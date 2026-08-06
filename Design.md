@@ -383,6 +383,32 @@ Endpoint 记录由 `Transport`、`Host`、`Port`、`ServerName` 和可选 `WssPa
 - 已建立连接异常断开后从列表第一项重新开始；不在存活连接之间主动迁移；
 - 没有 Endpoint 时 `Start` 返回 `STATUS_INVALID_PARAMETER`；所有失败通过状态回调上报，不静默切换到未配置或不安全的 Transport。
 
+### 8.2 第一版公开对象与配置
+
+公共 `SDK.h` 定义五种互不兼容的不透明 Handle：`ZP_CLIENT_HANDLE`、`ZP_SERVER_HANDLE`、`ZP_CONNECTION_HANDLE`、`ZP_REQUEST_HANDLE` 和 `ZP_CHANNEL_HANDLE`。Client 与 Server 公开头分别只暴露本端生命周期 API；具体对象布局和 Connection 握手状态不属于公开 ABI。
+
+Client 配置包含：
+
+- `Size`，第一版必须为 `sizeof(ZP_CLIENT_CONFIG)`；
+- 按尝试顺序排列的 Endpoint 数组；
+- Deployment 根证书 DER；
+- 可选的 CNG 客户端持久化密钥名；为空时由 SDK 使用默认名称；
+- 严格按 `ModuleId` 升序排列的模块版本与能力；
+- 连接超时，0 使用 10 秒默认值；
+- 状态回调和调用方 Context。
+
+Server 配置包含：
+
+- `Size`，第一版必须为 `sizeof(ZP_SERVER_CONFIG)`；
+- Listener 数组；Listener 的 `Host` 为空表示通配绑定，只有 WSS 使用非空 Path；
+- Deployment 数组，每项由 `ServerName` 和带可用私钥的 Windows `PCCERT_CONTEXT` 组成；SDK 在 `Create` 中复制证书 Context，调用方随后可释放原引用；
+- 严格按 `ModuleId` 升序排列的模块版本与能力；
+- Server 生命周期回调、单连接阶段回调和调用方 Context。
+
+Client 状态为 `Stopped`、`Connecting`、`Authenticating`、`Ready`、`RetryWait` 和 `Stopping`；Server 状态为 `Stopped`、`Starting`、`Running` 和 `Stopping`；Server 单连接以及需要统一表达的连接阶段使用 `Connecting`、`Authenticating`、`Ready` 和 `Closed`。状态回调中的 `NTSTATUS` 表示触发当前转换的结果，成功转换使用 `STATUS_SUCCESS`。
+
+`Create` 验证并复制数组、字符串、证书和模块配置，成功后对象处于 `Stopped`；回调函数指针和 Context 只保存值。`Start`、`Stop` 和 `Close` 遵循本节前述异步生命周期契约。第一版不公开内部 Connection 结构，也不允许调用方直接驱动 Frame 状态机。
+
 ## 9. 功能模块
 
 第一版模块范围：

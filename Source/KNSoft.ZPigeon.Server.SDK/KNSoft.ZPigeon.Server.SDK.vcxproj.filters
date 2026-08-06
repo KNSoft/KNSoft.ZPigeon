@@ -17,6 +17,8 @@
     <ClInclude Include="..\Network\Connection.h">
       <Filter>Network</Filter>
     </ClInclude>
+    <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Server.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

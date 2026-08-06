@@ -48,7 +48,7 @@
   <PropertyGroup Label="UserMacros" />
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>..\KNSoft.ZPigeon.Protocol\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\Include;..\KNSoft.ZPigeon.Client.SDK\Include;..\KNSoft.ZPigeon.Server.SDK\Include;..\KNSoft.ZPigeon.Protocol\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
     </ClCompile>
@@ -64,9 +64,13 @@
     <ClCompile Include="Message.c" />
     <ClCompile Include="Network.c" />
     <ClCompile Include="Protocol.c" />
+    <ClCompile Include="SDK.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Network\Connection.h" />
+    <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
+    <ClInclude Include="..\KNSoft.ZPigeon.Client.SDK\Include\KNSoft\ZPigeon\Client.h" />
+    <ClInclude Include="..\KNSoft.ZPigeon.Server.SDK\Include\KNSoft\ZPigeon\Server.h" />
     <ClInclude Include="UnitTest.h" />
   </ItemGroup>
   <ItemGroup>

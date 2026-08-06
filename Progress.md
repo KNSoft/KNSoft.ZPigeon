@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-项目已完成第一版 Protocol/API 规格、通用 Protocol 基础实现和 Transport 无关的 Connection 核心，进入 Client/Server SDK 公开 API 与 Transport 适配阶段。系统管理模块尚未开始。
+项目已完成第一版 Protocol/API 规格、通用 Protocol、Transport 无关的 Connection 核心以及 Client/Server SDK 公开 API 契约，进入 SDK 对象生命周期实现与 Transport 适配阶段。系统管理模块尚未开始。
 
 当前解决方案包含：
 
@@ -27,12 +27,13 @@
 - 实现 ClientHello、ServerChallenge、ClientAuthenticate、Ready 和 Disconnect 类型化 Codec；
 - 实现 Client/Server 握手发送与接收状态机，拒绝越序、重复及握手阶段业务消息；
 - 实现任意 Transport 分片与合并交付下的 Frame 切分，完整 Frame 走零中间复制路径，分片 Buffer 按实际接收量渐进增长；
+- 定义公共 Transport、Endpoint、Listener、五类不透明 Handle，以及 Client/Server 配置、生命周期状态和回调 API；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 106 项断言全部通过。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 118 项断言全部通过。
 
 ## 下一步
 
-1. 定义 Client SDK 与 Server SDK 的第一版公开配置、状态回调和 Handle 头文件；
+1. 实现 Client/Server 配置验证与深拷贝，以及 `Create`、`Start`、`Stop`、`Close` 生命周期；
 2. 实现 QUIC 单条双向 Stream 的最小 Transport 适配；
 3. 将握手 Codec、客户端签名和服务端验证接入 Connection 回调；
 4. 以 Ping/Pong 和 System.Info 完成首个端到端 C/S 验证；
