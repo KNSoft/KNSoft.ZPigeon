@@ -26,6 +26,12 @@ ZpClientQuic_CreateIdentity(
     BCRYPT_ECCKEY_BLOB* Blob = (BCRYPT_ECCKEY_BLOB*)BlobBuffer;
     ULONG BlobSize;
 
+    if (Transport->ExternalKey != 0)
+    {
+        Transport->Key = Transport->ExternalKey;
+        Transport->KeyOwned = FALSE;
+        goto ExportKey;
+    }
     SecurityStatus = NCryptOpenStorageProvider(&Transport->KeyProvider,
                                                MS_KEY_STORAGE_PROVIDER,
                                                0);
@@ -55,6 +61,9 @@ ZpClientQuic_CreateIdentity(
     {
         return SecurityStatus == NTE_NO_MEMORY ? STATUS_NO_MEMORY : STATUS_CRYPTO_SYSTEM_INVALID;
     }
+    Transport->KeyOwned = TRUE;
+
+ExportKey:
     SecurityStatus = NCryptExportKey(Transport->Key,
                                      0,
                                      BCRYPT_ECCPUBLIC_BLOB,
@@ -573,8 +582,7 @@ ZpClientQuic_Start(
     Credentials.Type = QUIC_CREDENTIAL_TYPE_NONE;
     Credentials.Flags = QUIC_CREDENTIAL_FLAG_CLIENT |
                         QUIC_CREDENTIAL_FLAG_INDICATE_CERTIFICATE_RECEIVED |
-                        QUIC_CREDENTIAL_FLAG_DEFER_CERTIFICATE_VALIDATION |
-                        QUIC_CREDENTIAL_FLAG_INPROC_PEER_CERTIFICATE;
+                        QUIC_CREDENTIAL_FLAG_DEFER_CERTIFICATE_VALIDATION;
     QuicStatus = MsQuicConfigurationOpen(Transport->Registration,
                                          &ZpQuicAlpn,
                                          1,
@@ -722,8 +730,12 @@ ZpClientQuic_Uninitialize(
     }
     if (Transport->Key != 0)
     {
-        NCryptFreeObject(Transport->Key);
+        if (Transport->KeyOwned)
+        {
+            NCryptFreeObject(Transport->Key);
+        }
         Transport->Key = 0;
+        Transport->KeyOwned = FALSE;
     }
     if (Transport->KeyProvider != 0)
     {

@@ -3,6 +3,7 @@
   <ItemGroup>
     <ClCompile Include="..\Network\Connection.c" />
     <ClCompile Include="Main.c" />
+    <ClCompile Include="Integration.c" />
     <ClCompile Include="Message.c" />
     <ClCompile Include="Network.c" />
     <ClCompile Include="Protocol.c" />

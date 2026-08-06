@@ -23,6 +23,8 @@ typedef struct _ZP_CLIENT_QUIC_TRANSPORT
     HCERTCHAINENGINE ChainEngine;
     NCRYPT_PROV_HANDLE KeyProvider;
     NCRYPT_KEY_HANDLE Key;
+    NCRYPT_KEY_HANDLE ExternalKey;
+    LOGICAL KeyOwned;
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE];
     ZP_CONNECTION ProtocolConnection;
     LOGICAL ProtocolConnectionInitialized;

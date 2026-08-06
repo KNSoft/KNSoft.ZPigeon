@@ -160,7 +160,7 @@ Source/
 - 第一版统一向上提供可靠、有序的字节传输语义；
 - QUIC 第一版只需使用一条双向 Stream，不立即暴露 QUIC 多流能力。
 
-QUIC 第一版使用 ALPN `knsoft-zpigeon/1`。Client 单独解析 Endpoint 的 `Host` 并设置 MsQuic 远端地址，再把 `ServerName` 作为 SNI 传入，因此连接目标与身份名称不会被混为同一字段。Client 为配置中的 Deployment 根 DER 建立内存证书库和 `hExclusiveRoot` 专用链引擎，通过 MsQuic 延迟证书验证事件执行 Windows SSL 链策略与 `ServerName` 校验，验证完成前返回 `QUIC_STATUS_PENDING`；不得设置 `NO_CERTIFICATE_VALIDATION`，也不得回退系统公共根。
+QUIC 第一版使用 ALPN `knsoft-zpigeon/1`。Client 单独解析 Endpoint 的 `Host` 并设置 MsQuic 远端地址，再把 `ServerName` 作为 SNI 传入，因此连接目标与身份名称不会被混为同一字段。Client 为配置中的 Deployment 根 DER 建立内存证书库和 `hExclusiveRoot` 专用链引擎，通过 MsQuic 延迟证书验证事件执行 Windows SSL 链策略与 `ServerName` 校验，验证完成前返回 `QUIC_STATUS_PENDING`；不得设置 `NO_CERTIFICATE_VALIDATION`，也不得回退系统公共根。Schannel 路径不设置 `QUIC_CREDENTIAL_FLAG_INPROC_PEER_CERTIFICATE`，从而保证证书事件提供原生 `PCCERT_CONTEXT`；若将来改用该标志，必须同时按 MsQuic 的序列化或 portable certificate 契约重写验证入口，不得把 blob 强制转换为证书 Context。
 
 Server 为每个 Deployment 创建独立 MsQuic Configuration 并装载其 `PCCERT_CONTEXT`，新连接按 SNI 不区分大小写精确选择 Configuration；缺失或未知 SNI 直接拒绝。Server 只允许对端创建一条双向 Stream，Client 在 TLS 连接完成后创建该 Stream；额外 Stream 或单向 Stream 是协议错误。Listener、Connection 和 Stream 均遵循 MsQuic 的异步停止/`SHUTDOWN_COMPLETE` 后关闭规则，Registration 的同步关闭不得发生在 MsQuic 回调栈内。
 
@@ -470,6 +470,8 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 - TLS 关闭、Frame 解析错误、身份验证失败和资源限制触发的断开均终止所有未完成请求、订阅和通道，不尝试在新连接上透明续接。
 
 Client 未配置 `ClientKeyName` 时使用机器级持久化 CNG 密钥名 `KNSoft.ZPigeon.Client`。SDK 通过 Microsoft Software Key Storage Provider 打开或创建 `ECDSA_P256` 密钥，只导出 `BCRYPT_ECCPUBLIC_BLOB` 并转换为线上 SEC1 格式；私钥签名由 `NCryptSignHash` 在 Provider 内完成。Server 使用系统首选 CSPRNG 生成 Challenge，把 SEC1 公钥转换为 `BCRYPT_ECCPUBLIC_BLOB` 后通过 `BCryptVerifySignature` 验证 P1363 签名，并计算 ClientId。签名验证成功前不会发送 `Ready` 或进入 Ready 阶段。
+
+Client QUIC Transport 内部允许测试代码借用一个调用方持有的 `NCRYPT_KEY_HANDLE`，用于无持久化副作用的端到端测试；该入口不属于公开 ABI，SDK 不释放借用句柄，调用方必须保持它存活到 Client 完成关闭。正常产品路径始终使用上述机器级持久化密钥。
 
 QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接受发送后立即推进 Connection 发送状态，Buffer 一直保留到 `SEND_COMPLETE`；接收回调按 MsQuic Buffer 顺序交给 `ZpConnection_Receive`，由 Connection 统一处理任意分片/合并和握手越序。Server 在 `ClientHello` 时按 ModuleId 取交集，版本取双方上限的较小值，Capabilities 取按位交集；Client 对 `Ready` 再验证所有选择均是其声明能力的子集。
 
