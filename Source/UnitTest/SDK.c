@@ -5,6 +5,7 @@
 
 #include "../KNSoft.ZPigeon.Client.SDK/Client.inl"
 #include "../KNSoft.ZPigeon.Server.SDK/Server.inl"
+#include "../Network/Authentication.inl"
 #include "../Network/Quic.inl"
 
 typedef struct _SDK_TEST_CONTEXT
@@ -51,6 +52,81 @@ static const ZP_TRANSPORT_OPERATIONS SDKTest_TransportOperations = {
     SDKTest_TransportStart,
     SDKTest_TransportStop
 };
+
+static
+LOGICAL
+SDKTest_AuthenticationRoundTrip(VOID)
+{
+    BCRYPT_ALG_HANDLE Algorithm = NULL;
+    BCRYPT_KEY_HANDLE Key = NULL;
+    BCRYPT_ECCKEY_BLOB* Blob;
+    BYTE BlobBuffer[sizeof(BCRYPT_ECCKEY_BLOB) + 64];
+    BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE];
+    BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE] = { 1 };
+    BYTE Hash[32], ClientId[32];
+    BYTE Signature[ZP_CLIENT_SIGNATURE_SIZE];
+    ULONG BlobSize, SignatureSize;
+    NTSTATUS Status;
+    LOGICAL Result = FALSE;
+
+    Status = BCryptOpenAlgorithmProvider(&Algorithm,
+                                         BCRYPT_ECDSA_P256_ALGORITHM,
+                                         NULL,
+                                         0);
+    if (!NT_SUCCESS(Status) ||
+        !NT_SUCCESS(Status = BCryptGenerateKeyPair(Algorithm, &Key, 256, 0)) ||
+        !NT_SUCCESS(Status = BCryptFinalizeKeyPair(Key, 0)) ||
+        !NT_SUCCESS(Status = BCryptExportKey(Key,
+                                             NULL,
+                                             BCRYPT_ECCPUBLIC_BLOB,
+                                             BlobBuffer,
+                                             sizeof(BlobBuffer),
+                                             &BlobSize,
+                                             0)))
+    {
+        goto Cleanup;
+    }
+    Blob = (BCRYPT_ECCKEY_BLOB*)BlobBuffer;
+    if (BlobSize != sizeof(BlobBuffer) ||
+        Blob->dwMagic != BCRYPT_ECDSA_PUBLIC_P256_MAGIC ||
+        Blob->cbKey != 32)
+    {
+        goto Cleanup;
+    }
+    PublicKey[0] = 0x04;
+    RtlCopyMemory(PublicKey + 1, BlobBuffer + sizeof(*Blob), 64);
+    Status = ZpAuthentication_Hash(Challenge, PublicKey, Hash);
+    if (!NT_SUCCESS(Status) ||
+        !NT_SUCCESS(Status = BCryptSignHash(Key,
+                                            NULL,
+                                            Hash,
+                                            sizeof(Hash),
+                                            Signature,
+                                            sizeof(Signature),
+                                            &SignatureSize,
+                                            0)) ||
+        SignatureSize != sizeof(Signature) ||
+        !NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, Signature)) ||
+        !NT_SUCCESS(ZpAuthentication_GetClientId(PublicKey, ClientId)))
+    {
+        goto Cleanup;
+    }
+    Signature[0] ^= 1;
+    Result = !NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, Signature));
+
+Cleanup:
+    if (Key != NULL)
+    {
+        BCryptDestroyKey(Key);
+    }
+    if (Algorithm != NULL)
+    {
+        BCryptCloseAlgorithmProvider(Algorithm, 0);
+    }
+    RtlSecureZeroMemory(Hash, sizeof(Hash));
+    RtlSecureZeroMemory(Signature, sizeof(Signature));
+    return Result;
+}
 
 static
 VOID
@@ -180,6 +256,7 @@ TEST_FUNC(SDKContract)
     TEST_OK(ZpQuicAlpn.Length == sizeof(ZP_QUIC_ALPN) - sizeof(ANSI_NULL));
     TEST_OK(ZpQuic_StatusToNtStatus(QUIC_STATUS_CONNECTION_TIMEOUT) == STATUS_IO_TIMEOUT &&
             ZpQuic_StatusToNtStatus(QUIC_STATUS_INVALID_PARAMETER) == STATUS_INVALID_PARAMETER);
+    TEST_OK(SDKTest_AuthenticationRoundTrip());
     QuicStatus = KNSoftQuicInitialize();
     TEST_OK(QUIC_SUCCEEDED(QuicStatus));
     if (QUIC_SUCCEEDED(QuicStatus))

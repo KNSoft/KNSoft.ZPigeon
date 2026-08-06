@@ -63,6 +63,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Network\Config.inl" />
+    <ClInclude Include="..\Network\Authentication.inl" />
     <ClInclude Include="..\Network\Connection.h" />
     <ClInclude Include="..\Network\Quic.inl" />
     <ClInclude Include="..\Network\Transport.h" />

@@ -17,6 +17,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\Network\Authentication.inl">
+      <Filter>Network</Filter>
+    </ClInclude>
     <ClInclude Include="..\Network\Config.inl">
       <Filter>Network</Filter>
     </ClInclude>

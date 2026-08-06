@@ -5,6 +5,8 @@
 
 #include <Ws2tcpip.h>
 
+#include "Connection.h"
+
 #pragma comment(lib, "Ws2_32.lib")
 
 #define ZP_QUIC_ALPN "knsoft-zpigeon/1"
@@ -13,6 +15,75 @@ static const QUIC_BUFFER ZpQuicAlpn = {
     sizeof(ZP_QUIC_ALPN) - sizeof(ANSI_NULL),
     (PBYTE)ZP_QUIC_ALPN
 };
+
+static
+NTSTATUS
+ZpQuic_StatusToNtStatus(
+    _In_ QUIC_STATUS QuicStatus);
+
+typedef struct _ZP_QUIC_SEND_CONTEXT
+{
+    QUIC_BUFFER Buffer;
+    BYTE Frame[ANYSIZE_ARRAY];
+} ZP_QUIC_SEND_CONTEXT, *PZP_QUIC_SEND_CONTEXT;
+
+static
+NTSTATUS
+ZpQuic_SendFrame(
+    _In_ HQUIC Stream,
+    _Inout_ PZP_CONNECTION Connection,
+    _In_ ZP_MESSAGE_TYPE MessageType,
+    _In_reads_bytes_opt_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength)
+{
+    PZP_QUIC_SEND_CONTEXT Send;
+    QUIC_STATUS QuicStatus;
+    NTSTATUS Status;
+    ULONG FrameSize, BytesWritten;
+
+    Status = ZpFrame_GetSize(BodyLength, &FrameSize);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    Send = Mem_Alloc(FIELD_OFFSET(ZP_QUIC_SEND_CONTEXT, Frame) + FrameSize);
+    if (Send == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    Status = ZpFrame_Encode(MessageType,
+                            Body,
+                            BodyLength,
+                            Send->Frame,
+                            FrameSize,
+                            &BytesWritten);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Send);
+        return Status;
+    }
+    Send->Buffer.Buffer = Send->Frame;
+    Send->Buffer.Length = BytesWritten;
+    QuicStatus = MsQuicStreamSend(Stream,
+                                  &Send->Buffer,
+                                  1,
+                                  QUIC_SEND_FLAG_NONE,
+                                  Send);
+    if (QUIC_FAILED(QuicStatus))
+    {
+        Mem_Free(Send);
+        return ZpQuic_StatusToNtStatus(QuicStatus);
+    }
+    return ZpConnection_NotifyMessageSent(Connection, MessageType);
+}
+
+static
+VOID
+ZpQuic_CompleteSend(
+    _In_opt_ PVOID Context)
+{
+    Mem_Free(Context);
+}
 
 static
 NTSTATUS

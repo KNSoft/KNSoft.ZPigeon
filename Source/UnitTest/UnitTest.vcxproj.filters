@@ -10,6 +10,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\KNSoft.ZPigeon.Client.SDK\Client.inl" />
+    <ClInclude Include="..\Network\Authentication.inl" />
     <ClInclude Include="..\Network\Connection.h" />
     <ClInclude Include="..\Network\Transport.h" />
     <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />

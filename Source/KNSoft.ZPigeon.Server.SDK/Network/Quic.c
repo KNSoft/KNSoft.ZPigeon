@@ -1,4 +1,5 @@
 ﻿#include "../Server.inl"
+#include "../../Network/Authentication.inl"
 #include "../../Network/Quic.inl"
 
 typedef struct _ZP_SERVER_QUIC_CONNECTION
@@ -7,12 +8,181 @@ typedef struct _ZP_SERVER_QUIC_CONNECTION
     HQUIC Connection;
     HQUIC Stream;
     NTSTATUS ShutdownStatus;
+    BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE];
+    BYTE ClientId[32];
+    BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE];
+    ZP_MODULE_RECORD Modules[ZP_MODULE_MAX_COUNT];
+    USHORT ModuleCount;
+    ZP_CONNECTION ProtocolConnection;
+    LOGICAL ProtocolConnectionInitialized;
 } ZP_SERVER_QUIC_CONNECTION, *PZP_SERVER_QUIC_CONNECTION;
 
 static const QUIC_REGISTRATION_CONFIG ZpServerQuicRegistrationConfig = {
     "KNSoft.ZPigeon.Server",
     QUIC_EXECUTION_PROFILE_LOW_LATENCY
 };
+
+static
+NTSTATUS
+ZpServerQuic_SelectModules(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
+    _In_ const ZP_CLIENT_HELLO_VIEW* Hello)
+{
+    PZP_SERVER_OBJECT Object = QuicConnection->Transport->Owner;
+    ZP_MODULE_RECORD ClientModule;
+    ULONG ClientIndex = 0;
+    ULONG ServerIndex = 0;
+    NTSTATUS Status;
+
+    QuicConnection->ModuleCount = 0;
+    while (ClientIndex < Hello->Modules.Count &&
+           ServerIndex < Object->Config.ModuleCount)
+    {
+        Status = ZpMessage_GetModuleRecord(&Hello->Modules,
+                                           (USHORT)ClientIndex,
+                                           &ClientModule);
+        if (!NT_SUCCESS(Status))
+        {
+            return Status;
+        }
+        if (ClientModule.ModuleId < Object->Config.Modules[ServerIndex].ModuleId)
+        {
+            ClientIndex++;
+            continue;
+        }
+        if (ClientModule.ModuleId > Object->Config.Modules[ServerIndex].ModuleId)
+        {
+            ServerIndex++;
+            continue;
+        }
+        QuicConnection->Modules[QuicConnection->ModuleCount].ModuleId = ClientModule.ModuleId;
+        QuicConnection->Modules[QuicConnection->ModuleCount].ModuleVersion =
+            min(ClientModule.ModuleVersion,
+                Object->Config.Modules[ServerIndex].ModuleVersion);
+        QuicConnection->Modules[QuicConnection->ModuleCount].Capabilities =
+            ClientModule.Capabilities & Object->Config.Modules[ServerIndex].Capabilities;
+        QuicConnection->ModuleCount++;
+        ClientIndex++;
+        ServerIndex++;
+    }
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+NTAPI
+ZpServerQuic_MessageCallback(
+    _Inout_ PZP_CONNECTION Connection,
+    _In_ const ZP_FRAME_VIEW* Frame,
+    _In_opt_ PVOID Context)
+{
+    PZP_SERVER_QUIC_CONNECTION QuicConnection = Context;
+    PZP_SERVER_OBJECT Object = QuicConnection->Transport->Owner;
+    ZP_CLIENT_HELLO_VIEW Hello;
+    ZP_BUFFER_VIEW Signature;
+    ZP_DISCONNECT_VIEW Disconnect;
+    ZP_READY Ready;
+    BYTE Body[sizeof(USHORT) + ZP_MODULE_MAX_COUNT * 8];
+    ULONG BodyLength;
+    NTSTATUS Status;
+
+    switch (Frame->MessageType)
+    {
+        case ZpMessageClientHello:
+            Status = ZpMessage_DecodeClientHello(Frame->Body,
+                                                  Frame->BodyLength,
+                                                  &Hello);
+            if (NT_SUCCESS(Status))
+            {
+                RtlCopyMemory(QuicConnection->PublicKey,
+                              Hello.ClientPublicKey,
+                              sizeof(QuicConnection->PublicKey));
+                Status = ZpAuthentication_GetClientId(QuicConnection->PublicKey,
+                                                      QuicConnection->ClientId);
+            }
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_SelectModules(QuicConnection, &Hello);
+            }
+            if (NT_SUCCESS(Status))
+            {
+                Status = BCryptGenRandom(NULL,
+                                         QuicConnection->Challenge,
+                                         sizeof(QuicConnection->Challenge),
+                                         BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+            }
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpMessage_EncodeServerChallenge(QuicConnection->Challenge,
+                                                         Body,
+                                                         sizeof(Body),
+                                                         &BodyLength);
+            }
+            if (!NT_SUCCESS(Status))
+            {
+                return Status;
+            }
+            return ZpQuic_SendFrame(QuicConnection->Stream,
+                                    Connection,
+                                    ZpMessageServerChallenge,
+                                    Body,
+                                    BodyLength);
+
+        case ZpMessageClientAuthenticate:
+            Status = ZpMessage_DecodeClientAuthenticate(Frame->Body,
+                                                        Frame->BodyLength,
+                                                        &Signature);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpAuthentication_Verify(QuicConnection->PublicKey,
+                                                 QuicConnection->Challenge,
+                                                 Signature.Buffer);
+            }
+            RtlSecureZeroMemory(QuicConnection->Challenge,
+                                sizeof(QuicConnection->Challenge));
+            if (!NT_SUCCESS(Status))
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+            Ready.Modules = QuicConnection->Modules;
+            Ready.ModuleCount = QuicConnection->ModuleCount;
+            Status = ZpMessage_EncodeReady(&Ready,
+                                           Body,
+                                           sizeof(Body),
+                                           &BodyLength);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpQuic_SendFrame(QuicConnection->Stream,
+                                          Connection,
+                                          ZpMessageReady,
+                                          Body,
+                                          BodyLength);
+            }
+            if (NT_SUCCESS(Status))
+            {
+                ZpServer_NotifyConnection((ZP_SERVER_HANDLE)Object,
+                                          (ZP_CONNECTION_HANDLE)QuicConnection,
+                                          ZpConnectionPhaseReady,
+                                          STATUS_SUCCESS);
+            }
+            return Status;
+
+        case ZpMessageDisconnect:
+            Status = ZpMessage_DecodeDisconnect(Frame->Body,
+                                                Frame->BodyLength,
+                                                &Disconnect);
+            if (NT_SUCCESS(Status))
+            {
+                InterlockedExchange((volatile LONG*)&QuicConnection->ShutdownStatus,
+                                    Disconnect.Status);
+                MsQuicConnectionShutdown(QuicConnection->Connection,
+                                         QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                         0);
+            }
+            return Status;
+    }
+    return STATUS_PROTOCOL_UNREACHABLE;
+}
 
 static
 VOID
@@ -48,15 +218,33 @@ ZpServerQuic_StreamCallback(
     _Inout_ QUIC_STREAM_EVENT* Event)
 {
     PZP_SERVER_QUIC_CONNECTION QuicConnection = Context;
+    NTSTATUS Status;
+    ULONG Index;
 
     switch (Event->Type)
     {
+        case QUIC_STREAM_EVENT_SEND_COMPLETE:
+            ZpQuic_CompleteSend(Event->SEND_COMPLETE.ClientContext);
+            break;
+
         case QUIC_STREAM_EVENT_RECEIVE:
-            InterlockedExchange((volatile LONG*)&QuicConnection->ShutdownStatus,
-                                STATUS_PROTOCOL_UNREACHABLE);
-            MsQuicConnectionShutdown(QuicConnection->Connection,
-                                     QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
-                                     0);
+            Status = STATUS_SUCCESS;
+            for (Index = 0;
+                 NT_SUCCESS(Status) && Index < Event->RECEIVE.BufferCount;
+                 Index++)
+            {
+                Status = ZpConnection_Receive(&QuicConnection->ProtocolConnection,
+                                              Event->RECEIVE.Buffers[Index].Buffer,
+                                              Event->RECEIVE.Buffers[Index].Length);
+            }
+            if (!NT_SUCCESS(Status))
+            {
+                InterlockedExchange((volatile LONG*)&QuicConnection->ShutdownStatus,
+                                    Status);
+                MsQuicConnectionShutdown(QuicConnection->Connection,
+                                         QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                         0);
+            }
             break;
 
         case QUIC_STREAM_EVENT_PEER_SEND_SHUTDOWN:
@@ -109,6 +297,20 @@ ZpServerQuic_ConnectionCallback(
                                          0);
                 break;
             }
+            Status = ZpConnection_Initialize(&QuicConnection->ProtocolConnection,
+                                             ZpConnectionRoleServer,
+                                             ZpServerQuic_MessageCallback,
+                                             QuicConnection);
+            if (!NT_SUCCESS(Status))
+            {
+                InterlockedExchange((volatile LONG*)&QuicConnection->ShutdownStatus,
+                                    Status);
+                MsQuicConnectionShutdown(Connection,
+                                         QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                         0);
+                break;
+            }
+            QuicConnection->ProtocolConnectionInitialized = TRUE;
             QuicConnection->Stream = Event->PEER_STREAM_STARTED.Stream;
             MsQuicSetCallbackHandler(QuicConnection->Stream,
                                      ZpServerQuic_StreamCallback,
@@ -142,6 +344,17 @@ ZpServerQuic_ConnectionCallback(
             Transport->ActiveConnectionCount--;
             RtlReleaseSRWLockExclusive(&Object->Lock);
             ZpServerQuic_TryCompleteStop(Transport);
+            if (QuicConnection->ProtocolConnectionInitialized)
+            {
+                ZpConnection_Uninitialize(&QuicConnection->ProtocolConnection);
+                QuicConnection->ProtocolConnectionInitialized = FALSE;
+            }
+            RtlSecureZeroMemory(QuicConnection->PublicKey,
+                                sizeof(QuicConnection->PublicKey));
+            RtlSecureZeroMemory(QuicConnection->ClientId,
+                                sizeof(QuicConnection->ClientId));
+            RtlSecureZeroMemory(QuicConnection->Challenge,
+                                sizeof(QuicConnection->Challenge));
             Mem_Free(QuicConnection);
             break;
     }

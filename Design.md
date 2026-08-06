@@ -469,6 +469,10 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 - `ClientHello` 之后只接受 `ServerChallenge` 或 `Disconnect`，`ServerChallenge` 之后只接受 `ClientAuthenticate` 或 `Disconnect`，认证成功后 S 发送 `Ready`；任何越序、重复或握手阶段业务消息均以 `STATUS_PROTOCOL_UNREACHABLE` 断开；
 - TLS 关闭、Frame 解析错误、身份验证失败和资源限制触发的断开均终止所有未完成请求、订阅和通道，不尝试在新连接上透明续接。
 
+Client 未配置 `ClientKeyName` 时使用机器级持久化 CNG 密钥名 `KNSoft.ZPigeon.Client`。SDK 通过 Microsoft Software Key Storage Provider 打开或创建 `ECDSA_P256` 密钥，只导出 `BCRYPT_ECCPUBLIC_BLOB` 并转换为线上 SEC1 格式；私钥签名由 `NCryptSignHash` 在 Provider 内完成。Server 使用系统首选 CSPRNG 生成 Challenge，把 SEC1 公钥转换为 `BCRYPT_ECCPUBLIC_BLOB` 后通过 `BCryptVerifySignature` 验证 P1363 签名，并计算 ClientId。签名验证成功前不会发送 `Ready` 或进入 Ready 阶段。
+
+QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接受发送后立即推进 Connection 发送状态，Buffer 一直保留到 `SEND_COMPLETE`；接收回调按 MsQuic Buffer 顺序交给 `ZpConnection_Receive`，由 Connection 统一处理任意分片/合并和握手越序。Server 在 `ClientHello` 时按 ModuleId 取交集，版本取双方上限的较小值，Capabilities 取按位交集；Client 对 `Ready` 再验证所有选择均是其声明能力的子集。
+
 ### 12.1 仍按模块延后确定的规格
 
 以下内容不阻塞 Network 和通用 Protocol 编码，在实现对应模块前定稿：
