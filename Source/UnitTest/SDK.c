@@ -5,6 +5,7 @@
 
 #include "../KNSoft.ZPigeon.Client.SDK/Client.inl"
 #include "../KNSoft.ZPigeon.Server.SDK/Server.inl"
+#include "../Network/Quic.inl"
 
 typedef struct _SDK_TEST_CONTEXT
 {
@@ -157,6 +158,8 @@ TEST_FUNC(SDKContract)
     PZP_CLIENT_OBJECT ClientObject;
     PZP_SERVER_OBJECT ServerObject;
     SDK_TEST_CONTEXT TestContext = { STATUS_SUCCESS };
+    QUIC_ADDR QuicAddress;
+    QUIC_STATUS QuicStatus;
 
     TEST_OK(ZpTransportQuic == 1 && ZpTransportTlsTcp == 2 && ZpTransportWss == 3);
     TEST_OK(Endpoint.Transport == ZpTransportQuic &&
@@ -174,6 +177,18 @@ TEST_FUNC(SDKContract)
     TEST_OK(ZP_CLIENT_DEFAULT_RETRY_MAX_MILLISECONDS == 60000);
     TEST_OK(ZP_CLIENT_DEFAULT_STABLE_RESET_MILLISECONDS == 60000);
     TEST_OK(ZP_CLIENT_DEFAULT_RETRY_JITTER_PERCENT == 20);
+    TEST_OK(ZpQuicAlpn.Length == sizeof(ZP_QUIC_ALPN) - sizeof(ANSI_NULL));
+    TEST_OK(ZpQuic_StatusToNtStatus(QUIC_STATUS_CONNECTION_TIMEOUT) == STATUS_IO_TIMEOUT &&
+            ZpQuic_StatusToNtStatus(QUIC_STATUS_INVALID_PARAMETER) == STATUS_INVALID_PARAMETER);
+    QuicStatus = KNSoftQuicInitialize();
+    TEST_OK(QUIC_SUCCEEDED(QuicStatus));
+    if (QUIC_SUCCEEDED(QuicStatus))
+    {
+        TEST_OK(NT_SUCCESS(ZpQuic_ResolveAddress(L"127.0.0.1", 443, &QuicAddress)) &&
+                QuicAddress.si_family == QUIC_ADDRESS_FAMILY_INET &&
+                QuicAddrGetPort(&QuicAddress) == 443);
+        KNSoftQuicUninitialize();
+    }
 
     TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
     ClientObject = (PZP_CLIENT_OBJECT)Client;
@@ -190,6 +205,8 @@ TEST_FUNC(SDKContract)
     TEST_OK(wcscmp(ClientObject->Config.ClientKeyName, L"ClientKey") == 0);
     TEST_OK(ClientObject->Config.DeploymentRootCertificate[0] == 0x30);
     TEST_OK(ClientObject->Config.Modules[0].ModuleVersion == 1);
+    TEST_OK(ClientObject->TransportOperations != NULL &&
+            ClientObject->TransportContext == &ClientObject->QuicTransport);
     ClientObject->State = ZpClientStateConnecting;
     TEST_OK(ZpClient_Close(Client) == STATUS_DEVICE_BUSY);
     ClientObject->State = ZpClientStateStopped;
@@ -233,6 +250,7 @@ TEST_FUNC(SDKContract)
 
     ServerConfig.Deployments = NULL;
     ServerConfig.DeploymentCount = 0;
+    Endpoint.Transport = ZpTransportTlsTcp;
     ClientConfig.CallbackContext = &TestContext;
     TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
     ClientObject = (PZP_CLIENT_OBJECT)Client;

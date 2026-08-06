@@ -130,6 +130,7 @@ ZpClient_Create(
     RtlCopyMemory(Cursor,
                   Config->DeploymentRootCertificate,
                   Config->DeploymentRootCertificateLength);
+    ZpClientQuic_Configure(Object);
     *Client = (ZP_CLIENT_HANDLE)Object;
     return STATUS_SUCCESS;
 }
@@ -311,6 +312,7 @@ ZpClient_Close(
         return STATUS_DEVICE_BUSY;
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
+    ZpClientQuic_Uninitialize(&Object->QuicTransport);
     Mem_Free(Object);
     return STATUS_SUCCESS;
 }

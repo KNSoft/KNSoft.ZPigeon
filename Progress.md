@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-项目已完成第一版 Protocol/API 规格、通用 Protocol、Transport 无关的 Connection 核心、Client/Server SDK 公开 API 契约、配置对象所有权以及 Start/Stop 生命周期，进入 QUIC Transport 适配阶段。系统管理模块尚未开始。
+项目已完成第一版 Protocol/API 规格、通用 Protocol、Transport 无关的 Connection 核心、Client/Server SDK 公开 API 契约、配置对象所有权以及 Start/Stop 生命周期；QUIC Transport 的连接、监听、证书链和单 Stream 骨架已落地，正在接入协议握手。系统管理模块尚未开始。
 
 当前解决方案包含：
 
@@ -30,13 +30,14 @@
 - 定义公共 Transport、Endpoint、Listener、五类不透明 Handle，以及 Client/Server 配置、生命周期状态和回调 API；
 - 实现 Client/Server `Create` 与 `Close`，包括配置校验、单块内存深拷贝、默认值、关闭状态门禁和 Server 证书 Context 引用管理；
 - 实现 Client/Server `Start`、`Stop`、受控状态转换和 Transport 操作表，状态回调在对象锁外执行并由活动回调计数保护 Handle 生命周期；
+- 实现基于 KNSoft.Quic/MsQuic 的 Client 连接与 Server 监听骨架，包括独立 Host 解析、SNI、`knsoft-zpigeon/1` ALPN、Client 专属根证书链验证、Server 按 SNI 选证书以及一条双向 Stream 限制；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 163 项断言全部通过。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 168 项断言全部通过。
 
 ## 下一步
 
-1. 实现 QUIC 单条双向 Stream 的最小 Transport 适配；
-2. 将握手 Codec、客户端签名和服务端验证接入 Connection 回调；
+1. 将握手 Codec、客户端签名和服务端验证接入 QUIC Stream 与 Connection 核心；
+2. 补齐 Endpoint 轮询、重连退避和混合 Transport 路由；
 3. 以 Ping/Pong 和 System.Info 完成首个端到端 C/S 验证；
 4. 再按 Process、Service、File、Terminal 等模块逐步实现。
 

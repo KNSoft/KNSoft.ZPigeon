@@ -3,6 +3,7 @@
 #include <KNSoft/ZPigeon/Server.h>
 
 #include "../Network/Transport.h"
+#include "Network/Quic.h"
 
 typedef struct _ZP_SERVER_OBJECT
 {
@@ -12,6 +13,7 @@ typedef struct _ZP_SERVER_OBJECT
     ZP_SERVER_CONFIG Config;
     PCZP_TRANSPORT_OPERATIONS TransportOperations;
     PVOID TransportContext;
+    ZP_SERVER_QUIC_TRANSPORT QuicTransport;
 } ZP_SERVER_OBJECT, *PZP_SERVER_OBJECT;
 
 NTSTATUS
@@ -24,4 +26,11 @@ NTSTATUS
 ZpServer_NotifyState(
     _In_ ZP_SERVER_HANDLE Server,
     _In_ ZP_SERVER_STATE State,
+    _In_ NTSTATUS Status);
+
+VOID
+ZpServer_NotifyConnection(
+    _In_ ZP_SERVER_HANDLE Server,
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_CONNECTION_PHASE Phase,
     _In_ NTSTATUS Status);

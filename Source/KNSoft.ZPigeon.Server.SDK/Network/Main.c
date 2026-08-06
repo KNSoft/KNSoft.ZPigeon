@@ -170,6 +170,7 @@ ZpServer_Create(
             return STATUS_UNSUCCESSFUL;
         }
     }
+    ZpServerQuic_Configure(Object);
     *Server = (ZP_SERVER_HANDLE)Object;
     return STATUS_SUCCESS;
 }
@@ -327,6 +328,28 @@ ZpServer_NotifyState(
     return STATUS_SUCCESS;
 }
 
+VOID
+ZpServer_NotifyConnection(
+    _In_ ZP_SERVER_HANDLE Server,
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_CONNECTION_PHASE Phase,
+    _In_ NTSTATUS Status)
+{
+    PZP_SERVER_OBJECT Object = (PZP_SERVER_OBJECT)Server;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount++;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    Object->Config.ConnectionCallback(Server,
+                                      Connection,
+                                      Phase,
+                                      Status,
+                                      Object->Config.CallbackContext);
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount--;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+}
+
 NTSTATUS
 NTAPI
 ZpServer_Close(
@@ -341,6 +364,7 @@ ZpServer_Close(
         return STATUS_DEVICE_BUSY;
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
+    ZpServerQuic_Uninitialize(&Object->QuicTransport);
     ZpServer_Free(Object);
     return STATUS_SUCCESS;
 }

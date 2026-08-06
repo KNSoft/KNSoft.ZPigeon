@@ -3,6 +3,7 @@
 #include <KNSoft/ZPigeon/Client.h>
 
 #include "../Network/Transport.h"
+#include "Network/Quic.h"
 
 typedef struct _ZP_CLIENT_OBJECT
 {
@@ -12,6 +13,7 @@ typedef struct _ZP_CLIENT_OBJECT
     ZP_CLIENT_CONFIG Config;
     PCZP_TRANSPORT_OPERATIONS TransportOperations;
     PVOID TransportContext;
+    ZP_CLIENT_QUIC_TRANSPORT QuicTransport;
 } ZP_CLIENT_OBJECT, *PZP_CLIENT_OBJECT;
 
 NTSTATUS

@@ -12,6 +12,9 @@
     <ClCompile Include="Network\Main.c">
       <Filter>Network</Filter>
     </ClCompile>
+    <ClCompile Include="Network\Quic.c">
+      <Filter>Network</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Network\Config.inl">
@@ -20,12 +23,18 @@
     <ClInclude Include="..\Network\Connection.h">
       <Filter>Network</Filter>
     </ClInclude>
+    <ClInclude Include="..\Network\Quic.inl">
+      <Filter>Network</Filter>
+    </ClInclude>
     <ClInclude Include="..\Network\Transport.h">
       <Filter>Network</Filter>
     </ClInclude>
     <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
     <ClInclude Include="Client.inl" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Client.h" />
+    <ClInclude Include="Network\Quic.h">
+      <Filter>Network</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
