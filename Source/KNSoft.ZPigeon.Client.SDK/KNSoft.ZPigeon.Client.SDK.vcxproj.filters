@@ -14,10 +14,14 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\Network\Config.inl">
+      <Filter>Network</Filter>
+    </ClInclude>
     <ClInclude Include="..\Network\Connection.h">
       <Filter>Network</Filter>
     </ClInclude>
     <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
+    <ClInclude Include="Client.inl" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Client.h" />
   </ItemGroup>
   <ItemGroup>

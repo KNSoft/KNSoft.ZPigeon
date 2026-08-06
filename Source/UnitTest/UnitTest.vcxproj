@@ -67,18 +67,26 @@
     <ClCompile Include="SDK.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\KNSoft.ZPigeon.Client.SDK\Client.inl" />
     <ClInclude Include="..\Network\Connection.h" />
     <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
     <ClInclude Include="..\KNSoft.ZPigeon.Client.SDK\Include\KNSoft\ZPigeon\Client.h" />
     <ClInclude Include="..\KNSoft.ZPigeon.Server.SDK\Include\KNSoft\ZPigeon\Server.h" />
+    <ClInclude Include="..\KNSoft.ZPigeon.Server.SDK\Server.inl" />
     <ClInclude Include="UnitTest.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\KNSoft.ZPigeon.Client.SDK\KNSoft.ZPigeon.Client.SDK.vcxproj">
+      <Project>{2E04E015-390E-4360-95C3-981A2C3CC93D}</Project>
+    </ProjectReference>
     <ProjectReference Include="..\KNSoft.ZPigeon.Protocol\KNSoft.ZPigeon.Protocol.vcxproj">
       <Project>{A4B9DA54-96D6-4F14-8B17-5D9016D0BE25}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\KNSoft.ZPigeon.Server.SDK\KNSoft.ZPigeon.Server.SDK.vcxproj">
+      <Project>{722AC452-A08B-4DBB-8D77-9C29E5394550}</Project>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

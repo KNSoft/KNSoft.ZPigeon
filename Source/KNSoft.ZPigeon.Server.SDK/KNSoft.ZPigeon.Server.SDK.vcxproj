@@ -61,9 +61,11 @@
     <ClCompile Include="Network\Main.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\Network\Config.inl" />
     <ClInclude Include="..\Network\Connection.h" />
     <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Server.h" />
+    <ClInclude Include="Server.inl" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

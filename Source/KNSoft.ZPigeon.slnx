@@ -11,6 +11,8 @@
     <BuildDependency Project="KNSoft.ZPigeon.Protocol/KNSoft.ZPigeon.Protocol.vcxproj" />
   </Project>
   <Project Path="UnitTest/UnitTest.vcxproj" Id="56257c0d-30e6-47d2-82b7-9ce3e3776c88">
+    <BuildDependency Project="KNSoft.ZPigeon.Client.SDK/KNSoft.ZPigeon.Client.SDK.vcxproj" />
     <BuildDependency Project="KNSoft.ZPigeon.Protocol/KNSoft.ZPigeon.Protocol.vcxproj" />
+    <BuildDependency Project="KNSoft.ZPigeon.Server.SDK/KNSoft.ZPigeon.Server.SDK.vcxproj" />
   </Project>
 </Solution>

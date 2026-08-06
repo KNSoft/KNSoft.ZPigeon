@@ -9,10 +9,12 @@
     <ClCompile Include="SDK.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\KNSoft.ZPigeon.Client.SDK\Client.inl" />
     <ClInclude Include="..\Network\Connection.h" />
     <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
     <ClInclude Include="..\KNSoft.ZPigeon.Client.SDK\Include\KNSoft\ZPigeon\Client.h" />
     <ClInclude Include="..\KNSoft.ZPigeon.Server.SDK\Include\KNSoft\ZPigeon\Server.h" />
+    <ClInclude Include="..\KNSoft.ZPigeon.Server.SDK\Server.inl" />
     <ClInclude Include="UnitTest.h" />
   </ItemGroup>
   <ItemGroup>

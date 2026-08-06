@@ -1,8 +1,10 @@
 ﻿#pragma once
 
+#include <KNSoft/ZPigeon/SDK.h>
+
 #include <Wincrypt.h>
 
-#include <KNSoft/ZPigeon/SDK.h>
+#pragma comment(lib, "Crypt32.lib")
 
 EXTERN_C_START
 
