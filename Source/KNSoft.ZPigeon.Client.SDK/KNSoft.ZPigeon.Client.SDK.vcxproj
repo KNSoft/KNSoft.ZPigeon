@@ -145,6 +145,7 @@
   <ItemGroup>
     <ClInclude Include="..\Network\Config.inl" />
     <ClInclude Include="..\Network\Connection.h" />
+    <ClInclude Include="..\Network\Transport.h" />
     <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
     <ClInclude Include="Client.inl" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Client.h" />

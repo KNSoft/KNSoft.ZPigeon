@@ -69,6 +69,7 @@
   <ItemGroup>
     <ClInclude Include="..\KNSoft.ZPigeon.Client.SDK\Client.inl" />
     <ClInclude Include="..\Network\Connection.h" />
+    <ClInclude Include="..\Network\Transport.h" />
     <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
     <ClInclude Include="..\KNSoft.ZPigeon.Client.SDK\Include\KNSoft\ZPigeon\Client.h" />
     <ClInclude Include="..\KNSoft.ZPigeon.Server.SDK\Include\KNSoft\ZPigeon\Server.h" />

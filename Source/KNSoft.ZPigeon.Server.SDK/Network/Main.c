@@ -176,13 +176,166 @@ ZpServer_Create(
 
 NTSTATUS
 NTAPI
+ZpServer_Start(
+    _In_ ZP_SERVER_HANDLE Server)
+{
+    NTSTATUS Status;
+    PZP_SERVER_OBJECT Object = (PZP_SERVER_OBJECT)Server;
+    PCZP_TRANSPORT_OPERATIONS Operations;
+    PVOID TransportContext;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (Object->State != ZpServerStateStopped)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    if (Object->Config.ListenerCount == 0 || Object->Config.DeploymentCount == 0)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (Object->TransportOperations == NULL)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_NOT_SUPPORTED;
+    }
+    Object->State = ZpServerStateStarting;
+    Object->CallbackCount++;
+    Operations = Object->TransportOperations;
+    TransportContext = Object->TransportContext;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+
+    Object->Config.StateCallback(Server,
+                                 ZpServerStateStarting,
+                                 STATUS_SUCCESS,
+                                 Object->Config.CallbackContext);
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount--;
+    if (Object->State != ZpServerStateStarting)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_SUCCESS;
+    }
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+
+    Status = Operations->Start(TransportContext);
+    if (!NT_SUCCESS(Status))
+    {
+        ZpServer_NotifyState(Server, ZpServerStateStopped, Status);
+    }
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_Stop(
+    _In_ ZP_SERVER_HANDLE Server)
+{
+    PZP_SERVER_OBJECT Object = (PZP_SERVER_OBJECT)Server;
+    PCZP_TRANSPORT_OPERATIONS Operations;
+    PVOID TransportContext;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (Object->State == ZpServerStateStopped || Object->State == ZpServerStateStopping)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_SUCCESS;
+    }
+    Object->State = ZpServerStateStopping;
+    Object->CallbackCount++;
+    Operations = Object->TransportOperations;
+    TransportContext = Object->TransportContext;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+
+    Object->Config.StateCallback(Server,
+                                 ZpServerStateStopping,
+                                 STATUS_SUCCESS,
+                                 Object->Config.CallbackContext);
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount--;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    Operations->Stop(TransportContext);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpServer_SetTransport(
+    _In_ ZP_SERVER_HANDLE Server,
+    _In_ PCZP_TRANSPORT_OPERATIONS Operations,
+    _In_opt_ PVOID Context)
+{
+    PZP_SERVER_OBJECT Object = (PZP_SERVER_OBJECT)Server;
+
+    if (Operations == NULL || Operations->Start == NULL || Operations->Stop == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (Object->State != ZpServerStateStopped)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    Object->TransportOperations = Operations;
+    Object->TransportContext = Context;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    return STATUS_SUCCESS;
+}
+
+static
+LOGICAL
+ZpServer_IsTransitionValid(
+    _In_ ZP_SERVER_STATE CurrentState,
+    _In_ ZP_SERVER_STATE State)
+{
+    switch (CurrentState)
+    {
+        case ZpServerStateStarting:
+            return State == ZpServerStateRunning || State == ZpServerStateStopped;
+
+        case ZpServerStateRunning:
+            return State == ZpServerStateStopped;
+
+        case ZpServerStateStopping:
+            return State == ZpServerStateStopped;
+    }
+    return FALSE;
+}
+
+NTSTATUS
+ZpServer_NotifyState(
+    _In_ ZP_SERVER_HANDLE Server,
+    _In_ ZP_SERVER_STATE State,
+    _In_ NTSTATUS Status)
+{
+    PZP_SERVER_OBJECT Object = (PZP_SERVER_OBJECT)Server;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (!ZpServer_IsTransitionValid(Object->State, State))
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    Object->State = State;
+    Object->CallbackCount++;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    Object->Config.StateCallback(Server, State, Status, Object->Config.CallbackContext);
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount--;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+NTAPI
 ZpServer_Close(
     _In_ ZP_SERVER_HANDLE Server)
 {
     PZP_SERVER_OBJECT Object = (PZP_SERVER_OBJECT)Server;
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
-    if (Object->State != ZpServerStateStopped)
+    if (Object->State != ZpServerStateStopped || Object->CallbackCount != 0)
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_DEVICE_BUSY;

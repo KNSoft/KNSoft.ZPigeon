@@ -6,6 +6,51 @@
 #include "../KNSoft.ZPigeon.Client.SDK/Client.inl"
 #include "../KNSoft.ZPigeon.Server.SDK/Server.inl"
 
+typedef struct _SDK_TEST_CONTEXT
+{
+    NTSTATUS StartStatus;
+    ULONG StartCount;
+    ULONG StopCount;
+    ULONG ClientStateCount;
+    ZP_CLIENT_STATE ClientStates[8];
+    NTSTATUS ClientStatuses[8];
+    LOGICAL CloseClientOnStopped;
+    NTSTATUS ClientCloseStatus;
+    ULONG ServerStateCount;
+    ZP_SERVER_STATE ServerStates[8];
+    NTSTATUS ServerStatuses[8];
+    LOGICAL CloseServerOnStopped;
+    NTSTATUS ServerCloseStatus;
+} SDK_TEST_CONTEXT, *PSDK_TEST_CONTEXT;
+
+static
+NTSTATUS
+NTAPI
+SDKTest_TransportStart(
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    TestContext->StartCount++;
+    return TestContext->StartStatus;
+}
+
+static
+VOID
+NTAPI
+SDKTest_TransportStop(
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    TestContext->StopCount++;
+}
+
+static const ZP_TRANSPORT_OPERATIONS SDKTest_TransportOperations = {
+    SDKTest_TransportStart,
+    SDKTest_TransportStop
+};
+
 static
 VOID
 NTAPI
@@ -15,10 +60,20 @@ SDKTest_ClientStateCallback(
     _In_ NTSTATUS Status,
     _In_opt_ PVOID Context)
 {
+    PSDK_TEST_CONTEXT TestContext = Context;
+    ULONG Index;
+
     UNREFERENCED_PARAMETER(Client);
-    UNREFERENCED_PARAMETER(State);
-    UNREFERENCED_PARAMETER(Status);
-    UNREFERENCED_PARAMETER(Context);
+    if (TestContext != NULL)
+    {
+        Index = TestContext->ClientStateCount++;
+        TestContext->ClientStates[Index] = State;
+        TestContext->ClientStatuses[Index] = Status;
+        if (TestContext->CloseClientOnStopped && State == ZpClientStateStopped)
+        {
+            TestContext->ClientCloseStatus = ZpClient_Close(Client);
+        }
+    }
 }
 
 static
@@ -30,10 +85,20 @@ SDKTest_ServerStateCallback(
     _In_ NTSTATUS Status,
     _In_opt_ PVOID Context)
 {
+    PSDK_TEST_CONTEXT TestContext = Context;
+    ULONG Index;
+
     UNREFERENCED_PARAMETER(Server);
-    UNREFERENCED_PARAMETER(State);
-    UNREFERENCED_PARAMETER(Status);
-    UNREFERENCED_PARAMETER(Context);
+    if (TestContext != NULL)
+    {
+        Index = TestContext->ServerStateCount++;
+        TestContext->ServerStates[Index] = State;
+        TestContext->ServerStatuses[Index] = Status;
+        if (TestContext->CloseServerOnStopped && State == ZpServerStateStopped)
+        {
+            TestContext->ServerCloseStatus = ZpServer_Close(Server);
+        }
+    }
 }
 
 static
@@ -91,6 +156,7 @@ TEST_FUNC(SDKContract)
     ZP_SERVER_HANDLE Server;
     PZP_CLIENT_OBJECT ClientObject;
     PZP_SERVER_OBJECT ServerObject;
+    SDK_TEST_CONTEXT TestContext = { STATUS_SUCCESS };
 
     TEST_OK(ZpTransportQuic == 1 && ZpTransportTlsTcp == 2 && ZpTransportWss == 3);
     TEST_OK(Endpoint.Transport == ZpTransportQuic &&
@@ -164,4 +230,79 @@ TEST_FUNC(SDKContract)
     ServerConfig.Deployments = &InvalidDeployment;
     ServerConfig.DeploymentCount = 1;
     TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
+
+    ServerConfig.Deployments = NULL;
+    ServerConfig.DeploymentCount = 0;
+    ClientConfig.CallbackContext = &TestContext;
+    TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
+    ClientObject = (PZP_CLIENT_OBJECT)Client;
+    TEST_OK(ZpClient_Start(Client) == STATUS_NOT_SUPPORTED &&
+            ClientObject->State == ZpClientStateStopped);
+    TEST_OK(NT_SUCCESS(ZpClient_SetTransport(Client, &SDKTest_TransportOperations, &TestContext)));
+    TEST_OK(NT_SUCCESS(ZpClient_Start(Client)) &&
+            ClientObject->State == ZpClientStateConnecting &&
+            TestContext.StartCount == 1 &&
+            TestContext.ClientStateCount == 1 &&
+            TestContext.ClientStates[0] == ZpClientStateConnecting);
+    TEST_OK(ZpClient_Start(Client) == STATUS_INVALID_DEVICE_STATE);
+    TEST_OK(NT_SUCCESS(ZpClient_NotifyState(Client,
+                                           ZpClientStateAuthenticating,
+                                           STATUS_SUCCESS)) &&
+            NT_SUCCESS(ZpClient_NotifyState(Client, ZpClientStateReady, STATUS_SUCCESS)) &&
+            TestContext.ClientStateCount == 3 &&
+            TestContext.ClientStates[1] == ZpClientStateAuthenticating &&
+            TestContext.ClientStates[2] == ZpClientStateReady);
+    TEST_OK(ZpClient_NotifyState(Client,
+                                ZpClientStateAuthenticating,
+                                STATUS_SUCCESS) == STATUS_INVALID_DEVICE_STATE);
+    TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) &&
+            ClientObject->State == ZpClientStateStopping &&
+            TestContext.StopCount == 1 &&
+            TestContext.ClientStates[3] == ZpClientStateStopping);
+    TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) && TestContext.StopCount == 1);
+    TEST_OK(ZpClient_Close(Client) == STATUS_DEVICE_BUSY);
+    TestContext.CloseClientOnStopped = TRUE;
+    TEST_OK(NT_SUCCESS(ZpClient_NotifyState(Client, ZpClientStateStopped, STATUS_SUCCESS)) &&
+            TestContext.ClientStates[4] == ZpClientStateStopped &&
+            TestContext.ClientCloseStatus == STATUS_DEVICE_BUSY);
+    TEST_OK(NT_SUCCESS(ZpClient_Close(Client)));
+
+    RtlZeroMemory(&TestContext, sizeof(TestContext));
+    TestContext.StartStatus = STATUS_ACCESS_DENIED;
+    ClientConfig.CallbackContext = &TestContext;
+    TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
+    TEST_OK(NT_SUCCESS(ZpClient_SetTransport(Client, &SDKTest_TransportOperations, &TestContext)));
+    TEST_OK(ZpClient_Start(Client) == STATUS_ACCESS_DENIED &&
+            ((PZP_CLIENT_OBJECT)Client)->State == ZpClientStateStopped &&
+            TestContext.ClientStateCount == 2 &&
+            TestContext.ClientStates[1] == ZpClientStateStopped &&
+            TestContext.ClientStatuses[1] == STATUS_ACCESS_DENIED);
+    TEST_OK(NT_SUCCESS(ZpClient_Close(Client)));
+
+    RtlZeroMemory(&TestContext, sizeof(TestContext));
+    ServerConfig.CallbackContext = &TestContext;
+    TEST_OK(NT_SUCCESS(ZpServer_Create(&ServerConfig, &Server)));
+    ServerObject = (PZP_SERVER_OBJECT)Server;
+    ServerObject->Config.DeploymentCount = 1;
+    TEST_OK(ZpServer_Start(Server) == STATUS_NOT_SUPPORTED &&
+            ServerObject->State == ZpServerStateStopped);
+    TEST_OK(NT_SUCCESS(ZpServer_SetTransport(Server, &SDKTest_TransportOperations, &TestContext)));
+    TEST_OK(NT_SUCCESS(ZpServer_Start(Server)) &&
+            ServerObject->State == ZpServerStateStarting &&
+            TestContext.StartCount == 1 &&
+            TestContext.ServerStateCount == 1 &&
+            TestContext.ServerStates[0] == ZpServerStateStarting);
+    TEST_OK(NT_SUCCESS(ZpServer_NotifyState(Server, ZpServerStateRunning, STATUS_SUCCESS)) &&
+            TestContext.ServerStates[1] == ZpServerStateRunning);
+    TEST_OK(NT_SUCCESS(ZpServer_Stop(Server)) &&
+            ServerObject->State == ZpServerStateStopping &&
+            TestContext.StopCount == 1 &&
+            TestContext.ServerStates[2] == ZpServerStateStopping);
+    TEST_OK(NT_SUCCESS(ZpServer_Stop(Server)) && TestContext.StopCount == 1);
+    TestContext.CloseServerOnStopped = TRUE;
+    TEST_OK(NT_SUCCESS(ZpServer_NotifyState(Server, ZpServerStateStopped, STATUS_SUCCESS)) &&
+            TestContext.ServerStates[3] == ZpServerStateStopped &&
+            TestContext.ServerCloseStatus == STATUS_DEVICE_BUSY);
+    ServerObject->Config.DeploymentCount = 0;
+    TEST_OK(NT_SUCCESS(ZpServer_Close(Server)));
 }

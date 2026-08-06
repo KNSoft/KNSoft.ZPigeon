@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-项目已完成第一版 Protocol/API 规格、通用 Protocol、Transport 无关的 Connection 核心、Client/Server SDK 公开 API 契约以及配置对象所有权实现，进入 Start/Stop 生命周期与 Transport 适配阶段。系统管理模块尚未开始。
+项目已完成第一版 Protocol/API 规格、通用 Protocol、Transport 无关的 Connection 核心、Client/Server SDK 公开 API 契约、配置对象所有权以及 Start/Stop 生命周期，进入 QUIC Transport 适配阶段。系统管理模块尚未开始。
 
 当前解决方案包含：
 
@@ -29,16 +29,16 @@
 - 实现任意 Transport 分片与合并交付下的 Frame 切分，完整 Frame 走零中间复制路径，分片 Buffer 按实际接收量渐进增长；
 - 定义公共 Transport、Endpoint、Listener、五类不透明 Handle，以及 Client/Server 配置、生命周期状态和回调 API；
 - 实现 Client/Server `Create` 与 `Close`，包括配置校验、单块内存深拷贝、默认值、关闭状态门禁和 Server 证书 Context 引用管理；
+- 实现 Client/Server `Start`、`Stop`、受控状态转换和 Transport 操作表，状态回调在对象锁外执行并由活动回调计数保护 Handle 生命周期；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 138 项断言全部通过。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 163 项断言全部通过。
 
 ## 下一步
 
-1. 实现 Client/Server `Start`、`Stop` 状态转换和回调序列；
-2. 实现 QUIC 单条双向 Stream 的最小 Transport 适配；
-3. 将握手 Codec、客户端签名和服务端验证接入 Connection 回调；
-4. 以 Ping/Pong 和 System.Info 完成首个端到端 C/S 验证；
-5. 再按 Process、Service、File、Terminal 等模块逐步实现。
+1. 实现 QUIC 单条双向 Stream 的最小 Transport 适配；
+2. 将握手 Codec、客户端签名和服务端验证接入 Connection 回调；
+3. 以 Ping/Pong 和 System.Info 完成首个端到端 C/S 验证；
+4. 再按 Process、Service、File、Terminal 等模块逐步实现。
 
 ## 待确认与阻塞
 
