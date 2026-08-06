@@ -534,12 +534,10 @@ ZpClientQuic_CreateRootChainEngine(
 
 static
 NTSTATUS
-NTAPI
-ZpClientQuic_Start(
-    _In_opt_ PVOID Context)
+ZpClientQuic_StartEndpoint(
+    _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport)
 {
     QUIC_STATUS QuicStatus;
-    PZP_CLIENT_QUIC_TRANSPORT Transport = Context;
     PZP_CLIENT_OBJECT Object = Transport->Owner;
     const ZP_ENDPOINT* Endpoint = &Object->Config.Endpoints[Transport->EndpointIndex];
     QUIC_SETTINGS Settings = { 0 };
@@ -650,6 +648,33 @@ Cleanup:
 }
 
 static
+NTSTATUS
+NTAPI
+ZpClientQuic_Start(
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_QUIC_TRANSPORT Transport = Context;
+    PZP_CLIENT_OBJECT Object = Transport->Owner;
+    NTSTATUS Status = STATUS_NOT_SUPPORTED;
+    ULONG Index;
+
+    for (Index = 0; Index < Object->Config.EndpointCount; Index++)
+    {
+        if (Object->Config.Endpoints[Index].Transport != ZpTransportQuic)
+        {
+            continue;
+        }
+        Transport->EndpointIndex = Index;
+        Status = ZpClientQuic_StartEndpoint(Transport);
+        if (NT_SUCCESS(Status))
+        {
+            return STATUS_SUCCESS;
+        }
+    }
+    return Status;
+}
+
+static
 VOID
 NTAPI
 ZpClientQuic_Stop(
@@ -686,7 +711,7 @@ ZpClientQuic_Configure(
     ULONG Index;
 
     Object->QuicTransport.Owner = Object;
-    for (Index = 0; Index < min(Object->Config.EndpointCount, 1UL); Index++)
+    for (Index = 0; Index < Object->Config.EndpointCount; Index++)
     {
         if (Object->Config.Endpoints[Index].Transport == ZpTransportQuic)
         {

@@ -202,6 +202,10 @@ TEST_FUNC(SDKContract)
     BYTE RootCertificate[] = { 0x30, 0x01, 0x00 };
     ZP_MODULE_RECORD Modules[] = { { 1, 1, 0 }, { 2, 1, 1 } };
     ZP_ENDPOINT Endpoint = { ZpTransportQuic, Host, 443, ServerName, NULL };
+    ZP_ENDPOINT MixedEndpoints[] = {
+        { ZpTransportTlsTcp, Host, 443, ServerName, NULL },
+        { ZpTransportQuic, Host, 443, ServerName, NULL }
+    };
     ZP_LISTENER_ENDPOINT Listener = { ZpTransportQuic, ListenerHost, 443, NULL };
     ZP_SERVER_DEPLOYMENT InvalidDeployment = { L"server.example", NULL };
     ZP_CLIENT_CONFIG ClientConfig = {
@@ -294,6 +298,15 @@ TEST_FUNC(SDKContract)
     ClientKeyName[0] = L'C';
     RootCertificate[0] = 0x30;
     Modules[0].ModuleVersion = 1;
+    ClientConfig.Endpoints = MixedEndpoints;
+    ClientConfig.EndpointCount = ARRAYSIZE(MixedEndpoints);
+    TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
+    ClientObject = (PZP_CLIENT_OBJECT)Client;
+    TEST_OK(ClientObject->TransportOperations != NULL &&
+            ClientObject->QuicTransport.EndpointIndex == 1);
+    TEST_OK(NT_SUCCESS(ZpClient_Close(Client)));
+    ClientConfig.Endpoints = &Endpoint;
+    ClientConfig.EndpointCount = 1;
     ClientConfig.Size = 0;
     TEST_OK(ZpClient_Create(&ClientConfig, &Client) == STATUS_INVALID_PARAMETER);
     ClientConfig.Size = sizeof(ClientConfig);

@@ -34,12 +34,13 @@
 - 将 QUIC Stream 收发接入 Connection 状态机，实现 Client 持久化 ECDSA P-256 身份、ClientHello、系统随机 Challenge、P1363 签名与验证、ClientId 计算、模块协商和 Ready 双端校验；
 - 实现本地进程内 QUIC 端到端测试，以临时自签名证书和借用的进程内 P-256 身份密钥验证 TLS 专属根链、SNI、单 Stream、完整认证握手、模块交集以及双端异步关闭；
 - 修正 Schannel `INPROC_PEER_CERTIFICATE` 与原生 `PCCERT_CONTEXT` 混用导致的访问冲突，证书验证回调现在严格接收原生 Windows 证书 Context；
+- Client 不再只识别配置首项：QUIC Endpoint 可位于混合列表任意位置，同步建连准备失败时会继续尝试后续 QUIC Endpoint；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 170 项断言全部通过，其中包含一条真实 localhost QUIC 端到端链路。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 173 项断言全部通过，其中包含一条真实 localhost QUIC 端到端链路。
 
 ## 下一步
 
-1. 补齐 Endpoint 轮询、重连退避和混合 Transport 路由；
+1. 补齐异步失败后的 Endpoint 轮次推进、重连退避和混合 Transport 路由；
 2. 以 Ping/Pong 和 System.Info 完成首个业务端到端验证；
 3. 再按 Process、Service、File、Terminal 等模块逐步实现。
 
