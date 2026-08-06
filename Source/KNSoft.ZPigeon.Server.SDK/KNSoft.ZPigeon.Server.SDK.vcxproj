@@ -55,7 +55,13 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\Network\Connection.c">
+      <ObjectFileName>$(IntDir)Network\</ObjectFileName>
+    </ClCompile>
     <ClCompile Include="Network\Main.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\Network\Connection.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

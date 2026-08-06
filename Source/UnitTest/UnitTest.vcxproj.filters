@@ -1,11 +1,14 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
+    <ClCompile Include="..\Network\Connection.c" />
     <ClCompile Include="Main.c" />
     <ClCompile Include="Message.c" />
+    <ClCompile Include="Network.c" />
     <ClCompile Include="Protocol.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\Network\Connection.h" />
     <ClInclude Include="UnitTest.h" />
   </ItemGroup>
   <ItemGroup>

@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-项目已完成第一版 Protocol/API 规格和通用 Protocol 基础实现，进入握手消息与 Connection 状态机实现阶段。系统管理模块尚未开始。
+项目已完成第一版 Protocol/API 规格、通用 Protocol 基础实现和 Transport 无关的 Connection 核心，进入 Client/Server SDK 公开 API 与 Transport 适配阶段。系统管理模块尚未开始。
 
 当前解决方案包含：
 
@@ -24,17 +24,19 @@
 - 定稿 Core Version 1 的 Frame、MessageType、Codec、握手密码学、Endpoint、重连、取消、Deadline 和 Buffer 生命周期；
 - 实现不分配内存的 `ZpCodec_*` 小端读写和 View 解码；
 - 实现 `ZpFrame_*` 长度计算、编码、流式解码及类型专用 Body 边界校验；
+- 实现 ClientHello、ServerChallenge、ClientAuthenticate、Ready 和 Disconnect 类型化 Codec；
+- 实现 Client/Server 握手发送与接收状态机，拒绝越序、重复及握手阶段业务消息；
+- 实现任意 Transport 分片与合并交付下的 Frame 切分，完整 Frame 走零中间复制路径，分片 Buffer 按实际接收量渐进增长；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵构建通过；每个配置下 48 项协议断言全部通过。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 106 项断言全部通过。
 
 ## 下一步
 
-1. 为 ClientHello、ServerChallenge、ClientAuthenticate、Ready 和 Disconnect 增加类型化 Codec；
-2. 实现与 Transport 无关的 Connection 接收缓存、Frame 切分和握手状态机；
-3. 定义 Client SDK 与 Server SDK 的第一版公开配置、状态回调和 Handle 头文件；
-4. 实现 QUIC 单双向 Stream 的最小 Transport 适配；
-5. 以 Ping/Pong 和 System.Info 完成首个端到端 C/S 验证；
-6. 再按 Process、Service、File、Terminal 等模块逐步实现。
+1. 定义 Client SDK 与 Server SDK 的第一版公开配置、状态回调和 Handle 头文件；
+2. 实现 QUIC 单条双向 Stream 的最小 Transport 适配；
+3. 将握手 Codec、客户端签名和服务端验证接入 Connection 回调；
+4. 以 Ping/Pong 和 System.Info 完成首个端到端 C/S 验证；
+5. 再按 Process、Service、File、Terminal 等模块逐步实现。
 
 ## 待确认与阻塞
 

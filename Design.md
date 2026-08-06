@@ -200,6 +200,26 @@ C 不内置、不依赖 S 的协议版本。S 在线升级后根据 C 报告的�
 
 QUIC、TLS/TCP 和 WSS 均使用 TLS 派生的对称会话密钥保护业务数据。分组公私钥不用于逐包加解密，也不在 TLS 外增加应用层二次加密。
 
+### 6.1 Connection 状态机与接收缓存
+
+Connection 通用实现位于共享的 `Source/Network`，由 Client SDK 和 Server SDK 分别编译，不放入 Protocol 静态库。Protocol 仍只负责无状态的 Frame 和 Payload 编解码。
+
+握手状态按本端下一步动作显式推进：
+
+```text
+Client: SendHello -> WaitChallenge -> SendAuthenticate -> WaitReady -> Ready
+Server: WaitHello -> SendChallenge -> WaitAuthenticate -> SendReady -> Ready
+```
+
+- Transport 成功接受一条本端握手消息后，Connection 通过发送通知推进到下一状态；
+- 收到完整且顺序正确的握手 Frame 后，Connection 先推进状态，再调用消息回调，使回调可以立即生成下一条握手消息；
+- `Ready` 前不允许业务消息，`Ready` 后不允许重复握手消息；越序、方向错误或重复消息以 `STATUS_PROTOCOL_UNREACHABLE` 关闭连接；
+- `Disconnect` 在任意未关闭状态均合法，分派后进入关闭状态；同批接收数据中位于 `Disconnect` 之后的字节不再分派；
+- 消息回调返回失败时当前连接立即进入关闭状态；具体 Transport 关闭和可选 `Disconnect` 发送由上层 Network 代码执行；
+- 同一连接的接收和发送状态通知由 SDK 串行调用，Connection 本身不增加热路径锁。
+
+接收路径针对 Transport 的任意分片和合并交付：连续完整 Frame 直接解码，不复制到中间 Buffer；不完整的 4 字节长度前缀保存在 Connection 内；分片 Frame 的堆 Buffer 从 4 KiB 起按已实际收到的数据增长，最大不超过 Frame 声明长度，不能仅凭未受信任的长度前缀立即分配 16 MiB。一次接收包含多个 Frame 时逐项分派，回调中的 View 只在当前回调返回前有效。
+
 ## 7. Protocol 与 Frame
 
 Protocol 负责：

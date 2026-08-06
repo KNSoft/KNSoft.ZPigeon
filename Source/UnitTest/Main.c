@@ -4,11 +4,13 @@
 TEST_DECL_FUNC(ProtocolCodec);
 TEST_DECL_FUNC(ProtocolFrame);
 TEST_DECL_FUNC(ProtocolMessage);
+TEST_DECL_FUNC(NetworkConnection);
 
 CONST UNITTEST_ENTRY UnitTestList[] = {
     TEST_DECL_ENTRY(ProtocolCodec),
     TEST_DECL_ENTRY(ProtocolFrame),
     TEST_DECL_ENTRY(ProtocolMessage),
+    TEST_DECL_ENTRY(NetworkConnection),
     { 0 }
 };
 
