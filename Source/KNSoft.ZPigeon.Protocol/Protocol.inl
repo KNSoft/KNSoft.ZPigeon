@@ -60,3 +60,9 @@ ZpWriteUInt64(
     ZpWriteUInt32(Buffer, (ULONG)Value);
     ZpWriteUInt32(Buffer + sizeof(ULONG), (ULONG)(Value >> 32));
 }
+
+NTSTATUS
+ZpMessage_ValidateBody(
+    _In_ ZP_MESSAGE_TYPE MessageType,
+    _In_reads_bytes_(BodyLength) const BYTE* Body,
+    _In_ ULONG BodyLength);

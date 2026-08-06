@@ -58,6 +58,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Main.c" />
+    <ClCompile Include="Message.c" />
     <ClCompile Include="Protocol.c" />
   </ItemGroup>
   <ItemGroup>

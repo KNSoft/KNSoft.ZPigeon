@@ -67,6 +67,68 @@ typedef struct _ZP_FRAME_VIEW
     ULONG BodyLength;
 } ZP_FRAME_VIEW, *PZP_FRAME_VIEW;
 
+typedef struct _ZP_MODULE_RECORD
+{
+    USHORT ModuleId;
+    USHORT ModuleVersion;
+    ULONG Capabilities;
+} ZP_MODULE_RECORD, *PZP_MODULE_RECORD;
+
+typedef const ZP_MODULE_RECORD* PCZP_MODULE_RECORD;
+
+typedef struct _ZP_MODULE_LIST_VIEW
+{
+    const BYTE* Buffer;
+    USHORT Count;
+} ZP_MODULE_LIST_VIEW, *PZP_MODULE_LIST_VIEW;
+
+typedef const ZP_MODULE_LIST_VIEW* PCZP_MODULE_LIST_VIEW;
+
+typedef struct _ZP_CLIENT_HELLO
+{
+    USHORT CoreVersion;
+    PCZP_MODULE_RECORD Modules;
+    USHORT ModuleCount;
+    const BYTE* ClientPublicKey;
+} ZP_CLIENT_HELLO, *PZP_CLIENT_HELLO;
+
+typedef const ZP_CLIENT_HELLO* PCZP_CLIENT_HELLO;
+
+typedef struct _ZP_CLIENT_HELLO_VIEW
+{
+    USHORT CoreVersion;
+    ZP_MODULE_LIST_VIEW Modules;
+    const BYTE* ClientPublicKey;
+} ZP_CLIENT_HELLO_VIEW, *PZP_CLIENT_HELLO_VIEW;
+
+typedef struct _ZP_READY
+{
+    PCZP_MODULE_RECORD Modules;
+    USHORT ModuleCount;
+} ZP_READY, *PZP_READY;
+
+typedef const ZP_READY* PCZP_READY;
+
+typedef struct _ZP_READY_VIEW
+{
+    ZP_MODULE_LIST_VIEW Modules;
+} ZP_READY_VIEW, *PZP_READY_VIEW;
+
+typedef struct _ZP_DISCONNECT
+{
+    NTSTATUS Status;
+    PCWCH Reason;
+    ULONG ReasonLength;
+} ZP_DISCONNECT, *PZP_DISCONNECT;
+
+typedef const ZP_DISCONNECT* PCZP_DISCONNECT;
+
+typedef struct _ZP_DISCONNECT_VIEW
+{
+    NTSTATUS Status;
+    ZP_STRING_VIEW Reason;
+} ZP_DISCONNECT_VIEW, *PZP_DISCONNECT_VIEW;
+
 VOID
 ZpCodec_InitializeWriter(
     _Out_ PZP_CODEC_WRITER Writer,
@@ -172,6 +234,77 @@ NTSTATUS
 ZpCodec_ReadArrayCount(
     _Inout_ PZP_CODEC_READER Reader,
     _Out_ PULONG Count);
+
+NTSTATUS
+ZpMessage_GetModuleRecord(
+    _In_ PCZP_MODULE_LIST_VIEW Modules,
+    _In_ USHORT Index,
+    _Out_ PZP_MODULE_RECORD Record);
+
+NTSTATUS
+ZpMessage_EncodeClientHello(
+    _In_ PCZP_CLIENT_HELLO Message,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodeClientHello(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_CLIENT_HELLO_VIEW View);
+
+NTSTATUS
+ZpMessage_EncodeServerChallenge(
+    _In_reads_bytes_(ZP_SERVER_CHALLENGE_SIZE) const BYTE* Challenge,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodeServerChallenge(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_BUFFER_VIEW View);
+
+NTSTATUS
+ZpMessage_EncodeClientAuthenticate(
+    _In_reads_bytes_(ZP_CLIENT_SIGNATURE_SIZE) const BYTE* Signature,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodeClientAuthenticate(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_BUFFER_VIEW View);
+
+NTSTATUS
+ZpMessage_EncodeReady(
+    _In_ PCZP_READY Message,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodeReady(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_READY_VIEW View);
+
+NTSTATUS
+ZpMessage_EncodeDisconnect(
+    _In_ PCZP_DISCONNECT Message,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodeDisconnect(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_DISCONNECT_VIEW View);
 
 NTSTATUS
 ZpFrame_GetSize(

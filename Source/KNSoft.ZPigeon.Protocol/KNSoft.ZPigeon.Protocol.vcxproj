@@ -58,6 +58,7 @@
   <ItemGroup>
     <ClCompile Include="Codec.c" />
     <ClCompile Include="Frame.c" />
+    <ClCompile Include="Message.c" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
