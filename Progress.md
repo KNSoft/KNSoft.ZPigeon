@@ -6,42 +6,37 @@
 
 ## 当前阶段
 
-项目处于 SDK 总体设计完成、第一版 Protocol/API 规格待编写阶段，尚未开始实现网络协议或系统管理模块。
+项目已完成第一版 Protocol/API 规格和通用 Protocol 基础实现，进入握手消息与 Connection 状态机实现阶段。系统管理模块尚未开始。
 
-当前解决方案只有 `KNSoft.ZPigeon.Client.SDK` 静态库骨架，`Network/Main.c` 为空。项目已引用：
+当前解决方案包含：
 
-- KNSoft.NDK；
-- KNSoft.MakeLifeEasier；
-- KNSoft.Quic。
+- `KNSoft.ZPigeon.Protocol` 静态库；
+- `KNSoft.ZPigeon.Client.SDK` 静态库骨架；
+- `KNSoft.ZPigeon.Server.SDK` 静态库骨架；
+- `UnitTest` 测试项目。
 
 ## 已完成
 
 - 明确产品边界与纯 C、Windows 10 及以上、x86/x64 的实施基线；
 - 完成 C/S、项目依赖、Transport、身份、连接加密、Protocol 和功能目录的总体设计；
 - 将总体设计整理到独立的 `Design.md`；
-- 明确第一版应保持薄 Network 模型，不预先实现复杂 RPC、权限或虚拟流框架。
+- 明确第一版应保持薄 Network 模型，不预先实现复杂 RPC、权限或虚拟流框架；
+- 定稿 Core Version 1 的 Frame、MessageType、Codec、握手密码学、Endpoint、重连、取消、Deadline 和 Buffer 生命周期；
+- 实现不分配内存的 `ZpCodec_*` 小端读写和 View 解码；
+- 实现 `ZpFrame_*` 长度计算、编码、流式解码及类型专用 Body 边界校验；
+- 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
+- x86/x64 的 Debug/Release 全矩阵构建通过；每个配置下 48 项协议断言全部通过。
 
 ## 下一步
 
-编写并确认第一版 Protocol/API 规格：
-
-1. 各 MessageType 的最小字段、确切位宽、长度定义和大小上限；
-2. Hello、S 证书验证、客户端 Challenge 签名、Ready 和断开流程；
-3. 固定版本 Payload Codec 及字符串、数组编码规则；
-4. Endpoint、连接超时、重试和退避规则；
-5. Protocol、Client SDK、Server SDK 的公开头文件、Handle、回调及 Buffer 生命周期；
-6. Request 取消、Deadline、Ping/Pong 和 ChannelData 语义；
-7. 所需辅助函数与 KNSoft.MakeLifeEasier 现有能力的逐项核对。
-
-规格确认后：
-
-1. 创建 KNSoft.ZPigeon.Protocol 项目；
-2. 创建 KNSoft.ZPigeon.Server.SDK 项目；
-3. 建立第一版 Network 和 Protocol 骨架；
-4. 以 System.Info/Ping 完成首个端到端 C/S 验证；
-5. 再按 Process、Service、File、Terminal 等模块逐步实现。
+1. 为 ClientHello、ServerChallenge、ClientAuthenticate、Ready 和 Disconnect 增加类型化 Codec；
+2. 实现与 Transport 无关的 Connection 接收缓存、Frame 切分和握手状态机；
+3. 定义 Client SDK 与 Server SDK 的第一版公开配置、状态回调和 Handle 头文件；
+4. 实现 QUIC 单双向 Stream 的最小 Transport 适配；
+5. 以 Ping/Pong 和 System.Info 完成首个端到端 C/S 验证；
+6. 再按 Process、Service、File、Terminal 等模块逐步实现。
 
 ## 待确认与阻塞
 
 - 当前无外部阻塞。
-- 第一版规格中的未定项集中列在 `Design.md` 的“第一版规格待定项”，编码前逐项确认。
+- File、Terminal、EventLog 等模块专属协议按 `Design.md` 的“仍按模块延后确定的规格”在实现前定稿。

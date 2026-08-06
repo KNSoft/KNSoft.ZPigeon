@@ -3,5 +3,14 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="KNSoft.ZPigeon.Client.SDK/KNSoft.ZPigeon.Client.SDK.vcxproj" Id="2e04e015-390e-4360-95c3-981a2c3cc93d" />
+  <Project Path="KNSoft.ZPigeon.Protocol/KNSoft.ZPigeon.Protocol.vcxproj" Id="a4b9da54-96d6-4f14-8b17-5d9016d0be25" />
+  <Project Path="KNSoft.ZPigeon.Client.SDK/KNSoft.ZPigeon.Client.SDK.vcxproj" Id="2e04e015-390e-4360-95c3-981a2c3cc93d">
+    <BuildDependency Project="KNSoft.ZPigeon.Protocol/KNSoft.ZPigeon.Protocol.vcxproj" />
+  </Project>
+  <Project Path="KNSoft.ZPigeon.Server.SDK/KNSoft.ZPigeon.Server.SDK.vcxproj" Id="722ac452-a08b-4dbb-8d77-9c29e5394550">
+    <BuildDependency Project="KNSoft.ZPigeon.Protocol/KNSoft.ZPigeon.Protocol.vcxproj" />
+  </Project>
+  <Project Path="UnitTest/UnitTest.vcxproj" Id="56257c0d-30e6-47d2-82b7-9ce3e3776c88">
+    <BuildDependency Project="KNSoft.ZPigeon.Protocol/KNSoft.ZPigeon.Protocol.vcxproj" />
+  </Project>
 </Solution>

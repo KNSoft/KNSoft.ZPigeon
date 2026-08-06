@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Include">
+      <UniqueIdentifier>{A9CD7C55-5C82-4D1C-B9A5-0599342102C3}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Protocol.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="Protocol.inl" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Codec.c" />
+    <ClCompile Include="Frame.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+  </ItemGroup>
+</Project>

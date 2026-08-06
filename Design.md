@@ -222,14 +222,20 @@ Protocol 不允许直接发送本机 C 结构体。线上格式使用：
 
 ### 7.1 Frame
 
-Frame 使用最小公共前缀：
+第一版 Frame 使用以下公共前缀：
 
 ```text
-UINT32 PayloadLength
+UINT32 BodyLength
 BYTE   MessageType
-...    Type-specific fields
-BYTE[] Payload
+BYTE[] Type-specific body
 ```
+
+- 所有整数使用小端序；
+- `BodyLength` 是其后全部字节数，包含 `MessageType`，不包含自身的 4 字节；
+- `BodyLength` 最小为 1，最大为 16 MiB；完整 Frame 长度为 `4 + BodyLength`；
+- 类型专用字段之后的剩余字节即该消息的模块 Payload，不再重复记录 Payload 长度；
+- Frame 连续排列，无对齐和 Padding；Transport 可把一个 Frame 拆成多次接收，也可一次交付多个 Frame；
+- 解码器在收到完整 4 字节长度前不得读取 `BodyLength`，在收到完整 Frame 前不得分派消息。
 
 公共前缀不传输：
 
@@ -240,7 +246,40 @@ BYTE[] Payload
 - 无用途的保留字段；
 - 对齐 Padding。
 
-初始消息语义限制为：
+第一版 `MessageType` 编号固定为：
+
+| 值 | 名称 | 方向 | 类型专用 Body |
+|---:|---|---|---|
+| `0x01` | `ClientHello` | C -> S | `UINT16 CoreVersion`、`UINT16 ModuleCount`、模块记录、65 字节客户端公钥 |
+| `0x02` | `ServerChallenge` | S -> C | 32 字节随机 Challenge |
+| `0x03` | `ClientAuthenticate` | C -> S | 64 字节 ECDSA P-256 `r || s` 签名 |
+| `0x04` | `Ready` | S -> C | `UINT16 ModuleCount`、协商后的模块记录 |
+| `0x05` | `Disconnect` | 双向 | `INT32 Status`、UTF-16LE 原因字符串 |
+| `0x10` | `Request` | 双向 | `UINT64 RequestId`、`UINT16 ModuleId`、`UINT16 OperationId`、`UINT32 TimeoutMilliseconds`、Payload |
+| `0x11` | `Response` | 双向 | `UINT64 RequestId`、`INT32 Status`、Payload |
+| `0x12` | `Cancel` | 双向 | `UINT64 RequestId` |
+| `0x13` | `Event` | 双向 | `UINT64 SubscriptionId`、`UINT16 ModuleId`、`UINT16 EventId`、Payload |
+| `0x14` | `ChannelData` | 双向 | `UINT64 ChannelId`、非空数据 |
+| `0x15` | `ChannelClose` | 双向 | `UINT64 ChannelId`、`INT32 Status` |
+| `0x16` | `Ping` | 双向 | `UINT64 Token` |
+| `0x17` | `Pong` | 双向 | `UINT64 Token` |
+
+其他值在 Core Version 1 中非法。消息类型的最小 Body 长度由 Protocol 解码器校验。`ChannelData` 单帧数据最大为 1 MiB，避免大块传输长期占用连接发送队列；其他消息仍受 16 MiB Frame 上限约束。
+
+模块记录编码为：
+
+```text
+UINT16 ModuleId
+UINT16 ModuleVersion
+UINT32 Capabilities
+```
+
+- `ModuleId` 和 `ModuleVersion` 均不得为 0；
+- 单个 Hello/Ready 最多 64 条模块记录；
+- 记录按 `ModuleId` 严格升序排列，不允许重复；
+- S 选择双方均支持的模块版本和能力，将结果放入 `Ready`；未出现在 `Ready` 的模块在当前连接不可用。
+
+初始业务消息语义限制为：
 
 - `Request`：发起一次操作并携带请求关联信息；
 - `Response`：返回对应请求的 `NTSTATUS` 和结果；
@@ -248,9 +287,26 @@ BYTE[] Payload
 - `ChannelData`：传递文件或终端等长生命周期数据；
 - `Ping`、`Pong`：连接存活检测。
 
-RequestId、ChannelId、订阅标识和操作标识只放入确实需要它们的消息类型，不为所有 Frame 建立统一大型 Header。确切字段位宽、最大 Payload、长度是否包含类型专用字段以及握手控制消息的编码方式，必须在编码前由第一版协议规格确定。
+`RequestId`、`ChannelId` 和 `SubscriptionId` 均为连接内非零 `UINT64`，由创建它的一方分配，在对应对象结束前不得复用。`ModuleId`、`OperationId` 和 `EventId` 为非零 `UINT16`。未匹配的标识视为协议违规。
 
-### 7.2 版本兼容
+`TimeoutMilliseconds` 是接收方从完整收到 Request 起计算的处理预算；0 表示协议层不额外施加超时。发送方 SDK 仍维护本地 Deadline：Deadline 到期后在本地以 `STATUS_IO_TIMEOUT` 完成操作，尽力发送 `Cancel`，并忽略迟到的 Response。显式取消在本地以 `STATUS_CANCELLED` 完成，`Cancel` 不要求单独响应。
+
+### 7.2 固定 Codec
+
+Core Version 1 使用以下固定 Codec：
+
+- `BYTE`、`UINT16`、`UINT32`、`UINT64` 和 `INT32` 分别占 1、2、4、8 和 4 字节；
+- `BOOLEAN` 占 1 字节，只允许 0 和 1；
+- 字节串编码为 `UINT32 ByteLength` 后跟原始字节；
+- UTF-16LE 字符串编码为 `UINT32 CodeUnitCount` 后跟对应数量的 16 位代码单元，不包含结尾 NUL；
+- 数组编码为 `UINT32 ElementCount` 后跟逐项固定编码；
+- 可选值先编码一个 `BOOLEAN Present`，为 1 时紧跟该值；
+- 需要边界隔离的嵌套对象编码为 `UINT32 ByteLength` 后跟其内部固定编码；
+- 不发送本机指针、`SIZE_T`、`HANDLE`、C 结构体 Padding 或依赖编译器布局的数据。
+
+通用 Codec 的单个字节串、字符串或数组计数上限为 `0x00100000`；模块可制定更小上限。长度乘法和游标加法必须在访问 Buffer 前检查溢出。解码成功得到的 View 指向原始接收 Buffer，地址可能未对齐，其生命周期止于接收 Buffer 被释放或复用。
+
+### 7.3 版本兼容
 
 - 最外层 Frame 格式保持稳定；
 - C 报告核心协议版本和各模块版本；
@@ -272,7 +328,40 @@ RequestId、ChannelId、订阅标识和操作标识只放入确实需要它们�
 - 热路径避免无依据的堆分配、内存复制、编码转换、锁和间接调用；
 - 回调中不执行可能长期阻塞网络推进的业务操作。
 
-公开 Handle、回调、取消、超时、Buffer 所有权和对象销毁契约尚未定稿，应在第一版 API 规格中一次写清，不能依赖调用方猜测。
+第一版公开对象采用不透明指针 Handle：`ZP_CLIENT_HANDLE`、`ZP_SERVER_HANDLE`、`ZP_CONNECTION_HANDLE`、`ZP_REQUEST_HANDLE` 和 `ZP_CHANNEL_HANDLE`。对象由创建它的 SDK 分配，调用方只能通过对应 API 操作。
+
+生命周期契约：
+
+- `Create` 成功后返回初始停止状态对象；`Start` 启动异步工作；`Stop` 可重复调用并异步终止连接；
+- `Close` 只接受已停止且不存在未完成回调的对象，否则返回 `STATUS_DEVICE_BUSY`；不隐式阻塞等待；
+- 回调可能来自任意 SDK 工作线程，同一连接的状态与消息回调保持顺序，但不同连接可并发；
+- SDK 在调用回调期间持有 Handle 的有效引用，调用方不得在回调栈内关闭当前对象；
+- 配置和 Endpoint 字符串在 `Create` 返回前由 SDK 复制，调用方随后可释放源数据；
+- 接收 Payload/View 只在当前回调返回前有效；需要长期保存时由调用方复制；
+- 异步发送 Buffer 由调用方保持到完成回调，SDK 不修改其内容；同步拒绝发送时不会触发完成回调；
+- 每个异步操作恰好产生一次终止完成；连接断开时未完成操作以连接终止状态完成。
+
+取消与 Deadline：
+
+- `ZpRequest_Cancel` 可从回调之外的任意线程调用；取消只保证本地完成，不保证远端操作能够撤销；
+- Deadline 使用单调时钟在本地计算，不依赖 C/S 墙上时钟同步；
+- 完成、取消、Deadline 和断开竞争时，以第一个原子确定的终止原因完成一次，其余事件只做清理；
+- 回调不得长期阻塞；需要阻塞的业务工作由上层投递到自己的执行环境。
+
+Protocol 第一阶段公开 `ZpFrame_*` 与 `ZpCodec_*` 纯函数；它们不分配内存、不持有全局状态。编码支持 `Buffer == NULL` 的长度计算模式，实际写入模式遇到容量不足返回 `STATUS_BUFFER_TOO_SMALL`。解码遇到不完整 Frame 返回 `STATUS_MORE_PROCESSING_REQUIRED`，遇到非法长度、字段或枚举返回 `STATUS_DATA_ERROR`，遇到不支持的版本返回 `STATUS_REVISION_MISMATCH`。除长度计算契约明确要求的输出外，失败时不初始化输出参数。
+
+### 8.1 Endpoint 与重连默认值
+
+Endpoint 记录由 `Transport`、`Host`、`Port`、`ServerName` 和可选 `WssPath` 构成。`Host` 是实际连接目标；`ServerName` 必须为非空 DNS 名称，用于 SNI 和证书名称验证，即使 `Host` 是 IP 也不省略。只有 WSS 允许非空 Path，Path 必须以 `/` 开头。
+
+第一版默认策略：
+
+- 单个 Endpoint 的连接建立超时为 10 秒；
+- 按配置顺序尝试全部 Endpoint，一轮内不重复；
+- 一轮全部失败后等待 1 秒，之后指数退避为 2、4、8、16、32、60 秒，上限保持 60 秒；
+- 每次等待加入正负 20% 随机抖动；连接连续稳定 60 秒后重置退避；
+- 已建立连接异常断开后从列表第一项重新开始；不在存活连接之间主动迁移；
+- 没有 Endpoint 时 `Start` 返回 `STATUS_INVALID_PARAMETER`；所有失败通过状态回调上报，不静默切换到未配置或不安全的 Transport。
 
 ## 9. 功能模块
 
@@ -309,19 +398,25 @@ RequestId、ChannelId、订阅标识和操作标识只放入确实需要它们�
 - ZPigeon 自己负责连接状态、Frame、Protocol Dispatcher 和业务模块；
 - 如果实现所需辅助函数具有独立的 common library 价值，应先由 Owner 决定是否抽到 KNSoft.MakeLifeEasier，再进行编码和依赖同步。
 
-## 12. 第一版规格待定项
+## 12. 第一版密码与握手规格
 
-以下问题必须在开始 Network 编码前定稿：
+- Deployment 根密钥和 S 在线密钥均使用 ECDSA P-256；根证书与在线证书使用标准 DER X.509；
+- C 内置 Deployment 根证书 DER，TLS 握手时建立到该根的专用证书链并严格验证 `ServerName`；不回退到系统公共根，也不忽略名称、有效期或签名错误；
+- S 在线证书由 Deployment 根证书签发，EKU 必须允许 Server Authentication；轮换通过同时部署新证书并保持同一根完成；
+- C 实例密钥为 CNG `ECDSA_P256` 持久化机器密钥；私钥不可导出；
+- 客户端公钥在线上使用 SEC1 非压缩格式 `0x04 || X[32] || Y[32]`；`ClientId = SHA-256(PublicKey[65])`；
+- S 的 Challenge 使用系统 CSPRNG 生成 32 字节，每条连接只使用一次；
+- 客户端签名摘要为 `SHA-256("KNSoft.ZPigeon.ClientAuth.v1" || 0x00 || Challenge[32] || PublicKey[65])`；
+- `ClientAuthenticate` 使用 IEEE P1363 编码的 ECDSA P-256 签名，即 32 字节大端 `r` 后跟 32 字节大端 `s`；
+- `ClientHello` 之后只接受 `ServerChallenge` 或 `Disconnect`，`ServerChallenge` 之后只接受 `ClientAuthenticate` 或 `Disconnect`，认证成功后 S 发送 `Ready`；任何越序、重复或握手阶段业务消息均以 `STATUS_PROTOCOL_UNREACHABLE` 断开；
+- TLS 关闭、Frame 解析错误、身份验证失败和资源限制触发的断开均终止所有未完成请求、订阅和通道，不尝试在新连接上透明续接。
 
-1. 各 MessageType 的确切字段、位宽、长度定义和数量上限；
-2. Hello、证书验证、Challenge 签名、Ready 和断开消息的编码；
-3. 密钥算法、证书/签名格式、密钥轮换及本地密钥存储契约；
-4. 字符串、数组、可选字段和嵌套 Payload 的 Codec 规则；
-5. Endpoint 配置、超时、重试、退避和切换规则；
-6. Protocol、Client SDK、Server SDK 的公开头文件、Handle 和回调契约；
-7. 接收 Buffer、解码 View、异步发送 Buffer 的所有权和生命周期；
-8. Request 取消、Deadline、Ping/Pong 和异常断开语义；
-9. ChannelData 在 File 和 Terminal 模块中的背压及关闭语义；
-10. Transport/Win32 错误到 `NTSTATUS` 的映射规则。
+### 12.1 仍按模块延后确定的规格
 
-这些待定项属于设计细化，不应在实现中通过临时字段、保留位、自动降级或猜测行为绕过。
+以下内容不阻塞 Network 和通用 Protocol 编码，在实现对应模块前定稿：
+
+1. 各业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
+2. File 通道的窗口、哈希、断点续传和落盘契约；
+3. Terminal 通道的输入输出分流、窗口调整和退出状态 Payload；
+4. EventLog 等订阅模块的事件丢失与恢复语义；
+5. 压力测试后确定的 Server 资源限制默认值。
