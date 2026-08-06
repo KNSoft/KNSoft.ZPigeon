@@ -1,0 +1,128 @@
+.browser-control-page {
+  display: grid;
+  grid-template-rows: 54px 1fr;
+}
+.browser-control-page main {
+  position: static;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+}
+.browser-control-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.browser-control-toolbar [data-role="address"] {
+  flex: 1;
+  min-width: 180px;
+}
+.browser-control-tabbar {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 8px 0;
+  border-bottom: 1px solid var(--line);
+  background: #101620;
+}
+.browser-control-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 3px;
+  overflow-x: auto;
+}
+.browser-control-tab {
+  display: flex;
+  align-items: center;
+  min-width: 120px;
+  max-width: 240px;
+  height: 34px;
+  padding: 0 5px 0 10px;
+  border: 1px solid #344056;
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+  background: #151d29;
+}
+.browser-control-tab.active {
+  color: var(--accent);
+  border-color: #435473;
+  border-bottom-color: var(--panel);
+  background: var(--panel);
+}
+.browser-control-tab-label > span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.browser-control-tab-label {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.browser-control-tab-close {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+.browser-control-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  overflow: auto;
+  background:
+    linear-gradient(45deg, #111722 25%, transparent 25%),
+    linear-gradient(-45deg, #111722 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #111722 75%),
+    linear-gradient(-45deg, transparent 75%, #111722 75%),
+    #0b0f16;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-size: 16px 16px;
+}
+.browser-control-stage canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  background: #fff;
+  box-shadow: 0 0 0 1px #2b3548;
+  outline: none;
+}
+.browser-control-stage .manager-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.browser-control-stage textarea {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+@media (max-width: 1100px) {
+  .browser-control-toolbar {
+    flex-wrap: wrap;
+  }
+  .browser-control-page main {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+}

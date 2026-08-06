@@ -1,0 +1,55 @@
+<Project DefaultTargets="All">
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <ZpOutputDirectory>$(MSBuildThisFileDirectory)OutDir</ZpOutputDirectory>
+    <ZpCodeAnalysisDirectory>$(ZpOutputDirectory)\CodeAnalysis\$(Platform)\$(Configuration)</ZpCodeAnalysisDirectory>
+    <ZpBuildProperties>Configuration=$(Configuration);Platform=$(Platform)</ZpBuildProperties>
+    <ZpCppProperties>BuildProjectReferences=false;RunCodeAnalysis=true;ZpCppCodeAnalysis=true</ZpCppProperties>
+    <ZpCppOutputProperties>ZpCodeAnalysisDirectory=$(ZpCodeAnalysisDirectory)</ZpCppOutputProperties>
+    <ZpManagedProperties>ZpManagedCodeAnalysis=true</ZpManagedProperties>
+    <ZpWebProperties>$(ZpManagedProperties);BuildProjectReferences=false</ZpWebProperties>
+    <ZpServerOutputProperties>ErrorLog=$(ZpCodeAnalysisDirectory)\managed-server.sarif</ZpServerOutputProperties>
+    <ZpWebOutputProperties>ErrorLog=$(ZpCodeAnalysisDirectory)\managed-web.sarif</ZpWebOutputProperties>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <CppProject Include="KNSoft.ZPigeon.Protocol\KNSoft.ZPigeon.Protocol.vcxproj" />
+    <CppProject Include="KNSoft.ZPigeon.Server.SDK\KNSoft.ZPigeon.Server.SDK.vcxproj" />
+    <CppProject Include="KNSoft.ZPigeon.Server.Native\KNSoft.ZPigeon.Server.Native.vcxproj" />
+    <CppProject Include="KNSoft.ZPigeon.Client.SDK\KNSoft.ZPigeon.Client.SDK.vcxproj" />
+    <CppProject Include="KNSoft.ZPigeon.Client\KNSoft.ZPigeon.Client.vcxproj" />
+    <CppProject Include="ConsumerTest\ConsumerTest.vcxproj" />
+    <CppProject Include="UnitTest\UnitTest.vcxproj" />
+    <CppSarif Include="@(CppProject->'$(ZpCodeAnalysisDirectory)\native-%(Filename).sarif')" />
+  </ItemGroup>
+
+  <Target Name="Prepare">
+    <MakeDir Directories="$(ZpCodeAnalysisDirectory)" />
+  </Target>
+
+  <Target Name="Cpp" DependsOnTargets="Prepare">
+    <Delete Files="@(CppSarif)" />
+    <MSBuild Projects="@(CppProject)"
+             Targets="Rebuild"
+             BuildInParallel="false"
+             Properties="$(ZpBuildProperties);$(ZpCppProperties);$(ZpCppOutputProperties)" />
+  </Target>
+
+  <Target Name="Managed" DependsOnTargets="Prepare">
+    <Delete Files="$(ZpCodeAnalysisDirectory)\managed-server.sarif;
+                   $(ZpCodeAnalysisDirectory)\managed-web.sarif" />
+    <MSBuild Projects="KNSoft.ZPigeon.Server.Managed\KNSoft.ZPigeon.Server.Managed.csproj"
+             Targets="Rebuild"
+             Properties="$(ZpBuildProperties);$(ZpManagedProperties);$(ZpServerOutputProperties)" />
+    <MSBuild Projects="KNSoft.ZPigeon.Web\KNSoft.ZPigeon.Web.csproj"
+             Targets="Rebuild"
+             Properties="$(ZpBuildProperties);$(ZpWebProperties);$(ZpWebOutputProperties)" />
+  </Target>
+
+  <Target Name="I18n">
+    <Exec Command="node &quot;$(MSBuildThisFileDirectory)I18nTest.mjs&quot;" />
+  </Target>
+
+  <Target Name="All" DependsOnTargets="Cpp;Managed;I18n" />
+</Project>

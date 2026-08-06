@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Core"><UniqueIdentifier>{51f96f46-68fc-4534-9c19-5767046699c6}</UniqueIdentifier></Filter>
+    <Filter Include="Include"><UniqueIdentifier>{a9cd7c55-5c82-4d1c-b9a5-0599342102c3}</UniqueIdentifier></Filter>
+    <Filter Include="Modules"><UniqueIdentifier>{4521f4cc-d091-4692-812a-ca01269a2364}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Administration"><UniqueIdentifier>{c80260b0-0762-4375-9943-91139de8669e}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Browser"><UniqueIdentifier>{0198fafe-d2bd-4aab-bda7-78b53ad3e357}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Wmi"><UniqueIdentifier>{d42e7b7c-5ef7-4c4d-9406-4d3f0e68d98b}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\EventLog"><UniqueIdentifier>{61d81070-e511-48b0-8d67-e6757942af7a}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Execution"><UniqueIdentifier>{27f0a9dc-631c-4f21-ab87-eb7d842f4489}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\File"><UniqueIdentifier>{a9d8f5eb-dc51-4c41-8f6d-48955099eda4}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\PortableDevice"><UniqueIdentifier>{de76d091-0b37-4e3b-8153-039eaeed80d7}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Window"><UniqueIdentifier>{f65306f4-ccea-47a2-98a7-44c3522943ba}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Process"><UniqueIdentifier>{78abef0f-31c4-4880-a284-9855fd4dc9a0}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Registry"><UniqueIdentifier>{c6da7759-0063-4490-ad26-c0d109725584}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Service"><UniqueIdentifier>{9c82bcb9-5346-4f6c-85a5-81498ce7ba06}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\System"><UniqueIdentifier>{35df8140-a4aa-4aa1-a496-e358347953f5}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Terminal"><UniqueIdentifier>{8b305900-503c-4e8f-896b-b6cc7afb0bce}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Tunnel"><UniqueIdentifier>{dcbf767a-8584-4f14-abd7-3a06b2a65d31}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Serial"><UniqueIdentifier>{3733506f-f754-481e-b6fa-7d78c4927673}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Audio"><UniqueIdentifier>{6c1b99fe-3f71-4aca-bfe8-27b2d05a356e}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Video"><UniqueIdentifier>{5ca9536e-c4f2-46d0-a1fe-e55eddd0636a}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Recording"><UniqueIdentifier>{b5d0c798-f45b-4538-b6d7-c0deef0d60ef}</UniqueIdentifier></Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\Modules\Administration\Protocol.c"><Filter>Modules\Administration</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Browser\Protocol.c"><Filter>Modules\Browser</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Wmi\Protocol.c"><Filter>Modules\Wmi</Filter></ClCompile>
+    <ClCompile Include="Core\Codec.c"><Filter>Core</Filter></ClCompile>
+    <ClCompile Include="Core\Frame.c"><Filter>Core</Filter></ClCompile>
+    <ClCompile Include="Core\Message.c"><Filter>Core</Filter></ClCompile>
+    <ClCompile Include="..\Modules\EventLog\Protocol.c"><Filter>Modules\EventLog</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Execution\Protocol.c"><Filter>Modules\Execution</Filter></ClCompile>
+    <ClCompile Include="..\Modules\File\Protocol.c"><Filter>Modules\File</Filter></ClCompile>
+    <ClCompile Include="..\Modules\PortableDevice\Protocol.c"><Filter>Modules\PortableDevice</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Window\Protocol.c"><Filter>Modules\Window</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Process\Protocol.c"><Filter>Modules\Process</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Registry\Protocol.c"><Filter>Modules\Registry</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Service\Protocol.c"><Filter>Modules\Service</Filter></ClCompile>
+    <ClCompile Include="..\Modules\System\Protocol.c"><Filter>Modules\System</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Terminal\Protocol.c"><Filter>Modules\Terminal</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Tunnel\Protocol.c"><Filter>Modules\Tunnel</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Serial\Protocol.c"><Filter>Modules\Serial</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Audio\Protocol.c"><Filter>Modules\Audio</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Video\Protocol.c"><Filter>Modules\Video</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Recording\Protocol.c"><Filter>Modules\Recording</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Administration.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Browser.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Wmi.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Core\Protocol.inl"><Filter>Core</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\EventLog.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Execution.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\File.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\PortableDevice.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Window.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Process.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Protocol.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Registry.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Service.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\System.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Terminal.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Tunnel.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Serial.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Audio.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Video.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Recording.h"><Filter>Include</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup><None Include="packages.config" /></ItemGroup>
+</Project>

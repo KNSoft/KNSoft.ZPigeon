@@ -1,0 +1,151 @@
+﻿<Project>
+    <!-- [Project properties] -->
+
+    <ItemGroup>
+        <PropertyPageSchema Include="$(MSBuildThisFileDirectory)KNSoft.xml" />
+    </ItemGroup>
+
+    <!-- ARM64EC does not support explicitly disabling global data optimization with /Gw- -->
+    <PropertyGroup Condition="'$(Platform)' == 'ARM64EC'">
+        <OptimizeGlobalData Condition="'$(OptimizeGlobalData)' == ''">true</OptimizeGlobalData>
+    </PropertyGroup>
+
+    <!-- Debug defaults -->
+    <PropertyGroup Condition="$(Configuration.Contains(`Debug`))">
+        <OptimizeGlobalData Condition="'$(OptimizeGlobalData)' == ''">false</OptimizeGlobalData>
+        <OmitCoffGroupInfo Condition="'$(OmitCoffGroupInfo)' == ''">false</OmitCoffGroupInfo>
+        <OmitRichHeader Condition="'$(OmitRichHeader)' == ''">false</OmitRichHeader>
+    </PropertyGroup>
+
+    <!-- Release defaults -->
+    <PropertyGroup Condition="$(Configuration.Contains(`Release`))">
+        <!-- /Gw must be enabled when static library objects are compiled; consumers cannot apply it retroactively.
+             Enable it for Release static libraries so final links can discard unused global data, but preserve MSVC's default for EXE/DLL. -->
+        <OptimizeGlobalData Condition="'$(OptimizeGlobalData)' == '' and '$(ConfigurationType)' == 'StaticLibrary'">true</OptimizeGlobalData>
+        <OptimizeGlobalData Condition="'$(OptimizeGlobalData)' == ''">false</OptimizeGlobalData>
+        <OmitCoffGroupInfo Condition="'$(OmitCoffGroupInfo)' == ''">true</OmitCoffGroupInfo>
+        <OmitRichHeader Condition="'$(OmitRichHeader)' == ''">true</OmitRichHeader>
+    </PropertyGroup>
+
+    <!-- [Overwrite defaults] -->
+
+    <!-- Preserve an explicitly selected Windows SDK -->
+    <PropertyGroup Label="Globals">
+        <WindowsTargetPlatformVersion Condition="'$(WindowsTargetPlatformVersion)' == ''">$(_LatestWindowsTargetPlatformVersion)</WindowsTargetPlatformVersion>
+    </PropertyGroup>
+
+    <!-- Add $(OutDir) to library path -->
+    <PropertyGroup>
+        <LibraryPath>$(OutDir);$(LibraryPath)</LibraryPath>
+    </PropertyGroup>
+
+    <!-- [Predefined macros and MSBuild variables addendum] -->
+
+    <!-- $(KnsoftPredefined) includes addendum predefined macros for CL, MASM, and MARMASM -->
+    <PropertyGroup>
+        <KnsoftPredefined>_KNSOFT_</KnsoftPredefined>
+    </PropertyGroup>
+
+    <!-- Add some MSBuild variables to $(KnsoftPredefined) -->
+    <PropertyGroup Condition="'$(ConfigurationType)' == 'Application'">
+        <KnsoftPredefined>MSBUILD_CONFIGURATION_TYPE_EXE;$(KnsoftPredefined)</KnsoftPredefined>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(ConfigurationType)' == 'DynamicLibrary'">
+        <KnsoftPredefined>MSBUILD_CONFIGURATION_TYPE_DLL;$(KnsoftPredefined)</KnsoftPredefined>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(ConfigurationType)' == 'StaticLibrary'">
+        <KnsoftPredefined>MSBUILD_CONFIGURATION_TYPE_LIB;$(KnsoftPredefined)</KnsoftPredefined>
+    </PropertyGroup>
+    <PropertyGroup>
+        <KnsoftPredefined>MSBUILD_SOLUTION_NAME="$(SolutionName)";$(KnsoftPredefined)</KnsoftPredefined>
+        <KnsoftPredefined>MSBUILD_PROJECT_NAME="$(ProjectName)";$(KnsoftPredefined)</KnsoftPredefined>
+        <KnsoftPredefined>MSBUILD_CONFIGURATION="$(Configuration)";$(KnsoftPredefined)</KnsoftPredefined>
+        <KnsoftPredefined>MSBUILD_PLATFORM="$(Platform)";$(KnsoftPredefined)</KnsoftPredefined>
+        <KnsoftPredefined>MSBUILD_PLATFORM_TOOLSET="$(PlatformToolset)";$(KnsoftPredefined)</KnsoftPredefined>
+        <KnsoftPredefined>MSBUILD_PLATFORM_TOOLSET_VERSION="$(PlatformToolsetVersion)";$(KnsoftPredefined)</KnsoftPredefined>
+        <KnsoftPredefined>MSBUILD_TARGET_PLATFORM="$(KnsoftArch)";$(KnsoftPredefined)</KnsoftPredefined>
+        <KnsoftPredefined>MSBUILD_TARGET_PLATFORM_VERSION="$(TargetPlatformVersion)";$(KnsoftPredefined)</KnsoftPredefined>
+        <KnsoftPredefined>MSBUILD_VERSION="$(MSBuildVersion)";$(KnsoftPredefined)</KnsoftPredefined>
+        <KnsoftPredefined>MSBUILD_VCTOOLS_VERSION="$(VCToolsVersion)";$(KnsoftPredefined)</KnsoftPredefined>
+    </PropertyGroup>
+
+    <!-- $(KnsoftAsmPredefined) includes $(KnsoftPredefined) and some CL definitions for MASM and MARMASM -->
+    <PropertyGroup>
+        <KnsoftAsmPredefined>$(KnsoftPredefined)</KnsoftAsmPredefined>
+        <KnsoftAsmPredefined Condition="$(Configuration.Contains(`Debug`))">_DEBUG=1;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
+        <KnsoftAsmPredefined Condition="$(Configuration.Contains(`Release`))">NDEBUG=1;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
+        <KnsoftAsmPredefined Condition="'$(Platform)' == 'x64' Or '$(Platform)' == 'ARM64EC'">_M_X64=100;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
+        <KnsoftAsmPredefined Condition="'$(Platform)' == 'ARM64'">_M_ARM64=1;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
+        <KnsoftAsmPredefined Condition="'$(Platform)' == 'ARM64EC'">_M_ARM64EC=1;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
+        <KnsoftAsmPredefined Condition="'$(Platform)' == 'ARM'">_M_ARM=7;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
+        <KnsoftAsmPredefined Condition="'$(Platform)' == 'x64' Or '$(Platform)' == 'ARM64' Or '$(Platform)' == 'ARM64EC'">_WIN64=1;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
+    </PropertyGroup>
+
+    <!-- Apply predefined macros -->
+    <ItemDefinitionGroup>
+        <ClCompile>
+            <PreprocessorDefinitions>$(KnsoftPredefined);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+        </ClCompile>
+        <MASM>
+            <PreprocessorDefinitions>$(KnsoftAsmPredefined);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+        </MASM>
+        <MARMASM>
+            <PreprocessorDefinitions>$(KnsoftAsmPredefined);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+        </MARMASM>
+    </ItemDefinitionGroup>
+
+    <Target Name="KNSoftCustomizeCompilerOptions"
+            BeforeTargets="ClCompile"
+            Condition="'@(ClCompile)' != '' and '$(OptimizeGlobalData)' == 'true'">
+        <ItemGroup>
+            <ClCompile Update="@(ClCompile)">
+                <AdditionalOptions>%(ClCompile.AdditionalOptions) /Gw</AdditionalOptions>
+            </ClCompile>
+        </ItemGroup>
+    </Target>
+
+    <!-- Keep non-preprocessed MARMASM output in IntDir; preprocessed items derive it from their generated source path -->
+    <Target Name="KNSoftCustomizeMARMASMOptions"
+            BeforeTargets="_CreateDirsForMARMASM"
+            Condition="'@(MARMASM)' != ''">
+        <ItemGroup>
+            <MARMASM Update="@(MARMASM)" Condition="'%(MARMASM.PreprocessWithCl)' != 'true' and '%(MARMASM.ObjectFileName)' == '%(MARMASM.RootDir)%(MARMASM.Directory)%(MARMASM.FileName).obj'">
+                <ObjectFileName>$(IntDir)%(MARMASM.RelativeDir)%(MARMASM.FileName).obj</ObjectFileName>
+            </MARMASM>
+        </ItemGroup>
+    </Target>
+
+    <Target Name="KNSoftCustomizeLinkerOptions"
+            AfterTargets="ComputeLinkSwitches"
+            BeforeTargets="Link"
+            Condition="'@(Link)' != '' and $(Configuration.Contains(`Release`))">
+        <Message Condition="'$(OmitCoffGroupInfo)' == 'true' and
+                            ('%(Link.LinkTimeCodeGeneration)' == 'PGInstrument' or
+                             '%(Link.LinkTimeCodeGeneration)' == 'PGOptimization' or
+                             '%(Link.LinkTimeCodeGeneration)' == 'PGUpdate')"
+                 Importance="High"
+                 Text="KNSoft: Omit COFF Group Information is ignored because PGO is enabled." />
+        <Message Condition="'$(OmitRichHeader)' == 'true' and
+                            ('%(Link.LinkTimeCodeGeneration)' == 'PGInstrument' or
+                             '%(Link.LinkTimeCodeGeneration)' == 'PGOptimization' or
+                             '%(Link.LinkTimeCodeGeneration)' == 'PGUpdate')"
+                 Importance="High"
+                 Text="KNSoft: Omit Rich Header is ignored because PGO is enabled." />
+        <ItemGroup>
+            <Link Condition="'$(OmitCoffGroupInfo)' == 'true' and
+                             '%(Link.LinkTimeCodeGeneration)' != 'PGInstrument' and
+                             '%(Link.LinkTimeCodeGeneration)' != 'PGOptimization' and
+                             '%(Link.LinkTimeCodeGeneration)' != 'PGUpdate'">
+                <AdditionalOptions>%(Link.AdditionalOptions) /NOCOFFGRPINFO</AdditionalOptions>
+            </Link>
+        </ItemGroup>
+        <ItemGroup>
+            <Link Condition="'$(OmitRichHeader)' == 'true' and
+                             '%(Link.LinkTimeCodeGeneration)' != 'PGInstrument' and
+                             '%(Link.LinkTimeCodeGeneration)' != 'PGOptimization' and
+                             '%(Link.LinkTimeCodeGeneration)' != 'PGUpdate'">
+                <AdditionalOptions>%(Link.AdditionalOptions) /EMITTOOLVERSIONINFO:NO</AdditionalOptions>
+            </Link>
+        </ItemGroup>
+    </Target>
+</Project>

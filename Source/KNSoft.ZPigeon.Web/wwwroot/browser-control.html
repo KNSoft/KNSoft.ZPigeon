@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title data-i18n="browserControl.title">Remote Browser</title>
+    <link rel="stylesheet" href="client.css" />
+    <link rel="stylesheet" href="browser-control.css" />
+  </head>
+  <body class="browser-control-page">
+    <header>
+      <a class="home" data-role="back">← ZPigeon</a>
+      <strong data-i18n="browserControl.title">远程浏览器</strong>
+      <span class="spacer"></span>
+      <span data-role="session" class="muted"></span>
+      <span data-role="status" class="muted" data-i18n="common.loading">读取中</span>
+    </header>
+    <main>
+      <div class="browser-control-toolbar">
+        <button data-action="back" disabled title="后退" data-i18n-title="browserControl.back">←</button>
+        <button data-action="forward" disabled title="前进" data-i18n-title="browserControl.forward">→</button>
+        <button data-action="reload" title="刷新" data-i18n-title="common.refresh">↻</button>
+        <button data-action="stop" title="停止" data-i18n-title="common.stop">×</button>
+        <input
+          data-role="address"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="地址"
+          data-i18n-aria-label="browserControl.address"
+        />
+        <select data-role="viewport" aria-label="页面尺寸" data-i18n-aria-label="browserControl.viewport">
+          <option value="1280x800">1280 × 800</option>
+          <option value="1920x1080">1920 × 1080</option>
+          <option value="2560x1440">2560 × 1440</option>
+          <option value="3840x2160">3840 × 2160</option>
+        </select>
+        <select data-role="quality" aria-label="画面质量" data-i18n-aria-label="browserControl.quality">
+          <option value="60" data-i18n="browserControl.qualityData">省流量</option>
+          <option value="80" selected data-i18n="browserControl.qualityBalanced">均衡</option>
+          <option value="100" data-i18n="browserControl.qualityOriginal">最高质量</option>
+        </select>
+        <button data-action="devtools">DevTools</button>
+        <button data-action="fullscreen" title="全屏" data-i18n-title="browserControl.fullscreen">⛶</button>
+      </div>
+      <div class="browser-control-tabbar">
+        <nav
+          class="browser-control-tabs"
+          data-role="tabs"
+          aria-label="标签页"
+          data-i18n-aria-label="browserControl.tabs"
+        ></nav>
+        <button data-action="targets" title="刷新标签页" data-i18n-title="browserControl.refreshTabs">↺</button>
+        <button data-action="new-target" title="新建标签页" data-i18n-title="browserControl.newTab">＋</button>
+      </div>
+      <section class="browser-control-stage">
+        <canvas
+          data-role="screen"
+          aria-label="远程浏览器画面"
+          data-i18n-aria-label="browserControl.screen"
+        ></canvas>
+        <textarea data-role="keyboard" aria-hidden="true"></textarea>
+        <div data-role="empty" class="manager-empty" data-i18n="browserControl.connecting">
+          正在连接远程浏览器…
+        </div>
+      </section>
+    </main>
+    <script type="module" src="browser-control.mjs"></script>
+  </body>
+</html>

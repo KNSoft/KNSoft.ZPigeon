@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{2e04e015-390e-4360-95c3-981a2c3cc93d}</ProjectGuid>
+    <RootNamespace>KNSoftZPigeonClientSDK</RootNamespace>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <WinGetProjectionDir>$(IntDir)WinGetProjection</WinGetProjectionDir>
+    <WinGetWinMD>..\packages\Microsoft.WindowsPackageManager.ComInterop.1.29.290\lib\uap10.0\Microsoft.Management.Deployment.winmd</WinGetWinMD>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(WinGetProjectionDir);Include;..\Include;..\KNSoft.ZPigeon.Protocol\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>MLE_API=;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <KNSoftQuicIntegration>Static</KNSoftQuicIntegration>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <KNSoftQuicIntegration>Static</KNSoftQuicIntegration>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <Manifest>
+      <EnableSegmentHeap>true</EnableSegmentHeap>
+    </Manifest>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <Manifest>
+      <EnableSegmentHeap>true</EnableSegmentHeap>
+    </Manifest>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\Modules\Administration\Client.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Administration\ProcessCapture.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Administration\ShadowCopy.cpp"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Administration\SoftwareDeployment.cpp"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Browser\Client.c"><ObjectFileName>$(IntDir)Modules\Browser\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Browser\AbeKey.c"><ObjectFileName>$(IntDir)Modules\Browser\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Wmi\Client.c"><ObjectFileName>$(IntDir)Modules\Wmi\</ObjectFileName></ClCompile>
+    <ClCompile Include="Core\Channel.c" />
+    <ClCompile Include="Core\Certificate.c" />
+    <ClCompile Include="Core\Account.c" />
+    <ClCompile Include="Core\AppContainer.c" />
+    <ClCompile Include="Core\Security.c" />
+    <ClCompile Include="Core\Session.c" />
+    <ClCompile Include="Core\Snapshot.c" />
+    <ClCompile Include="Core\Request.c" />
+    <ClCompile Include="..\Network\Connection.c">
+      <ObjectFileName>$(IntDir)Network\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\Network\Tls.c">
+      <ObjectFileName>$(IntDir)Network\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\Network\Tcp.c">
+      <ObjectFileName>$(IntDir)Network\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\Network\Dtls.c"><ObjectFileName>$(IntDir)Network\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Network\Udp.c"><ObjectFileName>$(IntDir)Network\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\EventLog\Client.c"><ObjectFileName>$(IntDir)Modules\EventLog\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Execution\Client.c"><ObjectFileName>$(IntDir)Modules\Execution\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Execution\Process.c"><ObjectFileName>$(IntDir)Modules\Execution\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Execution\Runtime.cpp"><ObjectFileName>$(IntDir)Modules\Execution\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\File\Client.c"><ObjectFileName>$(IntDir)Modules\File\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\File\Download.cpp"><ObjectFileName>$(IntDir)Modules\File\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\PortableDevice\Client.c"><ObjectFileName>$(IntDir)Modules\PortableDevice\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Process\Client.c"><ObjectFileName>$(IntDir)Modules\Process\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Registry\Client.c"><ObjectFileName>$(IntDir)Modules\Registry\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Service\Client.c"><ObjectFileName>$(IntDir)Modules\Service\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\System\Client.c"><ObjectFileName>$(IntDir)Modules\System\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Terminal\Client.c"><ObjectFileName>$(IntDir)Modules\Terminal\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Tunnel\Client.c"><ObjectFileName>$(IntDir)Modules\Tunnel\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Window\Client.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Window\Capture.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Window\Encoder.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Window\Shared.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Audio\Client.c"><ObjectFileName>$(IntDir)Modules\Audio\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Audio\Shared.c"><ObjectFileName>$(IntDir)Modules\Audio\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Audio\Stream.c"><ObjectFileName>$(IntDir)Modules\Audio\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Recording\Writer.c"><ObjectFileName>$(IntDir)Modules\Recording\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Recording\Client.c"><ObjectFileName>$(IntDir)Modules\Recording\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Video\Client.c"><ObjectFileName>$(IntDir)Modules\Video\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Video\Capture.c"><ObjectFileName>$(IntDir)Modules\Video\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Video\Shared.c"><ObjectFileName>$(IntDir)Modules\Video\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Rtc\Client.cpp"><ObjectFileName>$(IntDir)Modules\Rtc\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Serial\Client.c"><ObjectFileName>$(IntDir)Modules\Serial\</ObjectFileName></ClCompile>
+    <ClCompile Include="Transport\Main.c" />
+    <ClCompile Include="Transport\Quic.c" />
+    <ClCompile Include="Transport\Tcp.c" />
+    <ClCompile Include="Transport\Udp.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\Modules\Administration\Client.h" />
+    <ClInclude Include="..\Modules\Administration\ProcessCapture.h" />
+    <ClInclude Include="..\Modules\Administration\ShadowCopy.h" />
+    <ClInclude Include="..\Modules\Administration\SoftwareDeployment.h" />
+    <ClInclude Include="..\Modules\Browser\Client.h" />
+    <ClInclude Include="..\Modules\Wmi\Client.h" />
+    <ClInclude Include="..\Modules\Administration\Firewall.inl" />
+    <ClInclude Include="..\Modules\Administration\Hardware.inl" />
+    <ClInclude Include="..\Modules\Administration\Power.inl" />
+    <ClInclude Include="..\Modules\Administration\Software.inl" />
+    <ClInclude Include="..\Modules\Administration\InputMethod.inl" />
+    <ClInclude Include="..\Modules\Administration\System.inl" />
+    <ClInclude Include="..\Modules\Administration\Task.inl" />
+    <ClInclude Include="..\Modules\Administration\Update.inl" />
+    <ClInclude Include="..\Modules\Administration\User.inl" />
+    <ClInclude Include="..\Modules\Administration\Wlan.inl" />
+    <ClInclude Include="..\Modules\Administration\Credential.inl" />
+    <ClInclude Include="..\Modules\Administration\Firmware.inl" />
+    <ClInclude Include="..\Modules\Administration\NetworkShare.inl" />
+    <ClInclude Include="..\Modules\Administration\NetworkStatus.inl" />
+    <ClInclude Include="..\Modules\Administration\AppContainer.inl" />
+    <ClInclude Include="..\Modules\Administration\WinObj.inl" />
+    <ClInclude Include="..\Modules\Administration\BitLocker.inl" />
+    <ClInclude Include="Core\Channel.h" />
+    <ClInclude Include="Core\Certificate.h" />
+    <ClInclude Include="Core\Account.h" />
+    <ClInclude Include="Core\AppContainer.h" />
+    <ClInclude Include="Core\Security.h" />
+    <ClInclude Include="Core\Session.h" />
+    <ClInclude Include="Core\Snapshot.h" />
+    <ClInclude Include="..\Modules\EventLog\Client.h" />
+    <ClInclude Include="..\Modules\Execution\Client.h" />
+    <ClInclude Include="..\Modules\Execution\Process.h" />
+    <ClInclude Include="..\Modules\Execution\Runtime.h" />
+    <ClInclude Include="..\Modules\File\Client.h" />
+    <ClInclude Include="..\Modules\File\Download.h" />
+    <ClInclude Include="..\Modules\PortableDevice\Client.h" />
+    <ClInclude Include="..\Modules\Process\Client.h" />
+    <ClInclude Include="..\Modules\Registry\Client.h" />
+    <ClInclude Include="..\Modules\Service\Client.h" />
+    <ClInclude Include="..\Modules\System\Client.h" />
+    <ClInclude Include="..\Modules\Terminal\Client.h" />
+    <ClInclude Include="..\Modules\Tunnel\Client.h" />
+    <ClInclude Include="..\Modules\Window\Client.h" />
+    <ClInclude Include="..\Modules\Window\Capture.h" />
+    <ClInclude Include="..\Modules\Window\Encoder.h" />
+    <ClInclude Include="..\Modules\Window\Shared.h" />
+    <ClInclude Include="..\Modules\Audio\Client.h" />
+    <ClInclude Include="..\Modules\Audio\Capture.h" />
+    <ClInclude Include="..\Modules\Audio\Shared.h" />
+    <ClInclude Include="..\Modules\Recording\Writer.h" />
+    <ClInclude Include="..\Modules\Recording\Client.h" />
+    <ClInclude Include="..\Modules\Video\Client.h" />
+    <ClInclude Include="..\Modules\Video\Capture.h" />
+    <ClInclude Include="..\Modules\Video\Shared.h" />
+    <ClInclude Include="..\Modules\Rtc\Client.h" />
+    <ClInclude Include="..\Modules\Serial\Client.h" />
+    <ClInclude Include="..\Network\Config.inl" />
+    <ClInclude Include="..\Network\Authentication.inl" />
+    <ClInclude Include="..\Network\Connection.h" />
+    <ClInclude Include="..\Network\Quic.inl" />
+    <ClInclude Include="..\Network\Transport.h" />
+    <ClInclude Include="..\Network\Tls.h" />
+    <ClInclude Include="..\Network\Tcp.h" />
+    <ClInclude Include="..\Network\Dtls.h" />
+    <ClInclude Include="..\Network\Udp.h" />
+    <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
+    <ClInclude Include="Client.inl" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Client.h" />
+    <ClInclude Include="Transport\Quic.h" />
+    <ClInclude Include="Transport\Tcp.h" />
+    <ClInclude Include="Transport\Udp.h" />
+    <ClInclude Include="Transport\Retry.inl" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\KNSoft.ZPigeon.Protocol\KNSoft.ZPigeon.Protocol.vcxproj">
+      <Project>{A4B9DA54-96D6-4F14-8B17-5D9016D0BE25}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="..\packages\KNSoft.CBS.1.0.0-beta\build\KNSoft.CBS.targets" Condition="Exists('..\packages\KNSoft.CBS.1.0.0-beta\build\KNSoft.CBS.targets')" />
+    <Import Project="..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets" Condition="Exists('..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets')" />
+    <Import Project="..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets" Condition="Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" />
+    <Import Project="..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets" Condition="Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" />
+    <Import Project="..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets" Condition="Exists('..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets')" />
+    <Import Project="..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets" Condition="Exists('..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets')" />
+  </ImportGroup>
+  <Target Name="GenerateWinGetProjection"
+          BeforeTargets="ClCompile"
+          Inputs="$(WinGetWinMD)"
+          Outputs="$(WinGetProjectionDir)\winrt\Microsoft.Management.Deployment.h">
+    <MakeDir Directories="$(WinGetProjectionDir)" />
+    <Exec Command="&quot;$(WindowsSdkDir_10)bin\$(WindowsTargetPlatformVersion)\x64\cppwinrt.exe&quot; -input &quot;$(WinGetWinMD)&quot; -reference sdk -output &quot;$(WinGetProjectionDir)&quot;" />
+  </Target>
+  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
+    </PropertyGroup>
+    <Error Condition="!Exists('..\packages\KNSoft.CBS.1.0.0-beta\build\KNSoft.CBS.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.CBS.1.0.0-beta\build\KNSoft.CBS.targets'))" />
+    <Error Condition="!Exists('..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets'))" />
+    <Error Condition="!Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets'))" />
+    <Error Condition="!Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets'))" />
+    <Error Condition="!Exists('..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets'))" />
+    <Error Condition="!Exists('..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets'))" />
+    <Error Condition="!Exists('$(WinGetWinMD)')" Text="$([System.String]::Format('$(ErrorText)', '$(WinGetWinMD)'))" />
+  </Target>
+</Project>

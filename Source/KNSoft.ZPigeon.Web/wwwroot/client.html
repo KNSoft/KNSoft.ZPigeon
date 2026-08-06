@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>KNSoft ZPigeon</title>
+    <link rel="stylesheet" href="vendor/xterm/xterm.css" />
+    <link rel="stylesheet" href="client.css" />
+  </head>
+  <body>
+    <header>
+      <a class="home" href="/">← Clients</a>
+      <strong id="clientTitle">KNSoft ZPigeon</strong>
+      <nav class="app-nav">
+        <button data-category="zpigeon">ZPigeon</button
+        ><button data-category="system" data-i18n="nav.system">系统管理</button
+        ><button data-category="network" data-i18n="nav.network">网络</button
+        ><button data-category="storage" data-i18n="nav.storage">存储管理</button
+        ><button data-category="tasks" data-i18n="nav.tasks">任务管理</button
+        ><button data-category="hardware" data-i18n="nav.hardware">硬件管理</button
+        ><button data-category="software" data-i18n="nav.software">软件管理</button
+        ><button class="active" data-category="remote" data-i18n="nav.remote">远程访问</button>
+      </nav>
+      <div class="status">
+        <span id="serverDot" class="dot"></span>Server
+        <span id="server" data-i18n="common.loading">读取中</span
+        ><span id="clientDot" class="dot"></span>Client
+        <span id="client" data-i18n="common.loading">读取中</span
+        ><span
+          id="quality"
+          class="quality"
+          data-level="0"
+          title="连接质量：尚无数据"
+          data-i18n-title="quality.noData"
+          ><i></i><i></i><i></i><i></i><i></i
+        ></span>
+      </div>
+    </header>
+    <aside id="moduleNav" class="module-nav" aria-label="模块" data-i18n-aria-label="common.modules"></aside>
+    <main id="terminalView">
+      <div class="toolbar">
+        <select id="shellSelect" class="shell-select" disabled>
+          <option data-i18n="common.clientDisconnected">Client 未连接</option>
+        </select>
+        <button id="newShell" class="add-shell" disabled title="新建 Shell" data-i18n-title="terminal.new">＋</button>
+        <button id="scriptButton" disabled data-i18n="terminal.runScript">运行脚本</button>
+        <span class="spacer"></span>
+        <button id="closeShell" class="danger" disabled data-i18n="terminal.closeCurrent">关闭当前 Shell</button>
+      </div>
+      <section class="workspace">
+        <nav id="tabs" class="tabs"></nav>
+        <div id="terminals" class="terminals">
+          <div id="empty" class="empty">
+            <b data-i18n="terminal.emptyTitle">尚未打开 Shell</b
+            ><span data-i18n="terminal.emptyHint">连接 Client 后选择 Shell 并新建会话</span
+            ><button id="emptyNew" disabled data-i18n="terminal.new">新建 Shell</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <main id="executionView" class="manager-view" hidden>
+      <section id="executionManager" class="manager"></section>
+    </main>
+    <main id="forwardsView" class="manager-view" hidden>
+      <section id="portForwardManager" class="manager"></section>
+    </main>
+    <main id="proxyVpnView" class="manager-view" hidden><section id="proxyVpnManager" class="manager"></section></main>
+    <main id="systemView" class="manager-view" hidden><section id="systemManager" class="manager"></section></main>
+    <main id="wslView" class="manager-view" hidden><section id="wslManager" class="manager"></section></main>
+    <main id="pageFilesView" class="manager-view" hidden><section id="pageFileManager" class="manager"></section></main>
+    <main id="sandboxView" class="manager-view" hidden><section id="sandboxManager" class="manager"></section></main>
+    <main id="winobjView" class="manager-view" hidden><section id="winobjManager" class="manager"></section></main>
+    <main id="hardwareInfoView" class="manager-view" hidden>
+      <section id="hardwareInfoManager" class="manager"></section>
+    </main>
+    <main id="registryView" hidden><section id="registryEditor" class="registry-editor"></section></main>
+    <main id="filesView" class="manager-view" hidden><section id="fileManager" class="manager"></section></main>
+    <main id="bitlockerView" class="manager-view" hidden>
+      <section id="bitLockerManager" class="manager"></section>
+    </main>
+    <main id="shadowCopiesView" class="manager-view" hidden>
+      <section id="shadowCopyManager" class="manager"></section>
+    </main>
+    <main id="portableDevicesView" class="manager-view" hidden>
+      <section id="portableDeviceManager" class="manager"></section>
+    </main>
+    <main id="clipboardView" class="manager-view" hidden>
+      <section id="clipboardManager" class="manager"></section>
+    </main>
+    <main id="processesView" class="manager-view" hidden><section id="processManager" class="manager"></section></main>
+    <main id="windowsView" class="manager-view" hidden><section id="windowManager" class="manager"></section></main>
+    <main id="audioView" class="manager-view" hidden><section id="audioManager" class="manager"></section></main>
+    <main id="videoView" class="manager-view" hidden><section id="videoManager" class="manager"></section></main>
+    <main id="serialView" class="manager-view" hidden>
+      <section id="serialManager" class="manager">
+        <div class="toolbar serial-toolbar">
+          <select data-role="port" aria-label="串口">
+            <option>Client 未连接</option></select
+          ><button data-action="refresh">刷新</button>
+          <label>波特率<input data-role="baud" type="number" min="1" max="4000000" value="115200" /></label>
+          <label
+            >数据位<select data-role="data-bits">
+              <option>5</option>
+              <option>6</option>
+              <option>7</option>
+              <option selected>8</option>
+            </select></label
+          >
+          <label
+            >校验<select data-role="parity">
+              <option value="0">无</option>
+              <option value="1">奇校验</option>
+              <option value="2">偶校验</option>
+              <option value="3">标记</option>
+              <option value="4">空格</option>
+            </select></label
+          >
+          <label
+            >停止位<select data-role="stop-bits">
+              <option value="0">1</option>
+              <option value="1">1.5</option>
+              <option value="2">2</option>
+            </select></label
+          >
+          <label
+            >流控<select data-role="flow">
+              <option value="0">无</option>
+              <option value="1">XON/XOFF</option>
+              <option value="2">RTS/CTS</option>
+              <option value="3">DSR/DTR</option>
+            </select></label
+          >
+          <button data-action="open" disabled>打开</button><button data-action="close" disabled>关闭</button>
+          <span class="spacer"></span><span data-role="status">Client 未连接</span>
+        </div>
+        <pre class="serial-output" data-role="output" aria-label="串口数据"></pre>
+        <div class="serial-send">
+          <div class="serial-send-options">
+            <label
+              >显示<select data-role="display">
+                <option value="text">文本</option>
+                <option value="hex">HEX</option>
+              </select></label
+            >
+            <label><input data-role="timestamps" type="checkbox" checked />时间戳</label>
+            <label><input data-role="echo" type="checkbox" checked />本地回显</label>
+            <button data-action="clear">清空</button><button data-action="export">导出</button>
+            <span class="spacer"></span>
+            <label
+              >发送<select data-role="send-mode">
+                <option value="text">文本</option>
+                <option value="hex">HEX</option>
+              </select></label
+            >
+            <label
+              >行尾<select data-role="ending">
+                <option value="none">无</option>
+                <option value="cr">CR</option>
+                <option value="lf">LF</option>
+                <option value="crlf" selected>CRLF</option>
+              </select></label
+            >
+            <button data-action="send" disabled>发送</button>
+          </div>
+          <textarea
+            data-role="input"
+            spellcheck="false"
+            placeholder="输入文本或十六进制字节；Ctrl+Enter 发送"
+          ></textarea>
+        </div>
+      </section>
+    </main>
+    <main id="servicesView" class="manager-view" hidden><section id="serviceManager" class="manager"></section></main>
+    <main id="usersView" class="manager-view" hidden><section id="userManager" class="manager"></section></main>
+    <main id="softwareView" class="manager-view" hidden><section id="softwareManager" class="manager"></section></main>
+    <main id="inputMethodsView" class="manager-view" hidden>
+      <section id="inputMethodManager" class="manager"></section>
+    </main>
+    <main id="packagesView" class="manager-view" hidden><section id="packageManager" class="manager"></section></main>
+    <main id="hardwareView" class="manager-view" hidden><section id="hardwareManager" class="manager"></section></main>
+    <main id="bluetoothView" class="manager-view" hidden>
+      <section id="bluetoothManager" class="manager"></section>
+    </main>
+    <main id="keyboardView" class="manager-view" hidden><section id="keyboardManager" class="manager"></section></main>
+    <main id="locationView" class="manager-view" hidden><section id="locationManager" class="manager"></section></main>
+    <main id="firmwareView" class="manager-view" hidden><section id="firmwareManager" class="manager"></section></main>
+    <main id="certificatesView" class="manager-view" hidden>
+      <section id="certificateManager" class="manager"></section>
+    </main>
+    <main id="credentialsView" class="manager-view" hidden>
+      <section id="credentialManager" class="manager"></section>
+    </main>
+    <main id="browsersView" class="manager-view" hidden><section id="browserManager" class="manager"></section></main>
+    <main id="fontsView" class="manager-view" hidden><section id="fontManager" class="manager"></section></main>
+    <main id="wmiView" class="manager-view" hidden><section id="wmiManager" class="manager"></section></main>
+    <main id="updatesView" class="manager-view" hidden><section id="updateManager" class="manager"></section></main>
+    <main id="eventsView" class="manager-view" hidden><section id="eventViewer" class="event-viewer"></section></main>
+    <main id="tasksView" class="manager-view" hidden><section id="taskManager" class="manager"></section></main>
+    <main id="firewallView" class="manager-view" hidden><section id="firewallManager" class="manager"></section></main>
+    <main id="wlanView" class="manager-view" hidden><section id="wlanManager" class="manager"></section></main>
+    <main id="networkSharesView" class="manager-view" hidden>
+      <section id="networkShareManager" class="manager"></section>
+    </main>
+    <main id="networkAdaptersView" class="manager-view" hidden>
+      <section id="networkAdapterManager" class="manager"></section>
+    </main>
+    <main id="networkRoutesView" class="manager-view" hidden>
+      <section id="networkRouteManager" class="manager"></section>
+    </main>
+    <main id="networkEndpointsView" class="manager-view" hidden>
+      <section id="networkEndpointManager" class="manager"></section>
+    </main>
+    <main id="powerView" class="manager-view" hidden><section id="powerManager" class="manager"></section></main>
+    <main id="remoteDesktopView" class="manager-view" hidden>
+      <section id="remoteDesktopManager" class="manager"></section>
+    </main>
+    <main id="connectionView" class="manager-view" hidden>
+      <section id="connectionManager" class="manager"></section>
+    </main>
+    <main id="clientStatusView" class="manager-view" hidden>
+      <section id="clientStatusManager" class="manager"></section>
+    </main>
+
+    <dialog id="scriptDialog">
+      <form method="dialog">
+        <h2 data-i18n="terminal.runRemoteScript">在远程终端运行脚本</h2>
+        <label><span data-i18n="terminal.scriptType">脚本类型</span><select id="scriptType"></select></label>
+        <label
+          ><span data-i18n="terminal.scriptContent">脚本内容</span
+          ><textarea id="scriptText" class="dialog-input" rows="18" spellcheck="false" required></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button value="run" data-i18n="terminal.run">运行</button
+          ><button value="cancel" data-i18n="common.cancel">取消</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="tabMenu" class="context-menu" role="menu" hidden>
+      <button id="renameTab" role="menuitem" data-i18n="common.rename">重命名</button>
+      <button id="exportTab" role="menuitem" data-i18n="terminal.exportText">导出文本</button>
+      <button id="closeTab" class="danger" role="menuitem" data-i18n="common.close">关闭</button>
+    </div>
+
+    <dialog id="renameDialog">
+      <form method="dialog">
+        <h2 data-i18n="terminal.renameTab">重命名标签页</h2>
+        <input id="renameInput" class="dialog-input" maxlength="128" required autocomplete="off" />
+        <div class="dialog-actions">
+          <button value="cancel" formnovalidate data-i18n="common.cancel">取消</button
+          ><button value="rename" data-i18n="common.rename">重命名</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="pasteDialog">
+      <form method="dialog">
+        <h2 data-i18n="terminal.confirmPaste">确认粘贴</h2>
+        <p data-i18n="terminal.pasteWarning">粘贴多行或大量文本可能导致命令意外执行。</p>
+        <p id="pasteSummary" class="status"></p>
+        <pre id="pastePreview" class="clipboard-preview"></pre>
+        <div class="dialog-actions">
+          <button value="cancel" data-i18n="common.cancel">取消</button
+          ><button value="paste" class="danger" data-i18n="terminal.pasteAnyway">仍然粘贴</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script type="module" src="client.mjs"></script>
+  </body>
+</html>

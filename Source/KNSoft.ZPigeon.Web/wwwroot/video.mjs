@@ -1,0 +1,267 @@
+import { apiUrl } from "./client-context.mjs";
+
+export class VideoManager {
+  constructor(root, { call, notify, rtc, recording }) {
+    this.root = root;
+    this.call = call;
+    this.notify = notify;
+    this.rtc = rtc;
+    this.recording = recording;
+    this.connected = false;
+    this.devices = [];
+    this.request = 0;
+    root.innerHTML = /* HTML */ `<div class="manager-toolbar">
+        <select data-role="device"></select
+        ><label
+          >分辨率
+          <select data-role="resolution"></select></label
+        ><label
+          >帧率
+          <select data-role="rate"></select></label
+        ><label
+          >图像质量 <input data-role="quality" type="range" min="1" max="100" value="85" /><output
+            data-role="quality-value"
+            >85</output
+          ></label
+        ><button data-action="stream">开始</button
+        ><button data-action="record">录制</button><button data-action="recordings">录制任务</button
+        ><button data-action="refresh">刷新</button><span class="status" data-role="status">Client 未连接</span>
+      </div>
+      <div class="video-preview">
+        <img data-role="image" alt="远程摄像头画面" hidden />
+        <div class="manager-empty" data-role="empty">Client 未连接</div>
+      </div>`;
+    this.device = root.querySelector("[data-role=device]");
+    this.resolution = root.querySelector("[data-role=resolution]");
+    this.rate = root.querySelector("[data-role=rate]");
+    this.quality = root.querySelector("[data-role=quality]");
+    this.qualityValue = root.querySelector("[data-role=quality-value]");
+    this.image = root.querySelector("[data-role=image]");
+    this.empty = root.querySelector("[data-role=empty]");
+    this.status = root.querySelector("[data-role=status]");
+    this.streamButton = root.querySelector("[data-action=stream]");
+    this.recordButton = root.querySelector("[data-action=record]");
+    this.streamButton.onclick = () => (this.socket || this.starting ? this.stop() : this.start());
+    this.device.onchange = () => {
+      this.loadFormats();
+      if (this.socket) this.restart();
+    };
+    this.resolution.onchange = () => {
+      this.loadRates();
+      this.update();
+    };
+    this.rate.onchange = () => this.update();
+    this.quality.oninput = () => {
+      this.qualityValue.value = this.quality.value;
+      clearTimeout(this.updateTimer);
+      this.updateTimer = setTimeout(() => this.update(), 120);
+    };
+    this.recordButton.onclick = () => this.recording.camera(this.device.value);
+    root.querySelector("[data-action=recordings]").onclick = () => this.recording.show();
+    root.querySelector("[data-action=refresh]").onclick = () => this.load();
+  }
+  activate(connected) {
+    this.connected = connected;
+    this.streamButton.disabled = !connected || (!this.socket && !this.devices.length);
+    this.recordButton.disabled = !connected || !this.devices.length;
+    if (connected && !this.loaded) this.load();
+    else if (!connected) this.status.textContent = "Client 未连接";
+  }
+  disconnect() {
+    this.connected = false;
+    this.loaded = false;
+    this.devices = [];
+    this.device.replaceChildren();
+    this.resolution.replaceChildren();
+    this.rate.replaceChildren();
+    this.stop();
+    this.status.textContent = "Client 未连接";
+    this.empty.hidden = false;
+    this.empty.textContent = "Client 未连接";
+  }
+  async load() {
+    if (!this.connected) return;
+    this.status.textContent = "正在读取摄像头…";
+    try {
+      const selected = this.device.value;
+      this.devices = await this.call("/api/video/devices", {});
+      this.device.replaceChildren(...this.devices.map((device) => new Option(device.name || device.id, device.id)));
+      if (this.devices.some((device) => device.id === selected)) this.device.value = selected;
+      this.loadFormats();
+      this.loaded = true;
+      this.streamButton.disabled = !this.devices.length;
+      this.recordButton.disabled = !this.devices.length;
+      this.status.textContent = `${this.devices.length} 个摄像头`;
+      this.empty.textContent = this.devices.length ? "点击“开始”查看实时画面" : "没有可用摄像头";
+      this.empty.hidden = false;
+    } catch (error) {
+      this.status.textContent = error.message;
+      this.empty.textContent = error.message;
+      this.notify(error);
+    }
+  }
+  get currentDevice() {
+    return this.devices.find((device) => device.id === this.device.value);
+  }
+  loadFormats() {
+    const selected = this.resolution.value,
+      formats = this.currentDevice?.formats || [],
+      resolutions = [...new Map(formats.map((format) => [`${format.width}x${format.height}`, format])).values()].sort(
+        (a, b) => a.width * a.height - b.width * b.height,
+      );
+    this.resolution.replaceChildren(
+      ...resolutions.map(
+        (format) => new Option(`${format.width} × ${format.height}`, `${format.width}x${format.height}`),
+      ),
+    );
+    if (resolutions.some((format) => `${format.width}x${format.height}` === selected)) {
+      this.resolution.value = selected;
+    } else if (resolutions.length) {
+      const closest = resolutions.reduce((best, item) =>
+        Math.abs(Math.max(item.width, item.height) - 1280) < Math.abs(Math.max(best.width, best.height) - 1280)
+          ? item
+          : best,
+      );
+      this.resolution.value = `${closest.width}x${closest.height}`;
+    }
+    this.loadRates();
+  }
+  loadRates() {
+    const selected = this.rate.value,
+      [width, height] = this.resolution.value.split("x").map(Number),
+      formats = (this.currentDevice?.formats || [])
+        .filter((format) => format.width === width && format.height === height)
+        .sort((a, b) => a.frameRateNumerator / a.frameRateDenominator - b.frameRateNumerator / b.frameRateDenominator);
+    this.rate.replaceChildren(
+      ...formats.map((format) => {
+        const fps = format.frameRateNumerator / format.frameRateDenominator;
+        return new Option(
+          Number.isInteger(fps) ? `${fps}` : fps.toFixed(2),
+          `${format.frameRateNumerator}/${format.frameRateDenominator}`,
+        );
+      }),
+    );
+    if (formats.some((format) => `${format.frameRateNumerator}/${format.frameRateDenominator}` === selected))
+      this.rate.value = selected;
+    else if (formats.length) {
+      const format = formats.reduce((best, item) =>
+        Math.abs(item.frameRateNumerator / item.frameRateDenominator - 12) <
+        Math.abs(best.frameRateNumerator / best.frameRateDenominator - 12)
+          ? item
+          : best,
+      );
+      this.rate.value = `${format.frameRateNumerator}/${format.frameRateDenominator}`;
+    }
+  }
+  get settings() {
+    const [width, height] = this.resolution.value.split("x").map(Number),
+      [frameRateNumerator, frameRateDenominator] = this.rate.value.split("/").map(Number);
+    return { width, height, frameRateNumerator, frameRateDenominator, quality: Number(this.quality.value) };
+  }
+  update() {
+    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(this.settings));
+  }
+  restart() {
+    this.stop();
+    setTimeout(() => this.start(), 150);
+  }
+  async start() {
+    if (
+      !this.connected ||
+      !this.device.value ||
+      !this.resolution.value ||
+      !this.rate.value ||
+      this.socket ||
+      this.starting
+    )
+      return;
+    const settings = this.settings,
+      request = ++this.request;
+    this.starting = true;
+    this.streamButton.disabled = false;
+    this.streamButton.textContent = "停止";
+    this.buffer = new Uint8Array();
+    let socket, direct;
+    try {
+      try {
+        direct = await this.rtc.open(
+          (data) => this.receive(data, socket),
+          (text) => (this.status.textContent = text),
+        );
+      } catch (error) {
+        this.status.textContent = "P2P 加速失败";
+        console.warn(error);
+      }
+      if (request !== this.request) {
+        direct?.close();
+        return;
+      }
+      const url = new URL("/api/video/stream", location.href);
+      url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      url.searchParams.set("deviceId", this.device.value);
+      Object.entries(settings).forEach(([name, value]) => url.searchParams.set(name, value));
+      url.searchParams.set("directStreamId", direct?.id || 0);
+      socket = this.socket = new WebSocket(apiUrl(url));
+      this.direct = direct;
+      socket.binaryType = "blob";
+      socket.onopen = () => {
+        if (direct) this.status.textContent = "P2P 视频已连接";
+      };
+      if (!direct) socket.onmessage = (event) => this.show(event.data, socket);
+      socket.onerror = () => {
+        if (this.socket === socket) this.status.textContent = "视频连接失败";
+      };
+      socket.onclose = (event) => {
+        direct?.close();
+        if (this.direct === direct) this.direct = null;
+        if (this.socket !== socket) return;
+        this.socket = null;
+        this.streamButton.disabled = !this.connected || !this.devices.length;
+        this.streamButton.textContent = "开始";
+        this.status.textContent = event.code === 1000 ? "已停止" : event.reason || `视频流已断开 (${event.code})`;
+        if (event.code !== 1000) this.notify(this.status.textContent);
+      };
+    } finally {
+      this.starting = false;
+    }
+  }
+  receive(data, socket) {
+    if (this.socket !== socket) return;
+    const joined = new Uint8Array(this.buffer.length + data.length);
+    joined.set(this.buffer);
+    joined.set(data, this.buffer.length);
+    this.buffer = joined;
+    while (this.buffer.length >= 12) {
+      const view = new DataView(this.buffer.buffer, this.buffer.byteOffset),
+        width = view.getUint32(0, true),
+        height = view.getUint32(4, true),
+        length = view.getUint32(8, true);
+      if (!width || width > 3840 || !height || height > 3840 || !length || length > 0x1000000) {
+        socket.close(1002, "无效的视频帧");
+        return;
+      }
+      if (this.buffer.length < 12 + length) return;
+      this.show(new Blob([this.buffer.slice(12, 12 + length)], { type: "image/jpeg" }), socket);
+      this.buffer = this.buffer.slice(12 + length);
+    }
+  }
+  show(blob, socket) {
+    if (this.socket !== socket) return;
+    const old = this.image.src;
+    this.image.src = URL.createObjectURL(blob);
+    this.image.hidden = false;
+    this.empty.hidden = true;
+    if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+  }
+  stop() {
+    this.request++;
+    const socket = this.socket,
+      direct = this.direct;
+    this.socket = this.direct = null;
+    if (socket && socket.readyState < 2) socket.close(1000);
+    else direct?.close();
+    this.streamButton.disabled = !this.connected || !this.devices.length;
+    this.streamButton.textContent = "开始";
+    this.status.textContent = this.connected ? "已停止" : "Client 未连接";
+  }
+}

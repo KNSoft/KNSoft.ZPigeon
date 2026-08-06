@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KNSoft ZPigeon</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --background: #0c1017;
+        --panel: #141a24;
+        --line: #283142;
+        --text: #d9e1ee;
+        --muted: #8491a5;
+        --accent: #70a5ff;
+        --good: #43d17d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        padding: 48px 24px;
+        color: var(--text);
+        background: var(--background);
+        font:
+          14px system-ui,
+          sans-serif;
+      }
+
+      main {
+        width: min(960px, 100%);
+        margin: 0 auto;
+      }
+
+      header {
+        margin-bottom: 28px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      #clients {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 14px;
+      }
+
+      .client {
+        display: grid;
+        gap: 14px;
+        padding: 18px;
+        color: inherit;
+        text-decoration: none;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+      }
+
+      .client:hover {
+        border-color: var(--accent);
+      }
+
+      .client-header,
+      .detail {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .client-header strong {
+        font-size: 16px;
+      }
+
+      .online {
+        color: var(--good);
+      }
+
+      .details {
+        display: grid;
+        gap: 7px;
+        color: var(--muted);
+      }
+
+      .detail span:last-child {
+        color: var(--text);
+        text-align: right;
+        overflow-wrap: anywhere;
+      }
+
+      .empty {
+        grid-column: 1 / -1;
+        padding: 48px 20px;
+        color: var(--muted);
+        text-align: center;
+        border: 1px dashed var(--line);
+        border-radius: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>KNSoft ZPigeon</h1>
+        <p id="description"></p>
+      </header>
+      <section id="clients" aria-live="polite">
+        <div class="empty" id="loading"></div>
+      </section>
+    </main>
+    <script type="module">
+      import { t } from "./i18n.mjs";
+
+      const clients = document.querySelector("#clients");
+      const transports = { 1: "QUIC", 2: "TCP", 3: "UDP" };
+      document.querySelector("#description").textContent = t("home.description");
+      document.querySelector("#loading").textContent = t("home.loading");
+
+      function showMessage(message) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = message;
+        clients.replaceChildren(empty);
+      }
+
+      function render(values) {
+        if (!values.length) {
+          showMessage(t("home.empty"));
+          return;
+        }
+        clients.replaceChildren(
+          ...values.map((value) => {
+            const link = document.createElement("a");
+            link.className = "client";
+            link.href = `/client.html?client=${value.id}`;
+            const header = document.createElement("div"),
+              name = document.createElement("strong"),
+              online = document.createElement("span"),
+              details = document.createElement("div");
+            header.className = "client-header";
+            name.textContent = `Client ${value.fingerprint.slice(0, 12)}`;
+            online.className = "online";
+            online.textContent = `● ${t("common.connected")}`;
+            header.append(name, online);
+            details.className = "details";
+            for (const [label, detail] of [
+              [t("home.address"), value.address],
+              [t("home.transport"), transports[value.transport] ?? value.transport],
+              [t("home.fingerprint"), value.fingerprint],
+            ]) {
+              const row = document.createElement("div"),
+                key = document.createElement("span"),
+                content = document.createElement("span");
+              row.className = "detail";
+              key.textContent = label;
+              content.textContent = detail;
+              row.append(key, content);
+              details.append(row);
+            }
+            link.append(header, details);
+            return link;
+          }),
+        );
+      }
+
+      async function refresh() {
+        try {
+          const response = await fetch("/api/clients");
+          if (!response.ok) throw new Error(await response.text());
+          render(await response.json());
+        } catch (error) {
+          showMessage(error.message);
+        }
+      }
+
+      await refresh();
+      const clientEvents = new EventSource("/api/clients/events");
+      clientEvents.addEventListener("clients", refresh);
+    </script>
+  </body>
+</html>

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{D0D2CC27-D915-46BA-94F2-BD11110295CF}</ProjectGuid>
+    <RootNamespace>ConsumerTest</RootNamespace>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <KNSoftQuicIntegration>Static</KNSoftQuicIntegration>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>..\Include;..\KNSoft.ZPigeon.Client.SDK\Include;..\KNSoft.ZPigeon.Server.SDK\Include;..\KNSoft.ZPigeon.Protocol\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="Consumer.c" />
+    <ClCompile Include="PublicHeaders.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\KNSoft.ZPigeon.Client.SDK\KNSoft.ZPigeon.Client.SDK.vcxproj">
+      <Project>{2E04E015-390E-4360-95C3-981A2C3CC93D}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\KNSoft.ZPigeon.Protocol\KNSoft.ZPigeon.Protocol.vcxproj">
+      <Project>{A4B9DA54-96D6-4F14-8B17-5D9016D0BE25}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\KNSoft.ZPigeon.Server.SDK\KNSoft.ZPigeon.Server.SDK.vcxproj">
+      <Project>{722AC452-A08B-4DBB-8D77-9C29E5394550}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets" Condition="Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" />
+    <Import Project="..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets" Condition="Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" />
+    <Import Project="..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets" Condition="Exists('..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets')" />
+  </ImportGroup>
+  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <ErrorText>This project references NuGet package(s) that are missing on this computer. The missing file is {0}.</ErrorText>
+    </PropertyGroup>
+    <Error Condition="!Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets'))" />
+    <Error Condition="!Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets'))" />
+    <Error Condition="!Exists('..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets'))" />
+  </Target>
+</Project>

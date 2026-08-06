@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{A4B9DA54-96D6-4F14-8B17-5D9016D0BE25}</ProjectGuid>
+    <RootNamespace>KNSoftZPigeonProtocol</RootNamespace>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>.;Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Administration.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Browser.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Wmi.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\EventLog.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Execution.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Protocol.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Registry.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\File.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\PortableDevice.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Process.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Service.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\System.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Terminal.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Tunnel.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Window.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Audio.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Video.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Rtc.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Serial.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Recording.h" />
+    <ClInclude Include="Core\Protocol.inl" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Core\Codec.c" />
+    <ClCompile Include="Core\Frame.c" />
+    <ClCompile Include="Core\Message.c" />
+    <ClCompile Include="..\Modules\Administration\Protocol.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Browser\Protocol.c"><ObjectFileName>$(IntDir)Modules\Browser\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Wmi\Protocol.c"><ObjectFileName>$(IntDir)Modules\Wmi\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\EventLog\Protocol.c"><ObjectFileName>$(IntDir)Modules\EventLog\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Execution\Protocol.c"><ObjectFileName>$(IntDir)Modules\Execution\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\File\Protocol.c"><ObjectFileName>$(IntDir)Modules\File\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\PortableDevice\Protocol.c"><ObjectFileName>$(IntDir)Modules\PortableDevice\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Process\Protocol.c"><ObjectFileName>$(IntDir)Modules\Process\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Registry\Protocol.c"><ObjectFileName>$(IntDir)Modules\Registry\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Service\Protocol.c"><ObjectFileName>$(IntDir)Modules\Service\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\System\Protocol.c"><ObjectFileName>$(IntDir)Modules\System\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Terminal\Protocol.c"><ObjectFileName>$(IntDir)Modules\Terminal\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Tunnel\Protocol.c"><ObjectFileName>$(IntDir)Modules\Tunnel\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Window\Protocol.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Audio\Protocol.c"><ObjectFileName>$(IntDir)Modules\Audio\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Video\Protocol.c"><ObjectFileName>$(IntDir)Modules\Video\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Rtc\Protocol.c"><ObjectFileName>$(IntDir)Modules\Rtc\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Serial\Protocol.c"><ObjectFileName>$(IntDir)Modules\Serial\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Recording\Protocol.c"><ObjectFileName>$(IntDir)Modules\Recording\</ObjectFileName></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets" Condition="Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" />
+  </ImportGroup>
+  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <ErrorText>This project references NuGet package(s) that are missing on this computer. The missing file is {0}.</ErrorText>
+    </PropertyGroup>
+    <Error Condition="!Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets'))" />
+  </Target>
+</Project>

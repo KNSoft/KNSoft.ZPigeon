@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{722AC452-A08B-4DBB-8D77-9C29E5394550}</ProjectGuid>
+    <RootNamespace>KNSoftZPigeonServerSDK</RootNamespace>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <KNSoftQuicIntegration>Static</KNSoftQuicIntegration>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>Include;..\Include;..\KNSoft.ZPigeon.Protocol\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>MLE_API=;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\Modules\Administration\Server.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Browser\Server.c"><ObjectFileName>$(IntDir)Modules\Browser\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Wmi\Server.c"><ObjectFileName>$(IntDir)Modules\Wmi\</ObjectFileName></ClCompile>
+    <ClCompile Include="Core\Channel.c" />
+    <ClCompile Include="Core\Connection.c" />
+    <ClCompile Include="Core\Request.c" />
+    <ClCompile Include="Core\Session.c" />
+    <ClCompile Include="..\Network\Connection.c">
+      <ObjectFileName>$(IntDir)Network\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\Network\Tls.c">
+      <ObjectFileName>$(IntDir)Network\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\Network\Tcp.c">
+      <ObjectFileName>$(IntDir)Network\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\Network\Dtls.c"><ObjectFileName>$(IntDir)Network\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Network\Udp.c"><ObjectFileName>$(IntDir)Network\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\SDK\Channel.c"><ObjectFileName>$(IntDir)SDK\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\SDK\Request.c"><ObjectFileName>$(IntDir)SDK\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\EventLog\Server.c"><ObjectFileName>$(IntDir)Modules\EventLog\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Execution\Server.c"><ObjectFileName>$(IntDir)Modules\Execution\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\File\Server.c"><ObjectFileName>$(IntDir)Modules\File\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\PortableDevice\Server.c"><ObjectFileName>$(IntDir)Modules\PortableDevice\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Process\Server.c"><ObjectFileName>$(IntDir)Modules\Process\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Registry\Server.c"><ObjectFileName>$(IntDir)Modules\Registry\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Service\Server.c"><ObjectFileName>$(IntDir)Modules\Service\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\System\Server.c"><ObjectFileName>$(IntDir)Modules\System\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Terminal\Server.c"><ObjectFileName>$(IntDir)Modules\Terminal\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Tunnel\Server.c"><ObjectFileName>$(IntDir)Modules\Tunnel\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Window\Server.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Audio\Server.c"><ObjectFileName>$(IntDir)Modules\Audio\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Video\Server.c"><ObjectFileName>$(IntDir)Modules\Video\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Rtc\Server.c"><ObjectFileName>$(IntDir)Modules\Rtc\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Serial\Server.c"><ObjectFileName>$(IntDir)Modules\Serial\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Recording\Server.c"><ObjectFileName>$(IntDir)Modules\Recording\</ObjectFileName></ClCompile>
+    <ClCompile Include="Transport\Main.c" />
+    <ClCompile Include="Transport\Quic.c" />
+    <ClCompile Include="Transport\Tcp.c" />
+    <ClCompile Include="Transport\Udp.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Core\Channel.h" />
+    <ClInclude Include="Core\Connection.h" />
+    <ClInclude Include="Core\Session.h" />
+    <ClInclude Include="..\Network\Config.inl" />
+    <ClInclude Include="..\Network\Authentication.inl" />
+    <ClInclude Include="..\Network\Connection.h" />
+    <ClInclude Include="..\Network\Quic.inl" />
+    <ClInclude Include="..\Network\Transport.h" />
+    <ClInclude Include="..\Network\Tls.h" />
+    <ClInclude Include="..\Network\Tcp.h" />
+    <ClInclude Include="..\Network\Dtls.h" />
+    <ClInclude Include="..\Network\Udp.h" />
+    <ClInclude Include="..\SDK\Channel.h" />
+    <ClInclude Include="..\SDK\Request.h" />
+    <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Server.h" />
+    <ClInclude Include="Transport\Quic.h" />
+    <ClInclude Include="Transport\Tcp.h" />
+    <ClInclude Include="Transport\Udp.h" />
+    <ClInclude Include="Server.inl" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\KNSoft.ZPigeon.Protocol\KNSoft.ZPigeon.Protocol.vcxproj">
+      <Project>{A4B9DA54-96D6-4F14-8B17-5D9016D0BE25}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets" Condition="Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" />
+    <Import Project="..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets" Condition="Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" />
+    <Import Project="..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets" Condition="Exists('..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets')" />
+  </ImportGroup>
+  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <ErrorText>This project references NuGet package(s) that are missing on this computer. The missing file is {0}.</ErrorText>
+    </PropertyGroup>
+    <Error Condition="!Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets'))" />
+    <Error Condition="!Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets'))" />
+    <Error Condition="!Exists('..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets'))" />
+  </Target>
+</Project>

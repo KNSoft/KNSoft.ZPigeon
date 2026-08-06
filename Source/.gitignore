@@ -1,0 +1,10 @@
+.vs
+*.user
+*.aps
+
+/packages
+OutDir
+IntDir
+obj
+
+/*.nupkg

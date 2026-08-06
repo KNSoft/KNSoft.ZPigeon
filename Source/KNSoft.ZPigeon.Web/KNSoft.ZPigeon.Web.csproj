@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web" TreatAsLocalProperty="RunCodeAnalysis">
+  <PropertyGroup>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>$(Platform)</PlatformTarget>
+    <OutputPath>..\OutDir\$(Platform)\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="KNSoft.FirmwareSpec" Version="1.0.1-beta" />
+    <ProjectReference Include="..\KNSoft.ZPigeon.Server.Managed\KNSoft.ZPigeon.Server.Managed.csproj" />
+  </ItemGroup>
+</Project>
