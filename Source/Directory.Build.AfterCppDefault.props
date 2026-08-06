@@ -1,0 +1,14 @@
+﻿<Project>
+    <!-- [Overwrite defaults] -->
+    <PropertyGroup>
+        <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
+        <OutDir>$(SolutionDir)OutDir\$(KnsoftArch)\$(Configuration)\</OutDir>
+        <IntDir>IntDir\$(KnsoftArch)\$(Configuration)\</IntDir>
+    </PropertyGroup>
+    <PropertyGroup Label="Configuration">
+        <CharacterSet>Unicode</CharacterSet>
+    </PropertyGroup>
+    <PropertyGroup Condition="$(Configuration.Contains(`Debug`))" Label="Configuration">
+        <UseDebugLibraries>true</UseDebugLibraries>
+    </PropertyGroup>
+</Project>

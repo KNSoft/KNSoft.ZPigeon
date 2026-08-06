@@ -1,0 +1,30 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Rule Name="KNSoftMSVC"
+      DisplayName="KNSoft.MSVC"
+      PageTemplate="generic"
+      Order="9"
+      xmlns="http://schemas.microsoft.com/build/2009/properties">
+  <Rule.Categories>
+    <Category Name="Compiler" DisplayName="Compiler" />
+    <Category Name="Linker" DisplayName="Linker" />
+  </Rule.Categories>
+
+  <Rule.DataSource>
+    <DataSource Persistence="ProjectFile" HasConfigurationCondition="true" />
+  </Rule.DataSource>
+
+  <BoolProperty Name="OptimizeGlobalData"
+                DisplayName="Optimize Global Data"
+                Description="Pass /Gw to compile global data into individual COMDAT sections when enabled."
+                Category="Compiler" />
+
+  <BoolProperty Name="OmitCoffGroupInfo"
+                DisplayName="Omit COFF Group Information"
+                Description="Pass /NOCOFFGRPINFO when linking a Release image. Ignored when PGO is enabled."
+                Category="Linker" />
+
+  <BoolProperty Name="OmitRichHeader"
+                DisplayName="Omit Rich Header"
+                Description="Pass the undocumented /EMITTOOLVERSIONINFO:NO option to omit the Rich Header from a Release image. Ignored when PGO is enabled."
+                Category="Linker" />
+</Rule>

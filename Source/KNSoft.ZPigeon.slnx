@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="KNSoft.ZPigeon.Client.SDK/KNSoft.ZPigeon.Client.SDK.vcxproj" Id="2e04e015-390e-4360-95c3-981a2c3cc93d" />
+</Solution>
