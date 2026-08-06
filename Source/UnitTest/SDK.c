@@ -4,6 +4,7 @@
 #include <KNSoft/ZPigeon/Server.h>
 
 #include "../KNSoft.ZPigeon.Client.SDK/Client.inl"
+#include "../KNSoft.ZPigeon.Client.SDK/Network/Retry.inl"
 #include "../KNSoft.ZPigeon.Server.SDK/Server.inl"
 #include "../Network/Authentication.inl"
 #include "../Network/Quic.inl"
@@ -257,6 +258,15 @@ TEST_FUNC(SDKContract)
     TEST_OK(ZP_CLIENT_DEFAULT_RETRY_MAX_MILLISECONDS == 60000);
     TEST_OK(ZP_CLIENT_DEFAULT_STABLE_RESET_MILLISECONDS == 60000);
     TEST_OK(ZP_CLIENT_DEFAULT_RETRY_JITTER_PERCENT == 20);
+    TEST_OK(ZpClientRetry_GetBaseDelay(0) == 1000 &&
+            ZpClientRetry_GetBaseDelay(1) == 2000 &&
+            ZpClientRetry_GetBaseDelay(5) == 32000 &&
+            ZpClientRetry_GetBaseDelay(6) == 60000 &&
+            ZpClientRetry_GetBaseDelay(MAXULONG) == 60000);
+    TEST_OK(ZpClientRetry_GetDelay(0, 0) == 800 &&
+            ZpClientRetry_GetDelay(0, 400) == 1200);
+    TEST_OK(ZpClientRetry_GetDelay(6, 0) == 48000 &&
+            ZpClientRetry_GetDelay(6, 24000) == 72000);
     TEST_OK(ZpQuicAlpn.Length == sizeof(ZP_QUIC_ALPN) - sizeof(ANSI_NULL));
     TEST_OK(ZpQuic_StatusToNtStatus(QUIC_STATUS_CONNECTION_TIMEOUT) == STATUS_IO_TIMEOUT &&
             ZpQuic_StatusToNtStatus(QUIC_STATUS_INVALID_PARAMETER) == STATUS_INVALID_PARAMETER);

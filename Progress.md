@@ -35,8 +35,9 @@
 - 实现本地进程内 QUIC 端到端测试，以临时自签名证书和借用的进程内 P-256 身份密钥验证 TLS 专属根链、SNI、单 Stream、完整认证握手、模块交集以及双端异步关闭；
 - 修正 Schannel `INPROC_PEER_CERTIFICATE` 与原生 `PCCERT_CONTEXT` 混用导致的访问冲突，证书验证回调现在严格接收原生 Windows 证书 Context；
 - Client 不再只识别配置首项：QUIC Endpoint 可位于混合列表任意位置，同步建连准备失败时会继续尝试后续 QUIC Endpoint；
+- 固化重连退避计算：失败轮次按 1、2、4、8、16、32、60 秒封顶，并在每轮等待上应用正负 20% 的确定边界抖动；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 173 项断言全部通过，其中包含一条真实 localhost QUIC 端到端链路。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 176 项断言全部通过，其中包含一条真实 localhost QUIC 端到端链路。
 
 ## 下一步
 

@@ -153,6 +153,7 @@
     <ClInclude Include="Client.inl" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Client.h" />
     <ClInclude Include="Network\Quic.h" />
+    <ClInclude Include="Network\Retry.inl" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
