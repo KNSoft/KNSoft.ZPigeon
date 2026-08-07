@@ -427,7 +427,7 @@ Client `Start` 只允许 `Stopped -> Connecting`，Server `Start` 只允许 `Sto
 
 Client 在 `Ready` 状态可通过 `ZpClient_Ping` 发送调用方 Token；Server 协议层自动回送等值 Pong，Client 通过可选 Pong 回调交付 Token。该路径用于连接存活检测，不创建 Request 对象。
 
-Client 通过 `ZpClient_SendRequest` 创建引用计数 Request Handle；同步拒绝不会触发完成回调，成功提交后 Response、显式取消或连接终止恰好完成一次。调用方可通过 `ZpRequest_Cancel` 尽力发送 Cancel，并在不再使用句柄时调用 `ZpRequest_Close` 释放调用方引用。
+Client 通过 `ZpClient_SendRequest` 创建引用计数 Request Handle；同步拒绝不会触发完成回调，成功提交后 Response、显式取消或连接终止恰好完成一次。Transport 可以在发起 API 返回前同步交付 Response，因此完成回调允许重入发起线程并立即 `ZpRequest_Close`；SDK 在提交期间持有额外临时引用，发起 API 不会在回调关闭调用方引用后继续访问已释放对象。调用方可通过 `ZpRequest_Cancel` 尽力发送 Cancel，并在不再使用句柄时调用 `ZpRequest_Close` 释放调用方引用。
 
 EventLog Subscribe 的打开阶段仍以 Request Handle 表示；成功回调交付独立的 Subscription Handle。Record、远端终止、本地取消或连接终止按连接内顺序回调，终止回调恰好一次。调用方通过 `ZpSubscription_Cancel` 尽力请求取消远端订阅，并在终止回调返回后通过 `ZpSubscription_Close` 释放调用方引用。
 

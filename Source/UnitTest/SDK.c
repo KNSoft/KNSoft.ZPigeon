@@ -98,6 +98,9 @@ typedef struct _SDK_TEST_CONTEXT
     USHORT AuthorizedModuleId;
     USHORT AuthorizedOperationId;
     ULONG AuthorizedPayloadLength;
+    ZP_CLIENT_HANDLE SynchronousClient;
+    LOGICAL CompleteRequestInSend;
+    LOGICAL CloseRequestInCallback;
 } SDK_TEST_CONTEXT, *PSDK_TEST_CONTEXT;
 
 static
@@ -135,6 +138,7 @@ SDKTest_TransportSend(
 {
     PSDK_TEST_CONTEXT TestContext = Context;
     ZP_REQUEST_VIEW Request;
+    ZP_RESPONSE_VIEW Response;
     ZP_CHANNEL_DATA_VIEW ChannelData;
     ZP_CHANNEL_CLOSE ChannelClose;
 
@@ -151,6 +155,15 @@ SDKTest_TransportSend(
         TestContext->SendModuleId = Request.ModuleId;
         TestContext->SendOperationId = Request.OperationId;
         TestContext->SendPayloadLength = Request.Payload.Length;
+        if (TestContext->CompleteRequestInSend)
+        {
+            Response.RequestId = Request.RequestId;
+            Response.Status = STATUS_SUCCESS;
+            Response.Payload.Buffer = NULL;
+            Response.Payload.Length = 0;
+            return ZpClient_CompleteResponse(TestContext->SynchronousClient,
+                                             &Response);
+        }
     }
     else if (MessageType == ZpMessageCancel)
     {
@@ -193,13 +206,16 @@ SDKTest_RequestCompleteCallback(
 {
     PSDK_TEST_CONTEXT TestContext = Context;
 
-    UNREFERENCED_PARAMETER(Request);
     TestContext->RequestCompleteCount++;
     TestContext->RequestStatus = Status;
     TestContext->RequestPayloadLength = Payload->Length;
     if (TestContext->RequestCompleteEvent != NULL)
     {
         SetEvent(TestContext->RequestCompleteEvent);
+    }
+    if (TestContext->CloseRequestInCallback)
+    {
+        ZpRequest_Close(Request);
     }
 }
 
@@ -1016,6 +1032,23 @@ TEST_FUNC(SDKContract)
             TestContext.RequestStatus == STATUS_SUCCESS &&
             TestContext.RequestPayloadLength == sizeof(RootCertificate));
     ZpRequest_Close(Request);
+    TestContext.SynchronousClient = Client;
+    TestContext.CompleteRequestInSend = TRUE;
+    TestContext.CloseRequestInCallback = TRUE;
+    TEST_OK(NT_SUCCESS(ZpClient_SendRequest(Client,
+                                            1,
+                                            2,
+                                            1000,
+                                            NULL,
+                                            0,
+                                            SDKTest_RequestCompleteCallback,
+                                            &TestContext,
+                                            &Request)) &&
+            TestContext.RequestCompleteCount == 2 &&
+            TestContext.RequestStatus == STATUS_SUCCESS &&
+            TestContext.RequestPayloadLength == 0);
+    TestContext.CompleteRequestInSend = FALSE;
+    TestContext.CloseRequestInCallback = FALSE;
     TEST_OK(NT_SUCCESS(ZpClient_EnumerateFilesPage(Client,
                                                    L"C:\\Test",
                                                    7,
@@ -1631,7 +1664,7 @@ TEST_FUNC(SDKContract)
                                             &Request)) &&
             NT_SUCCESS(ZpRequest_Cancel(Request)) &&
             TestContext.SendMessageType == ZpMessageCancel &&
-            TestContext.RequestCompleteCount == 2 &&
+            TestContext.RequestCompleteCount == 3 &&
             TestContext.RequestStatus == STATUS_CANCELLED &&
             TestContext.RequestPayloadLength == 0);
     ZpRequest_Close(Request);
@@ -1648,7 +1681,7 @@ TEST_FUNC(SDKContract)
                                             &Request)) &&
             WaitForSingleObject(TestContext.RequestCompleteEvent, 1000) == WAIT_OBJECT_0 &&
             TestContext.SendMessageType == ZpMessageCancel &&
-            TestContext.RequestCompleteCount == 3 &&
+            TestContext.RequestCompleteCount == 4 &&
             TestContext.RequestStatus == STATUS_IO_TIMEOUT &&
             TestContext.RequestPayloadLength == 0);
     ZpRequest_Close(Request);

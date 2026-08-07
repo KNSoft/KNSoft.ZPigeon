@@ -171,6 +171,7 @@ StartClient(
 ## 异步 Handle 与 Buffer 规则
 
 - `ZpClient_*` 请求 API 成功返回时会交付 `ZP_REQUEST_HANDLE`；调用方不再需要取消或查询它时调用 `ZpRequest_Close` 释放自己的引用。
+- 完成回调可能在发起 API 返回前同步发生；回调可直接 `ZpRequest_Close`，应用不得依赖“函数先返回、回调后发生”的时序。
 - Request 回调恰好完成一次。超时在 Client 本地完成为 `STATUS_IO_TIMEOUT`，并尽力向 Server 发送 Cancel。
 - 回调参数中的 View/Buffer 只在当前回调返回前有效；需要长期持有时由应用自行复制。
 - Channel 和 Subscription 也使用引用计数 Handle；本地取消与远端结束均只产生一次终止回调，随后分别调用 `ZpChannel_Close` 或 `ZpSubscription_Close` 释放调用方引用。

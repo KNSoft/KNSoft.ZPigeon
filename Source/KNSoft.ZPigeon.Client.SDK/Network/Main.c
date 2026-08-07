@@ -690,7 +690,7 @@ ZpClient_SendRequest(
     }
     RtlZeroMemory(RequestObject, sizeof(*RequestObject));
     RequestObject->Owner = Object;
-    RequestObject->ReferenceCount = 2;
+    RequestObject->ReferenceCount = 3;
     RequestObject->Pending = TRUE;
     RequestObject->Callback = Callback;
     RequestObject->Context = Context;
@@ -763,6 +763,7 @@ ZpClient_SendRequest(
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
     *Request = (ZP_REQUEST_HANDLE)RequestObject;
+    ZpClient_ReleaseRequest(RequestObject);
     return STATUS_SUCCESS;
 }
 

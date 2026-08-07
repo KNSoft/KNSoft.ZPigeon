@@ -87,12 +87,13 @@
 - 增加每连接 Request Payload 总量配额：默认 64 MiB、配置硬上限 1 GiB，聚合预算在 Request 完成、取消、投递失败及连接关闭路径精确归还，单个超限请求在深拷贝前拒绝；
 - 限制 File 目录排序快照最多 65536 条、记录与排序指针总量最多 16 MiB，超限明确返回 `STATUS_QUOTA_EXCEEDED`；
 - 新增根目录 `README.md`，覆盖依赖与构建、最小 Client/Server 生命周期、证书输入、默认授权、异步 Handle/Buffer 所有权及第一版资源边界；
+- 修复 Client Request 同步回包重入竞态：提交期间增加临时引用，完成回调即使在发起 API 返回前调用 `ZpRequest_Close` 也不会造成后续访问已释放对象；SDK 契约测试以同步 Transport 回包覆盖该路径；
 - 扩展 localhost QUIC 集成测试，写入真实 Application 事件并验证 Record 内容、主动取消 Terminal，以及活动订阅随连接断开完成；
 - 扩展 localhost QUIC EventLog 恢复测试：持久化实时 Record Bookmark，离线产生事件后以 QueryPage 补页，再从补页 Bookmark 严格重新订阅并接收后续事件；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 335/335 项断言通过，其中包含 Request Payload/Channel/Subscription 配额、真实 Registry 全操作与默认值游标分页、Registry Client API 路由与回调解码、Registry/EventLog/Core Event Codec、Client Subscription 生命周期/乱序拒绝/取消、真实 File.EnumeratePage 连续翻页、File.OpenWrite 原子上传/取消清理、File.Hash SHA-256、ConPTY Terminal Create/输入/输出/Resize/退出/取消、真实 File.OpenRead 下载和既有管理操作端到端验证。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 336/336 项断言通过，其中包含同步回包重入关闭、Request Payload/Channel/Subscription 配额、真实 Registry 全操作与默认值游标分页、Registry Client API 路由与回调解码、Registry/EventLog/Core Event Codec、Client Subscription 生命周期/乱序拒绝/取消、真实 File.EnumeratePage 连续翻页、File.OpenWrite 原子上传/取消清理、File.Hash SHA-256、ConPTY Terminal Create/输入/输出/Resize/退出/取消、真实 File.OpenRead 下载和既有管理操作端到端验证。
 
 ## 下一步
 
