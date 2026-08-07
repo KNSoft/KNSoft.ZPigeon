@@ -320,3 +320,63 @@ ZpProcess_DecodeInfo(
     }
     return STATUS_SUCCESS;
 }
+
+NTSTATUS
+ZpProcess_EncodeTerminate(
+    _In_ ULONG ProcessId,
+    _In_ ULONG ExitCode,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+
+    if (ProcessId == 0)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *BytesWritten = 2 * sizeof(ULONG);
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < *BytesWritten)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt32(&Writer, ProcessId);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt32(&Writer, ExitCode);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpProcess_DecodeTerminate(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONG ProcessId,
+    _Out_ PULONG ExitCode)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    if (PayloadLength != 2 * sizeof(ULONG))
+    {
+        return STATUS_DATA_ERROR;
+    }
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt32(&Reader, ProcessId);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt32(&Reader, ExitCode);
+    }
+    if (NT_SUCCESS(Status) && *ProcessId == 0)
+    {
+        return STATUS_DATA_ERROR;
+    }
+    return Status;
+}

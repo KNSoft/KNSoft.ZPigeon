@@ -27,6 +27,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE ProcessInfoEvent;
     HANDLE ServiceListEvent;
     HANDLE ServiceInfoEvent;
+    HANDLE ProcessTerminateEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
@@ -61,6 +62,8 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONG ServiceInfoBinaryPathLength;
     volatile LONG AuthorizationCount;
     volatile LONG SawAuthenticatedClientId;
+    volatile LONG AllowControl;
+    volatile LONG ProcessTerminateStatus;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -265,6 +268,21 @@ SDKIntegration_ServiceInfoCallback(
 static
 VOID
 NTAPI
+SDKIntegration_ProcessTerminateCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    InterlockedExchange(&TestContext->ProcessTerminateStatus, Status);
+    SetEvent(TestContext->ProcessTerminateEvent);
+}
+
+static
+VOID
+NTAPI
 SDKIntegration_ServerStateCallback(
     _In_ ZP_SERVER_HANDLE Server,
     _In_ ZP_SERVER_STATE State,
@@ -330,7 +348,7 @@ SDKIntegration_ServerAuthorizeCallback(
     UNREFERENCED_PARAMETER(ModuleId);
     UNREFERENCED_PARAMETER(OperationId);
     UNREFERENCED_PARAMETER(Payload);
-    if (Access != ZpRequestAccessRead)
+    if (Access == ZpRequestAccessControl && !TestContext->AllowControl)
     {
         return STATUS_ACCESS_DENIED;
     }
@@ -613,12 +631,16 @@ TEST_FUNC(SDKQuicIntegration)
     NCRYPT_KEY_HANDLE IdentityKey = 0;
     HCERTSTORE CertificateStore = NULL;
     PCCERT_CONTEXT Certificate = NULL;
+    STARTUPINFOW StartupInfo = { sizeof(StartupInfo) };
+    PROCESS_INFORMATION TemporaryProcess = { 0 };
+    WCHAR TemporaryCommand[] = L"ping.exe -n 30 127.0.0.1";
     NTSTATUS Status;
     DWORD WaitStatus;
     DWORD ServerStopWait = MAXDWORD, RetryWait = MAXDWORD, ProcessWait = MAXDWORD;
     ULONG Index;
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -652,6 +674,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.ProcessInfoEvent = Events[9];
     TestContext.ServiceListEvent = Events[10];
     TestContext.ServiceInfoEvent = Events[11];
+    TestContext.ProcessTerminateEvent = Events[12];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -861,6 +884,63 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
+    if (!CreateProcessW(NULL,
+                        TemporaryCommand,
+                        NULL,
+                        NULL,
+                        FALSE,
+                        CREATE_NO_WINDOW,
+                        NULL,
+                        NULL,
+                        &StartupInfo,
+                        &TemporaryProcess))
+    {
+        goto Cleanup;
+    }
+    Status = ZpClient_TerminateProcess(Client,
+                                       TemporaryProcess.dwProcessId,
+                                       0x10203040,
+                                       SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                       SDKIntegration_ProcessTerminateCallback,
+                                       &TestContext,
+                                       &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.ProcessTerminateEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        TestContext.ProcessTerminateStatus != STATUS_ACCESS_DENIED ||
+        WaitForSingleObject(TemporaryProcess.hProcess, 0) != WAIT_TIMEOUT)
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.ProcessTerminateEvent);
+    InterlockedExchange(&TestContext.AllowControl, TRUE);
+    Status = ZpClient_TerminateProcess(Client,
+                                       TemporaryProcess.dwProcessId,
+                                       0x10203040,
+                                       SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                       SDKIntegration_ProcessTerminateCallback,
+                                       &TestContext,
+                                       &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.ProcessTerminateEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.ProcessTerminateStatus) ||
+        WaitForSingleObject(TemporaryProcess.hProcess,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0)
+    {
+        goto Cleanup;
+    }
+
     ResetEvent(TestContext.ServerRunningEvent);
     ResetEvent(TestContext.ClientReadyEvent);
     ResetEvent(TestContext.ServerReadyEvent);
@@ -944,6 +1024,20 @@ Cleanup:
     if (IdentityProvider != 0)
     {
         NCryptFreeObject(IdentityProvider);
+    }
+    if (TemporaryProcess.hProcess != NULL)
+    {
+        if (WaitForSingleObject(TemporaryProcess.hProcess, 0) == WAIT_TIMEOUT)
+        {
+            TerminateProcess(TemporaryProcess.hProcess, STATUS_CANCELLED);
+            WaitForSingleObject(TemporaryProcess.hProcess,
+                                SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
+        }
+        CloseHandle(TemporaryProcess.hProcess);
+    }
+    if (TemporaryProcess.hThread != NULL)
+    {
+        CloseHandle(TemporaryProcess.hThread);
     }
     if (Certificate != NULL)
     {

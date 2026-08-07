@@ -48,6 +48,13 @@ VOID
 
 typedef
 VOID
+(NTAPI *ZP_REQUEST_STATUS_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
 (NTAPI *ZP_SYSTEM_INFO_CALLBACK)(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ NTSTATUS Status,
@@ -164,6 +171,17 @@ ZpClient_QueryProcess(
     _In_ ULONG ProcessId,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_PROCESS_QUERY_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_TerminateProcess(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ExitCode,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 

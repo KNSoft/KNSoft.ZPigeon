@@ -453,6 +453,8 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 
 `Process.Query` 固定为 `OperationId = 2`，请求 Payload 为 `UINT32 ProcessId`。成功响应依次编码 `UINT32 ProcessId`、父 ProcessId、SessionId、ThreadCount、HandleCount，随后为五个 `UINT64`：CreateTime、UserTime、KernelTime、WorkingSetBytes、PrivateBytes，最后为 UTF-16LE ImageName；时间值沿用 Windows 100ns 原生计数。
 
+`Process.Terminate` 固定为 `OperationId = 3` 且访问级别为 `Control`，请求 Payload 依次为非零 `UINT32 ProcessId` 和 `UINT32 ExitCode`，成功响应 Payload 为空。Server 只有在授权门禁放行后才打开目标进程并调用系统终止接口；未配置授权回调时固定返回 `STATUS_ACCESS_DENIED`。
+
 `Service` 模块第一版固定为 `ModuleId = 3`、`ModuleVersion = 1`；`Enumerate` 固定为 `OperationId = 1`，请求 Payload 必须为空。成功响应 Payload 为数组，单项依次编码 `UINT32 ServiceType`、`CurrentState`、`ProcessId`，随后为 UTF-16LE ServiceName 和 DisplayName 字符串。字段值沿用 Windows Service Control Manager 定义；停止中的服务可返回 PID 0。
 
 `Service.Query` 固定为 `OperationId = 2`，请求 Payload 为非空 UTF-16LE ServiceName 字符串。成功响应依次编码 `UINT32 ServiceType`、`CurrentState`、`ProcessId`、`StartType`、`ErrorControl`，随后为 UTF-16LE ServiceName、DisplayName、BinaryPathName 和 StartName 字符串；配置和状态字段沿用 Windows Service Control Manager 定义。
@@ -503,7 +505,7 @@ QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接�
 
 以下内容不阻塞 Network 和通用 Protocol 编码，在实现对应模块前定稿：
 
-1. 除已固定的 System.Info、Process.Enumerate、Process.Query、Service.Enumerate 和 Service.Query 外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
+1. 除已固定的 System.Info、Process.Enumerate、Process.Query、Process.Terminate、Service.Enumerate 和 Service.Query 外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
 2. File 通道的窗口、哈希、断点续传和落盘契约；
 3. Terminal 通道的输入输出分流、窗口调整和退出状态 Payload；
 4. EventLog 等订阅模块的事件丢失与恢复语义；

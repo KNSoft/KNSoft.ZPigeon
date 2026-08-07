@@ -985,6 +985,83 @@ ZpClient_QueryProcess(
     return Status;
 }
 
+typedef struct _ZP_CLIENT_STATUS_CONTEXT
+{
+    ZP_REQUEST_STATUS_CALLBACK Callback;
+    PVOID Context;
+} ZP_CLIENT_STATUS_CONTEXT, *PZP_CLIENT_STATUS_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpClient_StatusComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_STATUS_CONTEXT StatusContext = Context;
+
+    if (NT_SUCCESS(Status) && Payload->Length != 0)
+    {
+        Status = STATUS_DATA_ERROR;
+    }
+    StatusContext->Callback(Request, Status, StatusContext->Context);
+    Mem_Free(StatusContext);
+}
+
+NTSTATUS
+NTAPI
+ZpClient_TerminateProcess(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ExitCode,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_CLIENT_STATUS_CONTEXT StatusContext;
+    BYTE Payload[2 * sizeof(ULONG)];
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpProcess_EncodeTerminate(ProcessId,
+                                       ExitCode,
+                                       Payload,
+                                       sizeof(Payload),
+                                       &PayloadLength);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    StatusContext = Mem_Alloc(sizeof(*StatusContext));
+    if (StatusContext == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    StatusContext->Callback = Callback;
+    StatusContext->Context = Context;
+    Status = ZpClient_SendRequest(Client,
+                                  ZP_PROCESS_MODULE_ID,
+                                  ZP_PROCESS_OPERATION_TERMINATE,
+                                  TimeoutMilliseconds,
+                                  Payload,
+                                  PayloadLength,
+                                  ZpClient_StatusComplete,
+                                  StatusContext,
+                                  Request);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(StatusContext);
+    }
+    return Status;
+}
+
 typedef struct _ZP_CLIENT_SERVICE_ENUMERATE_CONTEXT
 {
     ZP_SERVICE_ENUMERATE_CALLBACK Callback;

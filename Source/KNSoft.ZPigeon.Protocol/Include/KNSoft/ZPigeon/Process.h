@@ -8,6 +8,7 @@ EXTERN_C_START
 #define ZP_PROCESS_MODULE_VERSION 1
 #define ZP_PROCESS_OPERATION_ENUMERATE 1
 #define ZP_PROCESS_OPERATION_QUERY 2
+#define ZP_PROCESS_OPERATION_TERMINATE 3
 
 typedef struct _ZP_PROCESS_RECORD
 {
@@ -113,5 +114,20 @@ ZpProcess_DecodeInfo(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_PROCESS_INFO_VIEW View);
+
+NTSTATUS
+ZpProcess_EncodeTerminate(
+    _In_ ULONG ProcessId,
+    _In_ ULONG ExitCode,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpProcess_DecodeTerminate(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONG ProcessId,
+    _Out_ PULONG ExitCode);
 
 EXTERN_C_END

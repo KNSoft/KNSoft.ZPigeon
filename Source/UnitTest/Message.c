@@ -81,7 +81,7 @@ TEST_FUNC(ProtocolMessage)
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value;
-    ULONG Length, Index;
+    ULONG Length, Index, ExitCode;
 
     for (Index = 0; Index < ARRAYSIZE(Challenge); Index++)
     {
@@ -245,6 +245,23 @@ TEST_FUNC(ProtocolMessage)
             ProcessInfoView.WorkingSetBytes == ProcessInfo.WorkingSetBytes &&
             ProcessInfoView.PrivateBytes == ProcessInfo.PrivateBytes &&
             ProcessInfoView.ImageName.Length == ProcessInfo.ImageNameLength);
+    TEST_OK(NT_SUCCESS(ZpProcess_EncodeTerminate(ProcessInfo.ProcessId,
+                                                 0x10203040,
+                                                 Buffer,
+                                                 sizeof(Buffer),
+                                                 &Length)) &&
+            Length == 2 * sizeof(ULONG) &&
+            NT_SUCCESS(ZpProcess_DecodeTerminate(Buffer,
+                                                 Length,
+                                                 &Index,
+                                                 &ExitCode)) &&
+            Index == ProcessInfo.ProcessId &&
+            ExitCode == 0x10203040);
+    TEST_OK(ZpProcess_EncodeTerminate(0,
+                                      0,
+                                      NULL,
+                                      0,
+                                      &Length) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpService_EncodeList(Services,
                                            ARRAYSIZE(Services),
                                            Buffer,

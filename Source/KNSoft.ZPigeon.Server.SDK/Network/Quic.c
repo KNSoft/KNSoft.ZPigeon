@@ -295,6 +295,28 @@ ZpServerQuic_QueryProcess(
 
 static
 NTSTATUS
+ZpServerQuic_TerminateProcess(
+    _In_ ULONG ProcessId,
+    _In_ ULONG ExitCode)
+{
+    HANDLE Process;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    Process = OpenProcess(PROCESS_TERMINATE, FALSE, ProcessId);
+    if (Process == NULL)
+    {
+        return NTSTATUS_FROM_WIN32(GetLastError());
+    }
+    if (!TerminateProcess(Process, ExitCode))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+    }
+    CloseHandle(Process);
+    return Status;
+}
+
+static
+NTSTATUS
 ZpServerQuic_EnumerateServices(
     _Outptr_result_bytebuffer_(*PayloadLength) PBYTE* Payload,
     _Out_ PULONG PayloadLength)
@@ -622,8 +644,9 @@ ZpServerQuic_RequestCallback(
     const VOID* ResponsePayload = NULL;
     PBYTE AllocatedPayload = NULL;
     ULONG PayloadLength = 0;
-    ULONG ProcessId;
+    ULONG ProcessId, ExitCode;
     ZP_STRING_VIEW ServiceName;
+    ZP_REQUEST_ACCESS Access;
     NTSTATUS Status = STATUS_SUCCESS;
     LOGICAL SendResponse;
 
@@ -647,11 +670,15 @@ ZpServerQuic_RequestCallback(
             Request->PayloadLength
         };
 
+        Access = Request->ModuleId == ZP_PROCESS_MODULE_ID &&
+                 Request->OperationId == ZP_PROCESS_OPERATION_TERMINATE ?
+                     ZpRequestAccessControl :
+                     ZpRequestAccessRead;
         Status = ZpServer_AuthorizeRequest(
             (ZP_SERVER_HANDLE)QuicConnection->Transport->Owner,
             (ZP_CONNECTION_HANDLE)QuicConnection,
             QuicConnection->ClientId,
-            ZpRequestAccessRead,
+            Access,
             Request->ModuleId,
             Request->OperationId,
             &RequestPayload);
@@ -696,6 +723,18 @@ ZpServerQuic_RequestCallback(
                                                    &AllocatedPayload,
                                                    &PayloadLength);
                 ResponsePayload = AllocatedPayload;
+            }
+        }
+        else if (Request->ModuleId == ZP_PROCESS_MODULE_ID &&
+                 Request->OperationId == ZP_PROCESS_OPERATION_TERMINATE)
+        {
+            Status = ZpProcess_DecodeTerminate(Request->Payload,
+                                               Request->PayloadLength,
+                                               &ProcessId,
+                                               &ExitCode);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_TerminateProcess(ProcessId, ExitCode);
             }
         }
         else if (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
