@@ -75,6 +75,7 @@
 - 实现 Server EventLog.QueryPage：使用 Windows Event Log API 按 Channel/XPath 正向查询，以 `EvtSeekStrict` 从 Bookmark 后精确续页，渲染原生 Bookmark 与事件 XML，并按 Frame 容量安全截页；
 - 扩展 localhost QUIC 集成测试，覆盖 System 日志首个事件分页和严格 Bookmark 续页；
 - 实现 Server EventLog 实时订阅：以 Windows 拉取订阅和手动复位事件驱动 64 条有界批次，严格递增 Sequence、持续更新 Bookmark，并实现 Unsubscribe 响应截止点、错误 Terminal 与连接关闭清理；
+- 收紧 EventLog 缺口检测和批次排空：Future、Oldest、AfterBookmark 均启用 `EvtSubscribeStrict`，只有 `EvtNext` 明确返回 `ERROR_NO_MORE_ITEMS` 后才复位通知事件，日志过期错误会转为显式 Terminal；
 - 扩展 localhost QUIC 集成测试，写入真实 Application 事件并验证 Record 内容、主动取消 Terminal，以及活动订阅随连接断开完成；
 - 扩展 localhost QUIC EventLog 恢复测试：持久化实时 Record Bookmark，离线产生事件后以 QueryPage 补页，再从补页 Bookmark 严格重新订阅并接收后续事件；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
@@ -84,8 +85,8 @@
 
 ## 下一步
 
-1. 复核 EventLog 高速生产下的批次调度与显式日志过期 Terminal；
-2. 根据实际需求定稿下一业务模块的 Version 1 协议并实施。
+1. 根据实际需求定稿下一业务模块的 Version 1 协议并实施；
+2. 继续扩展 EventLog 极端吞吐、超大 XML 和日志轮转压力测试。
 
 ## 待确认与阻塞
 

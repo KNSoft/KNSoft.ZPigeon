@@ -1259,10 +1259,10 @@ ZpServerQuic_SubscriptionWaitCallback(
     PZP_SERVER_QUIC_SUBSCRIPTION Subscription = Context;
     PZP_SERVER_QUIC_CONNECTION QuicConnection = Subscription->Connection;
     EVT_HANDLE Events[ZP_SERVER_EVENT_LOG_BATCH_COUNT] = { 0 };
-    DWORD ReturnedCount = 0, Error;
+    DWORD ReturnedCount = 0, BatchCount, Error;
     ULONG Index;
     NTSTATUS Status = STATUS_SUCCESS;
-    LOGICAL Pending;
+    LOGICAL Drained = FALSE, Pending;
 
     UNREFERENCED_PARAMETER(Instance);
     UNREFERENCED_PARAMETER(Wait);
@@ -1274,18 +1274,33 @@ ZpServerQuic_SubscriptionWaitCallback(
     {
         return;
     }
-    if (!EvtNext(Subscription->EventLogHandle,
-                 ARRAYSIZE(Events),
-                 Events,
-                 0,
-                 0,
-                 &ReturnedCount))
+    while (ReturnedCount < ARRAYSIZE(Events))
     {
-        Error = GetLastError();
-        if (Error != ERROR_NO_MORE_ITEMS)
+        BatchCount = 0;
+        if (!EvtNext(Subscription->EventLogHandle,
+                     ARRAYSIZE(Events) - ReturnedCount,
+                     &Events[ReturnedCount],
+                     0,
+                     0,
+                     &BatchCount))
         {
-            Status = NTSTATUS_FROM_WIN32(Error);
+            Error = GetLastError();
+            if (Error == ERROR_NO_MORE_ITEMS)
+            {
+                Drained = TRUE;
+            }
+            else
+            {
+                Status = NTSTATUS_FROM_WIN32(Error);
+            }
+            break;
         }
+        if (BatchCount == 0)
+        {
+            Status = STATUS_DATA_ERROR;
+            break;
+        }
+        ReturnedCount += BatchCount;
     }
     for (Index = 0; NT_SUCCESS(Status) && Index < ReturnedCount; Index++)
     {
@@ -1312,7 +1327,7 @@ ZpServerQuic_SubscriptionWaitCallback(
     Pending = Subscription->Pending && !QuicConnection->Closing;
     if (Pending)
     {
-        if (ReturnedCount < ARRAYSIZE(Events))
+        if (Drained)
         {
             ResetEvent(Subscription->SignalEvent);
         }
@@ -1359,11 +1374,11 @@ ZpServerQuic_CreateEventLogSubscription(
     }
     if (Request->StartMode == ZpEventLogStartFuture)
     {
-        Flags = EvtSubscribeToFutureEvents;
+        Flags = EvtSubscribeToFutureEvents | EvtSubscribeStrict;
     }
     else if (Request->StartMode == ZpEventLogStartOldest)
     {
-        Flags = EvtSubscribeStartAtOldestRecord;
+        Flags = EvtSubscribeStartAtOldestRecord | EvtSubscribeStrict;
     }
     else
     {
