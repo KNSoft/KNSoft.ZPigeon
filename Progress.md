@@ -72,6 +72,8 @@
 - 定稿 EventLog Version 1：分页查询、严格 Bookmark Seek、实时订阅序号、显式 Terminal、队列溢出/日志过期检测，以及从最后持久化 Bookmark 补页后重新订阅的至少一次恢复语义；
 - 实现 Core Event 与 EventLog Version 1 类型化 Codec：QueryPage、Subscribe/Unsubscribe、Record/Terminal、分页记录 View 和边界校验均接入 Protocol 静态库；
 - 实现 Client EventLog API 与引用计数 Subscription Handle：打开阶段复用 Request，Record 严格校验连续 Sequence，Terminal/断线/取消单次完成，Unsubscribe 成功 Response 作为发送截止点，SDK 内部取消 Request 自动回收；
+- 实现 Server EventLog.QueryPage：使用 Windows Event Log API 按 Channel/XPath 正向查询，以 `EvtSeekStrict` 从 Bookmark 后精确续页，渲染原生 Bookmark 与事件 XML，并按 Frame 容量安全截页；
+- 扩展 localhost QUIC 集成测试，覆盖 System 日志首个事件分页和严格 Bookmark 续页；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
@@ -79,8 +81,8 @@
 
 ## 下一步
 
-1. 实现 Server Windows Event Log QueryPage 与实时订阅执行路径；
-2. 增加 localhost QUIC EventLog 分页、实时 Record、取消和恢复端到端测试。
+1. 实现 Server Windows Event Log 实时订阅、Unsubscribe 和 Terminal 执行路径；
+2. 增加 localhost QUIC EventLog 实时 Record、取消、断线 Terminal 和恢复端到端测试。
 
 ## 待确认与阻塞
 

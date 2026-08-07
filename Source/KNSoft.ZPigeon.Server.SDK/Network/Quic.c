@@ -2,6 +2,7 @@
 #include "../../Network/Authentication.inl"
 #include "../../Network/Quic.inl"
 
+#include <KNSoft/ZPigeon/EventLog.h>
 #include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/Service.h>
@@ -10,10 +11,12 @@
 
 #include <Bcrypt.h>
 #include <stdlib.h>
+#include <winevt.h>
 #include <Winsvc.h>
 
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Bcrypt.lib")
+#pragma comment(lib, "Wevtapi.lib")
 
 #define ZP_SERVER_FILE_CHANNEL_CHUNK_SIZE 0x00010000UL
 #define ZP_SERVER_FILE_WRITE_WINDOW_SIZE 0x00100000UL
@@ -665,6 +668,314 @@ Cleanup:
         CloseServiceHandle(Manager);
     }
     Mem_Free(ServiceName);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpServerQuic_CopyStringView(
+    _In_ PCZP_STRING_VIEW View,
+    _Outptr_result_z_ PWCHAR* String)
+{
+    *String = Mem_Alloc(((SIZE_T)View->Length + 1) * sizeof(WCHAR));
+    if (*String == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    RtlCopyMemory(*String,
+                  View->Buffer,
+                  (SIZE_T)View->Length * sizeof(WCHAR));
+    (*String)[View->Length] = UNICODE_NULL;
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpServerQuic_RenderEventLogString(
+    _In_opt_ EVT_HANDLE Context,
+    _In_ EVT_HANDLE Fragment,
+    _In_ DWORD Flags,
+    _In_ ULONG MaximumLength,
+    _Outptr_result_buffer_(*Length) PWCHAR* String,
+    _Out_ PULONG Length)
+{
+    PWCHAR Buffer;
+    DWORD BufferUsed = 0, PropertyCount = 0, Error;
+    NTSTATUS Status;
+
+    *String = NULL;
+    *Length = 0;
+    if (EvtRender(Context,
+                  Fragment,
+                  Flags,
+                  0,
+                  NULL,
+                  &BufferUsed,
+                  &PropertyCount))
+    {
+        return STATUS_DATA_ERROR;
+    }
+    Error = GetLastError();
+    if (Error != ERROR_INSUFFICIENT_BUFFER)
+    {
+        return NTSTATUS_FROM_WIN32(Error);
+    }
+    if (BufferUsed < sizeof(WCHAR) ||
+        BufferUsed % sizeof(WCHAR) != 0 ||
+        BufferUsed / sizeof(WCHAR) - 1 > MaximumLength)
+    {
+        return STATUS_BUFFER_OVERFLOW;
+    }
+    Buffer = Mem_Alloc(BufferUsed);
+    if (Buffer == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    if (!EvtRender(Context,
+                   Fragment,
+                   Flags,
+                   BufferUsed,
+                   Buffer,
+                   &BufferUsed,
+                   &PropertyCount))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        Mem_Free(Buffer);
+        return Status;
+    }
+    if (BufferUsed < sizeof(WCHAR) ||
+        BufferUsed % sizeof(WCHAR) != 0 ||
+        Buffer[BufferUsed / sizeof(WCHAR) - 1] != UNICODE_NULL)
+    {
+        Mem_Free(Buffer);
+        return STATUS_DATA_ERROR;
+    }
+    *String = Buffer;
+    *Length = BufferUsed / sizeof(WCHAR) - 1;
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpServerQuic_QueryEventLogPage(
+    _In_ const ZP_EVENT_LOG_QUERY_VIEW* Query,
+    _In_ volatile LONG* Pending,
+    _Outptr_result_bytebuffer_(*PayloadLength) PBYTE* Payload,
+    _Out_ PULONG PayloadLength)
+{
+    EVT_HANDLE QueryHandle = NULL, BookmarkHandle = NULL;
+    EVT_HANDLE Events[ZP_EVENT_LOG_PAGE_MAX_COUNT + 1] = { 0 };
+    ZP_EVENT_LOG_RECORD Records[ZP_EVENT_LOG_PAGE_MAX_COUNT] = { 0 };
+    PWCHAR ChannelPath = NULL, QueryString = NULL, BookmarkString = NULL;
+    PCWCH NextBookmark;
+    ULONG NextBookmarkLength;
+    DWORD ReturnedCount = 0, Error;
+    ULONG RecordCount = 0, TargetCount, Index;
+    ULONGLONG EncodedRecordsLength = 0, CandidateLength;
+    BOOLEAN HasMore;
+    NTSTATUS Status;
+
+    *Payload = NULL;
+    *PayloadLength = 0;
+    Status = ZpServerQuic_CopyStringView(&Query->ChannelPath, &ChannelPath);
+    if (!NT_SUCCESS(Status))
+    {
+        goto Cleanup;
+    }
+    if (Query->Query.Length != 0)
+    {
+        Status = ZpServerQuic_CopyStringView(&Query->Query, &QueryString);
+        if (!NT_SUCCESS(Status))
+        {
+            goto Cleanup;
+        }
+    }
+    QueryHandle = EvtQuery(NULL,
+                           ChannelPath,
+                           QueryString,
+                           EvtQueryChannelPath | EvtQueryForwardDirection);
+    if (QueryHandle == NULL)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    if (Query->StartMode == ZpEventLogStartAfterBookmark)
+    {
+        Status = ZpServerQuic_CopyStringView(&Query->Bookmark,
+                                             &BookmarkString);
+        if (!NT_SUCCESS(Status))
+        {
+            goto Cleanup;
+        }
+        BookmarkHandle = EvtCreateBookmark(BookmarkString);
+        if (BookmarkHandle == NULL)
+        {
+            Status = NTSTATUS_FROM_WIN32(GetLastError());
+            goto Cleanup;
+        }
+        if (!EvtSeek(QueryHandle,
+                     1,
+                     BookmarkHandle,
+                     0,
+                     EvtSeekRelativeToBookmark | EvtSeekStrict))
+        {
+            Status = NTSTATUS_FROM_WIN32(GetLastError());
+            goto Cleanup;
+        }
+        EvtClose(BookmarkHandle);
+        BookmarkHandle = NULL;
+    }
+    if (!InterlockedCompareExchange(Pending, TRUE, TRUE))
+    {
+        Status = STATUS_CANCELLED;
+        goto Cleanup;
+    }
+    if (!EvtNext(QueryHandle,
+                 Query->MaxEvents + 1,
+                 Events,
+                 INFINITE,
+                 0,
+                 &ReturnedCount))
+    {
+        Error = GetLastError();
+        if (Error != ERROR_NO_MORE_ITEMS)
+        {
+            Status = NTSTATUS_FROM_WIN32(Error);
+            goto Cleanup;
+        }
+    }
+    HasMore = ReturnedCount > Query->MaxEvents;
+    TargetCount = min(ReturnedCount, Query->MaxEvents);
+    if (TargetCount != 0)
+    {
+        BookmarkHandle = EvtCreateBookmark(NULL);
+        if (BookmarkHandle == NULL)
+        {
+            Status = NTSTATUS_FROM_WIN32(GetLastError());
+            goto Cleanup;
+        }
+    }
+    for (Index = 0; Index < TargetCount; Index++)
+    {
+        if (!InterlockedCompareExchange(Pending, TRUE, TRUE))
+        {
+            Status = STATUS_CANCELLED;
+            goto Cleanup;
+        }
+        if (!EvtUpdateBookmark(BookmarkHandle, Events[Index]))
+        {
+            Status = NTSTATUS_FROM_WIN32(GetLastError());
+            goto Cleanup;
+        }
+        Status = ZpServerQuic_RenderEventLogString(
+            NULL,
+            BookmarkHandle,
+            EvtRenderBookmark,
+            ZP_EVENT_LOG_BOOKMARK_MAX_LENGTH,
+            (PWCHAR*)&Records[Index].Bookmark,
+            &Records[Index].BookmarkLength);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpServerQuic_RenderEventLogString(
+                NULL,
+                Events[Index],
+                EvtRenderEventXml,
+                ZP_EVENT_LOG_XML_MAX_LENGTH,
+                (PWCHAR*)&Records[Index].Xml,
+                &Records[Index].XmlLength);
+        }
+        if (!NT_SUCCESS(Status))
+        {
+            goto Cleanup;
+        }
+        CandidateLength = sizeof(BYTE) + 2 * sizeof(ULONG) +
+                          EncodedRecordsLength + 2 * sizeof(ULONG) +
+                          ((ULONGLONG)Records[Index].BookmarkLength * 2 +
+                           Records[Index].XmlLength) * sizeof(WCHAR);
+        if (CandidateLength > ZP_FRAME_MAX_BODY_SIZE - 12)
+        {
+            Mem_Free((PVOID)Records[Index].Xml);
+            Mem_Free((PVOID)Records[Index].Bookmark);
+            Records[Index].Xml = NULL;
+            Records[Index].Bookmark = NULL;
+            if (RecordCount == 0)
+            {
+                Status = STATUS_BUFFER_OVERFLOW;
+                goto Cleanup;
+            }
+            HasMore = TRUE;
+            break;
+        }
+        EncodedRecordsLength += 2 * sizeof(ULONG) +
+                                ((ULONGLONG)Records[Index].BookmarkLength +
+                                 Records[Index].XmlLength) * sizeof(WCHAR);
+        RecordCount++;
+    }
+    if (RecordCount != 0)
+    {
+        NextBookmark = Records[RecordCount - 1].Bookmark;
+        NextBookmarkLength = Records[RecordCount - 1].BookmarkLength;
+    }
+    else
+    {
+        NextBookmark = (PCWCH)Query->Bookmark.Buffer;
+        NextBookmarkLength = Query->Bookmark.Length;
+    }
+    Status = ZpEventLog_EncodePage(HasMore,
+                                   Records,
+                                   RecordCount,
+                                   NextBookmark,
+                                   NextBookmarkLength,
+                                   NULL,
+                                   0,
+                                   PayloadLength);
+    *Payload = NT_SUCCESS(Status) ? Mem_Alloc(*PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && *Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpEventLog_EncodePage(HasMore,
+                                       Records,
+                                       RecordCount,
+                                       NextBookmark,
+                                       NextBookmarkLength,
+                                       *Payload,
+                                       *PayloadLength,
+                                       PayloadLength);
+    }
+
+Cleanup:
+    for (Index = 0; Index < ARRAYSIZE(Events); Index++)
+    {
+        if (Events[Index] != NULL)
+        {
+            EvtClose(Events[Index]);
+        }
+    }
+    for (Index = 0; Index < ARRAYSIZE(Records); Index++)
+    {
+        Mem_Free((PVOID)Records[Index].Xml);
+        Mem_Free((PVOID)Records[Index].Bookmark);
+    }
+    if (BookmarkHandle != NULL)
+    {
+        EvtClose(BookmarkHandle);
+    }
+    if (QueryHandle != NULL)
+    {
+        EvtClose(QueryHandle);
+    }
+    Mem_Free(BookmarkString);
+    Mem_Free(QueryString);
+    Mem_Free(ChannelPath);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(*Payload);
+        *Payload = NULL;
+        *PayloadLength = 0;
+    }
     return Status;
 }
 
@@ -2424,6 +2735,7 @@ ZpServerQuic_RequestCallback(
     ZP_FILE_CREATE_DISPOSITION FileDisposition;
     BYTE FileDigest[ZP_FILE_SHA256_SIZE];
     ZP_TERMINAL_CREATE_VIEW TerminalCreate;
+    ZP_EVENT_LOG_QUERY_VIEW EventLogQuery;
     ULONGLONG FileSize, FileOffset, TerminalChannelId;
     USHORT Columns, Rows;
     ZP_REQUEST_ACCESS Access;
@@ -2733,6 +3045,21 @@ ZpServerQuic_RequestCallback(
                     TerminalChannelId,
                     Columns,
                     Rows);
+            }
+        }
+        else if (Request->ModuleId == ZP_EVENT_LOG_MODULE_ID &&
+                 Request->OperationId == ZP_EVENT_LOG_OPERATION_QUERY_PAGE)
+        {
+            Status = ZpEventLog_DecodeQueryPageRequest(Request->Payload,
+                                                       Request->PayloadLength,
+                                                       &EventLogQuery);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_QueryEventLogPage(&EventLogQuery,
+                                                        &Request->Pending,
+                                                        &AllocatedPayload,
+                                                        &PayloadLength);
+                ResponsePayload = AllocatedPayload;
             }
         }
         else

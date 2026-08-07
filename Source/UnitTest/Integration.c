@@ -35,6 +35,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE FileInfoEvent;
     HANDLE FileListEvent;
     HANDLE FilePageEvent;
+    HANDLE EventLogPageEvent;
     HANDLE FileHashEvent;
     HANDLE FileReadEvent;
     HANDLE FileWriteEvent;
@@ -93,6 +94,12 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONG FilePageCursorLength;
     WCHAR FilePageName[MAX_PATH];
     ULONG FilePageNameLength;
+    volatile LONG EventLogPageStatus;
+    ULONG EventLogPageCount;
+    BOOLEAN EventLogHasMore;
+    WCHAR EventLogBookmark[4096];
+    ULONG EventLogBookmarkLength;
+    ULONG EventLogXmlLength;
     volatile LONG FileHashStatus;
     ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
     ULONGLONG FileHashSize;
@@ -455,6 +462,56 @@ SDKIntegration_FilePageCallback(
     }
     InterlockedExchange(&TestContext->FilePageStatus, Status);
     SetEvent(TestContext->FilePageEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_EventLogPageCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ const ZP_EVENT_LOG_PAGE_VIEW* Page,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+    ZP_EVENT_LOG_RECORD_VIEW Record;
+    ULONG Index;
+
+    UNREFERENCED_PARAMETER(Request);
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->EventLogPageCount = Page->Records.Count;
+        TestContext->EventLogHasMore = Page->HasMore;
+        TestContext->EventLogBookmarkLength = Page->NextBookmark.Length;
+        if (Page->NextBookmark.Length >=
+            ARRAYSIZE(TestContext->EventLogBookmark))
+        {
+            Status = STATUS_NAME_TOO_LONG;
+        }
+        else if (Page->NextBookmark.Length != 0)
+        {
+            RtlCopyMemory(TestContext->EventLogBookmark,
+                          Page->NextBookmark.Buffer,
+                          (SIZE_T)Page->NextBookmark.Length * sizeof(WCHAR));
+        }
+    }
+    for (Index = 0;
+         NT_SUCCESS(Status) && Index < Page->Records.Count;
+         Index++)
+    {
+        Status = ZpEventLog_GetRecord(&Page->Records, Index, &Record);
+        if (NT_SUCCESS(Status) &&
+            (Record.Bookmark.Length == 0 || Record.Xml.Length == 0))
+        {
+            Status = STATUS_DATA_ERROR;
+        }
+        if (NT_SUCCESS(Status))
+        {
+            TestContext->EventLogXmlLength = Record.Xml.Length;
+        }
+    }
+    InterlockedExchange(&TestContext->EventLogPageStatus, Status);
+    SetEvent(TestContext->EventLogPageEvent);
 }
 
 static
@@ -1160,14 +1217,16 @@ TEST_FUNC(SDKQuicIntegration)
         { 2, 1, 0x03 },
         { 3, 1, 0x01 },
         { 4, 1, 0x03 },
-        { 5, 1, 0x00 }
+        { 5, 1, 0x00 },
+        { 6, 1, 0x00 }
     };
     ZP_MODULE_RECORD ServerModules[] = {
         { 1, 2, 0x05 },
         { 2, 1, 0x03 },
         { 3, 1, 0x01 },
         { 4, 1, 0x03 },
-        { 5, 1, 0x00 }
+        { 5, 1, 0x00 },
+        { 6, 1, 0x00 }
     };
     ZP_ENDPOINT Endpoint = { ZpTransportQuic, L"127.0.0.1", 0, ServerName, NULL };
     ZP_LISTENER_ENDPOINT Listener = { ZpTransportQuic, L"127.0.0.1", 0, NULL };
@@ -1189,6 +1248,8 @@ TEST_FUNC(SDKQuicIntegration)
     WCHAR UploadSearchPath[MAX_PATH];
     WCHAR FirstPageName[MAX_PATH];
     ULONG FirstPageNameLength;
+    WCHAR FirstEventBookmark[4096];
+    ULONG FirstEventBookmarkLength;
     BYTE FileWriteData[0x20000 + 17];
     NTSTATUS Status;
     DWORD WaitStatus;
@@ -1201,6 +1262,7 @@ TEST_FUNC(SDKQuicIntegration)
     BYTE ExpectedFileDigest[ZP_FILE_SHA256_SIZE];
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -1250,12 +1312,13 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.FileInfoEvent = Events[14];
     TestContext.FileListEvent = Events[15];
     TestContext.FilePageEvent = Events[16];
-    TestContext.FileHashEvent = Events[17];
-    TestContext.FileReadEvent = Events[18];
-    TestContext.FileWriteEvent = Events[19];
-    TestContext.TerminalWritableEvent = Events[20];
-    TestContext.TerminalResizeEvent = Events[21];
-    TestContext.TerminalCloseEvent = Events[22];
+    TestContext.EventLogPageEvent = Events[17];
+    TestContext.FileHashEvent = Events[18];
+    TestContext.FileReadEvent = Events[19];
+    TestContext.FileWriteEvent = Events[20];
+    TestContext.TerminalWritableEvent = Events[21];
+    TestContext.TerminalResizeEvent = Events[22];
+    TestContext.TerminalCloseEvent = Events[23];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -1347,6 +1410,74 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.ClientPongEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         TestContext.ClientPongToken != 0x0102030405060708)
+    {
+        goto Cleanup;
+    }
+
+    Status = ZpClient_QueryEventLogPage(
+        Client,
+        ZpEventLogStartOldest,
+        1,
+        L"System",
+        ARRAYSIZE(L"System") - 1,
+        NULL,
+        0,
+        NULL,
+        0,
+        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+        SDKIntegration_EventLogPageCallback,
+        &TestContext,
+        &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.EventLogPageEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.EventLogPageStatus) ||
+        TestContext.EventLogPageCount != 1 ||
+        TestContext.EventLogBookmarkLength == 0 ||
+        TestContext.EventLogXmlLength == 0)
+    {
+        goto Cleanup;
+    }
+    FirstEventBookmarkLength = TestContext.EventLogBookmarkLength;
+    RtlCopyMemory(FirstEventBookmark,
+                  TestContext.EventLogBookmark,
+                  (SIZE_T)FirstEventBookmarkLength * sizeof(WCHAR));
+    ResetEvent(TestContext.EventLogPageEvent);
+    InterlockedExchange(&TestContext.EventLogPageStatus, STATUS_PENDING);
+    TestContext.EventLogPageCount = 0;
+    TestContext.EventLogBookmarkLength = 0;
+    TestContext.EventLogXmlLength = 0;
+    Status = ZpClient_QueryEventLogPage(
+        Client,
+        ZpEventLogStartAfterBookmark,
+        1,
+        L"System",
+        ARRAYSIZE(L"System") - 1,
+        NULL,
+        0,
+        FirstEventBookmark,
+        FirstEventBookmarkLength,
+        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+        SDKIntegration_EventLogPageCallback,
+        &TestContext,
+        &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.EventLogPageEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.EventLogPageStatus) ||
+        TestContext.EventLogPageCount > 1 ||
+        (TestContext.EventLogPageCount != 0 &&
+         TestContext.EventLogBookmarkLength == 0))
     {
         goto Cleanup;
     }
