@@ -448,6 +448,8 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 
 `Process` 模块第一版固定为 `ModuleId = 2`、`ModuleVersion = 1`；`Enumerate` 固定为 `OperationId = 1`，请求 Payload 必须为空。成功响应 Payload 为数组，单项依次编码 `UINT32 ProcessId`、`UINT32 SessionId` 和 UTF-16LE ImageName 字符串；PID 0 和空 ImageName 均为合法系统记录。
 
+`Process.Query` 固定为 `OperationId = 2`，请求 Payload 为 `UINT32 ProcessId`。成功响应依次编码 `UINT32 ProcessId`、父 ProcessId、SessionId、ThreadCount、HandleCount，随后为五个 `UINT64`：CreateTime、UserTime、KernelTime、WorkingSetBytes、PrivateBytes，最后为 UTF-16LE ImageName；时间值沿用 Windows 100ns 原生计数。
+
 大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口、断点续传和哈希规则在实现对应模块前按真实需求确定，不预先建设通用虚拟流框架。
 
 ## 10. 安全与资源限制

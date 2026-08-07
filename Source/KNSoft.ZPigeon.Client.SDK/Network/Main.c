@@ -904,6 +904,87 @@ ZpClient_EnumerateProcesses(
     return Status;
 }
 
+typedef struct _ZP_CLIENT_PROCESS_QUERY_CONTEXT
+{
+    ZP_PROCESS_QUERY_CALLBACK Callback;
+    PVOID Context;
+} ZP_CLIENT_PROCESS_QUERY_CONTEXT, *PZP_CLIENT_PROCESS_QUERY_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpClient_ProcessQueryComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_PROCESS_QUERY_CONTEXT ProcessContext = Context;
+    ZP_PROCESS_INFO_VIEW Info;
+
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpProcess_DecodeInfo(Payload->Buffer,
+                                      Payload->Length,
+                                      &Info);
+    }
+    ProcessContext->Callback(Request,
+                             Status,
+                             NT_SUCCESS(Status) ? &Info : NULL,
+                             ProcessContext->Context);
+    Mem_Free(ProcessContext);
+}
+
+NTSTATUS
+NTAPI
+ZpClient_QueryProcess(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONG ProcessId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PROCESS_QUERY_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_CLIENT_PROCESS_QUERY_CONTEXT ProcessContext;
+    BYTE Payload[sizeof(ProcessId)];
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpProcess_EncodeQuery(ProcessId,
+                                   Payload,
+                                   sizeof(Payload),
+                                   &PayloadLength);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    ProcessContext = Mem_Alloc(sizeof(*ProcessContext));
+    if (ProcessContext == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    ProcessContext->Callback = Callback;
+    ProcessContext->Context = Context;
+    Status = ZpClient_SendRequest(Client,
+                                  ZP_PROCESS_MODULE_ID,
+                                  ZP_PROCESS_OPERATION_QUERY,
+                                  TimeoutMilliseconds,
+                                  Payload,
+                                  PayloadLength,
+                                  ZpClient_ProcessQueryComplete,
+                                  ProcessContext,
+                                  Request);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(ProcessContext);
+    }
+    return Status;
+}
+
 NTSTATUS
 NTAPI
 ZpRequest_Cancel(

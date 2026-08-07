@@ -41,6 +41,21 @@ TEST_FUNC(ProtocolMessage)
     };
     ZP_PROCESS_LIST_VIEW ProcessList;
     ZP_PROCESS_RECORD_VIEW ProcessRecord;
+    ZP_PROCESS_INFO ProcessInfo = {
+        1234,
+        1000,
+        1,
+        8,
+        64,
+        100,
+        200,
+        300,
+        400,
+        500,
+        L"example.exe",
+        11
+    };
+    ZP_PROCESS_INFO_VIEW ProcessInfoView;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value;
@@ -190,4 +205,22 @@ TEST_FUNC(ProtocolMessage)
     TEST_OK(ZpProcess_GetRecord(&ProcessList,
                                 ProcessList.Count,
                                 &ProcessRecord) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpProcess_EncodeQuery(ProcessInfo.ProcessId,
+                                             Buffer,
+                                             sizeof(Buffer),
+                                             &Length)) &&
+            NT_SUCCESS(ZpProcess_DecodeQuery(Buffer, Length, &Index)) &&
+            Index == ProcessInfo.ProcessId);
+    TEST_OK(NT_SUCCESS(ZpProcess_EncodeInfo(&ProcessInfo,
+                                            Buffer,
+                                            sizeof(Buffer),
+                                            &Length)) &&
+            Length == 86 &&
+            NT_SUCCESS(ZpProcess_DecodeInfo(Buffer, Length, &ProcessInfoView)) &&
+            ProcessInfoView.ProcessId == ProcessInfo.ProcessId &&
+            ProcessInfoView.ParentProcessId == ProcessInfo.ParentProcessId &&
+            ProcessInfoView.ThreadCount == ProcessInfo.ThreadCount &&
+            ProcessInfoView.WorkingSetBytes == ProcessInfo.WorkingSetBytes &&
+            ProcessInfoView.PrivateBytes == ProcessInfo.PrivateBytes &&
+            ProcessInfoView.ImageName.Length == ProcessInfo.ImageNameLength);
 }

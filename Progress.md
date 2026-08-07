@@ -48,15 +48,16 @@
 - 固定 System 模块 Version 1 的 `Info` 操作和 Payload Codec，实现 Server 原生架构、Windows 版本、处理器数、物理内存及计算机名采集，以及 Client `ZpClient_GetSystemInfo` 异步 API；
 - 扩展 localhost QUIC 集成测试，覆盖 System.Info 的真实 Request/Response 往返和结果解码；
 - 固定 Process 模块 Version 1 的 `Enumerate` 操作和变长记录 Codec，实现 Server 原生进程快照、Client `ZpClient_EnumerateProcesses` 异步 API，以及当前进程可见性的真实端到端验证；
+- 实现 Process.Query：按 PID 返回父 PID、Session、线程/句柄数、创建与 CPU 时间、工作集、私有内存和映像名，并以 UnitTest 当前进程完成真实端到端验证；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 203 项断言全部通过，其中包含真实 localhost QUIC 认证、重连、Ping/Pong、System.Info 和 Process.Enumerate 端到端链路。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 205 项断言全部通过，其中包含真实 localhost QUIC 认证、重连、Ping/Pong、System.Info、Process.Enumerate 和 Process.Query 端到端链路。
 
 ## 下一步
 
-1. 增加 Process.Query 所需的单进程详细信息协议与实现；
-2. 再按 Process.Control、Service、File、Terminal 等模块逐步实现。
+1. 增加 Service.Enumerate 的最小协议与只读实现；
+2. Process.Control 等破坏性操作在权限门禁规格确定后再实现，随后推进 File、Terminal 等模块。
 
 ## 待确认与阻塞
 

@@ -24,6 +24,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE ClientPongEvent;
     HANDLE SystemInfoEvent;
     HANDLE ProcessListEvent;
+    HANDLE ProcessInfoEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
@@ -40,6 +41,11 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     volatile LONG ProcessCompletionCount;
     LONG ExpectedProcessCompletions;
     LOGICAL CollectProcessDetails;
+    volatile LONG ProcessInfoStatus;
+    ULONG ProcessInfoId;
+    ULONG ProcessInfoThreadCount;
+    ULONGLONG ProcessInfoCreateTime;
+    ULONG ProcessInfoImageNameLength;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -144,6 +150,29 @@ SDKIntegration_ProcessListCallback(
     {
         SetEvent(TestContext->ProcessListEvent);
     }
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_ProcessInfoCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ const ZP_PROCESS_INFO_VIEW* Info,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->ProcessInfoId = Info->ProcessId;
+        TestContext->ProcessInfoThreadCount = Info->ThreadCount;
+        TestContext->ProcessInfoCreateTime = Info->CreateTime;
+        TestContext->ProcessInfoImageNameLength = Info->ImageName.Length;
+    }
+    InterlockedExchange(&TestContext->ProcessInfoStatus, Status);
+    SetEvent(TestContext->ProcessInfoEvent);
 }
 
 static
@@ -470,6 +499,7 @@ TEST_FUNC(SDKQuicIntegration)
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL)
     };
 
@@ -489,6 +519,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.ClientPongEvent = Events[6];
     TestContext.SystemInfoEvent = Events[7];
     TestContext.ProcessListEvent = Events[8];
+    TestContext.ProcessInfoEvent = Events[9];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -624,6 +655,29 @@ TEST_FUNC(SDKQuicIntegration)
         !NT_SUCCESS(TestContext.ProcessListStatus) ||
         TestContext.ProcessCount == 0 ||
         !TestContext.FoundCurrentProcess)
+    {
+        goto Cleanup;
+    }
+
+    Status = ZpClient_QueryProcess(Client,
+                                   GetCurrentProcessId(),
+                                   SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                   SDKIntegration_ProcessInfoCallback,
+                                   &TestContext,
+                                   &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.ProcessInfoEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.ProcessInfoStatus) ||
+        TestContext.ProcessInfoId != GetCurrentProcessId() ||
+        TestContext.ProcessInfoThreadCount == 0 ||
+        TestContext.ProcessInfoCreateTime == 0 ||
+        TestContext.ProcessInfoImageNameLength == 0)
     {
         goto Cleanup;
     }

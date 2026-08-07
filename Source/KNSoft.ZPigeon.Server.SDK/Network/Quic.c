@@ -223,6 +223,73 @@ ZpServerQuic_EnumerateProcesses(
 
 static
 NTSTATUS
+ZpServerQuic_QueryProcess(
+    _In_ ULONG ProcessId,
+    _Outptr_result_bytebuffer_(*PayloadLength) PBYTE* Payload,
+    _Out_ PULONG PayloadLength)
+{
+    PSYSTEM_PROCESS_INFORMATION Entry;
+    ZP_PROCESS_INFO Info;
+    PVOID SystemInfo;
+    NTSTATUS Status;
+
+    *Payload = NULL;
+    *PayloadLength = 0;
+    Status = ZpServerQuic_QuerySystemInformation(SystemProcessInformation,
+                                                 &SystemInfo);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    Entry = SystemInfo;
+    while ((ULONG)(ULONG_PTR)Entry->UniqueProcessId != ProcessId)
+    {
+        if (Entry->NextEntryOffset == 0)
+        {
+            Mem_Free(SystemInfo);
+            return STATUS_NOT_FOUND;
+        }
+        Entry = Add2Ptr(Entry, Entry->NextEntryOffset);
+    }
+    Info.ProcessId = ProcessId;
+    Info.ParentProcessId = (ULONG)(ULONG_PTR)Entry->InheritedFromUniqueProcessId;
+    Info.SessionId = Entry->SessionId;
+    Info.ThreadCount = Entry->NumberOfThreads;
+    Info.HandleCount = Entry->HandleCount;
+    Info.CreateTime = Entry->CreateTime.QuadPart;
+    Info.UserTime = Entry->UserTime.QuadPart;
+    Info.KernelTime = Entry->KernelTime.QuadPart;
+    Info.WorkingSetBytes = Entry->WorkingSetSize;
+    Info.PrivateBytes = Entry->PrivatePageCount;
+    Info.ImageName = Entry->ImageName.Buffer;
+    Info.ImageNameLength = Entry->ImageName.Length / sizeof(WCHAR);
+    Status = ZpProcess_EncodeInfo(&Info,
+                                  NULL,
+                                  0,
+                                  PayloadLength);
+    *Payload = NT_SUCCESS(Status) ? Mem_Alloc(*PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && *Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpProcess_EncodeInfo(&Info,
+                                      *Payload,
+                                      *PayloadLength,
+                                      PayloadLength);
+    }
+    if (!NT_SUCCESS(Status) && *Payload != NULL)
+    {
+        Mem_Free(*Payload);
+        *Payload = NULL;
+    }
+    Mem_Free(SystemInfo);
+    return Status;
+}
+
+static
+NTSTATUS
 ZpServerQuic_SendResponse(
     _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
     _Inout_ PZP_CONNECTION Connection,
@@ -305,6 +372,7 @@ ZpServerQuic_RequestCallback(
     const VOID* ResponsePayload = NULL;
     PBYTE AllocatedPayload = NULL;
     ULONG PayloadLength = 0;
+    ULONG ProcessId;
     NTSTATUS Status = STATUS_SUCCESS;
     LOGICAL SendResponse;
 
@@ -321,16 +389,14 @@ ZpServerQuic_RequestCallback(
     {
         Status = STATUS_NOT_SUPPORTED;
     }
-    else if (Request->PayloadLength != 0)
-    {
-        Status = STATUS_INVALID_PARAMETER;
-    }
     else if (Request->ModuleId == ZP_SYSTEM_MODULE_ID &&
              Request->OperationId == ZP_SYSTEM_OPERATION_INFO)
     {
-        Status = ZpServerQuic_GetSystemInfo(&SystemInfo,
-                                            ComputerName,
-                                            ARRAYSIZE(ComputerName));
+        Status = Request->PayloadLength == 0 ?
+                     ZpServerQuic_GetSystemInfo(&SystemInfo,
+                                                ComputerName,
+                                                ARRAYSIZE(ComputerName)) :
+                     STATUS_INVALID_PARAMETER;
         if (NT_SUCCESS(Status))
         {
             Status = ZpSystem_EncodeInfo(&SystemInfo,
@@ -343,9 +409,25 @@ ZpServerQuic_RequestCallback(
     else if (Request->ModuleId == ZP_PROCESS_MODULE_ID &&
              Request->OperationId == ZP_PROCESS_OPERATION_ENUMERATE)
     {
-        Status = ZpServerQuic_EnumerateProcesses(&AllocatedPayload,
-                                                 &PayloadLength);
+        Status = Request->PayloadLength == 0 ?
+                     ZpServerQuic_EnumerateProcesses(&AllocatedPayload,
+                                                     &PayloadLength) :
+                     STATUS_INVALID_PARAMETER;
         ResponsePayload = AllocatedPayload;
+    }
+    else if (Request->ModuleId == ZP_PROCESS_MODULE_ID &&
+             Request->OperationId == ZP_PROCESS_OPERATION_QUERY)
+    {
+        Status = ZpProcess_DecodeQuery(Request->Payload,
+                                       Request->PayloadLength,
+                                       &ProcessId);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpServerQuic_QueryProcess(ProcessId,
+                                               &AllocatedPayload,
+                                               &PayloadLength);
+            ResponsePayload = AllocatedPayload;
+        }
     }
     else
     {
