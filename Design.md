@@ -356,7 +356,7 @@ Core Version 1 使用以下固定 Codec：
 - 热路径避免无依据的堆分配、内存复制、编码转换、锁和间接调用；
 - 回调中不执行可能长期阻塞网络推进的业务操作。
 
-第一版公开对象采用不透明指针 Handle：`ZP_CLIENT_HANDLE`、`ZP_SERVER_HANDLE`、`ZP_CONNECTION_HANDLE`、`ZP_REQUEST_HANDLE` 和 `ZP_CHANNEL_HANDLE`。对象由创建它的 SDK 分配，调用方只能通过对应 API 操作。
+第一版公开对象采用不透明指针 Handle：`ZP_CLIENT_HANDLE`、`ZP_SERVER_HANDLE`、`ZP_CONNECTION_HANDLE`、`ZP_REQUEST_HANDLE`、`ZP_CHANNEL_HANDLE` 和 `ZP_SUBSCRIPTION_HANDLE`。对象由创建它的 SDK 分配，调用方只能通过对应 API 操作。
 
 生命周期契约：
 
@@ -372,6 +372,7 @@ Core Version 1 使用以下固定 Codec：
 取消与 Deadline：
 
 - `ZpRequest_Cancel` 可从回调之外的任意线程调用；取消只保证本地完成，不保证远端操作能够撤销；
+- `ZpSubscription_Cancel` 终止本地订阅并尽力请求 Server 取消对应原生订阅；调用方仍通过终止回调获知最终状态；
 - Deadline 使用单调时钟在本地计算，不依赖 C/S 墙上时钟同步；
 - 完成、取消、Deadline 和断开竞争时，以第一个原子确定的终止原因完成一次，其余事件只做清理；
 - 回调不得长期阻塞；需要阻塞的业务工作由上层投递到自己的执行环境。
@@ -393,7 +394,7 @@ Endpoint 记录由 `Transport`、`Host`、`Port`、`ServerName` 和可选 `WssPa
 
 ### 8.2 第一版公开对象与配置
 
-公共 `SDK.h` 定义五种互不兼容的不透明 Handle：`ZP_CLIENT_HANDLE`、`ZP_SERVER_HANDLE`、`ZP_CONNECTION_HANDLE`、`ZP_REQUEST_HANDLE` 和 `ZP_CHANNEL_HANDLE`。Client 与 Server 公开头分别只暴露本端生命周期 API；具体对象布局和 Connection 握手状态不属于公开 ABI。
+公共 `SDK.h` 定义六种互不兼容的不透明 Handle：`ZP_CLIENT_HANDLE`、`ZP_SERVER_HANDLE`、`ZP_CONNECTION_HANDLE`、`ZP_REQUEST_HANDLE`、`ZP_CHANNEL_HANDLE` 和 `ZP_SUBSCRIPTION_HANDLE`。Client 与 Server 公开头分别只暴露本端生命周期 API；具体对象布局和 Connection 握手状态不属于公开 ABI。
 
 Client 配置包含：
 
@@ -427,6 +428,8 @@ Client `Start` 只允许 `Stopped -> Connecting`，Server `Start` 只允许 `Sto
 Client 在 `Ready` 状态可通过 `ZpClient_Ping` 发送调用方 Token；Server 协议层自动回送等值 Pong，Client 通过可选 Pong 回调交付 Token。该路径用于连接存活检测，不创建 Request 对象。
 
 Client 通过 `ZpClient_SendRequest` 创建引用计数 Request Handle；同步拒绝不会触发完成回调，成功提交后 Response、显式取消或连接终止恰好完成一次。调用方可通过 `ZpRequest_Cancel` 尽力发送 Cancel，并在不再使用句柄时调用 `ZpRequest_Close` 释放调用方引用。
+
+EventLog Subscribe 的打开阶段仍以 Request Handle 表示；成功回调交付独立的 Subscription Handle。Record、远端终止、本地取消或连接终止按连接内顺序回调，终止回调恰好一次。调用方通过 `ZpSubscription_Cancel` 尽力请求取消远端订阅，并在终止回调返回后通过 `ZpSubscription_Close` 释放调用方引用。
 
 `ZpClient_OpenFileRead` 仍以 Request Handle 表示异步打开阶段；成功 Open 回调交付独立的 Channel Handle、FileSize 和确认 Offset。SDK 在 Open 回调返回后自动授予 1 MiB 初始窗口，每次 Data 回调返回后自动补回等量额度。Data Buffer 仅在回调期间有效；远端 Close、本地取消或连接终止恰好触发一次 Channel Close 回调。调用方可通过 `ZpChannel_Cancel` 尽力发送 `STATUS_CANCELLED` 的 ChannelClose，并在不再使用句柄时调用 `ZpChannel_Close` 释放调用方引用。
 
@@ -485,6 +488,18 @@ Client 以 `ZpClient_CreateTerminal` 异步建立终端并在成功回调中交�
 
 Server 使用 ConPTY 建立同步输入/输出管道；传给 `CreatePseudoConsole` 的 Input Read 与 Output Write 端必须保持到附加终端属性的子进程创建成功后再关闭。输出在长生命周期线程池工作中持续排空并受 Client Window 限制；输入首窗固定为 4 KiB，Server 将获准数据写入 ConPTY 后等量补窗，限制同步写入对网络回调的占用。进程退出后由独立线程池回调关闭 ConPTY，输出工作继续排空最终 VT Frame，随后以原始进程退出码发送 ChannelClose；连接终止或本地关闭会终止仍存活的终端进程并回收全部句柄。
 
+`EventLog` 模块第一版固定为 `ModuleId = 6`、`ModuleVersion = 1`；`QueryPage`、`Subscribe` 和 `Unsubscribe` 分别固定为 `OperationId = 1`、`2` 和 `3`，均属于 `Read` 权限。ChannelPath 必须为非空 UTF-16LE 字符串；Query 是可空 XPath，空值等价于 `*`。Bookmark 是 Windows Event Log 渲染出的不透明 XML 字符串，只能作为同一 ChannelPath 与 Query 的恢复位置使用，Client 不解析或拼接其内容。
+
+QueryPage 请求依次编码 `UINT16 StartMode`、`UINT32 MaxEvents`、ChannelPath、Query 和 Bookmark。StartMode 只允许 `Oldest = 2` 或 `AfterBookmark = 3`；AfterBookmark 要求非空 Bookmark，Oldest 要求空 Bookmark。MaxEvents 范围为 1～256。成功响应依次编码 `BOOLEAN HasMore`、NextBookmark 和 EventRecord 数组；每条 EventRecord 编码该事件的 Bookmark 与 `EvtRenderEventXml` 产生的 XML。非空结果的 NextBookmark 必须等于最后一条记录的 Bookmark，空结果沿用请求 Bookmark。Server 以正向查询和严格 Bookmark Seek 返回 Bookmark 之后的记录，不在 Bookmark 失效时悄悄跳到最接近的位置；日志已清除、覆盖或 Bookmark 不属于结果集时原样返回相应失败状态。
+
+Subscribe 请求依次编码 `UINT16 StartMode`、ChannelPath、Query 和 Bookmark。StartMode 允许 `Future = 1`、`Oldest = 2` 或 `AfterBookmark = 3`；只有 AfterBookmark 要求非空 Bookmark，其余模式要求空 Bookmark。Server 使用 `EvtSubscribeStrict`，成功响应编码由 Server 分配的偶数、连接内永不复用的 `UINT64 SubscriptionId`。Unsubscribe 请求只编码 SubscriptionId；成功 Response 是该订阅的发送截止点，之后不得再发送对应 Event。Client 创建的未来双向订阅使用奇数 ID，遵循与 Channel 相同的创建方奇偶规则。
+
+EventLog 的 `EventId = 1` 表示 Record，Payload 依次编码从 1 开始严格递增的 `UINT64 Sequence`、Bookmark 和事件 XML；`EventId = 2` 表示 Terminal，Payload 依次编码下一期望 Sequence、`INT32 Status` 和最后一条已发送 Record 的 Bookmark。Server 对每个订阅维护有界事件数和有界字节数的队列，不允许无限缓存；队列溢出、Windows 报告 `ERROR_EVT_QUERY_RESULT_STALE`、渲染失败或其他不可继续错误时，停止原生订阅，先发送已入队 Record，再发送一次 Terminal，禁止静默跳过后继续。连接直接断开时无法发送 Terminal，由 Client SDK 以连接终止状态完成订阅。
+
+实时订阅是可靠有序但非 exactly-once：调用方只在成功处理 Record 后持久化该 Record 的 Bookmark；回调前崩溃或重连可能产生重复，调用方可按业务需要用 Bookmark 或事件标识去重。收到 Terminal、发现 Sequence 不连续或连接断开后，Client 不透明续接旧 SubscriptionId，而是从最后持久化 Bookmark 反复 QueryPage 补齐，直至 HasMore 为假，再以 AfterBookmark 建立新订阅。查询结束与新订阅建立之间产生的事件由严格 AfterBookmark 订阅补入；若原生日志保留期已淘汰该 Bookmark，则恢复明确失败，由调用方选择从 Oldest 或 Future 重新开始并承认数据缺口。
+
+Bookmark 和单条事件 XML 分别限制为 64 Ki 个 UTF-16 code unit 和 1 Mi 个 UTF-16 code unit；QueryPage 编码后仍不得超过 Core Frame 的 16 MiB 上限。Server 的默认订阅数量及队列上限由压力测试确定，但无论取值为何，达到限制都必须以 `STATUS_QUOTA_EXCEEDED` 拒绝 Subscribe，或以可恢复的 Terminal 终止已有订阅。
+
 大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口和断点续传按上述通用 Channel 与 File.OpenRead 规则处理，不预先建设通用虚拟流框架。
 
 ## 10. 安全与资源限制
@@ -533,5 +548,4 @@ QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接�
 
 1. 除已固定的 System、Process、Service、File 和 Terminal 操作外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
 2. File 通道的哈希、上传、目录分页和落盘契约；
-3. EventLog 等订阅模块的事件丢失与恢复语义；
-4. 压力测试后确定的 Server 资源限制默认值。
+3. 压力测试后确定的 Server 资源限制默认值。

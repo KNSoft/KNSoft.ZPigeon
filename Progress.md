@@ -69,6 +69,7 @@
 - 实现 File.Hash：Version 1 固定 SHA-256 算法标识及请求/响应 Codec，Client 提供异步 Hash API，Server 以 64 KiB 分块计算并响应取消；localhost QUIC 集成测试将远端结果与本地独立 SHA-256 计算逐字节比对；
 - 实现 File.OpenWrite 原子上传：Client 以 Server 窗口驱动有界发送且禁止超过声明 FileSize，Server 写入同目录随机临时文件，完整接收并刷新后按 CreateNew/CreateAlways 原子提交；真实 QUIC 测试覆盖 131,089 字节内容完整性、覆盖为零字节文件以及取消后目标和临时文件均无残留；
 - 实现 File.EnumeratePage：保留旧 Enumerate 兼容接口，新增 1～4096 页大小、无状态文件名 Cursor、ordinal 排序及 NextCursor 校验；真实 QUIC 测试以页大小 1 连续翻页并验证游标严格推进；
+- 定稿 EventLog Version 1：分页查询、严格 Bookmark Seek、实时订阅序号、显式 Terminal、队列溢出/日志过期检测，以及从最后持久化 Bookmark 补页后重新订阅的至少一次恢复语义；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
@@ -76,9 +77,10 @@
 
 ## 下一步
 
-1. 设计 EventLog 等订阅模块的事件丢失与恢复语义。
+1. 实现 EventLog QueryPage、Subscribe/Unsubscribe 及 Record/Terminal Payload Codec；
+2. 实现 Client Subscription Handle 与 Server Windows Event Log 执行路径。
 
 ## 待确认与阻塞
 
 - 当前无外部阻塞。
-- File 扩展、EventLog 等模块专属协议按 `Design.md` 的“仍按模块延后确定的规格”在实现前定稿。
+- 后续业务模块专属协议按 `Design.md` 的“仍按模块延后确定的规格”在实现前定稿。
