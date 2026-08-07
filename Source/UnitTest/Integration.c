@@ -1470,6 +1470,7 @@ TEST_FUNC(SDKQuicIntegration)
     ZP_CLIENT_HANDLE Client = NULL;
     ZP_SERVER_HANDLE Server = NULL;
     ZP_REQUEST_HANDLE Request = NULL;
+    ZP_CHANNEL_HANDLE ActiveTerminalChannel;
     NCRYPT_PROV_HANDLE IdentityProvider = 0;
     NCRYPT_KEY_HANDLE IdentityKey = 0;
     HCERTSTORE CertificateStore = NULL;
@@ -1615,6 +1616,8 @@ TEST_FUNC(SDKQuicIntegration)
     ServerConfig.Modules = ServerModules;
     ServerConfig.ModuleCount = ARRAYSIZE(ServerModules);
     ServerConfig.MaxRequestsPerConnection = 4;
+    ServerConfig.MaxChannelsPerConnection = 1;
+    ServerConfig.MaxSubscriptionsPerConnection = 1;
     ServerConfig.StateCallback = SDKIntegration_ServerStateCallback;
     ServerConfig.ConnectionCallback = SDKIntegration_ServerConnectionCallback;
     ServerConfig.CallbackContext = &TestContext;
@@ -3004,8 +3007,47 @@ TEST_FUNC(SDKQuicIntegration)
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         !NT_SUCCESS(TestContext.TerminalCreateStatus) ||
         TestContext.TerminalChannel == NULL ||
-        TestContext.TerminalProcessId == 0 ||
-        !NT_SUCCESS(ZpChannel_Cancel(TestContext.TerminalChannel)) ||
+        TestContext.TerminalProcessId == 0)
+    {
+        goto Cleanup;
+    }
+    ActiveTerminalChannel = TestContext.TerminalChannel;
+    ResetEvent(TestContext.TerminalCloseEvent);
+    InterlockedExchange(&TestContext.TerminalCreateStatus, STATUS_PENDING);
+    Status = ZpClient_CreateTerminal(
+        Client,
+        80,
+        25,
+        TerminalCancelCommandLine,
+        ARRAYSIZE(TerminalCancelCommandLine) - 1,
+        NULL,
+        0,
+        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+        SDKIntegration_TerminalCreateCallback,
+        SDKIntegration_TerminalDataCallback,
+        SDKIntegration_TerminalWritableCallback,
+        SDKIntegration_TerminalCloseCallback,
+        &TestContext,
+        &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.TerminalCloseEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        TestContext.TerminalCreateStatus != STATUS_QUOTA_EXCEEDED ||
+        TestContext.TerminalChannel != NULL)
+    {
+        ZpChannel_Cancel(ActiveTerminalChannel);
+        ZpChannel_Close(ActiveTerminalChannel);
+        goto Cleanup;
+    }
+    TestContext.TerminalChannel = ActiveTerminalChannel;
+    ResetEvent(TestContext.TerminalCloseEvent);
+    if (!NT_SUCCESS(ZpChannel_Cancel(TestContext.TerminalChannel)) ||
         WaitForSingleObject(TestContext.TerminalCloseEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         TestContext.TerminalCloseStatus != STATUS_CANCELLED)
@@ -3044,6 +3086,38 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.EventLogSubscribeEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         !NT_SUCCESS(TestContext.EventLogSubscribeStatus) ||
+        TestContext.EventLogSubscription == NULL)
+    {
+        goto Cleanup;
+    }
+
+    ResetEvent(TestContext.EventLogSubscribeEvent);
+    InterlockedExchange(&TestContext.EventLogSubscribeStatus, STATUS_PENDING);
+    Status = ZpClient_SubscribeEventLog(
+        Client,
+        ZpEventLogStartFuture,
+        L"Application",
+        ARRAYSIZE(L"Application") - 1,
+        EventLogQuery,
+        ARRAYSIZE(EventLogQuery) - 1,
+        NULL,
+        0,
+        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+        SDKIntegration_EventLogSubscribeCallback,
+        SDKIntegration_EventLogRecordCallback,
+        SDKIntegration_EventLogTerminalCallback,
+        &TestContext,
+        &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.EventLogSubscribeEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        TestContext.EventLogSubscribeStatus != STATUS_QUOTA_EXCEEDED ||
         TestContext.EventLogSubscription == NULL)
     {
         goto Cleanup;

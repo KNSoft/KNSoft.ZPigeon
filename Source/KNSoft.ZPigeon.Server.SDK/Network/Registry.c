@@ -5,6 +5,9 @@
 
 #pragma comment(lib, "Advapi32.lib")
 
+#define ZP_SERVER_REGISTRY_SNAPSHOT_MAX_COUNT 65536
+#define ZP_SERVER_REGISTRY_SNAPSHOT_MAX_NAME_BYTES 0x01000000UL
+
 typedef struct _ZP_SERVER_REGISTRY_KEY_ENTRY
 {
     PWCHAR Name;
@@ -264,10 +267,13 @@ ZpServerRegistry_EnumerateKeys(
         return Status;
     }
     if (MaxNameLength > ZP_REGISTRY_PATH_MAX_LENGTH ||
-        Count > MAXSIZE_T / sizeof(*Result))
+        Count > ZP_SERVER_REGISTRY_SNAPSHOT_MAX_COUNT ||
+        Count > MAXSIZE_T / sizeof(*Result) ||
+        (ULONGLONG)Count * (MaxNameLength + 1) * sizeof(WCHAR) >
+            ZP_SERVER_REGISTRY_SNAPSHOT_MAX_NAME_BYTES)
     {
         RegCloseKey(Key);
-        return STATUS_BUFFER_OVERFLOW;
+        return STATUS_QUOTA_EXCEEDED;
     }
     Result = Mem_Alloc((SIZE_T)Count * sizeof(*Result));
     if (Result == NULL)
@@ -372,10 +378,13 @@ ZpServerRegistry_EnumerateValues(
         return Status;
     }
     if (MaxNameLength > ZP_REGISTRY_PATH_MAX_LENGTH ||
-        Count > MAXSIZE_T / sizeof(*Result))
+        Count > ZP_SERVER_REGISTRY_SNAPSHOT_MAX_COUNT ||
+        Count > MAXSIZE_T / sizeof(*Result) ||
+        (ULONGLONG)Count * (MaxNameLength + 1) * sizeof(WCHAR) >
+            ZP_SERVER_REGISTRY_SNAPSHOT_MAX_NAME_BYTES)
     {
         RegCloseKey(Key);
-        return STATUS_BUFFER_OVERFLOW;
+        return STATUS_QUOTA_EXCEEDED;
     }
     Result = Mem_Alloc((SIZE_T)Count * sizeof(*Result));
     if (Result == NULL)

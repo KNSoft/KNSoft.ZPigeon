@@ -18,6 +18,10 @@ ZpServer_ValidateConfig(
         Config->DeploymentCount > ZP_DEPLOYMENT_MAX_COUNT ||
         Config->MaxRequestsPerConnection >
             ZP_SERVER_MAX_REQUESTS_PER_CONNECTION ||
+        Config->MaxChannelsPerConnection >
+            ZP_SERVER_MAX_CHANNELS_PER_CONNECTION ||
+        Config->MaxSubscriptionsPerConnection >
+            ZP_SERVER_MAX_SUBSCRIPTIONS_PER_CONNECTION ||
         (Config->DeploymentCount != 0 && Config->Deployments == NULL) ||
         Config->StateCallback == NULL ||
         Config->ConnectionCallback == NULL)
@@ -141,6 +145,14 @@ ZpServer_Create(
         Config->MaxRequestsPerConnection != 0 ?
             Config->MaxRequestsPerConnection :
             ZP_SERVER_DEFAULT_MAX_REQUESTS_PER_CONNECTION;
+    Object->Config.MaxChannelsPerConnection =
+        Config->MaxChannelsPerConnection != 0 ?
+            Config->MaxChannelsPerConnection :
+            ZP_SERVER_DEFAULT_MAX_CHANNELS_PER_CONNECTION;
+    Object->Config.MaxSubscriptionsPerConnection =
+        Config->MaxSubscriptionsPerConnection != 0 ?
+            Config->MaxSubscriptionsPerConnection :
+            ZP_SERVER_DEFAULT_MAX_SUBSCRIPTIONS_PER_CONNECTION;
 
     Cursor = Add2Ptr(Object, sizeof(*Object));
     Listeners = (PZP_LISTENER_ENDPOINT)Cursor;

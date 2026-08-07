@@ -437,7 +437,7 @@ Client 的非零 `TimeoutMilliseconds` 同时建立基于 `GetTickCount64` 的�
 
 Server 完整收到 Request 后复制 Payload 并投递线程池，MsQuic 接收回调不执行系统查询等业务工作；每条连接维护活动 Request 表和引用计数。Cancel、连接关闭与工作完成通过请求表锁竞争一次终止，连接对象延迟到所有工作退出后释放，Server Stop 也等待这些连接引用归零。
 
-Server 配置的 `MaxRequestsPerConnection` 限制每连接已投递且尚未完成的 Request；0 使用默认值 64，第一版配置硬上限为 4096。达到上限的新请求返回 `STATUS_QUOTA_EXCEEDED`，不进入工作队列且不终止连接。
+Server 配置的 `MaxRequestsPerConnection` 限制每连接已投递且尚未完成的 Request；0 使用默认值 64，第一版配置硬上限为 4096。`MaxChannelsPerConnection` 和 `MaxSubscriptionsPerConnection` 分别限制已激活 Channel 与 Subscription；两者的 0 均使用默认值 16，配置硬上限均为 1024。达到任一上限的新对象返回 `STATUS_QUOTA_EXCEEDED`，不终止连接；对象在 Response 发送失败、主动取消、远端关闭或工作完成后立即释放名额。
 
 Server 在线程池执行具体业务操作前统一经过授权门禁。授权回调接收已认证连接的 32 字节 ClientId、`Read` 或 `Control` 访问级别、ModuleId、OperationId 以及只在回调期间有效的原始 Payload View，并以 `NTSTATUS` 决定是否继续；失败状态原样作为 Response 返回。未配置回调时只读操作默认放行，控制类操作默认返回 `STATUS_ACCESS_DENIED`。授权回调在对象锁外执行并计入活动回调，不能在回调栈内关闭 Server。
 
@@ -512,6 +512,8 @@ Client 分页 API 以 `Cursor == NULL` 表示 CursorPresent=0；非空 Cursor �
 
 CreateKey 请求编码 Root、View 和 Path，Path 必须非空；操作是幂等的，键已存在仍成功。DeleteKey 复用同一请求，只允许删除非空且无子键的目标，使用所选 WOW64 View，不提供递归删除，避免一次请求隐式扩大破坏范围。所有 Registry 原生错误映射为 `NTSTATUS` 原样返回；成功的 SetValue、DeleteValue、CreateKey 和 DeleteKey Response Payload 均为空。
 
+为完成 ordinal 排序，Server 的单次 Registry 枚举会建立有界快照：最多 65536 条记录，按当前最大名称长度估算的名称 Buffer 总量最多 16 MiB；超出时返回 `STATUS_QUOTA_EXCEEDED`，不得静默截断为看似完整的末页。分页响应仍按 Frame 上限自动缩小当前页，并通过 HasMore/NextCursor 继续推进。
+
 大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口和断点续传按上述通用 Channel 与 File.OpenRead 规则处理，不预先建设通用虚拟流框架。
 
 ## 10. 安全与资源限制
@@ -559,5 +561,4 @@ QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接�
 以下内容不阻塞 Network 和通用 Protocol 编码，在实现对应模块前定稿：
 
 1. 除已固定的 System、Process、Service、File、Terminal、EventLog 和 Registry 操作外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
-2. File 通道的哈希、上传、目录分页和落盘契约；
-3. 压力测试后确定的 Server 资源限制默认值。
+2. 压力测试后仍需调整的 Server 资源限制默认值及全局配额。

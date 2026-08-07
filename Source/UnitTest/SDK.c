@@ -704,6 +704,8 @@ TEST_FUNC(SDKContract)
         Modules,
         ARRAYSIZE(Modules),
         0,
+        0,
+        0,
         SDKTest_ServerStateCallback,
         SDKTest_ServerConnectionCallback,
         NULL
@@ -888,13 +890,25 @@ TEST_FUNC(SDKContract)
         ZP_SERVER_MAX_REQUESTS_PER_CONNECTION + 1;
     TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
     ServerConfig.MaxRequestsPerConnection = 0;
+    ServerConfig.MaxChannelsPerConnection =
+        ZP_SERVER_MAX_CHANNELS_PER_CONNECTION + 1;
+    TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
+    ServerConfig.MaxChannelsPerConnection = 0;
+    ServerConfig.MaxSubscriptionsPerConnection =
+        ZP_SERVER_MAX_SUBSCRIPTIONS_PER_CONNECTION + 1;
+    TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
+    ServerConfig.MaxSubscriptionsPerConnection = 0;
     TEST_OK(NT_SUCCESS(ZpServer_Create(&ServerConfig, &Server)));
     ServerObject = (PZP_SERVER_OBJECT)Server;
     ListenerHost[0] = L'X';
     Modules[0].ModuleVersion = 2;
     TEST_OK(ServerObject->State == ZpServerStateStopped);
     TEST_OK(ServerObject->Config.MaxRequestsPerConnection ==
-            ZP_SERVER_DEFAULT_MAX_REQUESTS_PER_CONNECTION);
+                ZP_SERVER_DEFAULT_MAX_REQUESTS_PER_CONNECTION &&
+            ServerObject->Config.MaxChannelsPerConnection ==
+                ZP_SERVER_DEFAULT_MAX_CHANNELS_PER_CONNECTION &&
+            ServerObject->Config.MaxSubscriptionsPerConnection ==
+                ZP_SERVER_DEFAULT_MAX_SUBSCRIPTIONS_PER_CONNECTION);
     TEST_OK(wcscmp(ServerObject->Config.Listeners[0].Host, L"::") == 0);
     TEST_OK(ServerObject->Config.Modules[0].ModuleVersion == 1);
     TEST_OK(NT_SUCCESS(ZpServer_AuthorizeRequest(

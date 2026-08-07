@@ -132,6 +132,24 @@ static const QUIC_REGISTRATION_CONFIG ZpServerQuicRegistrationConfig = {
 };
 
 static
+ULONG
+ZpServerQuic_CountListUntil(
+    _In_ const LIST_ENTRY* Head,
+    _In_ ULONG Limit)
+{
+    const LIST_ENTRY* Entry;
+    ULONG Count = 0;
+
+    for (Entry = Head->Flink;
+         Entry != Head && Count < Limit;
+         Entry = Entry->Flink)
+    {
+        Count++;
+    }
+    return Count;
+}
+
+static
 NTSTATUS
 ZpServerQuic_GetSystemInfo(
     _Out_ PZP_SYSTEM_INFO Info,
@@ -1445,6 +1463,15 @@ ZpServerQuic_CreateEventLogSubscription(
                      STATUS_CONNECTION_DISCONNECTED :
                      STATUS_INTEGER_OVERFLOW;
     }
+    else if (ZpServerQuic_CountListUntil(
+                 &QuicConnection->Subscriptions,
+                 QuicConnection->Transport->Owner->Config
+                     .MaxSubscriptionsPerConnection) >=
+             QuicConnection->Transport->Owner->Config
+                 .MaxSubscriptionsPerConnection)
+    {
+        Status = STATUS_QUOTA_EXCEEDED;
+    }
     else
     {
         SubscriptionObject->SubscriptionId =
@@ -2587,6 +2614,15 @@ ZpServerQuic_ActivateChannel(
     {
         RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
         return STATUS_CONNECTION_DISCONNECTED;
+    }
+    if (ZpServerQuic_CountListUntil(
+            &QuicConnection->Channels,
+            QuicConnection->Transport->Owner->Config
+                .MaxChannelsPerConnection) >=
+        QuicConnection->Transport->Owner->Config.MaxChannelsPerConnection)
+    {
+        RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+        return STATUS_QUOTA_EXCEEDED;
     }
     Channel->Pending = TRUE;
     InsertTailList(&QuicConnection->Channels, &Channel->ListEntry);
