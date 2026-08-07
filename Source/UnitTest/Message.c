@@ -1,6 +1,7 @@
 ﻿#include "UnitTest.h"
 
 #include <KNSoft/ZPigeon/Protocol.h>
+#include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/System.h>
 
 TEST_FUNC(ProtocolMessage)
@@ -34,6 +35,12 @@ TEST_FUNC(ProtocolMessage)
         9
     };
     ZP_SYSTEM_INFO_VIEW SystemInfoView;
+    ZP_PROCESS_RECORD Processes[] = {
+        { 0, 0, L"", 0 },
+        { 1234, 1, L"example.exe", 11 }
+    };
+    ZP_PROCESS_LIST_VIEW ProcessList;
+    ZP_PROCESS_RECORD_VIEW ProcessRecord;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value;
@@ -160,4 +167,27 @@ TEST_FUNC(ProtocolMessage)
                              SystemInfo.ComputerNameLength * sizeof(WCHAR)) ==
                 SystemInfo.ComputerNameLength * sizeof(WCHAR));
     TEST_OK(ZpSystem_DecodeInfo(Buffer, Length - 1, &SystemInfoView) == STATUS_DATA_ERROR);
+
+    TEST_OK(NT_SUCCESS(ZpProcess_EncodeList(Processes,
+                                           ARRAYSIZE(Processes),
+                                           Buffer,
+                                           sizeof(Buffer),
+                                           &Length)) &&
+            Length == 50 &&
+            NT_SUCCESS(ZpProcess_DecodeList(Buffer, Length, &ProcessList)) &&
+            ProcessList.Count == ARRAYSIZE(Processes) &&
+            NT_SUCCESS(ZpProcess_GetRecord(&ProcessList, 0, &ProcessRecord)) &&
+            ProcessRecord.ProcessId == 0 &&
+            ProcessRecord.ImageName.Length == 0 &&
+            NT_SUCCESS(ZpProcess_GetRecord(&ProcessList, 1, &ProcessRecord)) &&
+            ProcessRecord.ProcessId == Processes[1].ProcessId &&
+            ProcessRecord.SessionId == Processes[1].SessionId &&
+            ProcessRecord.ImageName.Length == Processes[1].ImageNameLength &&
+            RtlCompareMemory(ProcessRecord.ImageName.Buffer,
+                             Processes[1].ImageName,
+                             Processes[1].ImageNameLength * sizeof(WCHAR)) ==
+                Processes[1].ImageNameLength * sizeof(WCHAR));
+    TEST_OK(ZpProcess_GetRecord(&ProcessList,
+                                ProcessList.Count,
+                                &ProcessRecord) == STATUS_INVALID_PARAMETER);
 }

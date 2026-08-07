@@ -2,6 +2,7 @@
 #include "../../Network/Authentication.inl"
 #include "../../Network/Quic.inl"
 
+#include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/System.h>
 
 typedef struct _ZP_SERVER_QUIC_CONNECTION
@@ -73,6 +74,173 @@ ZpServerQuic_GetSystemInfo(
     Info->ComputerName = ComputerName;
     Info->ComputerNameLength = ComputerNameLength;
     return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpServerQuic_QuerySystemInformation(
+    _In_ SYSTEM_INFORMATION_CLASS InformationClass,
+    _Outptr_ PVOID* Information)
+{
+    PVOID Buffer;
+    ULONG Length = 0;
+    NTSTATUS Status;
+
+    Status = NtQuerySystemInformation(InformationClass,
+                                      NULL,
+                                      0,
+                                      &Length);
+    if (Status != STATUS_INFO_LENGTH_MISMATCH)
+    {
+        return Status;
+    }
+    for (;;)
+    {
+        Buffer = Mem_Alloc(Length);
+        if (Buffer == NULL)
+        {
+            return STATUS_NO_MEMORY;
+        }
+        Status = NtQuerySystemInformation(InformationClass,
+                                          Buffer,
+                                          Length,
+                                          &Length);
+        if (NT_SUCCESS(Status))
+        {
+            *Information = Buffer;
+            return STATUS_SUCCESS;
+        }
+        Mem_Free(Buffer);
+        if (Status != STATUS_INFO_LENGTH_MISMATCH)
+        {
+            return Status;
+        }
+    }
+}
+
+static
+NTSTATUS
+ZpServerQuic_EnumerateProcesses(
+    _Outptr_result_bytebuffer_(*PayloadLength) PBYTE* Payload,
+    _Out_ PULONG PayloadLength)
+{
+    PSYSTEM_PROCESS_INFORMATION Entry;
+    PZP_PROCESS_RECORD Processes;
+    PVOID SystemInfo;
+    NTSTATUS Status;
+    ULONG Count = 0, Index;
+
+    *Payload = NULL;
+    *PayloadLength = 0;
+    Status = ZpServerQuic_QuerySystemInformation(SystemProcessInformation,
+                                                 &SystemInfo);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    Entry = SystemInfo;
+    do
+    {
+        Count++;
+        Entry = Entry->NextEntryOffset != 0 ?
+                    Add2Ptr(Entry, Entry->NextEntryOffset) :
+                    NULL;
+    } while (Entry != NULL);
+    Processes = Mem_Alloc((SIZE_T)Count * sizeof(*Processes));
+    if (Processes == NULL)
+    {
+        Mem_Free(SystemInfo);
+        return STATUS_NO_MEMORY;
+    }
+
+    Entry = SystemInfo;
+    for (Index = 0; Index < Count; Index++)
+    {
+        Processes[Index].ProcessId = (ULONG)(ULONG_PTR)Entry->UniqueProcessId;
+        Processes[Index].SessionId = Entry->SessionId;
+        Processes[Index].ImageName = Entry->ImageName.Buffer;
+        Processes[Index].ImageNameLength = Entry->ImageName.Length / sizeof(WCHAR);
+        Entry = Entry->NextEntryOffset != 0 ?
+                    Add2Ptr(Entry, Entry->NextEntryOffset) :
+                    NULL;
+    }
+    Status = ZpProcess_EncodeList(Processes,
+                                  Count,
+                                  NULL,
+                                  0,
+                                  PayloadLength);
+    *Payload = NT_SUCCESS(Status) ? Mem_Alloc(*PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && *Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpProcess_EncodeList(Processes,
+                                      Count,
+                                      *Payload,
+                                      *PayloadLength,
+                                      PayloadLength);
+    }
+    if (!NT_SUCCESS(Status) && *Payload != NULL)
+    {
+        Mem_Free(*Payload);
+        *Payload = NULL;
+    }
+    Mem_Free(Processes);
+    Mem_Free(SystemInfo);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpServerQuic_SendResponse(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
+    _Inout_ PZP_CONNECTION Connection,
+    _In_ ULONGLONG RequestId,
+    _In_ NTSTATUS ResponseStatus,
+    _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength)
+{
+    ZP_RESPONSE Response = {
+        RequestId,
+        ResponseStatus,
+        Payload,
+        PayloadLength
+    };
+    PBYTE Body;
+    ULONG BodyLength;
+    NTSTATUS Status;
+
+    Status = ZpMessage_EncodeResponse(&Response,
+                                      NULL,
+                                      0,
+                                      &BodyLength);
+    Body = NT_SUCCESS(Status) ? Mem_Alloc(BodyLength) : NULL;
+    if (NT_SUCCESS(Status) && Body == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpMessage_EncodeResponse(&Response,
+                                          Body,
+                                          BodyLength,
+                                          &BodyLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpQuic_SendFrame(QuicConnection->Stream,
+                                  Connection,
+                                  ZpMessageResponse,
+                                  Body,
+                                  BodyLength);
+    }
+    if (Body != NULL)
+    {
+        Mem_Free(Body);
+    }
+    return Status;
 }
 
 static
@@ -153,16 +321,18 @@ ZpServerQuic_MessageCallback(
     ZP_BUFFER_VIEW Signature;
     ZP_DISCONNECT_VIEW Disconnect;
     ZP_REQUEST_VIEW Request;
-    ZP_RESPONSE Response;
     ZP_SYSTEM_INFO SystemInfo;
     ZP_READY Ready;
     BYTE Body[sizeof(USHORT) + ZP_MODULE_MAX_COUNT * 8];
     BYTE Payload[30 + (MAX_COMPUTERNAME_LENGTH + 1) * sizeof(WCHAR)];
     WCHAR ComputerName[MAX_COMPUTERNAME_LENGTH + 1];
+    const VOID* ResponsePayload;
+    PBYTE AllocatedPayload;
     ULONG BodyLength;
     ULONG PayloadLength;
     ULONGLONG Token;
     ULONGLONG RequestId;
+    ULONGLONG StartTick;
     NTSTATUS Status;
 
     switch (Frame->MessageType)
@@ -290,10 +460,11 @@ ZpServerQuic_MessageCallback(
             {
                 return Status;
             }
+            StartTick = GetTickCount64();
+            AllocatedPayload = NULL;
+            ResponsePayload = NULL;
             PayloadLength = 0;
-            if (!ZpServerQuic_HasModule(QuicConnection, Request.ModuleId) ||
-                Request.ModuleId != ZP_SYSTEM_MODULE_ID ||
-                Request.OperationId != ZP_SYSTEM_OPERATION_INFO)
+            if (!ZpServerQuic_HasModule(QuicConnection, Request.ModuleId))
             {
                 Status = STATUS_NOT_SUPPORTED;
             }
@@ -303,32 +474,49 @@ ZpServerQuic_MessageCallback(
             }
             if (NT_SUCCESS(Status))
             {
-                Status = ZpServerQuic_GetSystemInfo(&SystemInfo,
-                                                    ComputerName,
-                                                    ARRAYSIZE(ComputerName));
+                if (Request.ModuleId == ZP_SYSTEM_MODULE_ID &&
+                    Request.OperationId == ZP_SYSTEM_OPERATION_INFO)
+                {
+                    Status = ZpServerQuic_GetSystemInfo(&SystemInfo,
+                                                        ComputerName,
+                                                        ARRAYSIZE(ComputerName));
+                    if (NT_SUCCESS(Status))
+                    {
+                        Status = ZpSystem_EncodeInfo(&SystemInfo,
+                                                     Payload,
+                                                     sizeof(Payload),
+                                                     &PayloadLength);
+                        ResponsePayload = Payload;
+                    }
+                }
+                else if (Request.ModuleId == ZP_PROCESS_MODULE_ID &&
+                         Request.OperationId == ZP_PROCESS_OPERATION_ENUMERATE)
+                {
+                    Status = ZpServerQuic_EnumerateProcesses(&AllocatedPayload,
+                                                             &PayloadLength);
+                    ResponsePayload = AllocatedPayload;
+                }
+                else
+                {
+                    Status = STATUS_NOT_SUPPORTED;
+                }
             }
-            if (NT_SUCCESS(Status))
+            if (NT_SUCCESS(Status) &&
+                Request.TimeoutMilliseconds != 0 &&
+                GetTickCount64() - StartTick >= Request.TimeoutMilliseconds)
             {
-                Status = ZpSystem_EncodeInfo(&SystemInfo,
-                                             Payload,
-                                             sizeof(Payload),
-                                             &PayloadLength);
+                Status = STATUS_IO_TIMEOUT;
             }
-            Response.RequestId = Request.RequestId;
-            Response.Status = Status;
-            Response.Payload = NT_SUCCESS(Status) ? Payload : NULL;
-            Response.PayloadLength = NT_SUCCESS(Status) ? PayloadLength : 0;
-            Status = ZpMessage_EncodeResponse(&Response,
-                                              Body,
-                                              sizeof(Body),
-                                              &BodyLength);
-            if (NT_SUCCESS(Status))
+            BodyLength = NT_SUCCESS(Status) ? PayloadLength : 0;
+            Status = ZpServerQuic_SendResponse(QuicConnection,
+                                               Connection,
+                                               Request.RequestId,
+                                               Status,
+                                               NT_SUCCESS(Status) ? ResponsePayload : NULL,
+                                               BodyLength);
+            if (AllocatedPayload != NULL)
             {
-                Status = ZpQuic_SendFrame(QuicConnection->Stream,
-                                          Connection,
-                                          ZpMessageResponse,
-                                          Body,
-                                          BodyLength);
+                Mem_Free(AllocatedPayload);
             }
             return Status;
 

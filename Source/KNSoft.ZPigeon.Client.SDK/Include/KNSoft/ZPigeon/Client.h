@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <KNSoft/ZPigeon/SDK.h>
+#include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/System.h>
 
 EXTERN_C_START
@@ -50,6 +51,14 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ NTSTATUS Status,
     _In_opt_ const ZP_SYSTEM_INFO_VIEW* Info,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_PROCESS_ENUMERATE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_PROCESS_LIST_VIEW Processes,
     _In_opt_ PVOID Context);
 
 typedef struct _ZP_CLIENT_CONFIG
@@ -111,6 +120,15 @@ ZpClient_GetSystemInfo(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_SYSTEM_INFO_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_EnumerateProcesses(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PROCESS_ENUMERATE_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 

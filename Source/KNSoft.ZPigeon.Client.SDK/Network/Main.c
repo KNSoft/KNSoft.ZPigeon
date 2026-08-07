@@ -834,6 +834,76 @@ ZpClient_GetSystemInfo(
     return Status;
 }
 
+typedef struct _ZP_CLIENT_PROCESS_ENUMERATE_CONTEXT
+{
+    ZP_PROCESS_ENUMERATE_CALLBACK Callback;
+    PVOID Context;
+} ZP_CLIENT_PROCESS_ENUMERATE_CONTEXT, *PZP_CLIENT_PROCESS_ENUMERATE_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpClient_ProcessEnumerateComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_PROCESS_ENUMERATE_CONTEXT ProcessContext = Context;
+    ZP_PROCESS_LIST_VIEW Processes;
+
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpProcess_DecodeList(Payload->Buffer,
+                                      Payload->Length,
+                                      &Processes);
+    }
+    ProcessContext->Callback(Request,
+                             Status,
+                             NT_SUCCESS(Status) ? &Processes : NULL,
+                             ProcessContext->Context);
+    Mem_Free(ProcessContext);
+}
+
+NTSTATUS
+NTAPI
+ZpClient_EnumerateProcesses(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PROCESS_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_CLIENT_PROCESS_ENUMERATE_CONTEXT ProcessContext;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    ProcessContext = Mem_Alloc(sizeof(*ProcessContext));
+    if (ProcessContext == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    ProcessContext->Callback = Callback;
+    ProcessContext->Context = Context;
+    Status = ZpClient_SendRequest(Client,
+                                  ZP_PROCESS_MODULE_ID,
+                                  ZP_PROCESS_OPERATION_ENUMERATE,
+                                  TimeoutMilliseconds,
+                                  NULL,
+                                  0,
+                                  ZpClient_ProcessEnumerateComplete,
+                                  ProcessContext,
+                                  Request);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(ProcessContext);
+    }
+    return Status;
+}
+
 NTSTATUS
 NTAPI
 ZpRequest_Cancel(

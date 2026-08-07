@@ -53,6 +53,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="Include\KNSoft\ZPigeon\Protocol.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Process.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\System.h" />
     <ClInclude Include="Protocol.inl" />
   </ItemGroup>
@@ -60,6 +61,7 @@
     <ClCompile Include="Codec.c" />
     <ClCompile Include="Frame.c" />
     <ClCompile Include="Message.c" />
+    <ClCompile Include="Process.c" />
     <ClCompile Include="System.c" />
   </ItemGroup>
   <ItemGroup>

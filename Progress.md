@@ -44,15 +44,16 @@
 - 实现 Client 单调时钟本地 Deadline：以对象级线程池定时器统一调度未完成请求，超时本地完成为 `STATUS_IO_TIMEOUT` 并尽力发送 Cancel；
 - 固定 System 模块 Version 1 的 `Info` 操作和 Payload Codec，实现 Server 原生架构、Windows 版本、处理器数、物理内存及计算机名采集，以及 Client `ZpClient_GetSystemInfo` 异步 API；
 - 扩展 localhost QUIC 集成测试，覆盖 System.Info 的真实 Request/Response 往返和结果解码；
+- 固定 Process 模块 Version 1 的 `Enumerate` 操作和变长记录 Codec，实现 Server 原生进程快照、Client `ZpClient_EnumerateProcesses` 异步 API，以及当前进程可见性的真实端到端验证；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 199 项断言全部通过，其中包含真实 localhost QUIC 认证、重连、Ping/Pong 和 System.Info 端到端链路。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 201 项断言全部通过，其中包含真实 localhost QUIC 认证、重连、Ping/Pong、System.Info 和 Process.Enumerate 端到端链路。
 
 ## 下一步
 
-1. 补齐 Server Request 处理预算与可取消异步调度；
-2. 再按 Process、Service、File、Terminal 等模块逐步实现。
+1. 将可能阻塞的 Server Request 处理移出 MsQuic 回调并接入处理预算与取消；
+2. 再按 Process.Query/Control、Service、File、Terminal 等模块逐步实现。
 
 ## 待确认与阻塞
 

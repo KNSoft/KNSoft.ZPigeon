@@ -23,6 +23,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE ServerStoppedEvent;
     HANDLE ClientPongEvent;
     HANDLE SystemInfoEvent;
+    HANDLE ProcessListEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
@@ -33,6 +34,9 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONG SystemProcessorCount;
     ULONGLONG SystemPhysicalMemoryBytes;
     ULONG SystemComputerNameLength;
+    volatile LONG ProcessListStatus;
+    ULONG ProcessCount;
+    LOGICAL FoundCurrentProcess;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -99,6 +103,40 @@ SDKIntegration_SystemInfoCallback(
     }
     InterlockedExchange(&TestContext->SystemInfoStatus, Status);
     SetEvent(TestContext->SystemInfoEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_ProcessListCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_PROCESS_LIST_VIEW Processes,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+    ZP_PROCESS_RECORD_VIEW Process;
+    ULONG Index;
+
+    UNREFERENCED_PARAMETER(Request);
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->ProcessCount = Processes->Count;
+        for (Index = 0; Index < Processes->Count; Index++)
+        {
+            Status = ZpProcess_GetRecord(Processes, Index, &Process);
+            if (!NT_SUCCESS(Status))
+            {
+                break;
+            }
+            if (Process.ProcessId == GetCurrentProcessId())
+            {
+                TestContext->FoundCurrentProcess = TRUE;
+            }
+        }
+    }
+    InterlockedExchange(&TestContext->ProcessListStatus, Status);
+    SetEvent(TestContext->ProcessListEvent);
 }
 
 static
@@ -394,7 +432,11 @@ TEST_FUNC(SDKQuicIntegration)
     static const WCHAR ServerName[] = L"localhost";
     SDK_INTEGRATION_CONTEXT TestContext = { 0 };
     ZP_MODULE_RECORD ClientModules[] = { { 1, 3, 0x0F }, { 2, 1, 0x03 } };
-    ZP_MODULE_RECORD ServerModules[] = { { 1, 2, 0x05 }, { 3, 1, 0x01 } };
+    ZP_MODULE_RECORD ServerModules[] = {
+        { 1, 2, 0x05 },
+        { 2, 1, 0x03 },
+        { 3, 1, 0x01 }
+    };
     ZP_ENDPOINT Endpoint = { ZpTransportQuic, L"127.0.0.1", 0, ServerName, NULL };
     ZP_LISTENER_ENDPOINT Listener = { ZpTransportQuic, L"127.0.0.1", 0, NULL };
     ZP_SERVER_DEPLOYMENT Deployment = { ServerName, NULL };
@@ -412,6 +454,7 @@ TEST_FUNC(SDKQuicIntegration)
     ULONG Index;
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -437,6 +480,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.ServerStoppedEvent = Events[5];
     TestContext.ClientPongEvent = Events[6];
     TestContext.SystemInfoEvent = Events[7];
+    TestContext.ProcessListEvent = Events[8];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -549,6 +593,26 @@ TEST_FUNC(SDKQuicIntegration)
         TestContext.SystemProcessorCount == 0 ||
         TestContext.SystemPhysicalMemoryBytes == 0 ||
         TestContext.SystemComputerNameLength == 0)
+    {
+        goto Cleanup;
+    }
+
+    Status = ZpClient_EnumerateProcesses(Client,
+                                         SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                         SDKIntegration_ProcessListCallback,
+                                         &TestContext,
+                                         &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.ProcessListEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.ProcessListStatus) ||
+        TestContext.ProcessCount == 0 ||
+        !TestContext.FoundCurrentProcess)
     {
         goto Cleanup;
     }
