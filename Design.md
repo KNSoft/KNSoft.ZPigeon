@@ -438,6 +438,8 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 - `File`：枚举、属性及文件传输等管理操作；
 - `Terminal`：基于 ConPTY 的双向终端，包含窗口尺寸、输入、输出和退出状态。
 
+`System` 模块第一版固定为 `ModuleId = 1`、`ModuleVersion = 1`；`Info` 固定为 `OperationId = 1`，请求 Payload 必须为空。成功响应 Payload 依次编码 `UINT16 Architecture`（1=x86、2=x64、3=ARM64）、三个 `UINT32` Windows 主/次/Build 版本、`UINT32 ProcessorCount`、`UINT64 PhysicalMemoryBytes` 和 UTF-16LE ComputerName 字符串。
+
 大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口、断点续传和哈希规则在实现对应模块前按真实需求确定，不预先建设通用虚拟流框架。
 
 ## 10. 安全与资源限制
@@ -483,7 +485,7 @@ QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接�
 
 以下内容不阻塞 Network 和通用 Protocol 编码，在实现对应模块前定稿：
 
-1. 各业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
+1. 除已固定的 System.Info 外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
 2. File 通道的窗口、哈希、断点续传和落盘契约；
 3. Terminal 通道的输入输出分流、窗口调整和退出状态 Payload；
 4. EventLog 等订阅模块的事件丢失与恢复语义；

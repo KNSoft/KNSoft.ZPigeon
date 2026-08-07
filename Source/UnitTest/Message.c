@@ -1,6 +1,7 @@
 ﻿#include "UnitTest.h"
 
 #include <KNSoft/ZPigeon/Protocol.h>
+#include <KNSoft/ZPigeon/System.h>
 
 TEST_FUNC(ProtocolMessage)
 {
@@ -22,6 +23,17 @@ TEST_FUNC(ProtocolMessage)
     ZP_REQUEST_VIEW RequestView;
     ZP_RESPONSE Response = { 7, STATUS_SUCCESS, ResponsePayload, sizeof(ResponsePayload) };
     ZP_RESPONSE_VIEW ResponseView;
+    ZP_SYSTEM_INFO SystemInfo = {
+        ZpSystemArchitectureX64,
+        10,
+        0,
+        26100,
+        16,
+        32ULL * 1024 * 1024 * 1024,
+        L"TEST-HOST",
+        9
+    };
+    ZP_SYSTEM_INFO_VIEW SystemInfoView;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value;
@@ -134,4 +146,18 @@ TEST_FUNC(ProtocolMessage)
             NT_SUCCESS(ZpMessage_DecodePing(ZpMessagePong, Buffer, Length, &Value)) &&
             Value == MAXULONGLONG);
     TEST_OK(ZpMessage_DecodePing(ZpMessageRequest, Buffer, Length, &Value) == STATUS_INVALID_PARAMETER);
+
+    TEST_OK(NT_SUCCESS(ZpSystem_EncodeInfo(&SystemInfo, Buffer, sizeof(Buffer), &Length)) &&
+            Length == 48 &&
+            NT_SUCCESS(ZpSystem_DecodeInfo(Buffer, Length, &SystemInfoView)) &&
+            SystemInfoView.Architecture == SystemInfo.Architecture &&
+            SystemInfoView.BuildNumber == SystemInfo.BuildNumber &&
+            SystemInfoView.ProcessorCount == SystemInfo.ProcessorCount &&
+            SystemInfoView.PhysicalMemoryBytes == SystemInfo.PhysicalMemoryBytes &&
+            SystemInfoView.ComputerName.Length == SystemInfo.ComputerNameLength &&
+            RtlCompareMemory(SystemInfoView.ComputerName.Buffer,
+                             SystemInfo.ComputerName,
+                             SystemInfo.ComputerNameLength * sizeof(WCHAR)) ==
+                SystemInfo.ComputerNameLength * sizeof(WCHAR));
+    TEST_OK(ZpSystem_DecodeInfo(Buffer, Length - 1, &SystemInfoView) == STATUS_DATA_ERROR);
 }

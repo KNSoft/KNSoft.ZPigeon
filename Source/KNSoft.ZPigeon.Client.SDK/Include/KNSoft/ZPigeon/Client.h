@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <KNSoft/ZPigeon/SDK.h>
+#include <KNSoft/ZPigeon/System.h>
 
 EXTERN_C_START
 
@@ -41,6 +42,14 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ NTSTATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_SYSTEM_INFO_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ const ZP_SYSTEM_INFO_VIEW* Info,
     _In_opt_ PVOID Context);
 
 typedef struct _ZP_CLIENT_CONFIG
@@ -93,6 +102,15 @@ ZpClient_SendRequest(
     _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _In_ ZP_REQUEST_COMPLETE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_GetSystemInfo(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_SYSTEM_INFO_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 

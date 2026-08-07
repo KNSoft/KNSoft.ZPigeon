@@ -22,11 +22,17 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE ServerReadyEvent;
     HANDLE ServerStoppedEvent;
     HANDLE ClientPongEvent;
+    HANDLE SystemInfoEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
     volatile LONG ServerStoppedStatus;
     ULONGLONG ClientPongToken;
+    volatile LONG SystemInfoStatus;
+    ZP_SYSTEM_ARCHITECTURE SystemArchitecture;
+    ULONG SystemProcessorCount;
+    ULONGLONG SystemPhysicalMemoryBytes;
+    ULONG SystemComputerNameLength;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -70,6 +76,29 @@ SDKIntegration_ClientPongCallback(
     UNREFERENCED_PARAMETER(Client);
     TestContext->ClientPongToken = Token;
     SetEvent(TestContext->ClientPongEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_SystemInfoCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ const ZP_SYSTEM_INFO_VIEW* Info,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->SystemArchitecture = Info->Architecture;
+        TestContext->SystemProcessorCount = Info->ProcessorCount;
+        TestContext->SystemPhysicalMemoryBytes = Info->PhysicalMemoryBytes;
+        TestContext->SystemComputerNameLength = Info->ComputerName.Length;
+    }
+    InterlockedExchange(&TestContext->SystemInfoStatus, Status);
+    SetEvent(TestContext->SystemInfoEvent);
 }
 
 static
@@ -373,6 +402,7 @@ TEST_FUNC(SDKQuicIntegration)
     ZP_SERVER_CONFIG ServerConfig = { 0 };
     ZP_CLIENT_HANDLE Client = NULL;
     ZP_SERVER_HANDLE Server = NULL;
+    ZP_REQUEST_HANDLE Request = NULL;
     NCRYPT_PROV_HANDLE IdentityProvider = 0;
     NCRYPT_KEY_HANDLE IdentityKey = 0;
     HCERTSTORE CertificateStore = NULL;
@@ -382,6 +412,7 @@ TEST_FUNC(SDKQuicIntegration)
     ULONG Index;
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -405,6 +436,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.ServerReadyEvent = Events[4];
     TestContext.ServerStoppedEvent = Events[5];
     TestContext.ClientPongEvent = Events[6];
+    TestContext.SystemInfoEvent = Events[7];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -498,6 +530,29 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
+    Status = ZpClient_GetSystemInfo(Client,
+                                    SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                    SDKIntegration_SystemInfoCallback,
+                                    &TestContext,
+                                    &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.SystemInfoEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.SystemInfoStatus) ||
+        TestContext.SystemArchitecture < ZpSystemArchitectureX86 ||
+        TestContext.SystemArchitecture > ZpSystemArchitectureArm64 ||
+        TestContext.SystemProcessorCount == 0 ||
+        TestContext.SystemPhysicalMemoryBytes == 0 ||
+        TestContext.SystemComputerNameLength == 0)
+    {
+        goto Cleanup;
+    }
+
     ResetEvent(TestContext.ServerRunningEvent);
     ResetEvent(TestContext.ClientReadyEvent);
     ResetEvent(TestContext.ServerReadyEvent);
@@ -527,6 +582,10 @@ TEST_FUNC(SDKQuicIntegration)
     Result = TRUE;
 
 Cleanup:
+    if (Request != NULL)
+    {
+        ZpRequest_Close(Request);
+    }
     if (Client != NULL)
     {
         ZpClient_Stop(Client);

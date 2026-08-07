@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -53,12 +53,14 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="Include\KNSoft\ZPigeon\Protocol.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\System.h" />
     <ClInclude Include="Protocol.inl" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Codec.c" />
     <ClCompile Include="Frame.c" />
     <ClCompile Include="Message.c" />
+    <ClCompile Include="System.c" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

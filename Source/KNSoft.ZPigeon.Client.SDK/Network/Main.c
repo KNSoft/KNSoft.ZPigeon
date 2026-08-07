@@ -619,6 +619,76 @@ ZpClient_SendRequest(
     return STATUS_SUCCESS;
 }
 
+typedef struct _ZP_CLIENT_SYSTEM_INFO_CONTEXT
+{
+    ZP_SYSTEM_INFO_CALLBACK Callback;
+    PVOID Context;
+} ZP_CLIENT_SYSTEM_INFO_CONTEXT, *PZP_CLIENT_SYSTEM_INFO_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpClient_SystemInfoComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_SYSTEM_INFO_CONTEXT SystemContext = Context;
+    ZP_SYSTEM_INFO_VIEW Info;
+
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpSystem_DecodeInfo(Payload->Buffer,
+                                     Payload->Length,
+                                     &Info);
+    }
+    SystemContext->Callback(Request,
+                            Status,
+                            NT_SUCCESS(Status) ? &Info : NULL,
+                            SystemContext->Context);
+    Mem_Free(SystemContext);
+}
+
+NTSTATUS
+NTAPI
+ZpClient_GetSystemInfo(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_SYSTEM_INFO_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_CLIENT_SYSTEM_INFO_CONTEXT SystemContext;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    SystemContext = Mem_Alloc(sizeof(*SystemContext));
+    if (SystemContext == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    SystemContext->Callback = Callback;
+    SystemContext->Context = Context;
+    Status = ZpClient_SendRequest(Client,
+                                  ZP_SYSTEM_MODULE_ID,
+                                  ZP_SYSTEM_OPERATION_INFO,
+                                  TimeoutMilliseconds,
+                                  NULL,
+                                  0,
+                                  ZpClient_SystemInfoComplete,
+                                  SystemContext,
+                                  Request);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(SystemContext);
+    }
+    return Status;
+}
+
 NTSTATUS
 NTAPI
 ZpRequest_Cancel(

@@ -2,6 +2,8 @@
 #include "../../Network/Authentication.inl"
 #include "../../Network/Quic.inl"
 
+#include <KNSoft/ZPigeon/System.h>
+
 typedef struct _ZP_SERVER_QUIC_CONNECTION
 {
     PZP_SERVER_QUIC_TRANSPORT Transport;
@@ -21,6 +23,75 @@ static const QUIC_REGISTRATION_CONFIG ZpServerQuicRegistrationConfig = {
     "KNSoft.ZPigeon.Server",
     QUIC_EXECUTION_PROFILE_LOW_LATENCY
 };
+
+static
+NTSTATUS
+ZpServerQuic_GetSystemInfo(
+    _Out_ PZP_SYSTEM_INFO Info,
+    _Out_writes_(ComputerNameCount) PWCHAR ComputerName,
+    _In_ ULONG ComputerNameCount)
+{
+    RTL_OSVERSIONINFOW Version = { sizeof(Version) };
+    MEMORYSTATUSEX Memory = { sizeof(Memory) };
+    SYSTEM_INFO NativeInfo;
+    DWORD ComputerNameLength = ComputerNameCount;
+    NTSTATUS Status;
+
+    GetNativeSystemInfo(&NativeInfo);
+    switch (NativeInfo.wProcessorArchitecture)
+    {
+        case PROCESSOR_ARCHITECTURE_INTEL:
+            Info->Architecture = ZpSystemArchitectureX86;
+            break;
+
+        case PROCESSOR_ARCHITECTURE_AMD64:
+            Info->Architecture = ZpSystemArchitectureX64;
+            break;
+
+        case PROCESSOR_ARCHITECTURE_ARM64:
+            Info->Architecture = ZpSystemArchitectureArm64;
+            break;
+
+        default:
+            return STATUS_NOT_SUPPORTED;
+    }
+    Status = RtlGetVersion(&Version);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    if (!GlobalMemoryStatusEx(&Memory) ||
+        !GetComputerNameW(ComputerName, &ComputerNameLength))
+    {
+        return NTSTATUS_FROM_WIN32(GetLastError());
+    }
+    Info->MajorVersion = Version.dwMajorVersion;
+    Info->MinorVersion = Version.dwMinorVersion;
+    Info->BuildNumber = Version.dwBuildNumber;
+    Info->ProcessorCount = NativeInfo.dwNumberOfProcessors;
+    Info->PhysicalMemoryBytes = Memory.ullTotalPhys;
+    Info->ComputerName = ComputerName;
+    Info->ComputerNameLength = ComputerNameLength;
+    return STATUS_SUCCESS;
+}
+
+static
+LOGICAL
+ZpServerQuic_HasModule(
+    _In_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
+    _In_ USHORT ModuleId)
+{
+    USHORT Index;
+
+    for (Index = 0; Index < QuicConnection->ModuleCount; Index++)
+    {
+        if (QuicConnection->Modules[Index].ModuleId == ModuleId)
+        {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
 
 static
 NTSTATUS
@@ -81,10 +152,17 @@ ZpServerQuic_MessageCallback(
     ZP_CLIENT_HELLO_VIEW Hello;
     ZP_BUFFER_VIEW Signature;
     ZP_DISCONNECT_VIEW Disconnect;
+    ZP_REQUEST_VIEW Request;
+    ZP_RESPONSE Response;
+    ZP_SYSTEM_INFO SystemInfo;
     ZP_READY Ready;
     BYTE Body[sizeof(USHORT) + ZP_MODULE_MAX_COUNT * 8];
+    BYTE Payload[30 + (MAX_COMPUTERNAME_LENGTH + 1) * sizeof(WCHAR)];
+    WCHAR ComputerName[MAX_COMPUTERNAME_LENGTH + 1];
     ULONG BodyLength;
+    ULONG PayloadLength;
     ULONGLONG Token;
+    ULONGLONG RequestId;
     NTSTATUS Status;
 
     switch (Frame->MessageType)
@@ -203,6 +281,61 @@ ZpServerQuic_MessageCallback(
                                           BodyLength);
             }
             return Status;
+
+        case ZpMessageRequest:
+            Status = ZpMessage_DecodeRequest(Frame->Body,
+                                             Frame->BodyLength,
+                                             &Request);
+            if (!NT_SUCCESS(Status))
+            {
+                return Status;
+            }
+            PayloadLength = 0;
+            if (!ZpServerQuic_HasModule(QuicConnection, Request.ModuleId) ||
+                Request.ModuleId != ZP_SYSTEM_MODULE_ID ||
+                Request.OperationId != ZP_SYSTEM_OPERATION_INFO)
+            {
+                Status = STATUS_NOT_SUPPORTED;
+            }
+            if (NT_SUCCESS(Status) && Request.Payload.Length != 0)
+            {
+                Status = STATUS_INVALID_PARAMETER;
+            }
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_GetSystemInfo(&SystemInfo,
+                                                    ComputerName,
+                                                    ARRAYSIZE(ComputerName));
+            }
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpSystem_EncodeInfo(&SystemInfo,
+                                             Payload,
+                                             sizeof(Payload),
+                                             &PayloadLength);
+            }
+            Response.RequestId = Request.RequestId;
+            Response.Status = Status;
+            Response.Payload = NT_SUCCESS(Status) ? Payload : NULL;
+            Response.PayloadLength = NT_SUCCESS(Status) ? PayloadLength : 0;
+            Status = ZpMessage_EncodeResponse(&Response,
+                                              Body,
+                                              sizeof(Body),
+                                              &BodyLength);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpQuic_SendFrame(QuicConnection->Stream,
+                                          Connection,
+                                          ZpMessageResponse,
+                                          Body,
+                                          BodyLength);
+            }
+            return Status;
+
+        case ZpMessageCancel:
+            return ZpMessage_DecodeCancel(Frame->Body,
+                                          Frame->BodyLength,
+                                          &RequestId);
     }
     return STATUS_PROTOCOL_UNREACHABLE;
 }
