@@ -653,6 +653,74 @@ ZpMessage_DecodeCancel(
 }
 
 NTSTATUS
+ZpMessage_EncodeEvent(
+    _In_ PCZP_EVENT Message,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+    ULONG RequiredSize;
+
+    if (Message->SubscriptionId == 0 ||
+        Message->ModuleId == 0 ||
+        Message->EventId == 0 ||
+        Message->PayloadLength > ZP_FRAME_MAX_BODY_SIZE - 12 ||
+        (Message->PayloadLength != 0 && Message->Payload == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = 12 + Message->PayloadLength;
+    Status = ZpMessage_PrepareOutput(Buffer,
+                                     BufferSize,
+                                     RequiredSize,
+                                     BytesWritten);
+    if (!NT_SUCCESS(Status) || Buffer == NULL)
+    {
+        return Status;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt64(&Writer, Message->SubscriptionId);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt16(&Writer, Message->ModuleId);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt16(&Writer, Message->EventId);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteData(&Writer,
+                                   Message->Payload,
+                                   Message->PayloadLength);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpMessage_DecodeEvent(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_EVENT_VIEW View)
+{
+    const BYTE* Buffer = Body;
+    NTSTATUS Status;
+
+    Status = ZpMessage_ValidateBody(ZpMessageEvent, Buffer, BodyLength);
+    if (NT_SUCCESS(Status))
+    {
+        View->SubscriptionId = ZpReadUInt64(Buffer);
+        View->ModuleId = ZpReadUInt16(Buffer + 8);
+        View->EventId = ZpReadUInt16(Buffer + 10);
+        View->Payload.Buffer = Buffer + 12;
+        View->Payload.Length = BodyLength - 12;
+    }
+    return Status;
+}
+
+NTSTATUS
 ZpMessage_EncodeChannelData(
     _In_ ULONGLONG ChannelId,
     _In_reads_bytes_(DataLength) const VOID* Data,

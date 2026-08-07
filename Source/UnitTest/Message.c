@@ -1,5 +1,6 @@
 ﻿#include "UnitTest.h"
 
+#include <KNSoft/ZPigeon/EventLog.h>
 #include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Protocol.h>
 #include <KNSoft/ZPigeon/Process.h>
@@ -9,6 +10,10 @@
 
 TEST_FUNC(ProtocolMessage)
 {
+    static const WCHAR EventChannel[] = L"System";
+    static const WCHAR EventQuery[] = L"*[System/Level<=3]";
+    static const WCHAR EventBookmark[] = L"<Bookmark>1</Bookmark>";
+    static const WCHAR EventXml[] = L"<Event/>";
     ZP_MODULE_RECORD Modules[] = {
         { 1, 1, 0x01020304 },
         { 3, 2, 0xA0B0C0D0 }
@@ -27,6 +32,14 @@ TEST_FUNC(ProtocolMessage)
     ZP_REQUEST_VIEW RequestView;
     ZP_RESPONSE Response = { 7, STATUS_SUCCESS, ResponsePayload, sizeof(ResponsePayload) };
     ZP_RESPONSE_VIEW ResponseView;
+    ZP_EVENT Event = {
+        2,
+        ZP_EVENT_LOG_MODULE_ID,
+        ZP_EVENT_LOG_EVENT_RECORD,
+        ResponsePayload,
+        sizeof(ResponsePayload)
+    };
+    ZP_EVENT_VIEW EventView;
     ZP_CHANNEL_DATA_VIEW ChannelDataView;
     ZP_CHANNEL_CLOSE ChannelClose;
     ZP_SYSTEM_INFO SystemInfo = {
@@ -105,6 +118,20 @@ TEST_FUNC(ProtocolMessage)
     ZP_FILE_LIST_VIEW FileList;
     ZP_FILE_PAGE_VIEW FilePage;
     ZP_FILE_RECORD_VIEW FileRecord;
+    ZP_EVENT_LOG_RECORD EventRecords[] = {
+        {
+            EventBookmark,
+            ARRAYSIZE(EventBookmark) - 1,
+            EventXml,
+            ARRAYSIZE(EventXml) - 1
+        }
+    };
+    ZP_EVENT_LOG_QUERY_VIEW EventLogQuery;
+    ZP_EVENT_LOG_SUBSCRIBE_VIEW EventLogSubscribe;
+    ZP_EVENT_LOG_PAGE_VIEW EventLogPage;
+    ZP_EVENT_LOG_RECORD_VIEW EventLogRecord;
+    ZP_EVENT_LOG_EVENT_RECORD_VIEW EventLogRecordEvent;
+    ZP_EVENT_LOG_EVENT_TERMINAL_VIEW EventLogTerminalEvent;
     ZP_TERMINAL_CREATE_VIEW TerminalCreate;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
@@ -215,6 +242,26 @@ TEST_FUNC(ProtocolMessage)
             NT_SUCCESS(ZpMessage_DecodeCancel(Buffer, Length, &Value)) &&
             Value == 7);
     TEST_OK(ZpMessage_EncodeCancel(0, NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
+
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeEvent(&Event,
+                                             Buffer,
+                                             sizeof(Buffer),
+                                             &Length)) &&
+            Length == 12 + sizeof(ResponsePayload) &&
+            NT_SUCCESS(ZpMessage_DecodeEvent(Buffer, Length, &EventView)) &&
+            EventView.SubscriptionId == Event.SubscriptionId &&
+            EventView.ModuleId == Event.ModuleId &&
+            EventView.EventId == Event.EventId &&
+            EventView.Payload.Length == sizeof(ResponsePayload) &&
+            RtlCompareMemory(EventView.Payload.Buffer,
+                             ResponsePayload,
+                             sizeof(ResponsePayload)) == sizeof(ResponsePayload));
+    Event.SubscriptionId = 0;
+    TEST_OK(ZpMessage_EncodeEvent(&Event,
+                                  NULL,
+                                  0,
+                                  &Length) == STATUS_INVALID_PARAMETER);
+    Event.SubscriptionId = 2;
 
     TEST_OK(NT_SUCCESS(ZpMessage_EncodePing(MAXULONGLONG, Buffer, sizeof(Buffer), &Length)) &&
             Length == sizeof(ULONGLONG) &&
@@ -584,6 +631,173 @@ TEST_FUNC(ProtocolMessage)
             NT_SUCCESS(ZpFile_DecodePage(Buffer, Length, &FilePage)) &&
             FilePage.NextCursor.Length == 0 &&
             FilePage.Files.Count == ARRAYSIZE(FileRecords));
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeQueryPageRequest(
+                           ZpEventLogStartOldest,
+                           16,
+                           EventChannel,
+                           ARRAYSIZE(EventChannel) - 1,
+                           EventQuery,
+                           ARRAYSIZE(EventQuery) - 1,
+                           NULL,
+                           0,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodeQueryPageRequest(Buffer,
+                                                         Length,
+                                                         &EventLogQuery)) &&
+            EventLogQuery.StartMode == ZpEventLogStartOldest &&
+            EventLogQuery.MaxEvents == 16 &&
+            EventLogQuery.ChannelPath.Length == ARRAYSIZE(EventChannel) - 1 &&
+            EventLogQuery.Query.Length == ARRAYSIZE(EventQuery) - 1 &&
+            EventLogQuery.Bookmark.Length == 0);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeQueryPageRequest(
+                           ZpEventLogStartAfterBookmark,
+                           ZP_EVENT_LOG_PAGE_MAX_COUNT,
+                           EventChannel,
+                           ARRAYSIZE(EventChannel) - 1,
+                           NULL,
+                           0,
+                           EventBookmark,
+                           ARRAYSIZE(EventBookmark) - 1,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodeQueryPageRequest(Buffer,
+                                                         Length,
+                                                         &EventLogQuery)) &&
+            EventLogQuery.StartMode == ZpEventLogStartAfterBookmark &&
+            EventLogQuery.Bookmark.Length == ARRAYSIZE(EventBookmark) - 1);
+    TEST_OK(ZpEventLog_EncodeQueryPageRequest(ZpEventLogStartFuture,
+                                              16,
+                                              EventChannel,
+                                              ARRAYSIZE(EventChannel) - 1,
+                                              NULL,
+                                              0,
+                                              NULL,
+                                              0,
+                                              Buffer,
+                                              sizeof(Buffer),
+                                              &Length) ==
+                STATUS_INVALID_PARAMETER &&
+            ZpEventLog_EncodeQueryPageRequest(ZpEventLogStartAfterBookmark,
+                                              16,
+                                              EventChannel,
+                                              ARRAYSIZE(EventChannel) - 1,
+                                              NULL,
+                                              0,
+                                              NULL,
+                                              0,
+                                              Buffer,
+                                              sizeof(Buffer),
+                                              &Length) ==
+                STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeSubscribeRequest(
+                           ZpEventLogStartFuture,
+                           EventChannel,
+                           ARRAYSIZE(EventChannel) - 1,
+                           EventQuery,
+                           ARRAYSIZE(EventQuery) - 1,
+                           NULL,
+                           0,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodeSubscribeRequest(
+                Buffer,
+                Length,
+                &EventLogSubscribe)) &&
+            EventLogSubscribe.StartMode == ZpEventLogStartFuture &&
+            EventLogSubscribe.ChannelPath.Length == ARRAYSIZE(EventChannel) - 1 &&
+            EventLogSubscribe.Bookmark.Length == 0);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodePage(
+                           TRUE,
+                           EventRecords,
+                           ARRAYSIZE(EventRecords),
+                           EventBookmark,
+                           ARRAYSIZE(EventBookmark) - 1,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodePage(Buffer, Length, &EventLogPage)) &&
+            EventLogPage.HasMore &&
+            EventLogPage.NextBookmark.Length == ARRAYSIZE(EventBookmark) - 1 &&
+            EventLogPage.Records.Count == ARRAYSIZE(EventRecords) &&
+            NT_SUCCESS(ZpEventLog_GetRecord(&EventLogPage.Records,
+                                            0,
+                                            &EventLogRecord)) &&
+            EventLogRecord.Bookmark.Length == ARRAYSIZE(EventBookmark) - 1 &&
+            EventLogRecord.Xml.Length == ARRAYSIZE(EventXml) - 1);
+    TEST_OK(ZpEventLog_EncodePage(TRUE,
+                                 EventRecords,
+                                 ARRAYSIZE(EventRecords),
+                                 L"different",
+                                 9,
+                                 Buffer,
+                                 sizeof(Buffer),
+                                 &Length) == STATUS_INVALID_PARAMETER &&
+            ZpEventLog_GetRecord(&EventLogPage.Records,
+                                 EventLogPage.Records.Count,
+                                 &EventLogRecord) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeSubscribeResponse(2,
+                                                          Buffer,
+                                                          sizeof(Buffer),
+                                                          &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodeSubscribeResponse(Buffer,
+                                                          Length,
+                                                          &Value)) &&
+            Value == 2 &&
+            ZpEventLog_EncodeSubscribeResponse(3,
+                                               Buffer,
+                                               sizeof(Buffer),
+                                               &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeUnsubscribeRequest(4,
+                                                           Buffer,
+                                                           sizeof(Buffer),
+                                                           &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodeUnsubscribeRequest(Buffer,
+                                                           Length,
+                                                           &Value)) &&
+            Value == 4);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeRecordEvent(
+                           1,
+                           EventBookmark,
+                           ARRAYSIZE(EventBookmark) - 1,
+                           EventXml,
+                           ARRAYSIZE(EventXml) - 1,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodeRecordEvent(Buffer,
+                                                    Length,
+                                                    &EventLogRecordEvent)) &&
+            EventLogRecordEvent.Sequence == 1 &&
+            EventLogRecordEvent.Record.Bookmark.Length ==
+                ARRAYSIZE(EventBookmark) - 1 &&
+            EventLogRecordEvent.Record.Xml.Length == ARRAYSIZE(EventXml) - 1);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeTerminalEvent(
+                           2,
+                           STATUS_BUFFER_OVERFLOW,
+                           EventBookmark,
+                           ARRAYSIZE(EventBookmark) - 1,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodeTerminalEvent(
+                Buffer,
+                Length,
+                &EventLogTerminalEvent)) &&
+            EventLogTerminalEvent.NextSequence == 2 &&
+            EventLogTerminalEvent.Status == STATUS_BUFFER_OVERFLOW &&
+            EventLogTerminalEvent.LastBookmark.Length ==
+                ARRAYSIZE(EventBookmark) - 1 &&
+            ZpEventLog_EncodeTerminalEvent(2,
+                                           STATUS_SUCCESS,
+                                           EventBookmark,
+                                           ARRAYSIZE(EventBookmark) - 1,
+                                           Buffer,
+                                           sizeof(Buffer),
+                                           &Length) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpTerminal_EncodeCreate(120,
                                                30,
                                                L"cmd.exe /Q",

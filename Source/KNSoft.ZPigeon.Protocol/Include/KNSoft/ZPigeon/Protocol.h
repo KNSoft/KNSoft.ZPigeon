@@ -174,6 +174,27 @@ typedef struct _ZP_RESPONSE_VIEW
 
 typedef const ZP_RESPONSE_VIEW* PCZP_RESPONSE_VIEW;
 
+typedef struct _ZP_EVENT
+{
+    ULONGLONG SubscriptionId;
+    USHORT ModuleId;
+    USHORT EventId;
+    const VOID* Payload;
+    ULONG PayloadLength;
+} ZP_EVENT, *PZP_EVENT;
+
+typedef const ZP_EVENT* PCZP_EVENT;
+
+typedef struct _ZP_EVENT_VIEW
+{
+    ULONGLONG SubscriptionId;
+    USHORT ModuleId;
+    USHORT EventId;
+    ZP_BUFFER_VIEW Payload;
+} ZP_EVENT_VIEW, *PZP_EVENT_VIEW;
+
+typedef const ZP_EVENT_VIEW* PCZP_EVENT_VIEW;
+
 typedef struct _ZP_CHANNEL_DATA_VIEW
 {
     ULONGLONG ChannelId;
@@ -401,6 +422,19 @@ ZpMessage_DecodeCancel(
     _In_reads_bytes_(BodyLength) const VOID* Body,
     _In_ ULONG BodyLength,
     _Out_ PULONGLONG RequestId);
+
+NTSTATUS
+ZpMessage_EncodeEvent(
+    _In_ PCZP_EVENT Message,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodeEvent(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_EVENT_VIEW View);
 
 NTSTATUS
 ZpMessage_EncodeChannelData(
