@@ -293,6 +293,7 @@ TEST_FUNC(SDKContract)
         0,
         Modules,
         ARRAYSIZE(Modules),
+        0,
         SDKTest_ServerStateCallback,
         SDKTest_ServerConnectionCallback,
         NULL
@@ -419,11 +420,17 @@ TEST_FUNC(SDKContract)
     TEST_OK(ZpClient_Create(&ClientConfig, &Client) == STATUS_INVALID_PARAMETER);
     Modules[1].ModuleId = 2;
 
+    ServerConfig.MaxRequestsPerConnection =
+        ZP_SERVER_MAX_REQUESTS_PER_CONNECTION + 1;
+    TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
+    ServerConfig.MaxRequestsPerConnection = 0;
     TEST_OK(NT_SUCCESS(ZpServer_Create(&ServerConfig, &Server)));
     ServerObject = (PZP_SERVER_OBJECT)Server;
     ListenerHost[0] = L'X';
     Modules[0].ModuleVersion = 2;
     TEST_OK(ServerObject->State == ZpServerStateStopped);
+    TEST_OK(ServerObject->Config.MaxRequestsPerConnection ==
+            ZP_SERVER_DEFAULT_MAX_REQUESTS_PER_CONNECTION);
     TEST_OK(wcscmp(ServerObject->Config.Listeners[0].Host, L"::") == 0);
     TEST_OK(ServerObject->Config.Modules[0].ModuleVersion == 1);
     ServerObject->State = ZpServerStateRunning;

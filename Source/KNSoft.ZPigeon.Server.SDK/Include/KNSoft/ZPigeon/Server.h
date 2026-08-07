@@ -8,6 +8,9 @@
 
 EXTERN_C_START
 
+#define ZP_SERVER_DEFAULT_MAX_REQUESTS_PER_CONNECTION 64
+#define ZP_SERVER_MAX_REQUESTS_PER_CONNECTION 4096
+
 typedef enum _ZP_SERVER_STATE
 {
     ZpServerStateStopped,
@@ -50,6 +53,7 @@ typedef struct _ZP_SERVER_CONFIG
     ULONG DeploymentCount;
     PCZP_MODULE_RECORD Modules;
     USHORT ModuleCount;
+    ULONG MaxRequestsPerConnection;
     ZP_SERVER_STATE_CALLBACK StateCallback;
     ZP_SERVER_CONNECTION_CALLBACK ConnectionCallback;
     PVOID CallbackContext;

@@ -44,18 +44,19 @@
 - 实现 Client 单调时钟本地 Deadline：以对象级线程池定时器统一调度未完成请求，超时本地完成为 `STATUS_IO_TIMEOUT` 并尽力发送 Cancel；
 - 将 Server Request 业务处理移出 MsQuic 回调并投递线程池；连接引用计数覆盖工作生命周期，Cancel/关闭会从活动表摘除请求并抑制迟到 Response，Server Stop 等待工作安全退出；
 - 扩展集成压力路径，覆盖 8 个并发 Process 请求进行中停止 Server、全部 Client 请求单次完成以及随后自动重连；
+- 增加 Server 每连接未完成 Request 配额：默认 64、配置硬上限 4096；超额请求返回 `STATUS_QUOTA_EXCEEDED`，集成压力路径以配额 4 验证 8 个并发请求；
 - 固定 System 模块 Version 1 的 `Info` 操作和 Payload Codec，实现 Server 原生架构、Windows 版本、处理器数、物理内存及计算机名采集，以及 Client `ZpClient_GetSystemInfo` 异步 API；
 - 扩展 localhost QUIC 集成测试，覆盖 System.Info 的真实 Request/Response 往返和结果解码；
 - 固定 Process 模块 Version 1 的 `Enumerate` 操作和变长记录 Codec，实现 Server 原生进程快照、Client `ZpClient_EnumerateProcesses` 异步 API，以及当前进程可见性的真实端到端验证；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 201 项断言全部通过，其中包含真实 localhost QUIC 认证、重连、Ping/Pong、System.Info 和 Process.Enumerate 端到端链路。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 203 项断言全部通过，其中包含真实 localhost QUIC 认证、重连、Ping/Pong、System.Info 和 Process.Enumerate 端到端链路。
 
 ## 下一步
 
-1. 为 Server 工作队列补充可配置并发/未完成请求上限；
-2. 再按 Process.Query/Control、Service、File、Terminal 等模块逐步实现。
+1. 增加 Process.Query 所需的单进程详细信息协议与实现；
+2. 再按 Process.Control、Service、File、Terminal 等模块逐步实现。
 
 ## 待确认与阻塞
 

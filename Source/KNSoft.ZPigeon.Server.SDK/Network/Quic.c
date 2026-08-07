@@ -12,6 +12,7 @@ typedef struct _ZP_SERVER_QUIC_CONNECTION
     LIST_ENTRY Requests;
     volatile LONG ReferenceCount;
     LOGICAL Closing;
+    ULONG ActiveRequestCount;
     HQUIC Connection;
     HQUIC Stream;
     NTSTATUS ShutdownStatus;
@@ -364,6 +365,7 @@ ZpServerQuic_RequestCallback(
     if (SendResponse)
     {
         RemoveEntryList(&Request->ListEntry);
+        QuicConnection->ActiveRequestCount--;
         ZpServerQuic_SendResponse(QuicConnection,
                                   &QuicConnection->ProtocolConnection,
                                   Request->RequestId,
@@ -427,6 +429,18 @@ ZpServerQuic_QueueRequest(
         Mem_Free(Request);
         return STATUS_CONNECTION_DISCONNECTED;
     }
+    if (QuicConnection->ActiveRequestCount >=
+        QuicConnection->Transport->Owner->Config.MaxRequestsPerConnection)
+    {
+        RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
+        Mem_Free(Request);
+        return ZpServerQuic_SendResponse(QuicConnection,
+                                         &QuicConnection->ProtocolConnection,
+                                         Message->RequestId,
+                                         STATUS_QUOTA_EXCEEDED,
+                                         NULL,
+                                         0);
+    }
     for (Entry = QuicConnection->Requests.Flink;
          Entry != &QuicConnection->Requests;
          Entry = Entry->Flink)
@@ -442,6 +456,7 @@ ZpServerQuic_QueueRequest(
         }
     }
     InsertTailList(&QuicConnection->Requests, &Request->ListEntry);
+    QuicConnection->ActiveRequestCount++;
     InterlockedIncrement(&QuicConnection->ReferenceCount);
     RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
 
@@ -455,6 +470,7 @@ ZpServerQuic_QueueRequest(
         if (InterlockedExchange(&Request->Pending, FALSE))
         {
             RemoveEntryList(&Request->ListEntry);
+            QuicConnection->ActiveRequestCount--;
         }
         RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
         Mem_Free(Request);
@@ -491,6 +507,7 @@ ZpServerQuic_CancelRequest(
         {
             InterlockedExchange(&Request->Pending, FALSE);
             RemoveEntryList(&Request->ListEntry);
+            QuicConnection->ActiveRequestCount--;
             RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
             return STATUS_SUCCESS;
         }
@@ -839,6 +856,7 @@ ZpServerQuic_CancelRequests(
                                     ListEntry);
         InterlockedExchange(&Request->Pending, FALSE);
         RemoveEntryList(&Request->ListEntry);
+        QuicConnection->ActiveRequestCount--;
     }
     RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
 }

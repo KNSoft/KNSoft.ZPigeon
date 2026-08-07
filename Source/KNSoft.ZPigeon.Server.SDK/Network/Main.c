@@ -16,6 +16,8 @@ ZpServer_ValidateConfig(
         Config->ListenerCount > ZP_LISTENER_MAX_COUNT ||
         (Config->ListenerCount != 0 && Config->Listeners == NULL) ||
         Config->DeploymentCount > ZP_DEPLOYMENT_MAX_COUNT ||
+        Config->MaxRequestsPerConnection >
+            ZP_SERVER_MAX_REQUESTS_PER_CONNECTION ||
         (Config->DeploymentCount != 0 && Config->Deployments == NULL) ||
         Config->StateCallback == NULL ||
         Config->ConnectionCallback == NULL)
@@ -135,6 +137,10 @@ ZpServer_Create(
     RtlInitializeSRWLock(&Object->Lock);
     Object->State = ZpServerStateStopped;
     Object->Config = *Config;
+    Object->Config.MaxRequestsPerConnection =
+        Config->MaxRequestsPerConnection != 0 ?
+            Config->MaxRequestsPerConnection :
+            ZP_SERVER_DEFAULT_MAX_REQUESTS_PER_CONNECTION;
 
     Cursor = Add2Ptr(Object, sizeof(*Object));
     Listeners = (PZP_LISTENER_ENDPOINT)Cursor;

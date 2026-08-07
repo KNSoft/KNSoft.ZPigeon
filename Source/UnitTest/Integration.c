@@ -531,6 +531,7 @@ TEST_FUNC(SDKQuicIntegration)
     ServerConfig.DeploymentCount = 1;
     ServerConfig.Modules = ServerModules;
     ServerConfig.ModuleCount = ARRAYSIZE(ServerModules);
+    ServerConfig.MaxRequestsPerConnection = 4;
     ServerConfig.StateCallback = SDKIntegration_ServerStateCallback;
     ServerConfig.ConnectionCallback = SDKIntegration_ServerConnectionCallback;
     ServerConfig.CallbackContext = &TestContext;
