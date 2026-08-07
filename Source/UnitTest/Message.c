@@ -103,12 +103,13 @@ TEST_FUNC(ProtocolMessage)
         }
     };
     ZP_FILE_LIST_VIEW FileList;
+    ZP_FILE_PAGE_VIEW FilePage;
     ZP_FILE_RECORD_VIEW FileRecord;
     ZP_TERMINAL_CREATE_VIEW TerminalCreate;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value, FileSize, FileOffset;
-    ULONG Length, Index, ExitCode, CreditBytes, ProcessId;
+    ULONG Length, Index, ExitCode, CreditBytes, ProcessId, MaxEntries;
     USHORT Columns, Rows;
 
     for (Index = 0; Index < ARRAYSIZE(Challenge); Index++)
@@ -391,6 +392,30 @@ TEST_FUNC(ProtocolMessage)
                                          &Length)) &&
             NT_SUCCESS(ZpFile_DecodePath(Buffer, Length, &FilePathView)) &&
             FilePathView.Length == 11);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeEnumeratePageRequest(L"C:\\Test",
+                                                         7,
+                                                         NULL,
+                                                         0,
+                                                         128,
+                                                         Buffer,
+                                                         sizeof(Buffer),
+                                                         &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeEnumeratePageRequest(Buffer,
+                                                         Length,
+                                                         &FilePathView,
+                                                         &FilePage.NextCursor,
+                                                         &MaxEntries)) &&
+            FilePathView.Length == 7 &&
+            FilePage.NextCursor.Length == 0 &&
+            MaxEntries == 128);
+    TEST_OK(ZpFile_EncodeEnumeratePageRequest(L"C:\\Test",
+                                              7,
+                                              NULL,
+                                              0,
+                                              0,
+                                              Buffer,
+                                              sizeof(Buffer),
+                                              &Length) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenReadRequest(L"C:\\Test.bin",
                                                     11,
                                                     4096,
@@ -537,6 +562,28 @@ TEST_FUNC(ProtocolMessage)
     TEST_OK(ZpFile_GetRecord(&FileList,
                               FileList.Count,
                               &FileRecord) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodePage(FileRecords,
+                                         ARRAYSIZE(FileRecords),
+                                         FileRecords[0].Name,
+                                         FileRecords[0].NameLength,
+                                         Buffer,
+                                         sizeof(Buffer),
+                                         &Length)) &&
+            NT_SUCCESS(ZpFile_DecodePage(Buffer, Length, &FilePage)) &&
+            FilePage.NextCursor.Length == FileRecords[0].NameLength &&
+            FilePage.Files.Count == ARRAYSIZE(FileRecords) &&
+            NT_SUCCESS(ZpFile_GetRecord(&FilePage.Files, 0, &FileRecord)) &&
+            FileRecord.Name.Length == FileRecords[0].NameLength);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodePage(FileRecords,
+                                         ARRAYSIZE(FileRecords),
+                                         NULL,
+                                         0,
+                                         Buffer,
+                                         sizeof(Buffer),
+                                         &Length)) &&
+            NT_SUCCESS(ZpFile_DecodePage(Buffer, Length, &FilePage)) &&
+            FilePage.NextCursor.Length == 0 &&
+            FilePage.Files.Count == ARRAYSIZE(FileRecords));
     TEST_OK(NT_SUCCESS(ZpTerminal_EncodeCreate(120,
                                                30,
                                                L"cmd.exe /Q",

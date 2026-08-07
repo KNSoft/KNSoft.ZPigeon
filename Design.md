@@ -467,9 +467,11 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 
 `Service.Start` 和 `Service.Stop` 分别固定为 `OperationId = 3` 和 `4`，访问级别均为 `Control`，请求 Payload 复用非空 UTF-16LE ServiceName 字符串，成功响应 Payload 为空。Server 只有在授权门禁放行后才打开 Service Control Manager 句柄并执行启动或停止控制；未配置授权回调时固定返回 `STATUS_ACCESS_DENIED`。
 
-`File` 模块第一版固定为 `ModuleId = 4`、`ModuleVersion = 1`；`Enumerate` 固定为 `OperationId = 1`，`Query` 固定为 `OperationId = 2`，`OpenRead` 固定为 `OperationId = 3`，`Hash` 固定为 `OperationId = 4`，`OpenWrite` 固定为 `OperationId = 5`。
+`File` 模块第一版固定为 `ModuleId = 4`、`ModuleVersion = 1`；`Enumerate` 固定为 `OperationId = 1`，`Query` 固定为 `OperationId = 2`，`OpenRead` 固定为 `OperationId = 3`，`Hash` 固定为 `OperationId = 4`，`OpenWrite` 固定为 `OperationId = 5`，`EnumeratePage` 固定为 `OperationId = 6`。
 
-Enumerate 与 Query 请求 Payload 均为非空 UTF-16LE Path 字符串。Query 成功响应依次编码 `UINT32 Attributes` 以及四个 `UINT64`：Size、CreationTime、LastAccessTime、LastWriteTime。Enumerate 成功响应为数组，单项编码同一组元数据后追加 UTF-16LE Name 字符串，并排除 `.` 与 `..`；结果超过单 Frame 上限时返回 `STATUS_BUFFER_OVERFLOW`，后续按真实规模需求增加分页。
+Enumerate 与 Query 请求 Payload 均为非空 UTF-16LE Path 字符串。Query 成功响应依次编码 `UINT32 Attributes` 以及四个 `UINT64`：Size、CreationTime、LastAccessTime、LastWriteTime。Enumerate 成功响应为数组，单项编码同一组元数据后追加 UTF-16LE Name 字符串，并排除 `.` 与 `..`；结果超过单 Frame 上限时返回 `STATUS_BUFFER_OVERFLOW`。
+
+EnumeratePage 请求依次编码 `UINT32 MaxEntries`、非空 Path 字符串和可空 Cursor 字符串，MaxEntries 范围为 1～4096。Server 以不区分大小写的 ordinal 文件名顺序返回严格大于 Cursor 的下一页；响应编码可空 NextCursor 字符串及同 Enumerate 格式的记录数组，有后续记录时 NextCursor 必须等于本页最后一个名称，否则为空。该游标无服务端状态；目录并发变化时分页是 best-effort 快照，调用方可按需要重新从空 Cursor 开始。
 
 OpenRead 请求依次编码 `UINT64 Offset` 和非空 UTF-16LE Path；成功响应依次编码 Server 创建的偶数 `UINT64 ChannelId`、`UINT64 FileSize` 和服务端确认的 `UINT64 Offset`，Offset 大于 FileSize 时请求失败，等于 FileSize 时建立后正常空流结束。Client 在成功响应回调返回后授予首个接收窗口，Server 才能发送文件数据。
 
