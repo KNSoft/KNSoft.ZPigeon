@@ -522,7 +522,8 @@ static
 NTSTATUS
 NTAPI
 ZpServerQuic_Start(
-    _In_opt_ PVOID Context)
+    _In_opt_ PVOID Context,
+    _In_ ULONG EndpointIndex)
 {
     PZP_SERVER_QUIC_TRANSPORT Transport = Context;
     PZP_SERVER_OBJECT Object = Transport->Owner;
@@ -530,6 +531,8 @@ ZpServerQuic_Start(
     QUIC_ADDR Address;
     NTSTATUS Status;
     ULONG Index;
+
+    UNREFERENCED_PARAMETER(EndpointIndex);
 
     ZpServerQuic_Uninitialize(Transport);
     Transport->Owner = Object;

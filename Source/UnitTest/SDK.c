@@ -13,6 +13,7 @@ typedef struct _SDK_TEST_CONTEXT
 {
     NTSTATUS StartStatus;
     ULONG StartCount;
+    ULONG StartEndpointIndices[8];
     ULONG StopCount;
     ULONG ClientStateCount;
     ZP_CLIENT_STATE ClientStates[8];
@@ -30,11 +31,12 @@ static
 NTSTATUS
 NTAPI
 SDKTest_TransportStart(
-    _In_opt_ PVOID Context)
+    _In_opt_ PVOID Context,
+    _In_ ULONG EndpointIndex)
 {
     PSDK_TEST_CONTEXT TestContext = Context;
 
-    TestContext->StartCount++;
+    TestContext->StartEndpointIndices[TestContext->StartCount++] = EndpointIndex;
     return TestContext->StartStatus;
 }
 
@@ -239,6 +241,8 @@ TEST_FUNC(SDKContract)
     PZP_CLIENT_OBJECT ClientObject;
     PZP_SERVER_OBJECT ServerObject;
     SDK_TEST_CONTEXT TestContext = { STATUS_SUCCESS };
+    SDK_TEST_CONTEXT TlsContext = { STATUS_ACCESS_DENIED };
+    SDK_TEST_CONTEXT QuicContext = { STATUS_SUCCESS };
     QUIC_ADDR QuicAddress;
     QUIC_STATUS QuicStatus;
 
@@ -296,8 +300,8 @@ TEST_FUNC(SDKContract)
     TEST_OK(wcscmp(ClientObject->Config.ClientKeyName, L"ClientKey") == 0);
     TEST_OK(ClientObject->Config.DeploymentRootCertificate[0] == 0x30);
     TEST_OK(ClientObject->Config.Modules[0].ModuleVersion == 1);
-    TEST_OK(ClientObject->TransportOperations != NULL &&
-            ClientObject->TransportContext == &ClientObject->QuicTransport);
+    TEST_OK(ClientObject->TransportOperations[ZpTransportQuic] != NULL &&
+            ClientObject->TransportContexts[ZpTransportQuic] == &ClientObject->QuicTransport);
     ClientObject->State = ZpClientStateConnecting;
     TEST_OK(ZpClient_Close(Client) == STATUS_DEVICE_BUSY);
     ClientObject->State = ZpClientStateStopped;
@@ -312,9 +316,34 @@ TEST_FUNC(SDKContract)
     ClientConfig.EndpointCount = ARRAYSIZE(MixedEndpoints);
     TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
     ClientObject = (PZP_CLIENT_OBJECT)Client;
-    TEST_OK(ClientObject->TransportOperations != NULL &&
-            ClientObject->QuicTransport.EndpointIndex == 1);
+    TEST_OK(ClientObject->TransportOperations[ZpTransportQuic] != NULL &&
+            ClientObject->TransportContexts[ZpTransportQuic] == &ClientObject->QuicTransport);
     TEST_OK(NT_SUCCESS(ZpClient_Close(Client)));
+
+    ClientConfig.CallbackContext = &TlsContext;
+    TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
+    ClientObject = (PZP_CLIENT_OBJECT)Client;
+    TEST_OK(NT_SUCCESS(ZpClient_SetTransport(Client,
+                                             ZpTransportTlsTcp,
+                                             &SDKTest_TransportOperations,
+                                             &TlsContext)) &&
+            NT_SUCCESS(ZpClient_SetTransport(Client,
+                                             ZpTransportQuic,
+                                             &SDKTest_TransportOperations,
+                                             &QuicContext)));
+    TEST_OK(NT_SUCCESS(ZpClient_Start(Client)) &&
+            TlsContext.StartCount == 1 &&
+            TlsContext.StartEndpointIndices[0] == 0 &&
+            QuicContext.StartCount == 1 &&
+            QuicContext.StartEndpointIndices[0] == 1 &&
+            ClientObject->ActiveTransport == ZpTransportQuic &&
+            ClientObject->EndpointIndex == 1);
+    TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) && QuicContext.StopCount == 1);
+    TEST_OK(NT_SUCCESS(ZpClient_NotifyState(Client,
+                                           ZpClientStateStopped,
+                                           STATUS_SUCCESS)) &&
+            NT_SUCCESS(ZpClient_Close(Client)));
+
     ClientConfig.Endpoints = &Endpoint;
     ClientConfig.EndpointCount = 1;
     ClientConfig.Size = 0;
@@ -356,7 +385,10 @@ TEST_FUNC(SDKContract)
     ClientObject = (PZP_CLIENT_OBJECT)Client;
     TEST_OK(ZpClient_Start(Client) == STATUS_NOT_SUPPORTED &&
             ClientObject->State == ZpClientStateStopped);
-    TEST_OK(NT_SUCCESS(ZpClient_SetTransport(Client, &SDKTest_TransportOperations, &TestContext)));
+    TEST_OK(NT_SUCCESS(ZpClient_SetTransport(Client,
+                                             ZpTransportTlsTcp,
+                                             &SDKTest_TransportOperations,
+                                             &TestContext)));
     TEST_OK(NT_SUCCESS(ZpClient_Start(Client)) &&
             ClientObject->State == ZpClientStateConnecting &&
             TestContext.StartCount == 1 &&
@@ -389,12 +421,22 @@ TEST_FUNC(SDKContract)
     TestContext.StartStatus = STATUS_ACCESS_DENIED;
     ClientConfig.CallbackContext = &TestContext;
     TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
-    TEST_OK(NT_SUCCESS(ZpClient_SetTransport(Client, &SDKTest_TransportOperations, &TestContext)));
-    TEST_OK(ZpClient_Start(Client) == STATUS_ACCESS_DENIED &&
-            ((PZP_CLIENT_OBJECT)Client)->State == ZpClientStateStopped &&
+    TEST_OK(NT_SUCCESS(ZpClient_SetTransport(Client,
+                                             ZpTransportTlsTcp,
+                                             &SDKTest_TransportOperations,
+                                             &TestContext)));
+    ClientObject = (PZP_CLIENT_OBJECT)Client;
+    TEST_OK(NT_SUCCESS(ZpClient_Start(Client)) &&
+            ClientObject->State == ZpClientStateRetryWait &&
+            ClientObject->FailureRound == 1 &&
+            ClientObject->RetryPending &&
             TestContext.ClientStateCount == 2 &&
-            TestContext.ClientStates[1] == ZpClientStateStopped &&
+            TestContext.ClientStates[1] == ZpClientStateRetryWait &&
             TestContext.ClientStatuses[1] == STATUS_ACCESS_DENIED);
+    TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) && TestContext.StopCount == 1);
+    TEST_OK(NT_SUCCESS(ZpClient_NotifyState(Client,
+                                           ZpClientStateStopped,
+                                           STATUS_SUCCESS)));
     TEST_OK(NT_SUCCESS(ZpClient_Close(Client)));
 
     RtlZeroMemory(&TestContext, sizeof(TestContext));

@@ -1,5 +1,8 @@
 ﻿#include "../Client.inl"
 #include "../../Network/Config.inl"
+#include "Retry.inl"
+
+#include <Bcrypt.h>
 
 static
 NTSTATUS
@@ -135,6 +138,212 @@ ZpClient_Create(
     return STATUS_SUCCESS;
 }
 
+static
+LOGICAL
+ZpClient_FindNextEndpoint(
+    _In_ PZP_CLIENT_OBJECT Object,
+    _In_ ULONG StartIndex,
+    _Out_ PULONG EndpointIndex)
+{
+    ULONG Index;
+
+    for (Index = StartIndex; Index < Object->Config.EndpointCount; Index++)
+    {
+        if (Object->TransportOperations[Object->Config.Endpoints[Index].Transport] != NULL)
+        {
+            *EndpointIndex = Index;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static
+VOID
+ZpClient_ScheduleRetry(
+    _Inout_ PZP_CLIENT_OBJECT Object,
+    _In_ NTSTATUS Status,
+    _In_ LOGICAL RestartRound)
+{
+    LARGE_INTEGER DueTime;
+    ULONG Delay, EndpointIndex, RandomValue;
+
+    if (RestartRound)
+    {
+        Object->NextEndpointIndex = 0;
+    }
+    if (ZpClient_FindNextEndpoint(Object,
+                                  Object->NextEndpointIndex,
+                                  &EndpointIndex))
+    {
+        Object->NextEndpointIndex = EndpointIndex;
+        Delay = 1;
+    }
+    else
+    {
+        Object->NextEndpointIndex = 0;
+        if (!NT_SUCCESS(BCryptGenRandom(NULL,
+                                        (PUCHAR)&RandomValue,
+                                        sizeof(RandomValue),
+                                        BCRYPT_USE_SYSTEM_PREFERRED_RNG)))
+        {
+            RandomValue = ZpClientRetry_GetBaseDelay(Object->FailureRound) *
+                          ZP_CLIENT_DEFAULT_RETRY_JITTER_PERCENT / 100;
+        }
+        Delay = ZpClientRetry_GetDelay(Object->FailureRound, RandomValue);
+        if (Object->FailureRound != MAXULONG)
+        {
+            Object->FailureRound++;
+        }
+    }
+    if (!NT_SUCCESS(ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
+                                         ZpClientStateRetryWait,
+                                         Status)))
+    {
+        return;
+    }
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (Object->State == ZpClientStateRetryWait)
+    {
+        Object->RetryPending = TRUE;
+        Object->RetryDelay = Delay;
+        if (!Object->StartPending)
+        {
+            DueTime.QuadPart = -(LONGLONG)Delay * 10000;
+            SetThreadpoolTimer(Object->RetryTimer,
+                               (PFILETIME)&DueTime,
+                               0,
+                               0);
+        }
+    }
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+}
+
+static
+NTSTATUS
+ZpClient_StartEndpoints(
+    _Inout_ PZP_CLIENT_OBJECT Object)
+{
+    PCZP_TRANSPORT_OPERATIONS Operations;
+    PVOID TransportContext;
+    NTSTATUS Status = STATUS_NOT_SUPPORTED;
+    ULONG Index;
+
+    for (Index = Object->NextEndpointIndex;
+         Index < Object->Config.EndpointCount;
+         Index++)
+    {
+        Operations = Object->TransportOperations[Object->Config.Endpoints[Index].Transport];
+        if (Operations == NULL)
+        {
+            continue;
+        }
+        TransportContext = Object->TransportContexts[Object->Config.Endpoints[Index].Transport];
+        RtlAcquireSRWLockExclusive(&Object->Lock);
+        Object->ActiveTransport = Object->Config.Endpoints[Index].Transport;
+        Object->EndpointIndex = Index;
+        Object->NextEndpointIndex = Index + 1;
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        Status = Operations->Start(TransportContext, Index);
+        if (NT_SUCCESS(Status))
+        {
+            return STATUS_SUCCESS;
+        }
+    }
+    return Status;
+}
+
+static
+VOID
+ZpClient_CompleteStart(
+    _Inout_ PZP_CLIENT_OBJECT Object,
+    _In_ NTSTATUS Status)
+{
+    LARGE_INTEGER DueTime;
+    PCZP_TRANSPORT_OPERATIONS Operations;
+    PVOID TransportContext;
+    ZP_CLIENT_STATE State;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->StartPending = FALSE;
+    State = Object->State;
+    Operations = Object->TransportOperations[Object->ActiveTransport];
+    TransportContext = Object->TransportContexts[Object->ActiveTransport];
+    if (State == ZpClientStateRetryWait && Object->RetryPending)
+    {
+        DueTime.QuadPart = -(LONGLONG)Object->RetryDelay * 10000;
+        SetThreadpoolTimer(Object->RetryTimer,
+                           (PFILETIME)&DueTime,
+                           0,
+                           0);
+    }
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+
+    if (State == ZpClientStateStopping)
+    {
+        if (NT_SUCCESS(Status))
+        {
+            Operations->Stop(TransportContext);
+        }
+        else
+        {
+            ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
+                                 ZpClientStateStopped,
+                                 STATUS_SUCCESS);
+        }
+    }
+    else if (!NT_SUCCESS(Status) && State == ZpClientStateConnecting)
+    {
+        ZpClient_ScheduleRetry(Object, Status, FALSE);
+    }
+}
+
+static
+VOID
+CALLBACK
+ZpClient_RetryTimerCallback(
+    _Inout_ PTP_CALLBACK_INSTANCE Instance,
+    _In_opt_ PVOID Context,
+    _Inout_ PTP_TIMER Timer)
+{
+    PZP_CLIENT_OBJECT Object = Context;
+    NTSTATUS Status;
+    LOGICAL Start;
+
+    UNREFERENCED_PARAMETER(Instance);
+    UNREFERENCED_PARAMETER(Timer);
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Start = Object->State == ZpClientStateRetryWait &&
+            Object->RetryPending &&
+            !Object->StartPending;
+    if (Start)
+    {
+        Object->RetryPending = FALSE;
+        Object->StartPending = TRUE;
+    }
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    if (!Start)
+    {
+        return;
+    }
+
+    Status = ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
+                                  ZpClientStateConnecting,
+                                  STATUS_SUCCESS);
+    if (NT_SUCCESS(Status))
+    {
+        RtlAcquireSRWLockShared(&Object->Lock);
+        Start = Object->State == ZpClientStateConnecting;
+        RtlReleaseSRWLockShared(&Object->Lock);
+        if (Start)
+        {
+            Status = ZpClient_StartEndpoints(Object);
+        }
+    }
+    ZpClient_CompleteStart(Object, Status);
+}
+
 NTSTATUS
 NTAPI
 ZpClient_Start(
@@ -142,8 +351,7 @@ ZpClient_Start(
 {
     NTSTATUS Status;
     PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
-    PCZP_TRANSPORT_OPERATIONS Operations;
-    PVOID TransportContext;
+    ULONG EndpointIndex;
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
     if (Object->State != ZpClientStateStopped)
@@ -156,15 +364,26 @@ ZpClient_Start(
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_INVALID_PARAMETER;
     }
-    if (Object->TransportOperations == NULL)
+    if (!ZpClient_FindNextEndpoint(Object, 0, &EndpointIndex))
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_NOT_SUPPORTED;
     }
+    if (Object->RetryTimer == NULL)
+    {
+        Object->RetryTimer = CreateThreadpoolTimer(ZpClient_RetryTimerCallback,
+                                                    Object,
+                                                    NULL);
+        if (Object->RetryTimer == NULL)
+        {
+            RtlReleaseSRWLockExclusive(&Object->Lock);
+            return STATUS_NO_MEMORY;
+        }
+    }
     Object->State = ZpClientStateConnecting;
     Object->CallbackCount++;
-    Operations = Object->TransportOperations;
-    TransportContext = Object->TransportContext;
+    Object->ActiveTransport = Object->Config.Endpoints[EndpointIndex].Transport;
+    Object->EndpointIndex = EndpointIndex;
     RtlReleaseSRWLockExclusive(&Object->Lock);
 
     Object->Config.StateCallback(Client,
@@ -178,14 +397,16 @@ ZpClient_Start(
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_SUCCESS;
     }
+    Object->NextEndpointIndex = 0;
+    Object->FailureRound = 0;
+    Object->ReadyTickCount = 0;
+    Object->StartPending = TRUE;
+    Object->RetryPending = FALSE;
     RtlReleaseSRWLockExclusive(&Object->Lock);
 
-    Status = Operations->Start(TransportContext);
-    if (!NT_SUCCESS(Status))
-    {
-        ZpClient_NotifyState(Client, ZpClientStateStopped, Status);
-    }
-    return Status;
+    Status = ZpClient_StartEndpoints(Object);
+    ZpClient_CompleteStart(Object, Status);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -205,8 +426,13 @@ ZpClient_Stop(
     }
     Object->State = ZpClientStateStopping;
     Object->CallbackCount++;
-    Operations = Object->TransportOperations;
-    TransportContext = Object->TransportContext;
+    Object->RetryPending = FALSE;
+    if (Object->RetryTimer != NULL)
+    {
+        SetThreadpoolTimer(Object->RetryTimer, NULL, 0, 0);
+    }
+    Operations = Object->TransportOperations[Object->ActiveTransport];
+    TransportContext = Object->TransportContexts[Object->ActiveTransport];
     RtlReleaseSRWLockExclusive(&Object->Lock);
 
     Object->Config.StateCallback(Client,
@@ -223,12 +449,16 @@ ZpClient_Stop(
 NTSTATUS
 ZpClient_SetTransport(
     _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_TRANSPORT_TYPE Transport,
     _In_ PCZP_TRANSPORT_OPERATIONS Operations,
     _In_opt_ PVOID Context)
 {
     PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
 
-    if (Operations == NULL || Operations->Start == NULL || Operations->Stop == NULL)
+    if (!ZpConfig_IsTransportValid(Transport) ||
+        Operations == NULL ||
+        Operations->Start == NULL ||
+        Operations->Stop == NULL)
     {
         return STATUS_INVALID_PARAMETER;
     }
@@ -238,8 +468,8 @@ ZpClient_SetTransport(
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_INVALID_DEVICE_STATE;
     }
-    Object->TransportOperations = Operations;
-    Object->TransportContext = Context;
+    Object->TransportOperations[Transport] = Operations;
+    Object->TransportContexts[Transport] = Context;
     RtlReleaseSRWLockExclusive(&Object->Lock);
     return STATUS_SUCCESS;
 }
@@ -289,6 +519,10 @@ ZpClient_NotifyState(
         return STATUS_INVALID_DEVICE_STATE;
     }
     Object->State = State;
+    if (State == ZpClientStateReady)
+    {
+        Object->ReadyTickCount = GetTickCount64();
+    }
     Object->CallbackCount++;
     RtlReleaseSRWLockExclusive(&Object->Lock);
     Object->Config.StateCallback(Client, State, Status, Object->Config.CallbackContext);
@@ -296,6 +530,41 @@ ZpClient_NotifyState(
     Object->CallbackCount--;
     RtlReleaseSRWLockExclusive(&Object->Lock);
     return STATUS_SUCCESS;
+}
+
+VOID
+ZpClient_TransportShutdown(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ NTSTATUS Status)
+{
+    PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
+    ZP_CLIENT_STATE State;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    State = Object->State;
+    if (State == ZpClientStateReady)
+    {
+        if (GetTickCount64() - Object->ReadyTickCount >=
+            ZP_CLIENT_DEFAULT_STABLE_RESET_MILLISECONDS)
+        {
+            Object->FailureRound = 0;
+        }
+        Object->NextEndpointIndex = 0;
+    }
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+
+    if (State == ZpClientStateStopping)
+    {
+        ZpClient_NotifyState(Client, ZpClientStateStopped, Status);
+    }
+    else if (State == ZpClientStateConnecting ||
+             State == ZpClientStateAuthenticating ||
+             State == ZpClientStateReady)
+    {
+        ZpClient_ScheduleRetry(Object,
+                               Status,
+                               State == ZpClientStateReady);
+    }
 }
 
 NTSTATUS
@@ -312,6 +581,13 @@ ZpClient_Close(
         return STATUS_DEVICE_BUSY;
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
+    if (Object->RetryTimer != NULL)
+    {
+        SetThreadpoolTimer(Object->RetryTimer, NULL, 0, 0);
+        WaitForThreadpoolTimerCallbacks(Object->RetryTimer, TRUE);
+        CloseThreadpoolTimer(Object->RetryTimer);
+        Object->RetryTimer = NULL;
+    }
     ZpClientQuic_Uninitialize(&Object->QuicTransport);
     Mem_Free(Object);
     return STATUS_SUCCESS;

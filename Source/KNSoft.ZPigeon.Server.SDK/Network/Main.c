@@ -220,7 +220,7 @@ ZpServer_Start(
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
 
-    Status = Operations->Start(TransportContext);
+    Status = Operations->Start(TransportContext, 0);
     if (!NT_SUCCESS(Status))
     {
         ZpServer_NotifyState(Server, ZpServerStateStopped, Status);

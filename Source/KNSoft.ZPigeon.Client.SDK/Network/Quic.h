@@ -14,13 +14,6 @@ typedef struct _ZP_CLIENT_QUIC_TRANSPORT
     struct _ZP_CLIENT_OBJECT* Owner;
     LOGICAL Initialized;
     ULONG EndpointIndex;
-    ULONG NextEndpointIndex;
-    ULONG FailureRound;
-    ULONGLONG ReadyTickCount;
-    PTP_TIMER RetryTimer;
-    LOGICAL StartPending;
-    LOGICAL RetryPending;
-    ULONG RetryDelay;
     NTSTATUS ShutdownStatus;
     HQUIC Registration;
     HQUIC Configuration;

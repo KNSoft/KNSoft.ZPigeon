@@ -5,7 +5,8 @@
 typedef
 NTSTATUS
 (NTAPI *ZP_TRANSPORT_START_ROUTINE)(
-    _In_opt_ PVOID Context);
+    _In_opt_ PVOID Context,
+    _In_ ULONG EndpointIndex);
 
 typedef
 VOID
