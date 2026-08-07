@@ -205,6 +205,7 @@ ZpClientQuic_MessageCallback(
     ZP_READY_VIEW Ready;
     ZP_DISCONNECT_VIEW Disconnect;
     ZP_RESPONSE_VIEW Response;
+    ZP_EVENT_VIEW Event;
     ZP_CHANNEL_DATA_VIEW ChannelData;
     ZP_CHANNEL_CLOSE ChannelClose;
     BYTE Signature[ZP_CLIENT_SIGNATURE_SIZE];
@@ -293,6 +294,18 @@ ZpClientQuic_MessageCallback(
             {
                 Status = ZpClient_CompleteResponse((ZP_CLIENT_HANDLE)Transport->Owner,
                                                    &Response);
+            }
+            return Status;
+
+        case ZpMessageEvent:
+            Status = ZpMessage_DecodeEvent(Frame->Body,
+                                           Frame->BodyLength,
+                                           &Event);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpClient_ReceiveEvent(
+                    (ZP_CLIENT_HANDLE)Transport->Owner,
+                    &Event);
             }
             return Status;
 

@@ -42,6 +42,21 @@ typedef struct _SDK_TEST_CONTEXT
     ULONG FilePageFileCount;
     WCHAR FilePageCursor[32];
     ULONG FilePageCursorLength;
+    ULONG EventPageCount;
+    NTSTATUS EventPageStatus;
+    ULONG EventPageRecordCount;
+    BOOLEAN EventPageHasMore;
+    ULONG EventSubscribeCount;
+    NTSTATUS EventSubscribeStatus;
+    ZP_SUBSCRIPTION_HANDLE EventSubscription;
+    ULONG EventRecordCount;
+    ULONGLONG EventSequence;
+    ULONG EventBookmarkLength;
+    ULONG EventXmlLength;
+    ULONG EventTerminalCount;
+    ULONGLONG EventNextSequence;
+    NTSTATUS EventTerminalStatus;
+    ULONG EventLastBookmarkLength;
     ZP_CHANNEL_HANDLE FileChannel;
     ULONGLONG FileSize;
     ULONGLONG FileOffset;
@@ -251,6 +266,83 @@ SDKTest_FilePageCallback(
                           (SIZE_T)Page->NextCursor.Length * sizeof(WCHAR));
         }
     }
+}
+
+static
+VOID
+NTAPI
+SDKTest_EventLogPageCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ const ZP_EVENT_LOG_PAGE_VIEW* Page,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->EventPageCount++;
+    TestContext->EventPageStatus = Status;
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->EventPageRecordCount = Page->Records.Count;
+        TestContext->EventPageHasMore = Page->HasMore;
+    }
+}
+
+static
+VOID
+NTAPI
+SDKTest_EventLogSubscribeCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ ZP_SUBSCRIPTION_HANDLE Subscription,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->EventSubscribeCount++;
+    TestContext->EventSubscribeStatus = Status;
+    TestContext->EventSubscription = Subscription;
+}
+
+static
+VOID
+NTAPI
+SDKTest_EventLogRecordCallback(
+    _In_ ZP_SUBSCRIPTION_HANDLE Subscription,
+    _In_ ULONGLONG Sequence,
+    _In_ const ZP_EVENT_LOG_RECORD_VIEW* Record,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Subscription);
+    TestContext->EventRecordCount++;
+    TestContext->EventSequence = Sequence;
+    TestContext->EventBookmarkLength = Record->Bookmark.Length;
+    TestContext->EventXmlLength = Record->Xml.Length;
+}
+
+static
+VOID
+NTAPI
+SDKTest_EventLogTerminalCallback(
+    _In_ ZP_SUBSCRIPTION_HANDLE Subscription,
+    _In_ ULONGLONG NextSequence,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_STRING_VIEW LastBookmark,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Subscription);
+    TestContext->EventTerminalCount++;
+    TestContext->EventNextSequence = NextSequence;
+    TestContext->EventTerminalStatus = Status;
+    TestContext->EventLastBookmarkLength = LastBookmark != NULL ?
+                                                   LastBookmark->Length :
+                                                   0;
 }
 
 static
@@ -529,6 +621,9 @@ TEST_FUNC(SDKContract)
 {
     WCHAR Host[] = L"127.0.0.1", ServerName[] = L"server.example", ClientKeyName[] = L"ClientKey";
     WCHAR ListenerHost[] = L"::";
+    WCHAR EventChannel[] = L"System";
+    WCHAR EventBookmark[] = L"<Bookmark>1</Bookmark>";
+    WCHAR EventXml[] = L"<Event/>";
     BYTE RootCertificate[] = { 0x30, 0x01, 0x00 };
     ZP_MODULE_RECORD Modules[] = { { 1, 1, 0 }, { 2, 1, 1 } };
     ZP_ENDPOINT Endpoint = { ZpTransportQuic, Host, 443, ServerName, NULL };
@@ -592,6 +687,21 @@ TEST_FUNC(SDKContract)
     };
     BYTE FilePageResponse[256];
     ULONG FilePageResponseLength;
+    ZP_EVENT_LOG_RECORD EventRecords[] = {
+        {
+            EventBookmark,
+            ARRAYSIZE(EventBookmark) - 1,
+            EventXml,
+            ARRAYSIZE(EventXml) - 1
+        }
+    };
+    BYTE EventPageResponse[256];
+    ULONG EventPageResponseLength;
+    BYTE EventSubscribeResponse[sizeof(ULONGLONG)];
+    ULONG EventSubscribeResponseLength;
+    BYTE EventPayload[256];
+    ULONG EventPayloadLength;
+    ZP_EVENT_VIEW Event;
     BYTE TerminalCreateResponse[sizeof(ULONGLONG) + sizeof(ULONG)];
     ULONG TerminalCreateResponseLength;
     BYTE TerminalInput[] = { 'e', 'x', 'i', 't' };
@@ -618,6 +728,7 @@ TEST_FUNC(SDKContract)
     TEST_OK(sizeof(ZP_CLIENT_HANDLE) == sizeof(PVOID));
     TEST_OK(sizeof(ZP_SERVER_HANDLE) == sizeof(PVOID));
     TEST_OK(sizeof(ZP_CONNECTION_HANDLE) == sizeof(PVOID));
+    TEST_OK(sizeof(ZP_SUBSCRIPTION_HANDLE) == sizeof(PVOID));
     TEST_OK(ZP_CLIENT_DEFAULT_CONNECT_TIMEOUT_MILLISECONDS == 10000);
     TEST_OK(ZP_CLIENT_DEFAULT_RETRY_MAX_MILLISECONDS == 60000);
     TEST_OK(ZP_CLIENT_DEFAULT_STABLE_RESET_MILLISECONDS == 60000);
@@ -893,6 +1004,157 @@ TEST_FUNC(SDKContract)
                              FileDigest,
                              sizeof(FileDigest)) == sizeof(FileDigest));
     ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_QueryEventLogPage(
+                           Client,
+                           ZpEventLogStartOldest,
+                           16,
+                           EventChannel,
+                           ARRAYSIZE(EventChannel) - 1,
+                           NULL,
+                           0,
+                           NULL,
+                           0,
+                           1000,
+                           SDKTest_EventLogPageCallback,
+                           &TestContext,
+                           &Request)) &&
+            TestContext.SendModuleId == ZP_EVENT_LOG_MODULE_ID &&
+            TestContext.SendOperationId ==
+                ZP_EVENT_LOG_OPERATION_QUERY_PAGE);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodePage(
+                           FALSE,
+                           EventRecords,
+                           ARRAYSIZE(EventRecords),
+                           EventBookmark,
+                           ARRAYSIZE(EventBookmark) - 1,
+                           EventPageResponse,
+                           sizeof(EventPageResponse),
+                           &EventPageResponseLength)));
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload.Buffer = EventPageResponse;
+    Response.Payload.Length = EventPageResponseLength;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.EventPageCount == 1 &&
+            TestContext.EventPageStatus == STATUS_SUCCESS &&
+            TestContext.EventPageRecordCount == 1 &&
+            !TestContext.EventPageHasMore);
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_SubscribeEventLog(
+                           Client,
+                           ZpEventLogStartFuture,
+                           EventChannel,
+                           ARRAYSIZE(EventChannel) - 1,
+                           NULL,
+                           0,
+                           NULL,
+                           0,
+                           1000,
+                           SDKTest_EventLogSubscribeCallback,
+                           SDKTest_EventLogRecordCallback,
+                           SDKTest_EventLogTerminalCallback,
+                           &TestContext,
+                           &Request)) &&
+            TestContext.SendModuleId == ZP_EVENT_LOG_MODULE_ID &&
+            TestContext.SendOperationId == ZP_EVENT_LOG_OPERATION_SUBSCRIBE);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeSubscribeResponse(
+                           2,
+                           EventSubscribeResponse,
+                           sizeof(EventSubscribeResponse),
+                           &EventSubscribeResponseLength)));
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload.Buffer = EventSubscribeResponse;
+    Response.Payload.Length = EventSubscribeResponseLength;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.EventSubscribeCount == 1 &&
+            TestContext.EventSubscribeStatus == STATUS_SUCCESS &&
+            TestContext.EventSubscription != NULL);
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeRecordEvent(
+                           1,
+                           EventBookmark,
+                           ARRAYSIZE(EventBookmark) - 1,
+                           EventXml,
+                           ARRAYSIZE(EventXml) - 1,
+                           EventPayload,
+                           sizeof(EventPayload),
+                           &EventPayloadLength)));
+    Event.SubscriptionId = 2;
+    Event.ModuleId = ZP_EVENT_LOG_MODULE_ID;
+    Event.EventId = ZP_EVENT_LOG_EVENT_RECORD;
+    Event.Payload.Buffer = EventPayload;
+    Event.Payload.Length = EventPayloadLength;
+    TEST_OK(NT_SUCCESS(ZpClient_ReceiveEvent(Client, &Event)) &&
+            TestContext.EventRecordCount == 1 &&
+            TestContext.EventSequence == 1 &&
+            TestContext.EventBookmarkLength ==
+                ARRAYSIZE(EventBookmark) - 1 &&
+            TestContext.EventXmlLength == ARRAYSIZE(EventXml) - 1);
+    TEST_OK(ZpClient_ReceiveEvent(Client, &Event) ==
+            STATUS_PROTOCOL_UNREACHABLE);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeTerminalEvent(
+                           2,
+                           STATUS_BUFFER_OVERFLOW,
+                           EventBookmark,
+                           ARRAYSIZE(EventBookmark) - 1,
+                           EventPayload,
+                           sizeof(EventPayload),
+                           &EventPayloadLength)));
+    Event.EventId = ZP_EVENT_LOG_EVENT_TERMINAL;
+    Event.Payload.Length = EventPayloadLength;
+    TEST_OK(NT_SUCCESS(ZpClient_ReceiveEvent(Client, &Event)) &&
+            TestContext.EventTerminalCount == 1 &&
+            TestContext.EventNextSequence == 2 &&
+            TestContext.EventTerminalStatus == STATUS_BUFFER_OVERFLOW &&
+            TestContext.EventLastBookmarkLength ==
+                ARRAYSIZE(EventBookmark) - 1);
+    ZpSubscription_Close(TestContext.EventSubscription);
+    TestContext.EventSubscription = NULL;
+    TEST_OK(NT_SUCCESS(ZpClient_SubscribeEventLog(
+                           Client,
+                           ZpEventLogStartFuture,
+                           EventChannel,
+                           ARRAYSIZE(EventChannel) - 1,
+                           NULL,
+                           0,
+                           NULL,
+                           0,
+                           1000,
+                           SDKTest_EventLogSubscribeCallback,
+                           SDKTest_EventLogRecordCallback,
+                           SDKTest_EventLogTerminalCallback,
+                           &TestContext,
+                           &Request)));
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeSubscribeResponse(
+                           4,
+                           EventSubscribeResponse,
+                           sizeof(EventSubscribeResponse),
+                           &EventSubscribeResponseLength)));
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload.Buffer = EventSubscribeResponse;
+    Response.Payload.Length = EventSubscribeResponseLength;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.EventSubscribeCount == 2 &&
+            TestContext.EventSubscription != NULL);
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpSubscription_Cancel(
+                           TestContext.EventSubscription)) &&
+            TestContext.SendModuleId == ZP_EVENT_LOG_MODULE_ID &&
+            TestContext.SendOperationId ==
+                ZP_EVENT_LOG_OPERATION_UNSUBSCRIBE);
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload = EmptyPayload;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.EventTerminalCount == 2 &&
+            TestContext.EventNextSequence == 1 &&
+            TestContext.EventTerminalStatus == STATUS_CANCELLED &&
+            ZpSubscription_Cancel(TestContext.EventSubscription) ==
+                STATUS_INVALID_DEVICE_STATE);
+    ZpSubscription_Close(TestContext.EventSubscription);
+    TestContext.EventSubscription = NULL;
     TEST_OK(NT_SUCCESS(ZpClient_OpenFileRead(Client,
                                              L"C:\\Test.bin",
                                              11,

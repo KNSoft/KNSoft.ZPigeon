@@ -71,14 +71,16 @@
 - 实现 File.EnumeratePage：保留旧 Enumerate 兼容接口，新增 1～4096 页大小、无状态文件名 Cursor、ordinal 排序及 NextCursor 校验；真实 QUIC 测试以页大小 1 连续翻页并验证游标严格推进；
 - 定稿 EventLog Version 1：分页查询、严格 Bookmark Seek、实时订阅序号、显式 Terminal、队列溢出/日志过期检测，以及从最后持久化 Bookmark 补页后重新订阅的至少一次恢复语义；
 - 实现 Core Event 与 EventLog Version 1 类型化 Codec：QueryPage、Subscribe/Unsubscribe、Record/Terminal、分页记录 View 和边界校验均接入 Protocol 静态库；
+- 实现 Client EventLog API 与引用计数 Subscription Handle：打开阶段复用 Request，Record 严格校验连续 Sequence，Terminal/断线/取消单次完成，Unsubscribe 成功 Response 作为发送截止点，SDK 内部取消 Request 自动回收；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 290 项断言全部通过，其中包含 EventLog/Core Event Codec、真实 File.EnumeratePage 连续翻页、File.OpenWrite 原子上传/取消清理、File.Hash SHA-256、ConPTY Terminal Create/输入/输出/Resize/退出/取消、真实 File.OpenRead 下载、Client/Server Channel 生命周期和既有管理操作端到端验证。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 307 项断言全部通过，其中包含 EventLog/Core Event Codec、Client Subscription 生命周期/乱序拒绝/取消、真实 File.EnumeratePage 连续翻页、File.OpenWrite 原子上传/取消清理、File.Hash SHA-256、ConPTY Terminal Create/输入/输出/Resize/退出/取消、真实 File.OpenRead 下载和既有管理操作端到端验证。
 
 ## 下一步
 
-1. 实现 Client Subscription Handle 与 Server Windows Event Log 执行路径。
+1. 实现 Server Windows Event Log QueryPage 与实时订阅执行路径；
+2. 增加 localhost QUIC EventLog 分页、实时 Record、取消和恢复端到端测试。
 
 ## 待确认与阻塞
 

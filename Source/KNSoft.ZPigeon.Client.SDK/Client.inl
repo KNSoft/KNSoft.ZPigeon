@@ -36,6 +36,21 @@ typedef struct _ZP_CHANNEL_OBJECT
     PVOID Context;
 } ZP_CHANNEL_OBJECT, *PZP_CHANNEL_OBJECT;
 
+typedef struct _ZP_SUBSCRIPTION_OBJECT
+{
+    LIST_ENTRY ListEntry;
+    struct _ZP_CLIENT_OBJECT* Owner;
+    volatile LONG ReferenceCount;
+    volatile LONG Pending;
+    volatile LONG CancelPending;
+    ULONGLONG SubscriptionId;
+    ULONGLONG NextSequence;
+    USHORT ModuleId;
+    ZP_EVENT_LOG_RECORD_CALLBACK RecordCallback;
+    ZP_EVENT_LOG_TERMINAL_CALLBACK TerminalCallback;
+    PVOID Context;
+} ZP_SUBSCRIPTION_OBJECT, *PZP_SUBSCRIPTION_OBJECT;
+
 typedef struct _ZP_CLIENT_OBJECT
 {
     RTL_SRWLOCK Lock;
@@ -43,7 +58,9 @@ typedef struct _ZP_CLIENT_OBJECT
     ULONG CallbackCount;
     LIST_ENTRY Requests;
     LIST_ENTRY Channels;
+    LIST_ENTRY Subscriptions;
     ULONGLONG HighestServerChannelId;
+    ULONGLONG HighestServerSubscriptionId;
     ULONGLONG NextRequestId;
     PTP_TIMER RequestTimer;
     ZP_CLIENT_CONFIG Config;
@@ -88,6 +105,11 @@ NTSTATUS
 ZpClient_CompleteResponse(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ PCZP_RESPONSE_VIEW Response);
+
+NTSTATUS
+ZpClient_ReceiveEvent(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ PCZP_EVENT_VIEW Message);
 
 NTSTATUS
 ZpClient_ReceiveChannelData(

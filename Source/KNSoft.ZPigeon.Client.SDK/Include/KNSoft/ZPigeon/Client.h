@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <KNSoft/ZPigeon/SDK.h>
+#include <KNSoft/ZPigeon/EventLog.h>
 #include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/Service.h>
@@ -126,6 +127,39 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ NTSTATUS Status,
     _In_opt_ PCZP_FILE_HASH_VIEW Hash,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_EVENT_LOG_QUERY_PAGE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ const ZP_EVENT_LOG_PAGE_VIEW* Page,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_EVENT_LOG_SUBSCRIBE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ ZP_SUBSCRIPTION_HANDLE Subscription,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_EVENT_LOG_RECORD_CALLBACK)(
+    _In_ ZP_SUBSCRIPTION_HANDLE Subscription,
+    _In_ ULONGLONG Sequence,
+    _In_ const ZP_EVENT_LOG_RECORD_VIEW* Record,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_EVENT_LOG_TERMINAL_CALLBACK)(
+    _In_ ZP_SUBSCRIPTION_HANDLE Subscription,
+    _In_ ULONGLONG NextSequence,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_STRING_VIEW LastBookmark,
     _In_opt_ PVOID Context);
 
 typedef
@@ -361,6 +395,41 @@ ZpClient_HashFile(
 
 NTSTATUS
 NTAPI
+ZpClient_QueryEventLogPage(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_EVENT_LOG_START_MODE StartMode,
+    _In_ ULONG MaxEvents,
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_reads_opt_(QueryLength) PCWCH Query,
+    _In_ ULONG QueryLength,
+    _In_reads_opt_(BookmarkLength) PCWCH Bookmark,
+    _In_ ULONG BookmarkLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_EVENT_LOG_QUERY_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_SubscribeEventLog(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_EVENT_LOG_START_MODE StartMode,
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_reads_opt_(QueryLength) PCWCH Query,
+    _In_ ULONG QueryLength,
+    _In_reads_opt_(BookmarkLength) PCWCH Bookmark,
+    _In_ ULONG BookmarkLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_EVENT_LOG_SUBSCRIBE_CALLBACK SubscribeCallback,
+    _In_ ZP_EVENT_LOG_RECORD_CALLBACK RecordCallback,
+    _In_ ZP_EVENT_LOG_TERMINAL_CALLBACK TerminalCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpClient_OpenFileRead(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_reads_(PathLength) PCWCH Path,
@@ -443,6 +512,16 @@ VOID
 NTAPI
 ZpChannel_Close(
     _In_ ZP_CHANNEL_HANDLE Channel);
+
+NTSTATUS
+NTAPI
+ZpSubscription_Cancel(
+    _In_ ZP_SUBSCRIPTION_HANDLE Subscription);
+
+VOID
+NTAPI
+ZpSubscription_Close(
+    _In_ ZP_SUBSCRIPTION_HANDLE Subscription);
 
 NTSTATUS
 NTAPI

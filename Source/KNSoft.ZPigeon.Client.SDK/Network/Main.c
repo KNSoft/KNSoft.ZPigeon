@@ -113,6 +113,7 @@ ZpClient_Create(
     RtlInitializeSRWLock(&Object->Lock);
     InitializeListHead(&Object->Requests);
     InitializeListHead(&Object->Channels);
+    InitializeListHead(&Object->Subscriptions);
     Object->NextRequestId = 1;
     Object->RequestTimer = CreateThreadpoolTimer(ZpClient_RequestTimerCallback,
                                                   Object,
@@ -977,6 +978,142 @@ ZpClient_CreateServerChannel(
                                          ChannelId);
     RtlReleaseSRWLockExclusive(&Object->Lock);
     *Channel = ChannelObject;
+    return STATUS_SUCCESS;
+}
+
+static
+VOID
+ZpClient_ReleaseSubscription(
+    _Inout_ PZP_SUBSCRIPTION_OBJECT Subscription)
+{
+    if (InterlockedDecrement(&Subscription->ReferenceCount) == 0)
+    {
+        Mem_Free(Subscription);
+    }
+}
+
+static
+PZP_SUBSCRIPTION_OBJECT
+ZpClient_FindSubscription(
+    _In_ PZP_CLIENT_OBJECT Object,
+    _In_ ULONGLONG SubscriptionId)
+{
+    PZP_SUBSCRIPTION_OBJECT Subscription;
+    PLIST_ENTRY Entry;
+
+    for (Entry = Object->Subscriptions.Flink;
+         Entry != &Object->Subscriptions;
+         Entry = Entry->Flink)
+    {
+        Subscription = CONTAINING_RECORD(Entry,
+                                         ZP_SUBSCRIPTION_OBJECT,
+                                         ListEntry);
+        if (Subscription->SubscriptionId == SubscriptionId)
+        {
+            return Subscription;
+        }
+    }
+    return NULL;
+}
+
+static
+VOID
+ZpClient_InvokeSubscriptionTerminal(
+    _Inout_ PZP_SUBSCRIPTION_OBJECT Subscription,
+    _In_ ULONGLONG NextSequence,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_STRING_VIEW LastBookmark)
+{
+    PZP_CLIENT_OBJECT Object = Subscription->Owner;
+
+    Subscription->TerminalCallback((ZP_SUBSCRIPTION_HANDLE)Subscription,
+                                   NextSequence,
+                                   Status,
+                                   LastBookmark,
+                                   Subscription->Context);
+    Subscription->Owner = NULL;
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount--;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    ZpClient_ReleaseSubscription(Subscription);
+}
+
+static
+VOID
+ZpClient_CompleteSubscription(
+    _Inout_ PZP_SUBSCRIPTION_OBJECT Subscription,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_STRING_VIEW LastBookmark)
+{
+    PZP_CLIENT_OBJECT Object = Subscription->Owner;
+    ULONGLONG NextSequence;
+
+    if (Object == NULL)
+    {
+        return;
+    }
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (!InterlockedExchange(&Subscription->Pending, FALSE))
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return;
+    }
+    RemoveEntryList(&Subscription->ListEntry);
+    NextSequence = Subscription->NextSequence;
+    Object->CallbackCount++;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    ZpClient_InvokeSubscriptionTerminal(Subscription,
+                                        NextSequence,
+                                        Status,
+                                        LastBookmark);
+}
+
+static
+NTSTATUS
+ZpClient_CreateServerSubscription(
+    _Inout_ PZP_CLIENT_OBJECT Object,
+    _In_ ULONGLONG SubscriptionId,
+    _In_ USHORT ModuleId,
+    _In_ ZP_EVENT_LOG_RECORD_CALLBACK RecordCallback,
+    _In_ ZP_EVENT_LOG_TERMINAL_CALLBACK TerminalCallback,
+    _In_opt_ PVOID Context,
+    _Out_ PZP_SUBSCRIPTION_OBJECT* Subscription)
+{
+    PZP_SUBSCRIPTION_OBJECT SubscriptionObject;
+
+    if (SubscriptionId == 0 || (SubscriptionId & 1) != 0 || ModuleId == 0)
+    {
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    SubscriptionObject = Mem_Alloc(sizeof(*SubscriptionObject));
+    if (SubscriptionObject == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(SubscriptionObject, sizeof(*SubscriptionObject));
+    SubscriptionObject->Owner = Object;
+    SubscriptionObject->ReferenceCount = 3;
+    SubscriptionObject->Pending = TRUE;
+    SubscriptionObject->SubscriptionId = SubscriptionId;
+    SubscriptionObject->NextSequence = 1;
+    SubscriptionObject->ModuleId = ModuleId;
+    SubscriptionObject->RecordCallback = RecordCallback;
+    SubscriptionObject->TerminalCallback = TerminalCallback;
+    SubscriptionObject->Context = Context;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (Object->State != ZpClientStateReady ||
+        SubscriptionId <= Object->HighestServerSubscriptionId ||
+        ZpClient_FindSubscription(Object, SubscriptionId) != NULL)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        Mem_Free(SubscriptionObject);
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    InsertTailList(&Object->Subscriptions, &SubscriptionObject->ListEntry);
+    Object->HighestServerSubscriptionId = SubscriptionId;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    *Subscription = SubscriptionObject;
     return STATUS_SUCCESS;
 }
 
@@ -1979,6 +2116,263 @@ ZpClient_HashFile(
     return Status;
 }
 
+typedef struct _ZP_CLIENT_EVENT_LOG_QUERY_CONTEXT
+{
+    ZP_EVENT_LOG_QUERY_PAGE_CALLBACK Callback;
+    PVOID Context;
+} ZP_CLIENT_EVENT_LOG_QUERY_CONTEXT,
+  *PZP_CLIENT_EVENT_LOG_QUERY_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpClient_EventLogQueryComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_EVENT_LOG_QUERY_CONTEXT EventContext = Context;
+    ZP_EVENT_LOG_PAGE_VIEW Page;
+
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpEventLog_DecodePage(Payload->Buffer,
+                                       Payload->Length,
+                                       &Page);
+    }
+    EventContext->Callback(Request,
+                           Status,
+                           NT_SUCCESS(Status) ? &Page : NULL,
+                           EventContext->Context);
+    Mem_Free(EventContext);
+}
+
+NTSTATUS
+NTAPI
+ZpClient_QueryEventLogPage(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_EVENT_LOG_START_MODE StartMode,
+    _In_ ULONG MaxEvents,
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_reads_opt_(QueryLength) PCWCH Query,
+    _In_ ULONG QueryLength,
+    _In_reads_opt_(BookmarkLength) PCWCH Bookmark,
+    _In_ ULONG BookmarkLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_EVENT_LOG_QUERY_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_CLIENT_EVENT_LOG_QUERY_CONTEXT EventContext;
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpEventLog_EncodeQueryPageRequest(StartMode,
+                                               MaxEvents,
+                                               ChannelPath,
+                                               ChannelPathLength,
+                                               Query,
+                                               QueryLength,
+                                               Bookmark,
+                                               BookmarkLength,
+                                               NULL,
+                                               0,
+                                               &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpEventLog_EncodeQueryPageRequest(StartMode,
+                                                   MaxEvents,
+                                                   ChannelPath,
+                                                   ChannelPathLength,
+                                                   Query,
+                                                   QueryLength,
+                                                   Bookmark,
+                                                   BookmarkLength,
+                                                   Payload,
+                                                   PayloadLength,
+                                                   &PayloadLength);
+    }
+    EventContext = NT_SUCCESS(Status) ?
+                       Mem_Alloc(sizeof(*EventContext)) :
+                       NULL;
+    if (NT_SUCCESS(Status) && EventContext == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        EventContext->Callback = Callback;
+        EventContext->Context = Context;
+        Status = ZpClient_SendRequest(Client,
+                                      ZP_EVENT_LOG_MODULE_ID,
+                                      ZP_EVENT_LOG_OPERATION_QUERY_PAGE,
+                                      TimeoutMilliseconds,
+                                      Payload,
+                                      PayloadLength,
+                                      ZpClient_EventLogQueryComplete,
+                                      EventContext,
+                                      Request);
+        if (!NT_SUCCESS(Status))
+        {
+            Mem_Free(EventContext);
+        }
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+typedef struct _ZP_CLIENT_EVENT_LOG_SUBSCRIBE_CONTEXT
+{
+    ZP_EVENT_LOG_SUBSCRIBE_CALLBACK SubscribeCallback;
+    ZP_EVENT_LOG_RECORD_CALLBACK RecordCallback;
+    ZP_EVENT_LOG_TERMINAL_CALLBACK TerminalCallback;
+    PVOID Context;
+} ZP_CLIENT_EVENT_LOG_SUBSCRIBE_CONTEXT,
+  *PZP_CLIENT_EVENT_LOG_SUBSCRIBE_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpClient_EventLogSubscribeComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_EVENT_LOG_SUBSCRIBE_CONTEXT EventContext = Context;
+    PZP_REQUEST_OBJECT RequestObject = (PZP_REQUEST_OBJECT)Request;
+    PZP_SUBSCRIPTION_OBJECT Subscription = NULL;
+    ULONGLONG SubscriptionId = 0;
+
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpEventLog_DecodeSubscribeResponse(Payload->Buffer,
+                                                    Payload->Length,
+                                                    &SubscriptionId);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpClient_CreateServerSubscription(
+            RequestObject->Owner,
+            SubscriptionId,
+            ZP_EVENT_LOG_MODULE_ID,
+            EventContext->RecordCallback,
+            EventContext->TerminalCallback,
+            EventContext->Context,
+            &Subscription);
+    }
+    EventContext->SubscribeCallback(
+        Request,
+        Status,
+        NT_SUCCESS(Status) ? (ZP_SUBSCRIPTION_HANDLE)Subscription : NULL,
+        EventContext->Context);
+    if (Subscription != NULL)
+    {
+        ZpClient_ReleaseSubscription(Subscription);
+    }
+    Mem_Free(EventContext);
+}
+
+NTSTATUS
+NTAPI
+ZpClient_SubscribeEventLog(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_EVENT_LOG_START_MODE StartMode,
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_reads_opt_(QueryLength) PCWCH Query,
+    _In_ ULONG QueryLength,
+    _In_reads_opt_(BookmarkLength) PCWCH Bookmark,
+    _In_ ULONG BookmarkLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_EVENT_LOG_SUBSCRIBE_CALLBACK SubscribeCallback,
+    _In_ ZP_EVENT_LOG_RECORD_CALLBACK RecordCallback,
+    _In_ ZP_EVENT_LOG_TERMINAL_CALLBACK TerminalCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_CLIENT_EVENT_LOG_SUBSCRIBE_CONTEXT EventContext;
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (SubscribeCallback == NULL ||
+        RecordCallback == NULL ||
+        TerminalCallback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpEventLog_EncodeSubscribeRequest(StartMode,
+                                               ChannelPath,
+                                               ChannelPathLength,
+                                               Query,
+                                               QueryLength,
+                                               Bookmark,
+                                               BookmarkLength,
+                                               NULL,
+                                               0,
+                                               &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpEventLog_EncodeSubscribeRequest(StartMode,
+                                                   ChannelPath,
+                                                   ChannelPathLength,
+                                                   Query,
+                                                   QueryLength,
+                                                   Bookmark,
+                                                   BookmarkLength,
+                                                   Payload,
+                                                   PayloadLength,
+                                                   &PayloadLength);
+    }
+    EventContext = NT_SUCCESS(Status) ?
+                       Mem_Alloc(sizeof(*EventContext)) :
+                       NULL;
+    if (NT_SUCCESS(Status) && EventContext == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        EventContext->SubscribeCallback = SubscribeCallback;
+        EventContext->RecordCallback = RecordCallback;
+        EventContext->TerminalCallback = TerminalCallback;
+        EventContext->Context = Context;
+        Status = ZpClient_SendRequest(Client,
+                                      ZP_EVENT_LOG_MODULE_ID,
+                                      ZP_EVENT_LOG_OPERATION_SUBSCRIBE,
+                                      TimeoutMilliseconds,
+                                      Payload,
+                                      PayloadLength,
+                                      ZpClient_EventLogSubscribeComplete,
+                                      EventContext,
+                                      Request);
+        if (!NT_SUCCESS(Status))
+        {
+            Mem_Free(EventContext);
+        }
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
 typedef struct _ZP_CLIENT_FILE_OPEN_READ_CONTEXT
 {
     ZP_FILE_OPEN_READ_CALLBACK OpenCallback;
@@ -2639,6 +3033,108 @@ ZpChannel_Close(
     ZpClient_ReleaseChannel((PZP_CHANNEL_OBJECT)Channel);
 }
 
+static
+VOID
+NTAPI
+ZpClient_SubscriptionCancelComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_SUBSCRIPTION_OBJECT Subscription = Context;
+    PZP_REQUEST_OBJECT RequestObject = (PZP_REQUEST_OBJECT)Request;
+    PZP_CLIENT_OBJECT Object = RequestObject->Owner;
+
+    UNREFERENCED_PARAMETER(Payload);
+    if (NT_SUCCESS(Status))
+    {
+        ZpClient_CompleteSubscription(Subscription,
+                                      STATUS_CANCELLED,
+                                      NULL);
+    }
+    else
+    {
+        RtlAcquireSRWLockExclusive(&Object->Lock);
+        if (Subscription->Owner == Object && Subscription->Pending)
+        {
+            InterlockedExchange(&Subscription->CancelPending, FALSE);
+        }
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+    }
+    ZpRequest_Close(Request);
+    ZpClient_ReleaseSubscription(Subscription);
+}
+
+NTSTATUS
+NTAPI
+ZpSubscription_Cancel(
+    _In_ ZP_SUBSCRIPTION_HANDLE Subscription)
+{
+    PZP_SUBSCRIPTION_OBJECT SubscriptionObject =
+        (PZP_SUBSCRIPTION_OBJECT)Subscription;
+    PZP_CLIENT_OBJECT Object = SubscriptionObject->Owner;
+    ZP_REQUEST_HANDLE Request;
+    BYTE Payload[sizeof(ULONGLONG)];
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Object == NULL)
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (!SubscriptionObject->Pending ||
+        InterlockedCompareExchange(&SubscriptionObject->CancelPending,
+                                   TRUE,
+                                   FALSE))
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    InterlockedIncrement(&SubscriptionObject->ReferenceCount);
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+
+    Status = ZpEventLog_EncodeUnsubscribeRequest(
+        SubscriptionObject->SubscriptionId,
+        Payload,
+        sizeof(Payload),
+        &PayloadLength);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpClient_SendRequest(
+            (ZP_CLIENT_HANDLE)Object,
+            ZP_EVENT_LOG_MODULE_ID,
+            ZP_EVENT_LOG_OPERATION_UNSUBSCRIBE,
+            0,
+            Payload,
+            PayloadLength,
+            ZpClient_SubscriptionCancelComplete,
+            SubscriptionObject,
+            &Request);
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        RtlAcquireSRWLockExclusive(&Object->Lock);
+        if (SubscriptionObject->Owner == Object &&
+            SubscriptionObject->Pending)
+        {
+            InterlockedExchange(&SubscriptionObject->CancelPending, FALSE);
+        }
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        ZpClient_ReleaseSubscription(SubscriptionObject);
+    }
+    return Status;
+}
+
+VOID
+NTAPI
+ZpSubscription_Close(
+    _In_ ZP_SUBSCRIPTION_HANDLE Subscription)
+{
+    ZpClient_ReleaseSubscription((PZP_SUBSCRIPTION_OBJECT)Subscription);
+}
+
 NTSTATUS
 ZpClient_SetTransport(
     _In_ ZP_CLIENT_HANDLE Client,
@@ -2786,6 +3282,93 @@ ZpClient_CompleteResponse(
     ZpClient_InvokeRequestCallback(Request,
                                    Response->Status,
                                    &Response->Payload);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpClient_ReceiveEvent(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ PCZP_EVENT_VIEW Message)
+{
+    PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
+    PZP_SUBSCRIPTION_OBJECT Subscription;
+    ZP_EVENT_LOG_EVENT_RECORD_VIEW Record;
+    ZP_EVENT_LOG_EVENT_TERMINAL_VIEW Terminal;
+    NTSTATUS Status;
+
+    if (Message->ModuleId != ZP_EVENT_LOG_MODULE_ID)
+    {
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    if (Message->EventId == ZP_EVENT_LOG_EVENT_RECORD)
+    {
+        Status = ZpEventLog_DecodeRecordEvent(Message->Payload.Buffer,
+                                              Message->Payload.Length,
+                                              &Record);
+    }
+    else if (Message->EventId == ZP_EVENT_LOG_EVENT_TERMINAL)
+    {
+        Status = ZpEventLog_DecodeTerminalEvent(Message->Payload.Buffer,
+                                                Message->Payload.Length,
+                                                &Terminal);
+    }
+    else
+    {
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Subscription = ZpClient_FindSubscription(Object,
+                                              Message->SubscriptionId);
+    if (Subscription == NULL ||
+        Subscription->ModuleId != Message->ModuleId ||
+        !Subscription->Pending)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    if (Message->EventId == ZP_EVENT_LOG_EVENT_RECORD)
+    {
+        if (Record.Sequence != Subscription->NextSequence ||
+            Record.Sequence == MAXULONGLONG)
+        {
+            RtlReleaseSRWLockExclusive(&Object->Lock);
+            return STATUS_PROTOCOL_UNREACHABLE;
+        }
+        Subscription->NextSequence++;
+        InterlockedIncrement(&Subscription->ReferenceCount);
+        Object->CallbackCount++;
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+
+        Subscription->RecordCallback(
+            (ZP_SUBSCRIPTION_HANDLE)Subscription,
+            Record.Sequence,
+            &Record.Record,
+            Subscription->Context);
+
+        RtlAcquireSRWLockExclusive(&Object->Lock);
+        Object->CallbackCount--;
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        ZpClient_ReleaseSubscription(Subscription);
+        return STATUS_SUCCESS;
+    }
+    if (Terminal.NextSequence != Subscription->NextSequence ||
+        !InterlockedExchange(&Subscription->Pending, FALSE))
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    RemoveEntryList(&Subscription->ListEntry);
+    Object->CallbackCount++;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    ZpClient_InvokeSubscriptionTerminal(Subscription,
+                                        Terminal.NextSequence,
+                                        Terminal.Status,
+                                        &Terminal.LastBookmark);
     return STATUS_SUCCESS;
 }
 
@@ -2976,6 +3559,36 @@ ZpClient_CompleteChannels(
     }
 }
 
+static
+VOID
+ZpClient_CompleteSubscriptions(
+    _Inout_ PZP_CLIENT_OBJECT Object,
+    _In_ NTSTATUS Status)
+{
+    PZP_SUBSCRIPTION_OBJECT Subscription;
+
+    for (;;)
+    {
+        RtlAcquireSRWLockExclusive(&Object->Lock);
+        if (IsListEmpty(&Object->Subscriptions))
+        {
+            RtlReleaseSRWLockExclusive(&Object->Lock);
+            return;
+        }
+        Subscription = CONTAINING_RECORD(Object->Subscriptions.Flink,
+                                         ZP_SUBSCRIPTION_OBJECT,
+                                         ListEntry);
+        InterlockedExchange(&Subscription->Pending, FALSE);
+        RemoveEntryList(&Subscription->ListEntry);
+        Object->CallbackCount++;
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        ZpClient_InvokeSubscriptionTerminal(Subscription,
+                                            Subscription->NextSequence,
+                                            Status,
+                                            NULL);
+    }
+}
+
 VOID
 ZpClient_TransportShutdown(
     _In_ ZP_CLIENT_HANDLE Client,
@@ -3001,6 +3614,7 @@ ZpClient_TransportShutdown(
     {
         ZpClient_CompleteRequests(Object, Status);
         ZpClient_CompleteChannels(Object, Status);
+        ZpClient_CompleteSubscriptions(Object, Status);
         ZpClient_NotifyState(Client, ZpClientStateStopped, Status);
         return;
     }
@@ -3014,6 +3628,7 @@ ZpClient_TransportShutdown(
     }
     ZpClient_CompleteRequests(Object, Status);
     ZpClient_CompleteChannels(Object, Status);
+    ZpClient_CompleteSubscriptions(Object, Status);
 }
 
 NTSTATUS
@@ -3027,7 +3642,8 @@ ZpClient_Close(
     if (Object->State != ZpClientStateStopped ||
         Object->CallbackCount != 0 ||
         !IsListEmpty(&Object->Requests) ||
-        !IsListEmpty(&Object->Channels))
+        !IsListEmpty(&Object->Channels) ||
+        !IsListEmpty(&Object->Subscriptions))
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_DEVICE_BUSY;
