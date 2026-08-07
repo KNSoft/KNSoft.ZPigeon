@@ -207,6 +207,28 @@ ZpClient_QueryService(
 
 NTSTATUS
 NTAPI
+ZpClient_StartService(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_StopService(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpRequest_Cancel(
     _In_ ZP_REQUEST_HANDLE Request);
 

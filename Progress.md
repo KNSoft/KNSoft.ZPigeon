@@ -53,15 +53,16 @@
 - 实现 Service.Query：按服务名返回当前状态、宿主 PID、启动类型、错误控制、显示名、二进制路径和登录账户，并以枚举所得真实服务完成端到端验证；
 - 增加统一 Server 请求授权门禁：回调可依据认证 ClientId、Read/Control 访问级别、模块、操作和原始 Payload 返回授权结果；未配置回调时只读默认放行、控制默认拒绝，真实 localhost 请求已验证携带非零认证 ClientId；
 - 实现 Process.Terminate 控制操作：非零 PID 与退出码使用固定 Codec，Server 在 Control 授权通过后调用系统终止接口；集成测试验证未授权拒绝以及授权后只终止测试自身创建的临时进程；
+- 实现 Service.Start/Stop 控制操作：复用服务名 Codec，Server 在 Control 授权通过后调用 Service Control Manager；集成测试对真实服务仅验证未授权拒绝，授权路径只访问确定不存在的测试服务名，不修改系统服务状态；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 213 项断言全部通过，其中包含 Process.Terminate 的拒绝与授权执行，以及既有管理操作端到端验证。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 213 项断言全部通过，其中包含 Service.Start/Stop 的安全授权路径以及既有管理操作端到端验证。
 
 ## 下一步
 
-1. 在统一权限门禁上接入 Service.Start/Stop 等控制操作；
-2. 推进 File、Terminal 等需要 ChannelData 的模块。
+1. 设计并实现 File 模块的只读枚举与属性查询；
+2. 在真实大文件需求明确后推进 File ChannelData 传输，再实现 Terminal。
 
 ## 待确认与阻塞
 

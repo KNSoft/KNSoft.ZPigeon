@@ -28,6 +28,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE ServiceListEvent;
     HANDLE ServiceInfoEvent;
     HANDLE ProcessTerminateEvent;
+    HANDLE ServiceControlEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
@@ -64,6 +65,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     volatile LONG SawAuthenticatedClientId;
     volatile LONG AllowControl;
     volatile LONG ProcessTerminateStatus;
+    volatile LONG ServiceControlStatus;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -278,6 +280,21 @@ SDKIntegration_ProcessTerminateCallback(
     UNREFERENCED_PARAMETER(Request);
     InterlockedExchange(&TestContext->ProcessTerminateStatus, Status);
     SetEvent(TestContext->ProcessTerminateEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_ServiceControlCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    InterlockedExchange(&TestContext->ServiceControlStatus, Status);
+    SetEvent(TestContext->ServiceControlEvent);
 }
 
 static
@@ -608,6 +625,8 @@ Cleanup:
 TEST_FUNC(SDKQuicIntegration)
 {
     static const WCHAR ServerName[] = L"localhost";
+    static const WCHAR MissingServiceName[] =
+        L"KNSoft.ZPigeon.UnitTest.DoesNotExist";
     SDK_INTEGRATION_CONTEXT TestContext = { 0 };
     ZP_MODULE_RECORD ClientModules[] = {
         { 1, 3, 0x0F },
@@ -652,6 +671,7 @@ TEST_FUNC(SDKQuicIntegration)
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL)
     };
 
@@ -675,6 +695,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.ServiceListEvent = Events[10];
     TestContext.ServiceInfoEvent = Events[11];
     TestContext.ProcessTerminateEvent = Events[12];
+    TestContext.ServiceControlEvent = Events[13];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -937,6 +958,49 @@ TEST_FUNC(SDKQuicIntegration)
         !NT_SUCCESS(TestContext.ProcessTerminateStatus) ||
         WaitForSingleObject(TemporaryProcess.hProcess,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0)
+    {
+        goto Cleanup;
+    }
+
+    InterlockedExchange(&TestContext.AllowControl, FALSE);
+    Status = ZpClient_StopService(Client,
+                                  TestContext.ServiceName,
+                                  TestContext.ServiceNameLength,
+                                  SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                  SDKIntegration_ServiceControlCallback,
+                                  &TestContext,
+                                  &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.ServiceControlEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        TestContext.ServiceControlStatus != STATUS_ACCESS_DENIED)
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.ServiceControlEvent);
+    InterlockedExchange(&TestContext.AllowControl, TRUE);
+    Status = ZpClient_StartService(Client,
+                                   MissingServiceName,
+                                   ARRAYSIZE(MissingServiceName) - 1,
+                                   SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                   SDKIntegration_ServiceControlCallback,
+                                   &TestContext,
+                                   &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.ServiceControlEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        NT_SUCCESS(TestContext.ServiceControlStatus) ||
+        TestContext.ServiceControlStatus == STATUS_ACCESS_DENIED)
     {
         goto Cleanup;
     }

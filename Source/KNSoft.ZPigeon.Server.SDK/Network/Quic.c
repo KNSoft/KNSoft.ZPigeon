@@ -562,6 +562,66 @@ Cleanup:
 
 static
 NTSTATUS
+ZpServerQuic_ControlService(
+    _In_ PCZP_STRING_VIEW ServiceNameView,
+    _In_ LOGICAL Start)
+{
+    SERVICE_STATUS ServiceStatus;
+    SC_HANDLE Manager = NULL, Service = NULL;
+    PWCHAR ServiceName;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    ServiceName = Mem_Alloc(((SIZE_T)ServiceNameView->Length + 1) *
+                            sizeof(WCHAR));
+    if (ServiceName == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    RtlCopyMemory(ServiceName,
+                  ServiceNameView->Buffer,
+                  (SIZE_T)ServiceNameView->Length * sizeof(WCHAR));
+    ServiceName[ServiceNameView->Length] = UNICODE_NULL;
+    Manager = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+    if (Manager == NULL)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    Service = OpenServiceW(Manager,
+                           ServiceName,
+                           Start ? SERVICE_START : SERVICE_STOP);
+    if (Service == NULL)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    if (Start)
+    {
+        if (!StartServiceW(Service, 0, NULL))
+        {
+            Status = NTSTATUS_FROM_WIN32(GetLastError());
+        }
+    }
+    else if (!ControlService(Service, SERVICE_CONTROL_STOP, &ServiceStatus))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+    }
+
+Cleanup:
+    if (Service != NULL)
+    {
+        CloseServiceHandle(Service);
+    }
+    if (Manager != NULL)
+    {
+        CloseServiceHandle(Manager);
+    }
+    Mem_Free(ServiceName);
+    return Status;
+}
+
+static
+NTSTATUS
 ZpServerQuic_SendResponse(
     _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
     _Inout_ PZP_CONNECTION Connection,
@@ -670,8 +730,11 @@ ZpServerQuic_RequestCallback(
             Request->PayloadLength
         };
 
-        Access = Request->ModuleId == ZP_PROCESS_MODULE_ID &&
-                 Request->OperationId == ZP_PROCESS_OPERATION_TERMINATE ?
+        Access = (Request->ModuleId == ZP_PROCESS_MODULE_ID &&
+                  Request->OperationId == ZP_PROCESS_OPERATION_TERMINATE) ||
+                 (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
+                  (Request->OperationId == ZP_SERVICE_OPERATION_START ||
+                   Request->OperationId == ZP_SERVICE_OPERATION_STOP)) ?
                      ZpRequestAccessControl :
                      ZpRequestAccessRead;
         Status = ZpServer_AuthorizeRequest(
@@ -758,6 +821,20 @@ ZpServerQuic_RequestCallback(
                                                    &AllocatedPayload,
                                                    &PayloadLength);
                 ResponsePayload = AllocatedPayload;
+            }
+        }
+        else if (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
+                 (Request->OperationId == ZP_SERVICE_OPERATION_START ||
+                  Request->OperationId == ZP_SERVICE_OPERATION_STOP))
+        {
+            Status = ZpService_DecodeQuery(Request->Payload,
+                                           Request->PayloadLength,
+                                           &ServiceName);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_ControlService(
+                    &ServiceName,
+                    Request->OperationId == ZP_SERVICE_OPERATION_START);
             }
         }
         else

@@ -459,6 +459,8 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 
 `Service.Query` 固定为 `OperationId = 2`，请求 Payload 为非空 UTF-16LE ServiceName 字符串。成功响应依次编码 `UINT32 ServiceType`、`CurrentState`、`ProcessId`、`StartType`、`ErrorControl`，随后为 UTF-16LE ServiceName、DisplayName、BinaryPathName 和 StartName 字符串；配置和状态字段沿用 Windows Service Control Manager 定义。
 
+`Service.Start` 和 `Service.Stop` 分别固定为 `OperationId = 3` 和 `4`，访问级别均为 `Control`，请求 Payload 复用非空 UTF-16LE ServiceName 字符串，成功响应 Payload 为空。Server 只有在授权门禁放行后才打开 Service Control Manager 句柄并执行启动或停止控制；未配置授权回调时固定返回 `STATUS_ACCESS_DENIED`。
+
 大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口、断点续传和哈希规则在实现对应模块前按真实需求确定，不预先建设通用虚拟流框架。
 
 ## 10. 安全与资源限制
@@ -505,7 +507,7 @@ QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接�
 
 以下内容不阻塞 Network 和通用 Protocol 编码，在实现对应模块前定稿：
 
-1. 除已固定的 System.Info、Process.Enumerate、Process.Query、Process.Terminate、Service.Enumerate 和 Service.Query 外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
+1. 除已固定的 System.Info、Process.Enumerate、Process.Query、Process.Terminate、Service.Enumerate、Service.Query、Service.Start 和 Service.Stop 外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
 2. File 通道的窗口、哈希、断点续传和落盘契约；
 3. Terminal 通道的输入输出分流、窗口调整和退出状态 Payload；
 4. EventLog 等订阅模块的事件丢失与恢复语义；

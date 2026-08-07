@@ -1233,6 +1233,119 @@ ZpClient_QueryService(
     return Status;
 }
 
+static
+NTSTATUS
+ZpClient_SendServiceControl(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ USHORT OperationId,
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_CLIENT_STATUS_CONTEXT StatusContext;
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpService_EncodeQuery(ServiceName,
+                                   ServiceNameLength,
+                                   NULL,
+                                   0,
+                                   &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpService_EncodeQuery(ServiceName,
+                                       ServiceNameLength,
+                                       Payload,
+                                       PayloadLength,
+                                       &PayloadLength);
+    }
+    StatusContext = NT_SUCCESS(Status) ?
+                        Mem_Alloc(sizeof(*StatusContext)) :
+                        NULL;
+    if (NT_SUCCESS(Status) && StatusContext == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        StatusContext->Callback = Callback;
+        StatusContext->Context = Context;
+        Status = ZpClient_SendRequest(Client,
+                                      ZP_SERVICE_MODULE_ID,
+                                      OperationId,
+                                      TimeoutMilliseconds,
+                                      Payload,
+                                      PayloadLength,
+                                      ZpClient_StatusComplete,
+                                      StatusContext,
+                                      Request);
+        if (!NT_SUCCESS(Status))
+        {
+            Mem_Free(StatusContext);
+        }
+    }
+    if (Payload != NULL)
+    {
+        Mem_Free(Payload);
+    }
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpClient_StartService(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    return ZpClient_SendServiceControl(Client,
+                                       ZP_SERVICE_OPERATION_START,
+                                       ServiceName,
+                                       ServiceNameLength,
+                                       TimeoutMilliseconds,
+                                       Callback,
+                                       Context,
+                                       Request);
+}
+
+NTSTATUS
+NTAPI
+ZpClient_StopService(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    return ZpClient_SendServiceControl(Client,
+                                       ZP_SERVICE_OPERATION_STOP,
+                                       ServiceName,
+                                       ServiceNameLength,
+                                       TimeoutMilliseconds,
+                                       Callback,
+                                       Context,
+                                       Request);
+}
+
 NTSTATUS
 NTAPI
 ZpRequest_Cancel(
