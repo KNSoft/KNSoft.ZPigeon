@@ -399,7 +399,7 @@ Client 配置包含：
 - 可选的 CNG 客户端持久化密钥名；为空时由 SDK 使用默认名称；
 - 严格按 `ModuleId` 升序排列的模块版本与能力；
 - 连接超时，0 使用 10 秒默认值；
-- 状态回调和调用方 Context。
+- 状态回调、可选的 Pong 回调和调用方 Context。
 
 Server 配置包含：
 
@@ -418,6 +418,8 @@ SDK 对象通过内部 `ZP_TRANSPORT_OPERATIONS` 操作表持有具体 Transport
 Client `Start` 只允许 `Stopped -> Connecting`，Server `Start` 只允许 `Stopped -> Starting`；缺少 Endpoint、Listener 或 Deployment 返回 `STATUS_INVALID_PARAMETER`，尚未安装对应 Transport 适配返回 `STATUS_NOT_SUPPORTED`。Transport 启动失败时立即回到 `Stopped`，状态回调携带该失败状态。Client 后续只接受 `Connecting -> Authenticating/RetryWait/Stopped`、`Authenticating -> Ready/RetryWait/Stopped`、`Ready -> RetryWait/Stopped`、`RetryWait -> Connecting/Stopped` 和 `Stopping -> Stopped`；Server 只接受 `Starting -> Running/Stopped`、`Running -> Stopped` 和 `Stopping -> Stopped`。
 
 `Stop` 对 `Stopped` 和 `Stopping` 幂等；其他状态先同步进入 `Stopping` 并通知回调，再请求 Transport 异步停止。Transport 完成资源回收后通过受控内部通知进入 `Stopped`。Transport 操作表和状态通知均为 SDK 内部契约，不属于公开 ABI。
+
+Client 在 `Ready` 状态可通过 `ZpClient_Ping` 发送调用方 Token；Server 协议层自动回送等值 Pong，Client 通过可选 Pong 回调交付 Token。该路径用于连接存活检测，不创建 Request 对象。
 
 Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多 64 项；Deployment 根证书 DER 最大 1 MiB。非空数组与源指针必须成对提供；可选字符串使用 `NULL` 表示缺省，提供空字符串视为无效配置。ServerName 在同一 Server 配置中按不区分大小写方式保持唯一。所有深拷贝使用单块对象内存，Server 额外持有通过 `CertDuplicateCertificateContext` 获得的证书引用，并在 `Close` 时逐项释放。
 

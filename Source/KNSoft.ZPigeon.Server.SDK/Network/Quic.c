@@ -84,6 +84,7 @@ ZpServerQuic_MessageCallback(
     ZP_READY Ready;
     BYTE Body[sizeof(USHORT) + ZP_MODULE_MAX_COUNT * 8];
     ULONG BodyLength;
+    ULONGLONG Token;
     NTSTATUS Status;
 
     switch (Frame->MessageType)
@@ -178,6 +179,28 @@ ZpServerQuic_MessageCallback(
                 MsQuicConnectionShutdown(QuicConnection->Connection,
                                          QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
                                          0);
+            }
+            return Status;
+
+        case ZpMessagePing:
+            Status = ZpMessage_DecodePing(ZpMessagePing,
+                                          Frame->Body,
+                                          Frame->BodyLength,
+                                          &Token);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpMessage_EncodePing(Token,
+                                              Body,
+                                              sizeof(Body),
+                                              &BodyLength);
+            }
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpQuic_SendFrame(QuicConnection->Stream,
+                                          Connection,
+                                          ZpMessagePong,
+                                          Body,
+                                          BodyLength);
             }
             return Status;
     }
@@ -628,7 +651,8 @@ ZpServerQuic_Stop(
 
 static const ZP_TRANSPORT_OPERATIONS ZpServerQuicOperations = {
     ZpServerQuic_Start,
-    ZpServerQuic_Stop
+    ZpServerQuic_Stop,
+    NULL
 };
 
 VOID

@@ -447,6 +447,44 @@ ZpClient_Stop(
 }
 
 NTSTATUS
+NTAPI
+ZpClient_Ping(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONGLONG Token)
+{
+    PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
+    PCZP_TRANSPORT_OPERATIONS Operations;
+    PVOID TransportContext;
+    BYTE Body[sizeof(Token)];
+    ULONG BodyLength;
+    NTSTATUS Status;
+
+    RtlAcquireSRWLockShared(&Object->Lock);
+    if (Object->State != ZpClientStateReady)
+    {
+        RtlReleaseSRWLockShared(&Object->Lock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    Operations = Object->TransportOperations[Object->ActiveTransport];
+    TransportContext = Object->TransportContexts[Object->ActiveTransport];
+    if (Operations->Send == NULL)
+    {
+        RtlReleaseSRWLockShared(&Object->Lock);
+        return STATUS_NOT_SUPPORTED;
+    }
+    Status = ZpMessage_EncodePing(Token, Body, sizeof(Body), &BodyLength);
+    if (NT_SUCCESS(Status))
+    {
+        Status = Operations->Send(TransportContext,
+                                  ZpMessagePing,
+                                  Body,
+                                  BodyLength);
+    }
+    RtlReleaseSRWLockShared(&Object->Lock);
+    return Status;
+}
+
+NTSTATUS
 ZpClient_SetTransport(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ ZP_TRANSPORT_TYPE Transport,
@@ -526,6 +564,33 @@ ZpClient_NotifyState(
     Object->CallbackCount++;
     RtlReleaseSRWLockExclusive(&Object->Lock);
     Object->Config.StateCallback(Client, State, Status, Object->Config.CallbackContext);
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount--;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpClient_NotifyPong(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONGLONG Token)
+{
+    PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (Object->State != ZpClientStateReady)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    if (Object->Config.PongCallback == NULL)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_SUCCESS;
+    }
+    Object->CallbackCount++;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    Object->Config.PongCallback(Client, Token, Object->Config.CallbackContext);
     RtlAcquireSRWLockExclusive(&Object->Lock);
     Object->CallbackCount--;
     RtlReleaseSRWLockExclusive(&Object->Lock);

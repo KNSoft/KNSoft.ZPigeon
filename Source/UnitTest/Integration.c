@@ -21,10 +21,12 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE ClientStoppedEvent;
     HANDLE ServerReadyEvent;
     HANDLE ServerStoppedEvent;
+    HANDLE ClientPongEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
     volatile LONG ServerStoppedStatus;
+    ULONGLONG ClientPongToken;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -53,6 +55,21 @@ SDKIntegration_ClientStateCallback(
         InterlockedExchange(&TestContext->ClientStoppedStatus, Status);
         SetEvent(TestContext->ClientStoppedEvent);
     }
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_ClientPongCallback(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONGLONG Token,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Client);
+    TestContext->ClientPongToken = Token;
+    SetEvent(TestContext->ClientPongEvent);
 }
 
 static
@@ -370,6 +387,7 @@ TEST_FUNC(SDKQuicIntegration)
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL)
     };
 
@@ -386,6 +404,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.ClientStoppedEvent = Events[3];
     TestContext.ServerReadyEvent = Events[4];
     TestContext.ServerStoppedEvent = Events[5];
+    TestContext.ClientPongEvent = Events[6];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -418,6 +437,7 @@ TEST_FUNC(SDKQuicIntegration)
     ClientConfig.ModuleCount = ARRAYSIZE(ClientModules);
     ClientConfig.ConnectTimeoutMilliseconds = SDK_INTEGRATION_TIMEOUT_MILLISECONDS;
     ClientConfig.StateCallback = SDKIntegration_ClientStateCallback;
+    ClientConfig.PongCallback = SDKIntegration_ClientPongCallback;
     ClientConfig.CallbackContext = &TestContext;
 
     ServerConfig.Size = sizeof(ServerConfig);
@@ -465,6 +485,15 @@ TEST_FUNC(SDKQuicIntegration)
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         !NT_SUCCESS(TestContext.ClientReadyStatus) ||
         !NT_SUCCESS(TestContext.ServerReadyStatus))
+    {
+        goto Cleanup;
+    }
+
+    Status = ZpClient_Ping(Client, 0x0102030405060708);
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.ClientPongEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        TestContext.ClientPongToken != 0x0102030405060708)
     {
         goto Cleanup;
     }

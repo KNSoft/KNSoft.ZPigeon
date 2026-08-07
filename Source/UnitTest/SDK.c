@@ -15,6 +15,9 @@ typedef struct _SDK_TEST_CONTEXT
     ULONG StartCount;
     ULONG StartEndpointIndices[8];
     ULONG StopCount;
+    ULONG SendCount;
+    ZP_MESSAGE_TYPE SendMessageType;
+    ULONGLONG SendToken;
     ULONG ClientStateCount;
     ZP_CLIENT_STATE ClientStates[8];
     NTSTATUS ClientStatuses[8];
@@ -51,9 +54,30 @@ SDKTest_TransportStop(
     TestContext->StopCount++;
 }
 
+static
+NTSTATUS
+NTAPI
+SDKTest_TransportSend(
+    _In_opt_ PVOID Context,
+    _In_ ZP_MESSAGE_TYPE MessageType,
+    _In_reads_bytes_opt_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    TestContext->SendCount++;
+    TestContext->SendMessageType = MessageType;
+    if (BodyLength == sizeof(ULONGLONG))
+    {
+        ZpMessage_DecodePing(MessageType, Body, BodyLength, &TestContext->SendToken);
+    }
+    return STATUS_SUCCESS;
+}
+
 static const ZP_TRANSPORT_OPERATIONS SDKTest_TransportOperations = {
     SDKTest_TransportStart,
-    SDKTest_TransportStop
+    SDKTest_TransportStop,
+    SDKTest_TransportSend
 };
 
 static
@@ -222,6 +246,7 @@ TEST_FUNC(SDKContract)
         ARRAYSIZE(Modules),
         0,
         SDKTest_ClientStateCallback,
+        NULL,
         NULL
     };
     ZP_SERVER_CONFIG ServerConfig = {
@@ -405,6 +430,10 @@ TEST_FUNC(SDKContract)
     TEST_OK(ZpClient_NotifyState(Client,
                                 ZpClientStateAuthenticating,
                                 STATUS_SUCCESS) == STATUS_INVALID_DEVICE_STATE);
+    TEST_OK(NT_SUCCESS(ZpClient_Ping(Client, 0x0102030405060708)) &&
+            TestContext.SendCount == 1 &&
+            TestContext.SendMessageType == ZpMessagePing &&
+            TestContext.SendToken == 0x0102030405060708);
     TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) &&
             ClientObject->State == ZpClientStateStopping &&
             TestContext.StopCount == 1 &&

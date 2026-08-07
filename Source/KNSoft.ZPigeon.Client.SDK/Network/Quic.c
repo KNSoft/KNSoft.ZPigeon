@@ -206,6 +206,7 @@ ZpClientQuic_MessageCallback(
     ZP_DISCONNECT_VIEW Disconnect;
     BYTE Signature[ZP_CLIENT_SIGNATURE_SIZE];
     BYTE Body[ZP_CLIENT_SIGNATURE_SIZE];
+    ULONGLONG Token;
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -268,8 +269,38 @@ ZpClientQuic_MessageCallback(
                                          0);
             }
             return Status;
+
+        case ZpMessagePong:
+            Status = ZpMessage_DecodePing(ZpMessagePong,
+                                          Frame->Body,
+                                          Frame->BodyLength,
+                                          &Token);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpClient_NotifyPong((ZP_CLIENT_HANDLE)Transport->Owner,
+                                            Token);
+            }
+            return Status;
     }
     return STATUS_PROTOCOL_UNREACHABLE;
+}
+
+static
+NTSTATUS
+NTAPI
+ZpClientQuic_Send(
+    _In_opt_ PVOID Context,
+    _In_ ZP_MESSAGE_TYPE MessageType,
+    _In_reads_bytes_opt_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength)
+{
+    PZP_CLIENT_QUIC_TRANSPORT Transport = Context;
+
+    return ZpQuic_SendFrame(Transport->Stream,
+                            &Transport->ProtocolConnection,
+                            MessageType,
+                            Body,
+                            BodyLength);
 }
 
 static
@@ -699,7 +730,8 @@ ZpClientQuic_Stop(
 
 static const ZP_TRANSPORT_OPERATIONS ZpClientQuicOperations = {
     ZpClientQuic_Start,
-    ZpClientQuic_Stop
+    ZpClientQuic_Stop,
+    ZpClientQuic_Send
 };
 
 VOID

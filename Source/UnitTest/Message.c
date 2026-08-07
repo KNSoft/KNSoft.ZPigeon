@@ -16,8 +16,15 @@ TEST_FUNC(ProtocolMessage)
     ZP_READY_VIEW ReadyView;
     ZP_DISCONNECT Disconnect = { STATUS_ACCESS_DENIED, L"Denied", 6 };
     ZP_DISCONNECT_VIEW DisconnectView;
+    const BYTE RequestPayload[] = { 1, 2, 3 };
+    const BYTE ResponsePayload[] = { 4, 5 };
+    ZP_REQUEST Request = { 7, 1, 2, 5000, RequestPayload, sizeof(RequestPayload) };
+    ZP_REQUEST_VIEW RequestView;
+    ZP_RESPONSE Response = { 7, STATUS_SUCCESS, ResponsePayload, sizeof(ResponsePayload) };
+    ZP_RESPONSE_VIEW ResponseView;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
+    ULONGLONG Value;
     ULONG Length, Index;
 
     for (Index = 0; Index < ARRAYSIZE(Challenge); Index++)
@@ -90,4 +97,41 @@ TEST_FUNC(ProtocolMessage)
     TEST_OK(ZpMessage_DecodeDisconnect(Buffer, Length - 1, &DisconnectView) == STATUS_DATA_ERROR);
     Disconnect.ReasonLength = ZP_CODEC_MAX_ELEMENT_COUNT + 1;
     TEST_OK(ZpMessage_EncodeDisconnect(&Disconnect, NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
+
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeRequest(&Request, Buffer, sizeof(Buffer), &Length)) && Length == 19);
+    TEST_OK(NT_SUCCESS(ZpMessage_DecodeRequest(Buffer, Length, &RequestView)) &&
+            RequestView.RequestId == Request.RequestId &&
+            RequestView.ModuleId == Request.ModuleId &&
+            RequestView.OperationId == Request.OperationId &&
+            RequestView.TimeoutMilliseconds == Request.TimeoutMilliseconds &&
+            RequestView.Payload.Length == sizeof(RequestPayload) &&
+            RtlCompareMemory(RequestView.Payload.Buffer,
+                             RequestPayload,
+                             sizeof(RequestPayload)) == sizeof(RequestPayload));
+    Request.RequestId = 0;
+    TEST_OK(ZpMessage_EncodeRequest(&Request, NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
+    Request.RequestId = 7;
+
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeResponse(&Response, Buffer, sizeof(Buffer), &Length)) && Length == 14);
+    TEST_OK(NT_SUCCESS(ZpMessage_DecodeResponse(Buffer, Length, &ResponseView)) &&
+            ResponseView.RequestId == Response.RequestId &&
+            ResponseView.Status == Response.Status &&
+            ResponseView.Payload.Length == sizeof(ResponsePayload) &&
+            RtlCompareMemory(ResponseView.Payload.Buffer,
+                             ResponsePayload,
+                             sizeof(ResponsePayload)) == sizeof(ResponsePayload));
+
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeCancel(7, Buffer, sizeof(Buffer), &Length)) &&
+            Length == sizeof(ULONGLONG) &&
+            NT_SUCCESS(ZpMessage_DecodeCancel(Buffer, Length, &Value)) &&
+            Value == 7);
+    TEST_OK(ZpMessage_EncodeCancel(0, NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
+
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodePing(MAXULONGLONG, Buffer, sizeof(Buffer), &Length)) &&
+            Length == sizeof(ULONGLONG) &&
+            NT_SUCCESS(ZpMessage_DecodePing(ZpMessagePing, Buffer, Length, &Value)) &&
+            Value == MAXULONGLONG &&
+            NT_SUCCESS(ZpMessage_DecodePing(ZpMessagePong, Buffer, Length, &Value)) &&
+            Value == MAXULONGLONG);
+    TEST_OK(ZpMessage_DecodePing(ZpMessageRequest, Buffer, Length, &Value) == STATUS_INVALID_PARAMETER);
 }

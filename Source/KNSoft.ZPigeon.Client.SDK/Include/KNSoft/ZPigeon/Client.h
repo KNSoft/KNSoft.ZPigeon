@@ -28,6 +28,13 @@ VOID
     _In_ NTSTATUS Status,
     _In_opt_ PVOID Context);
 
+typedef
+VOID
+(NTAPI *ZP_CLIENT_PONG_CALLBACK)(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONGLONG Token,
+    _In_opt_ PVOID Context);
+
 typedef struct _ZP_CLIENT_CONFIG
 {
     ULONG Size;
@@ -40,6 +47,7 @@ typedef struct _ZP_CLIENT_CONFIG
     USHORT ModuleCount;
     ULONG ConnectTimeoutMilliseconds;
     ZP_CLIENT_STATE_CALLBACK StateCallback;
+    ZP_CLIENT_PONG_CALLBACK PongCallback;
     PVOID CallbackContext;
 } ZP_CLIENT_CONFIG, *PZP_CLIENT_CONFIG;
 
@@ -60,6 +68,12 @@ NTSTATUS
 NTAPI
 ZpClient_Stop(
     _In_ ZP_CLIENT_HANDLE Client);
+
+NTSTATUS
+NTAPI
+ZpClient_Ping(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONGLONG Token);
 
 NTSTATUS
 NTAPI

@@ -129,6 +129,44 @@ typedef struct _ZP_DISCONNECT_VIEW
     ZP_STRING_VIEW Reason;
 } ZP_DISCONNECT_VIEW, *PZP_DISCONNECT_VIEW;
 
+typedef struct _ZP_REQUEST
+{
+    ULONGLONG RequestId;
+    USHORT ModuleId;
+    USHORT OperationId;
+    ULONG TimeoutMilliseconds;
+    const VOID* Payload;
+    ULONG PayloadLength;
+} ZP_REQUEST, *PZP_REQUEST;
+
+typedef const ZP_REQUEST* PCZP_REQUEST;
+
+typedef struct _ZP_REQUEST_VIEW
+{
+    ULONGLONG RequestId;
+    USHORT ModuleId;
+    USHORT OperationId;
+    ULONG TimeoutMilliseconds;
+    ZP_BUFFER_VIEW Payload;
+} ZP_REQUEST_VIEW, *PZP_REQUEST_VIEW;
+
+typedef struct _ZP_RESPONSE
+{
+    ULONGLONG RequestId;
+    NTSTATUS Status;
+    const VOID* Payload;
+    ULONG PayloadLength;
+} ZP_RESPONSE, *PZP_RESPONSE;
+
+typedef const ZP_RESPONSE* PCZP_RESPONSE;
+
+typedef struct _ZP_RESPONSE_VIEW
+{
+    ULONGLONG RequestId;
+    NTSTATUS Status;
+    ZP_BUFFER_VIEW Payload;
+} ZP_RESPONSE_VIEW, *PZP_RESPONSE_VIEW;
+
 VOID
 ZpCodec_InitializeWriter(
     _Out_ PZP_CODEC_WRITER Writer,
@@ -305,6 +343,59 @@ ZpMessage_DecodeDisconnect(
     _In_reads_bytes_(BodyLength) const VOID* Body,
     _In_ ULONG BodyLength,
     _Out_ PZP_DISCONNECT_VIEW View);
+
+NTSTATUS
+ZpMessage_EncodeRequest(
+    _In_ PCZP_REQUEST Message,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodeRequest(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_REQUEST_VIEW View);
+
+NTSTATUS
+ZpMessage_EncodeResponse(
+    _In_ PCZP_RESPONSE Message,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodeResponse(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_RESPONSE_VIEW View);
+
+NTSTATUS
+ZpMessage_EncodeCancel(
+    _In_ ULONGLONG RequestId,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodeCancel(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PULONGLONG RequestId);
+
+NTSTATUS
+ZpMessage_EncodePing(
+    _In_ ULONGLONG Token,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodePing(
+    _In_ ZP_MESSAGE_TYPE MessageType,
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PULONGLONG Token);
 
 NTSTATUS
 ZpFrame_GetSize(

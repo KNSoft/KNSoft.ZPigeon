@@ -42,3 +42,8 @@ ZpClient_NotifyState(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ ZP_CLIENT_STATE State,
     _In_ NTSTATUS Status);
+
+NTSTATUS
+ZpClient_NotifyPong(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONGLONG Token);

@@ -39,9 +39,11 @@
 - 将异步连接失败和异常断线接入 Endpoint 轮次推进及线程池定时器：同轮继续后续 QUIC Endpoint，整轮失败后按策略退避，Ready 连接断开后从首项重新开始，稳定 60 秒后重置失败轮次；
 - 将 Endpoint 调度、异步重试和稳定连接重置从 QUIC 私有实现上移到 Client 通用层；各 Transport 按类型注册，所有已注册 Transport 的 Endpoint 严格按配置顺序参与同一轮尝试；
 - 扩展 SDK 契约测试，覆盖 TLS 同步失败后继续 QUIC Endpoint、活动 Transport 选择、停止路由以及同步失败进入通用 RetryWait；
+- 实现 Request、Response、Cancel、Ping 和 Pong 的类型化 Codec，以及 Client 通用 Transport 发送入口、`ZpClient_Ping`、Server 自动 Pong 和 Client Pong 回调；
+- 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 183 项断言全部通过，其中包含一条真实 localhost QUIC 端到端链路。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 193 项断言全部通过，其中包含真实 localhost QUIC 认证、重连和 Ping/Pong 端到端链路。
 
 ## 下一步
 
