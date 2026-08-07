@@ -8,7 +8,7 @@ KNSoft.ZPigeon 是面向 Windows 10 及以上系统的纯 C 远程管理 SDK。�
 - `KNSoft.ZPigeon.Client.SDK`：客户端连接、重试、请求和 Channel/Subscription 生命周期；
 - `KNSoft.ZPigeon.Server.SDK`：QUIC 监听、认证、授权及 Windows 原生管理操作。
 
-完整协议与安全模型见 [Design.md](Design.md)，当前实现状态见 [Progress.md](Progress.md)。
+完整协议与安全模型见 [Design.md](Design.md)，当前实现状态见 [Progress.md](Progress.md)，第一版交付门槛见 [Release.md](Release.md)。
 
 ## 构建与测试
 
