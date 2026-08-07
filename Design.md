@@ -500,6 +500,16 @@ EventLog 的 `EventId = 1` 表示 Record，Payload 依次编码从 1 开始严�
 
 Bookmark 和单条事件 XML 分别限制为 64 Ki 个 UTF-16 code unit 和 1 Mi 个 UTF-16 code unit；QueryPage 编码后仍不得超过 Core Frame 的 16 MiB 上限。Server 的默认订阅数量及队列上限由压力测试确定，但无论取值为何，达到限制都必须以 `STATUS_QUOTA_EXCEEDED` 拒绝 Subscribe，或以可恢复的 Terminal 终止已有订阅。
 
+`Registry` 模块第一版固定为 `ModuleId = 7`、`ModuleVersion = 1`；`EnumerateKeysPage`、`EnumerateValuesPage`、`QueryValue`、`SetValue`、`DeleteValue`、`CreateKey` 和 `DeleteKey` 分别固定为 `OperationId = 1`～`7`。前三项属于 `Read`，其余属于 `Control`，必须经过 Server 授权门禁。
+
+Registry Root 使用 `UINT16`：`ClassesRoot = 1`、`CurrentUser = 2`、`LocalMachine = 3`、`Users = 4`、`CurrentConfig = 5`。Registry View 使用 `UINT16`：`Default = 1`、`Registry32 = 2`、`Registry64 = 3`，后两者分别映射 `KEY_WOW64_32KEY` 和 `KEY_WOW64_64KEY`；不允许调用方直接传入任意访问掩码或原生 HKEY。`CurrentUser` 明确定义为 Server 进程安全上下文的 HKEY_CURRENT_USER，不推断交互式登录用户。Path 是相对于 Root 的 UTF-16LE 子键路径，允许空值表示 Root 本身，最长 32767 个 code unit。
+
+EnumerateKeysPage 和 EnumerateValuesPage 请求依次编码 Root、View、`UINT32 MaxEntries`、Path 和可空 Cursor，MaxEntries 范围为 1～4096。Server 收集当前快照后按不区分大小写的 ordinal 名称排序，返回严格大于 Cursor 的下一页；同名比较以区分大小写 ordinal 作为稳定次序补充。响应先编码可空 NextCursor，再编码记录数组；存在后续记录时 NextCursor 必须等于本页最后一个名称，否则为空。子键记录编码 Name 和 `UINT64 LastWriteTime`；值记录编码 Name、Windows 原生 `UINT32 Type` 和 `UINT32 DataLength`。空 Name 是合法的默认值名称。分页是 best-effort 快照，并发增删时调用方可从空 Cursor 重新开始。
+
+QueryValue 请求编码 Root、View、Path 和可空 ValueName；成功响应编码 Windows 原生 `UINT32 Type` 和长度前缀原始 Data。SetValue 请求编码 Root、View、Type、Path、ValueName 和原始 Data；Version 1 保留 Windows Value Type 与字节表示，不做文本转码或环境变量展开。单值 Data 最大 1 MiB；`REG_SZ`、`REG_EXPAND_SZ` 和 `REG_MULTI_SZ` 的终止符语义由调用方负责，Server 精确写入线上字节。DeleteValue 复用 QueryValue 请求，允许删除默认值。
+
+CreateKey 请求编码 Root、View 和 Path，Path 必须非空；操作是幂等的，键已存在仍成功。DeleteKey 复用同一请求，只允许删除非空且无子键的目标，使用所选 WOW64 View，不提供递归删除，避免一次请求隐式扩大破坏范围。所有 Registry 原生错误映射为 `NTSTATUS` 原样返回；成功的 SetValue、DeleteValue、CreateKey 和 DeleteKey Response Payload 均为空。
+
 大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口和断点续传按上述通用 Channel 与 File.OpenRead 规则处理，不预先建设通用虚拟流框架。
 
 ## 10. 安全与资源限制
@@ -546,6 +556,6 @@ QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接�
 
 以下内容不阻塞 Network 和通用 Protocol 编码，在实现对应模块前定稿：
 
-1. 除已固定的 System、Process、Service、File 和 Terminal 操作外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
+1. 除已固定的 System、Process、Service、File、Terminal、EventLog 和 Registry 操作外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
 2. File 通道的哈希、上传、目录分页和落盘契约；
 3. 压力测试后确定的 Server 资源限制默认值。
