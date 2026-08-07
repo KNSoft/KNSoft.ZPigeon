@@ -205,6 +205,8 @@ ZpClientQuic_MessageCallback(
     ZP_READY_VIEW Ready;
     ZP_DISCONNECT_VIEW Disconnect;
     ZP_RESPONSE_VIEW Response;
+    ZP_CHANNEL_DATA_VIEW ChannelData;
+    ZP_CHANNEL_CLOSE ChannelClose;
     BYTE Signature[ZP_CLIENT_SIGNATURE_SIZE];
     BYTE Body[ZP_CLIENT_SIGNATURE_SIZE];
     ULONGLONG Token;
@@ -291,6 +293,30 @@ ZpClientQuic_MessageCallback(
             {
                 Status = ZpClient_CompleteResponse((ZP_CLIENT_HANDLE)Transport->Owner,
                                                    &Response);
+            }
+            return Status;
+
+        case ZpMessageChannelData:
+            Status = ZpMessage_DecodeChannelData(Frame->Body,
+                                                  Frame->BodyLength,
+                                                  &ChannelData);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpClient_ReceiveChannelData(
+                    (ZP_CLIENT_HANDLE)Transport->Owner,
+                    &ChannelData);
+            }
+            return Status;
+
+        case ZpMessageChannelClose:
+            Status = ZpMessage_DecodeChannelClose(Frame->Body,
+                                                   Frame->BodyLength,
+                                                   &ChannelClose);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpClient_ReceiveChannelClose(
+                    (ZP_CLIENT_HANDLE)Transport->Owner,
+                    &ChannelClose);
             }
             return Status;
     }

@@ -13,6 +13,7 @@ EXTERN_C_START
 #define ZP_CLIENT_DEFAULT_STABLE_RESET_MILLISECONDS 60000
 #define ZP_CLIENT_DEFAULT_RETRY_JITTER_PERCENT 20
 #define ZP_CLIENT_DEFAULT_KEY_NAME L"KNSoft.ZPigeon.Client"
+#define ZP_CLIENT_DEFAULT_CHANNEL_WINDOW_SIZE ZP_CHANNEL_DATA_MAX_SIZE
 
 typedef enum _ZP_CLIENT_STATE
 {
@@ -108,6 +109,30 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ NTSTATUS Status,
     _In_opt_ PCZP_FILE_LIST_VIEW Files,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_CHANNEL_DATA_CALLBACK)(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ PCZP_BUFFER_VIEW Data,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_CHANNEL_CLOSE_CALLBACK)(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ NTSTATUS Status,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_FILE_OPEN_READ_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONGLONG FileSize,
+    _In_ ULONGLONG Offset,
     _In_opt_ PVOID Context);
 
 typedef struct _ZP_CLIENT_CONFIG
@@ -268,6 +293,20 @@ ZpClient_EnumerateFiles(
 
 NTSTATUS
 NTAPI
+ZpClient_OpenFileRead(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG Offset,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_OPEN_READ_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpRequest_Cancel(
     _In_ ZP_REQUEST_HANDLE Request);
 
@@ -275,6 +314,16 @@ VOID
 NTAPI
 ZpRequest_Close(
     _In_ ZP_REQUEST_HANDLE Request);
+
+NTSTATUS
+NTAPI
+ZpChannel_Cancel(
+    _In_ ZP_CHANNEL_HANDLE Channel);
+
+VOID
+NTAPI
+ZpChannel_Close(
+    _In_ ZP_CHANNEL_HANDLE Channel);
 
 NTSTATUS
 NTAPI

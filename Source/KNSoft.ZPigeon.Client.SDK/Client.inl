@@ -17,12 +17,26 @@ typedef struct _ZP_REQUEST_OBJECT
     PVOID Context;
 } ZP_REQUEST_OBJECT, *PZP_REQUEST_OBJECT;
 
+typedef struct _ZP_CHANNEL_OBJECT
+{
+    LIST_ENTRY ListEntry;
+    struct _ZP_CLIENT_OBJECT* Owner;
+    volatile LONG ReferenceCount;
+    volatile LONG Pending;
+    ULONGLONG ChannelId;
+    ULONGLONG ReceiveCredit;
+    ZP_CHANNEL_DATA_CALLBACK DataCallback;
+    ZP_CHANNEL_CLOSE_CALLBACK CloseCallback;
+    PVOID Context;
+} ZP_CHANNEL_OBJECT, *PZP_CHANNEL_OBJECT;
+
 typedef struct _ZP_CLIENT_OBJECT
 {
     RTL_SRWLOCK Lock;
     ZP_CLIENT_STATE State;
     ULONG CallbackCount;
     LIST_ENTRY Requests;
+    LIST_ENTRY Channels;
     ULONGLONG NextRequestId;
     PTP_TIMER RequestTimer;
     ZP_CLIENT_CONFIG Config;
@@ -67,3 +81,13 @@ NTSTATUS
 ZpClient_CompleteResponse(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ PCZP_RESPONSE_VIEW Response);
+
+NTSTATUS
+ZpClient_ReceiveChannelData(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ const ZP_CHANNEL_DATA_VIEW* Message);
+
+NTSTATUS
+ZpClient_ReceiveChannelClose(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ const ZP_CHANNEL_CLOSE* Message);

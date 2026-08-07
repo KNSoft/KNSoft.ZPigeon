@@ -19,10 +19,22 @@ typedef struct _SDK_TEST_CONTEXT
     ZP_MESSAGE_TYPE SendMessageType;
     ULONGLONG SendToken;
     ULONGLONG SendRequestId;
+    ULONGLONG SendChannelId;
+    ULONG SendChannelCredit;
+    NTSTATUS SendChannelStatus;
     ULONG RequestCompleteCount;
     NTSTATUS RequestStatus;
     ULONG RequestPayloadLength;
     HANDLE RequestCompleteEvent;
+    ULONG FileOpenReadCount;
+    NTSTATUS FileOpenReadStatus;
+    ZP_CHANNEL_HANDLE FileChannel;
+    ULONGLONG FileSize;
+    ULONGLONG FileOffset;
+    ULONG ChannelDataCount;
+    ULONG ChannelDataLength;
+    ULONG ChannelCloseCount;
+    NTSTATUS ChannelCloseStatus;
     ULONG ClientStateCount;
     ZP_CLIENT_STATE ClientStates[8];
     NTSTATUS ClientStatuses[8];
@@ -76,6 +88,7 @@ SDKTest_TransportSend(
 {
     PSDK_TEST_CONTEXT TestContext = Context;
     ZP_REQUEST_VIEW Request;
+    ZP_CHANNEL_CLOSE ChannelClose;
 
     TestContext->SendCount++;
     TestContext->SendMessageType = MessageType;
@@ -91,6 +104,21 @@ SDKTest_TransportSend(
     else if (MessageType == ZpMessageCancel)
     {
         ZpMessage_DecodeCancel(Body, BodyLength, &TestContext->SendRequestId);
+    }
+    else if (MessageType == ZpMessageChannelWindow)
+    {
+        ZpMessage_DecodeChannelWindow(Body,
+                                      BodyLength,
+                                      &TestContext->SendChannelId,
+                                      &TestContext->SendChannelCredit);
+    }
+    else if (MessageType == ZpMessageChannelClose &&
+             NT_SUCCESS(ZpMessage_DecodeChannelClose(Body,
+                                                      BodyLength,
+                                                      &ChannelClose)))
+    {
+        TestContext->SendChannelId = ChannelClose.ChannelId;
+        TestContext->SendChannelStatus = ChannelClose.Status;
     }
     return STATUS_SUCCESS;
 }
@@ -114,6 +142,57 @@ SDKTest_RequestCompleteCallback(
     {
         SetEvent(TestContext->RequestCompleteEvent);
     }
+}
+
+static
+VOID
+NTAPI
+SDKTest_FileOpenReadCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONGLONG FileSize,
+    _In_ ULONGLONG Offset,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->FileOpenReadCount++;
+    TestContext->FileOpenReadStatus = Status;
+    TestContext->FileChannel = Channel;
+    TestContext->FileSize = FileSize;
+    TestContext->FileOffset = Offset;
+}
+
+static
+VOID
+NTAPI
+SDKTest_ChannelDataCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ PCZP_BUFFER_VIEW Data,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Channel);
+    TestContext->ChannelDataCount++;
+    TestContext->ChannelDataLength = Data->Length;
+}
+
+static
+VOID
+NTAPI
+SDKTest_ChannelCloseCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ NTSTATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Channel);
+    TestContext->ChannelCloseCount++;
+    TestContext->ChannelCloseStatus = Status;
 }
 
 static const ZP_TRANSPORT_OPERATIONS SDKTest_TransportOperations = {
@@ -336,6 +415,10 @@ TEST_FUNC(SDKContract)
     PZP_SERVER_OBJECT ServerObject;
     ZP_REQUEST_HANDLE Request;
     ZP_RESPONSE_VIEW Response;
+    ZP_CHANNEL_DATA_VIEW ChannelData;
+    ZP_CHANNEL_CLOSE ChannelClose;
+    BYTE FileOpenReadResponse[3 * sizeof(ULONGLONG)];
+    ULONG FileOpenReadResponseLength;
     ZP_BUFFER_VIEW EmptyPayload = { NULL, 0 };
     BYTE ClientId[ZP_CLIENT_ID_SIZE] = { 0 };
     SDK_TEST_CONTEXT TestContext = { STATUS_SUCCESS };
@@ -565,8 +648,90 @@ TEST_FUNC(SDKContract)
             TestContext.RequestStatus == STATUS_SUCCESS &&
             TestContext.RequestPayloadLength == sizeof(RootCertificate));
     ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_OpenFileRead(Client,
+                                             L"C:\\Test.bin",
+                                             11,
+                                             16,
+                                             1000,
+                                             SDKTest_FileOpenReadCallback,
+                                             SDKTest_ChannelDataCallback,
+                                             SDKTest_ChannelCloseCallback,
+                                             &TestContext,
+                                             &Request)) &&
+            TestContext.SendMessageType == ZpMessageRequest);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenReadResponse(2,
+                                                     64,
+                                                     16,
+                                                     FileOpenReadResponse,
+                                                     sizeof(FileOpenReadResponse),
+                                                     &FileOpenReadResponseLength)));
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload.Buffer = FileOpenReadResponse;
+    Response.Payload.Length = FileOpenReadResponseLength;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.FileOpenReadCount == 1 &&
+            TestContext.FileOpenReadStatus == STATUS_SUCCESS &&
+            TestContext.FileChannel != NULL &&
+            TestContext.FileSize == 64 &&
+            TestContext.FileOffset == 16 &&
+            TestContext.SendMessageType == ZpMessageChannelWindow &&
+            TestContext.SendChannelId == 2 &&
+            TestContext.SendChannelCredit == ZP_CLIENT_DEFAULT_CHANNEL_WINDOW_SIZE);
+    ZpRequest_Close(Request);
+    ChannelData.ChannelId = 2;
+    ChannelData.Data.Buffer = RootCertificate;
+    ChannelData.Data.Length = sizeof(RootCertificate);
+    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelData(Client, &ChannelData)) &&
+            TestContext.ChannelDataCount == 1 &&
+            TestContext.ChannelDataLength == sizeof(RootCertificate) &&
+            TestContext.SendMessageType == ZpMessageChannelWindow &&
+            TestContext.SendChannelId == 2 &&
+            TestContext.SendChannelCredit == sizeof(RootCertificate));
+    ChannelClose.ChannelId = 2;
+    ChannelClose.Status = STATUS_SUCCESS;
+    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelClose(Client, &ChannelClose)) &&
+            TestContext.ChannelCloseCount == 1 &&
+            TestContext.ChannelCloseStatus == STATUS_SUCCESS);
+    ZpChannel_Close(TestContext.FileChannel);
+    TestContext.FileChannel = NULL;
+    TEST_OK(NT_SUCCESS(ZpClient_OpenFileRead(Client,
+                                             L"C:\\Test.bin",
+                                             11,
+                                             0,
+                                             1000,
+                                             SDKTest_FileOpenReadCallback,
+                                             SDKTest_ChannelDataCallback,
+                                             SDKTest_ChannelCloseCallback,
+                                             &TestContext,
+                                             &Request)));
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenReadResponse(4,
+                                                     64,
+                                                     0,
+                                                     FileOpenReadResponse,
+                                                     sizeof(FileOpenReadResponse),
+                                                     &FileOpenReadResponseLength)));
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload.Buffer = FileOpenReadResponse;
+    Response.Payload.Length = FileOpenReadResponseLength;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.FileOpenReadCount == 2 &&
+            TestContext.FileChannel != NULL &&
+            TestContext.SendMessageType == ZpMessageChannelWindow &&
+            TestContext.SendChannelId == 4);
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpChannel_Cancel(TestContext.FileChannel)) &&
+            TestContext.SendMessageType == ZpMessageChannelClose &&
+            TestContext.SendChannelId == 4 &&
+            TestContext.SendChannelStatus == STATUS_CANCELLED &&
+            TestContext.ChannelCloseCount == 2 &&
+            TestContext.ChannelCloseStatus == STATUS_CANCELLED);
+    TEST_OK(ZpChannel_Cancel(TestContext.FileChannel) == STATUS_INVALID_DEVICE_STATE);
+    ZpChannel_Close(TestContext.FileChannel);
+    TestContext.FileChannel = NULL;
     TEST_OK(NT_SUCCESS(ZpClient_SendRequest(Client,
-                                            1,
+                                             1,
                                             2,
                                             0,
                                             NULL,

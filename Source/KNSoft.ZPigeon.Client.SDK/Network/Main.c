@@ -112,6 +112,7 @@ ZpClient_Create(
     RtlZeroMemory(Object, sizeof(*Object));
     RtlInitializeSRWLock(&Object->Lock);
     InitializeListHead(&Object->Requests);
+    InitializeListHead(&Object->Channels);
     Object->NextRequestId = 1;
     Object->RequestTimer = CreateThreadpoolTimer(ZpClient_RequestTimerCallback,
                                                   Object,
@@ -761,6 +762,209 @@ ZpClient_SendRequest(
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
     *Request = (ZP_REQUEST_HANDLE)RequestObject;
+    return STATUS_SUCCESS;
+}
+
+static
+VOID
+ZpClient_ReleaseChannel(
+    _Inout_ PZP_CHANNEL_OBJECT Channel)
+{
+    if (InterlockedDecrement(&Channel->ReferenceCount) == 0)
+    {
+        Mem_Free(Channel);
+    }
+}
+
+static
+PZP_CHANNEL_OBJECT
+ZpClient_FindChannel(
+    _In_ PZP_CLIENT_OBJECT Object,
+    _In_ ULONGLONG ChannelId)
+{
+    PZP_CHANNEL_OBJECT Channel;
+    PLIST_ENTRY Entry;
+
+    for (Entry = Object->Channels.Flink;
+         Entry != &Object->Channels;
+         Entry = Entry->Flink)
+    {
+        Channel = CONTAINING_RECORD(Entry,
+                                    ZP_CHANNEL_OBJECT,
+                                    ListEntry);
+        if (Channel->ChannelId == ChannelId)
+        {
+            return Channel;
+        }
+    }
+    return NULL;
+}
+
+static
+NTSTATUS
+ZpClient_SendChannelWindow(
+    _Inout_ PZP_CHANNEL_OBJECT Channel,
+    _In_ ULONG CreditBytes)
+{
+    PZP_CLIENT_OBJECT Object = Channel->Owner;
+    PCZP_TRANSPORT_OPERATIONS Operations;
+    PVOID TransportContext;
+    BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
+    ULONG BodyLength;
+    NTSTATUS Status;
+
+    Status = ZpMessage_EncodeChannelWindow(Channel->ChannelId,
+                                           CreditBytes,
+                                           Body,
+                                           sizeof(Body),
+                                           &BodyLength);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (Object->State != ZpClientStateReady || !Channel->Pending)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    if (MAXULONGLONG - Channel->ReceiveCredit < CreditBytes)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_INTEGER_OVERFLOW;
+    }
+    Operations = Object->TransportOperations[Object->ActiveTransport];
+    TransportContext = Object->TransportContexts[Object->ActiveTransport];
+    Channel->ReceiveCredit += CreditBytes;
+    Status = Operations->Send != NULL ?
+                 Operations->Send(TransportContext,
+                                  ZpMessageChannelWindow,
+                                  Body,
+                                  BodyLength) :
+                 STATUS_NOT_SUPPORTED;
+    if (!NT_SUCCESS(Status))
+    {
+        Channel->ReceiveCredit -= CreditBytes;
+    }
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    return Status;
+}
+
+static
+VOID
+ZpClient_SendChannelClose(
+    _Inout_ PZP_CHANNEL_OBJECT Channel,
+    _In_ NTSTATUS CloseStatus)
+{
+    PZP_CLIENT_OBJECT Object = Channel->Owner;
+    PCZP_TRANSPORT_OPERATIONS Operations;
+    PVOID TransportContext;
+    BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
+    ULONG BodyLength;
+
+    if (!NT_SUCCESS(ZpMessage_EncodeChannelClose(Channel->ChannelId,
+                                                 CloseStatus,
+                                                 Body,
+                                                 sizeof(Body),
+                                                 &BodyLength)))
+    {
+        return;
+    }
+    RtlAcquireSRWLockShared(&Object->Lock);
+    if (Object->State == ZpClientStateReady)
+    {
+        Operations = Object->TransportOperations[Object->ActiveTransport];
+        TransportContext = Object->TransportContexts[Object->ActiveTransport];
+        if (Operations->Send != NULL)
+        {
+            Operations->Send(TransportContext,
+                             ZpMessageChannelClose,
+                             Body,
+                             BodyLength);
+        }
+    }
+    RtlReleaseSRWLockShared(&Object->Lock);
+}
+
+static
+VOID
+ZpClient_InvokeChannelClose(
+    _Inout_ PZP_CHANNEL_OBJECT Channel,
+    _In_ NTSTATUS Status)
+{
+    PZP_CLIENT_OBJECT Object = Channel->Owner;
+
+    Channel->CloseCallback((ZP_CHANNEL_HANDLE)Channel,
+                           Status,
+                           Channel->Context);
+    Channel->Owner = NULL;
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount--;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    ZpClient_ReleaseChannel(Channel);
+}
+
+static
+VOID
+ZpClient_CompleteChannel(
+    _Inout_ PZP_CHANNEL_OBJECT Channel,
+    _In_ NTSTATUS Status)
+{
+    PZP_CLIENT_OBJECT Object = Channel->Owner;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (!InterlockedExchange(&Channel->Pending, FALSE))
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return;
+    }
+    RemoveEntryList(&Channel->ListEntry);
+    Object->CallbackCount++;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    ZpClient_InvokeChannelClose(Channel, Status);
+}
+
+static
+NTSTATUS
+ZpClient_CreateServerChannel(
+    _Inout_ PZP_CLIENT_OBJECT Object,
+    _In_ ULONGLONG ChannelId,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ PZP_CHANNEL_OBJECT* Channel)
+{
+    PZP_CHANNEL_OBJECT ChannelObject;
+
+    if (ChannelId == 0 || (ChannelId & 1) != 0)
+    {
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    ChannelObject = Mem_Alloc(sizeof(*ChannelObject));
+    if (ChannelObject == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(ChannelObject, sizeof(*ChannelObject));
+    ChannelObject->Owner = Object;
+    ChannelObject->ReferenceCount = 3;
+    ChannelObject->Pending = TRUE;
+    ChannelObject->ChannelId = ChannelId;
+    ChannelObject->DataCallback = DataCallback;
+    ChannelObject->CloseCallback = CloseCallback;
+    ChannelObject->Context = Context;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (Object->State != ZpClientStateReady ||
+        ZpClient_FindChannel(Object, ChannelId) != NULL)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        Mem_Free(ChannelObject);
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    InsertTailList(&Object->Channels, &ChannelObject->ListEntry);
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    *Channel = ChannelObject;
     return STATUS_SUCCESS;
 }
 
@@ -1548,6 +1752,147 @@ ZpClient_EnumerateFiles(
     return Status;
 }
 
+typedef struct _ZP_CLIENT_FILE_OPEN_READ_CONTEXT
+{
+    ZP_FILE_OPEN_READ_CALLBACK OpenCallback;
+    ZP_CHANNEL_DATA_CALLBACK DataCallback;
+    ZP_CHANNEL_CLOSE_CALLBACK CloseCallback;
+    PVOID Context;
+} ZP_CLIENT_FILE_OPEN_READ_CONTEXT, *PZP_CLIENT_FILE_OPEN_READ_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpClient_FileOpenReadComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_FILE_OPEN_READ_CONTEXT FileContext = Context;
+    PZP_REQUEST_OBJECT RequestObject = (PZP_REQUEST_OBJECT)Request;
+    PZP_CHANNEL_OBJECT Channel = NULL;
+    ULONGLONG ChannelId = 0, FileSize = 0, Offset = 0;
+
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_DecodeOpenReadResponse(Payload->Buffer,
+                                               Payload->Length,
+                                               &ChannelId,
+                                               &FileSize,
+                                               &Offset);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpClient_CreateServerChannel(RequestObject->Owner,
+                                              ChannelId,
+                                              FileContext->DataCallback,
+                                              FileContext->CloseCallback,
+                                              FileContext->Context,
+                                              &Channel);
+    }
+    FileContext->OpenCallback(Request,
+                              Status,
+                              NT_SUCCESS(Status) ?
+                                  (ZP_CHANNEL_HANDLE)Channel :
+                                  NULL,
+                              NT_SUCCESS(Status) ? FileSize : 0,
+                              NT_SUCCESS(Status) ? Offset : 0,
+                              FileContext->Context);
+    if (Channel != NULL)
+    {
+        if (Channel->Pending)
+        {
+            Status = ZpClient_SendChannelWindow(
+                Channel,
+                ZP_CLIENT_DEFAULT_CHANNEL_WINDOW_SIZE);
+            if (!NT_SUCCESS(Status) && Channel->Owner != NULL)
+            {
+                ZpClient_CompleteChannel(Channel, Status);
+            }
+        }
+        ZpClient_ReleaseChannel(Channel);
+    }
+    Mem_Free(FileContext);
+}
+
+NTSTATUS
+NTAPI
+ZpClient_OpenFileRead(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG Offset,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_OPEN_READ_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_CLIENT_FILE_OPEN_READ_CONTEXT FileContext;
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (OpenCallback == NULL || DataCallback == NULL || CloseCallback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpFile_EncodeOpenReadRequest(Path,
+                                          PathLength,
+                                          Offset,
+                                          NULL,
+                                          0,
+                                          &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodeOpenReadRequest(Path,
+                                              PathLength,
+                                              Offset,
+                                              Payload,
+                                              PayloadLength,
+                                              &PayloadLength);
+    }
+    FileContext = NT_SUCCESS(Status) ?
+                      Mem_Alloc(sizeof(*FileContext)) :
+                      NULL;
+    if (NT_SUCCESS(Status) && FileContext == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        FileContext->OpenCallback = OpenCallback;
+        FileContext->DataCallback = DataCallback;
+        FileContext->CloseCallback = CloseCallback;
+        FileContext->Context = Context;
+        Status = ZpClient_SendRequest(Client,
+                                      ZP_FILE_MODULE_ID,
+                                      ZP_FILE_OPERATION_OPEN_READ,
+                                      TimeoutMilliseconds,
+                                      Payload,
+                                      PayloadLength,
+                                      ZpClient_FileOpenReadComplete,
+                                      FileContext,
+                                      Request);
+        if (!NT_SUCCESS(Status))
+        {
+            Mem_Free(FileContext);
+        }
+    }
+    if (Payload != NULL)
+    {
+        Mem_Free(Payload);
+    }
+    return Status;
+}
+
 NTSTATUS
 NTAPI
 ZpRequest_Cancel(
@@ -1582,6 +1927,40 @@ ZpRequest_Close(
     _In_ ZP_REQUEST_HANDLE Request)
 {
     ZpClient_ReleaseRequest((PZP_REQUEST_OBJECT)Request);
+}
+
+NTSTATUS
+NTAPI
+ZpChannel_Cancel(
+    _In_ ZP_CHANNEL_HANDLE Channel)
+{
+    PZP_CHANNEL_OBJECT ChannelObject = (PZP_CHANNEL_OBJECT)Channel;
+    PZP_CLIENT_OBJECT Object = ChannelObject->Owner;
+
+    if (Object == NULL)
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (!InterlockedExchange(&ChannelObject->Pending, FALSE))
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    RemoveEntryList(&ChannelObject->ListEntry);
+    Object->CallbackCount++;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    ZpClient_SendChannelClose(ChannelObject, STATUS_CANCELLED);
+    ZpClient_InvokeChannelClose(ChannelObject, STATUS_CANCELLED);
+    return STATUS_SUCCESS;
+}
+
+VOID
+NTAPI
+ZpChannel_Close(
+    _In_ ZP_CHANNEL_HANDLE Channel)
+{
+    ZpClient_ReleaseChannel((PZP_CHANNEL_OBJECT)Channel);
 }
 
 NTSTATUS
@@ -1733,6 +2112,73 @@ ZpClient_CompleteResponse(
     return STATUS_SUCCESS;
 }
 
+NTSTATUS
+ZpClient_ReceiveChannelData(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ const ZP_CHANNEL_DATA_VIEW* Message)
+{
+    PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
+    PZP_CHANNEL_OBJECT Channel;
+    LOGICAL Replenish;
+    NTSTATUS Status;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Channel = ZpClient_FindChannel(Object, Message->ChannelId);
+    if (Channel == NULL ||
+        Message->Data.Length > Channel->ReceiveCredit)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    Channel->ReceiveCredit -= Message->Data.Length;
+    InterlockedIncrement(&Channel->ReferenceCount);
+    Object->CallbackCount++;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+
+    Channel->DataCallback((ZP_CHANNEL_HANDLE)Channel,
+                          &Message->Data,
+                          Channel->Context);
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount--;
+    Replenish = Channel->Pending;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    if (Replenish)
+    {
+        Status = ZpClient_SendChannelWindow(Channel,
+                                            Message->Data.Length);
+        if (!NT_SUCCESS(Status) && Channel->Owner != NULL)
+        {
+            ZpClient_CompleteChannel(Channel, Status);
+        }
+    }
+    ZpClient_ReleaseChannel(Channel);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpClient_ReceiveChannelClose(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ const ZP_CHANNEL_CLOSE* Message)
+{
+    PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
+    PZP_CHANNEL_OBJECT Channel;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Channel = ZpClient_FindChannel(Object, Message->ChannelId);
+    if (Channel == NULL ||
+        !InterlockedExchange(&Channel->Pending, FALSE))
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    RemoveEntryList(&Channel->ListEntry);
+    Object->CallbackCount++;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    ZpClient_InvokeChannelClose(Channel, Message->Status);
+    return STATUS_SUCCESS;
+}
+
 static
 VOID
 ZpClient_CompleteRequests(
@@ -1761,6 +2207,33 @@ ZpClient_CompleteRequests(
     }
 }
 
+static
+VOID
+ZpClient_CompleteChannels(
+    _Inout_ PZP_CLIENT_OBJECT Object,
+    _In_ NTSTATUS Status)
+{
+    PZP_CHANNEL_OBJECT Channel;
+
+    for (;;)
+    {
+        RtlAcquireSRWLockExclusive(&Object->Lock);
+        if (IsListEmpty(&Object->Channels))
+        {
+            RtlReleaseSRWLockExclusive(&Object->Lock);
+            return;
+        }
+        Channel = CONTAINING_RECORD(Object->Channels.Flink,
+                                    ZP_CHANNEL_OBJECT,
+                                    ListEntry);
+        InterlockedExchange(&Channel->Pending, FALSE);
+        RemoveEntryList(&Channel->ListEntry);
+        Object->CallbackCount++;
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        ZpClient_InvokeChannelClose(Channel, Status);
+    }
+}
+
 VOID
 ZpClient_TransportShutdown(
     _In_ ZP_CLIENT_HANDLE Client,
@@ -1785,6 +2258,7 @@ ZpClient_TransportShutdown(
     if (State == ZpClientStateStopping)
     {
         ZpClient_CompleteRequests(Object, Status);
+        ZpClient_CompleteChannels(Object, Status);
         ZpClient_NotifyState(Client, ZpClientStateStopped, Status);
         return;
     }
@@ -1797,6 +2271,7 @@ ZpClient_TransportShutdown(
                                State == ZpClientStateReady);
     }
     ZpClient_CompleteRequests(Object, Status);
+    ZpClient_CompleteChannels(Object, Status);
 }
 
 NTSTATUS
@@ -1809,7 +2284,8 @@ ZpClient_Close(
     RtlAcquireSRWLockExclusive(&Object->Lock);
     if (Object->State != ZpClientStateStopped ||
         Object->CallbackCount != 0 ||
-        !IsListEmpty(&Object->Requests))
+        !IsListEmpty(&Object->Requests) ||
+        !IsListEmpty(&Object->Channels))
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_DEVICE_BUSY;

@@ -428,6 +428,8 @@ Client 在 `Ready` 状态可通过 `ZpClient_Ping` 发送调用方 Token；Serve
 
 Client 通过 `ZpClient_SendRequest` 创建引用计数 Request Handle；同步拒绝不会触发完成回调，成功提交后 Response、显式取消或连接终止恰好完成一次。调用方可通过 `ZpRequest_Cancel` 尽力发送 Cancel，并在不再使用句柄时调用 `ZpRequest_Close` 释放调用方引用。
 
+`ZpClient_OpenFileRead` 仍以 Request Handle 表示异步打开阶段；成功 Open 回调交付独立的 Channel Handle、FileSize 和确认 Offset。SDK 在 Open 回调返回后自动授予 1 MiB 初始窗口，每次 Data 回调返回后自动补回等量额度。Data Buffer 仅在回调期间有效；远端 Close、本地取消或连接终止恰好触发一次 Channel Close 回调。调用方可通过 `ZpChannel_Cancel` 尽力发送 `STATUS_CANCELLED` 的 ChannelClose，并在不再使用句柄时调用 `ZpChannel_Close` 释放调用方引用。
+
 Client 的非零 `TimeoutMilliseconds` 同时建立基于 `GetTickCount64` 的本地 Deadline；对象级线程池定时器始终只等待最近截止项，到期请求以 `STATUS_IO_TIMEOUT` 完成并尽力发送 Cancel，Response、取消和计时器竞争由同一请求表锁串行化。
 
 Server 完整收到 Request 后复制 Payload 并投递线程池，MsQuic 接收回调不执行系统查询等业务工作；每条连接维护活动 Request 表和引用计数。Cancel、连接关闭与工作完成通过请求表锁竞争一次终止，连接对象延迟到所有工作退出后释放，Server Stop 也等待这些连接引用归零。
