@@ -85,6 +85,7 @@
 - 限制 Registry 排序快照最多 65536 条、估算名称 Buffer 最多 16 MiB，超限明确返回 `STATUS_QUOTA_EXCEEDED`，避免单次分页请求以全量排序耗尽 Server 内存；
 - 增加每连接 Request Payload 总量配额：默认 64 MiB、配置硬上限 1 GiB，聚合预算在 Request 完成、取消、投递失败及连接关闭路径精确归还，单个超限请求在深拷贝前拒绝；
 - 限制 File 目录排序快照最多 65536 条、记录与排序指针总量最多 16 MiB，超限明确返回 `STATUS_QUOTA_EXCEEDED`；
+- 新增根目录 `README.md`，覆盖依赖与构建、最小 Client/Server 生命周期、证书输入、默认授权、异步 Handle/Buffer 所有权及第一版资源边界；
 - 扩展 localhost QUIC 集成测试，写入真实 Application 事件并验证 Record 内容、主动取消 Terminal，以及活动订阅随连接断开完成；
 - 扩展 localhost QUIC EventLog 恢复测试：持久化实时 Record Bookmark，离线产生事件后以 QueryPage 补页，再从补页 Bookmark 严格重新订阅并接收后续事件；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
@@ -95,7 +96,7 @@
 ## 下一步
 
 1. 继续 Version 1 完整性与资源安全审计，核对 EventLog 批处理、连接级内存、取消竞争及所有配额释放路径；
-2. 补充公开使用说明和最小 Client/Server 示例，形成可交付的第一版 SDK 入口文档。
+2. 审阅公开头文件的一致性与遗漏注释，准备第一版 SDK 交付清单。
 
 ## 待确认与阻塞
 
