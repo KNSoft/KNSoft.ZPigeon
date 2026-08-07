@@ -29,6 +29,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE ServiceInfoEvent;
     HANDLE ProcessTerminateEvent;
     HANDLE ServiceControlEvent;
+    HANDLE FileInfoEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
@@ -66,6 +67,10 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     volatile LONG AllowControl;
     volatile LONG ProcessTerminateStatus;
     volatile LONG ServiceControlStatus;
+    volatile LONG FileInfoStatus;
+    ULONG FileAttributes;
+    ULONGLONG FileSize;
+    ULONGLONG FileLastWriteTime;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -295,6 +300,28 @@ SDKIntegration_ServiceControlCallback(
     UNREFERENCED_PARAMETER(Request);
     InterlockedExchange(&TestContext->ServiceControlStatus, Status);
     SetEvent(TestContext->ServiceControlEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_FileInfoCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_FILE_INFO Info,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->FileAttributes = Info->Attributes;
+        TestContext->FileSize = Info->Size;
+        TestContext->FileLastWriteTime = Info->LastWriteTime;
+    }
+    InterlockedExchange(&TestContext->FileInfoStatus, Status);
+    SetEvent(TestContext->FileInfoEvent);
 }
 
 static
@@ -631,12 +658,14 @@ TEST_FUNC(SDKQuicIntegration)
     ZP_MODULE_RECORD ClientModules[] = {
         { 1, 3, 0x0F },
         { 2, 1, 0x03 },
-        { 3, 1, 0x01 }
+        { 3, 1, 0x01 },
+        { 4, 1, 0x02 }
     };
     ZP_MODULE_RECORD ServerModules[] = {
         { 1, 2, 0x05 },
         { 2, 1, 0x03 },
-        { 3, 1, 0x01 }
+        { 3, 1, 0x01 },
+        { 4, 1, 0x02 }
     };
     ZP_ENDPOINT Endpoint = { ZpTransportQuic, L"127.0.0.1", 0, ServerName, NULL };
     ZP_LISTENER_ENDPOINT Listener = { ZpTransportQuic, L"127.0.0.1", 0, NULL };
@@ -653,12 +682,14 @@ TEST_FUNC(SDKQuicIntegration)
     STARTUPINFOW StartupInfo = { sizeof(StartupInfo) };
     PROCESS_INFORMATION TemporaryProcess = { 0 };
     WCHAR TemporaryCommand[] = L"ping.exe -n 30 127.0.0.1";
+    WCHAR ModulePath[MAX_PATH];
     NTSTATUS Status;
     DWORD WaitStatus;
     DWORD ServerStopWait = MAXDWORD, RetryWait = MAXDWORD, ProcessWait = MAXDWORD;
     ULONG Index;
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -696,6 +727,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.ServiceInfoEvent = Events[11];
     TestContext.ProcessTerminateEvent = Events[12];
     TestContext.ServiceControlEvent = Events[13];
+    TestContext.FileInfoEvent = Events[14];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -1001,6 +1033,34 @@ TEST_FUNC(SDKQuicIntegration)
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         NT_SUCCESS(TestContext.ServiceControlStatus) ||
         TestContext.ServiceControlStatus == STATUS_ACCESS_DENIED)
+    {
+        goto Cleanup;
+    }
+
+    Index = GetModuleFileNameW(NULL, ModulePath, ARRAYSIZE(ModulePath));
+    if (Index == 0 || Index == ARRAYSIZE(ModulePath))
+    {
+        goto Cleanup;
+    }
+    Status = ZpClient_QueryFile(Client,
+                                ModulePath,
+                                Index,
+                                SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                SDKIntegration_FileInfoCallback,
+                                &TestContext,
+                                &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.FileInfoEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.FileInfoStatus) ||
+        TestContext.FileAttributes == INVALID_FILE_ATTRIBUTES ||
+        TestContext.FileSize == 0 ||
+        TestContext.FileLastWriteTime == 0)
     {
         goto Cleanup;
     }

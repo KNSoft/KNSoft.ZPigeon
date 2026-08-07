@@ -9,6 +9,9 @@
     <ClInclude Include="Include\KNSoft\ZPigeon\Protocol.h">
       <Filter>Include</Filter>
     </ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\File.h">
+      <Filter>Include</Filter>
+    </ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Process.h">
       <Filter>Include</Filter>
     </ClInclude>
@@ -22,6 +25,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Codec.c" />
+    <ClCompile Include="File.c" />
     <ClCompile Include="Frame.c" />
     <ClCompile Include="Message.c" />
     <ClCompile Include="Process.c" />

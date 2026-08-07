@@ -1,5 +1,6 @@
 ﻿#include "UnitTest.h"
 
+#include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Protocol.h>
 #include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/Service.h>
@@ -78,6 +79,15 @@ TEST_FUNC(ProtocolMessage)
         11
     };
     ZP_SERVICE_INFO_VIEW ServiceInfoView;
+    ZP_FILE_INFO FileInfo = {
+        FILE_ATTRIBUTE_ARCHIVE,
+        123456789,
+        100,
+        200,
+        300
+    };
+    ZP_FILE_INFO FileInfoView;
+    ZP_STRING_VIEW FilePathView;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value;
@@ -304,4 +314,22 @@ TEST_FUNC(ProtocolMessage)
             ServiceInfoView.DisplayName.Length == ServiceInfo.DisplayNameLength &&
             ServiceInfoView.BinaryPathName.Length == ServiceInfo.BinaryPathNameLength &&
             ServiceInfoView.StartName.Length == ServiceInfo.StartNameLength);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodePath(L"C:\\Test.bin",
+                                         11,
+                                         Buffer,
+                                         sizeof(Buffer),
+                                         &Length)) &&
+            NT_SUCCESS(ZpFile_DecodePath(Buffer, Length, &FilePathView)) &&
+            FilePathView.Length == 11);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeInfo(&FileInfo,
+                                         Buffer,
+                                         sizeof(Buffer),
+                                         &Length)) &&
+            Length == sizeof(ULONG) + 4 * sizeof(ULONGLONG) &&
+            NT_SUCCESS(ZpFile_DecodeInfo(Buffer, Length, &FileInfoView)) &&
+            FileInfoView.Attributes == FileInfo.Attributes &&
+            FileInfoView.Size == FileInfo.Size &&
+            FileInfoView.CreationTime == FileInfo.CreationTime &&
+            FileInfoView.LastAccessTime == FileInfo.LastAccessTime &&
+            FileInfoView.LastWriteTime == FileInfo.LastWriteTime);
 }

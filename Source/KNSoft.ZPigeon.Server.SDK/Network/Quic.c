@@ -2,6 +2,7 @@
 #include "../../Network/Authentication.inl"
 #include "../../Network/Quic.inl"
 
+#include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
@@ -622,6 +623,50 @@ Cleanup:
 
 static
 NTSTATUS
+ZpServerQuic_QueryFile(
+    _In_ PCZP_STRING_VIEW PathView,
+    _Out_ PZP_FILE_INFO Info)
+{
+    WIN32_FILE_ATTRIBUTE_DATA Data;
+    ULARGE_INTEGER Value;
+    PWCHAR Path;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    Path = Mem_Alloc(((SIZE_T)PathView->Length + 1) * sizeof(WCHAR));
+    if (Path == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    RtlCopyMemory(Path,
+                  PathView->Buffer,
+                  (SIZE_T)PathView->Length * sizeof(WCHAR));
+    Path[PathView->Length] = UNICODE_NULL;
+    if (!GetFileAttributesExW(Path, GetFileExInfoStandard, &Data))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    Info->Attributes = Data.dwFileAttributes;
+    Value.HighPart = Data.nFileSizeHigh;
+    Value.LowPart = Data.nFileSizeLow;
+    Info->Size = Value.QuadPart;
+    Value.HighPart = Data.ftCreationTime.dwHighDateTime;
+    Value.LowPart = Data.ftCreationTime.dwLowDateTime;
+    Info->CreationTime = Value.QuadPart;
+    Value.HighPart = Data.ftLastAccessTime.dwHighDateTime;
+    Value.LowPart = Data.ftLastAccessTime.dwLowDateTime;
+    Info->LastAccessTime = Value.QuadPart;
+    Value.HighPart = Data.ftLastWriteTime.dwHighDateTime;
+    Value.LowPart = Data.ftLastWriteTime.dwLowDateTime;
+    Info->LastWriteTime = Value.QuadPart;
+
+Cleanup:
+    Mem_Free(Path);
+    return Status;
+}
+
+static
+NTSTATUS
 ZpServerQuic_SendResponse(
     _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
     _Inout_ PZP_CONNECTION Connection,
@@ -705,7 +750,8 @@ ZpServerQuic_RequestCallback(
     PBYTE AllocatedPayload = NULL;
     ULONG PayloadLength = 0;
     ULONG ProcessId, ExitCode;
-    ZP_STRING_VIEW ServiceName;
+    ZP_STRING_VIEW ServiceName, FilePath;
+    ZP_FILE_INFO FileInfo;
     ZP_REQUEST_ACCESS Access;
     NTSTATUS Status = STATUS_SUCCESS;
     LOGICAL SendResponse;
@@ -835,6 +881,25 @@ ZpServerQuic_RequestCallback(
                 Status = ZpServerQuic_ControlService(
                     &ServiceName,
                     Request->OperationId == ZP_SERVICE_OPERATION_START);
+            }
+        }
+        else if (Request->ModuleId == ZP_FILE_MODULE_ID &&
+                 Request->OperationId == ZP_FILE_OPERATION_QUERY)
+        {
+            Status = ZpFile_DecodePath(Request->Payload,
+                                       Request->PayloadLength,
+                                       &FilePath);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_QueryFile(&FilePath, &FileInfo);
+            }
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpFile_EncodeInfo(&FileInfo,
+                                           Payload,
+                                           sizeof(Payload),
+                                           &PayloadLength);
+                ResponsePayload = Payload;
             }
         }
         else
