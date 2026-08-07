@@ -76,6 +76,7 @@
 - 扩展 localhost QUIC 集成测试，覆盖 System 日志首个事件分页和严格 Bookmark 续页；
 - 实现 Server EventLog 实时订阅：以 Windows 拉取订阅和手动复位事件驱动 64 条有界批次，严格递增 Sequence、持续更新 Bookmark，并实现 Unsubscribe 响应截止点、错误 Terminal 与连接关闭清理；
 - 扩展 localhost QUIC 集成测试，写入真实 Application 事件并验证 Record 内容、主动取消 Terminal，以及活动订阅随连接断开完成；
+- 扩展 localhost QUIC EventLog 恢复测试：持久化实时 Record Bookmark，离线产生事件后以 QueryPage 补页，再从补页 Bookmark 严格重新订阅并接收后续事件；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
@@ -83,8 +84,8 @@
 
 ## 下一步
 
-1. 增加 localhost QUIC EventLog 从最后 Bookmark 补页后严格重新订阅的恢复端到端测试；
-2. 复核 EventLog 高速生产下的批次调度与显式日志过期 Terminal。
+1. 复核 EventLog 高速生产下的批次调度与显式日志过期 Terminal；
+2. 根据实际需求定稿下一业务模块的 Version 1 协议并实施。
 
 ## 待确认与阻塞
 

@@ -103,6 +103,8 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     WCHAR EventLogBookmark[4096];
     ULONG EventLogBookmarkLength;
     ULONG EventLogXmlLength;
+    WCHAR EventLogRecordBookmark[4096];
+    ULONG EventLogRecordBookmarkLength;
     volatile LONG EventLogSubscribeStatus;
     volatile LONG EventLogTerminalStatus;
     ZP_SUBSCRIPTION_HANDLE EventLogSubscription;
@@ -485,7 +487,8 @@ SDKIntegration_EventLogPageCallback(
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
     ZP_EVENT_LOG_RECORD_VIEW Record;
-    ULONG Index;
+    PCWCH Xml;
+    ULONG Index, Offset;
 
     UNREFERENCED_PARAMETER(Request);
     if (NT_SUCCESS(Status))
@@ -518,6 +521,27 @@ SDKIntegration_EventLogPageCallback(
         if (NT_SUCCESS(Status))
         {
             TestContext->EventLogXmlLength = Record.Xml.Length;
+            Xml = (PCWCH)Record.Xml.Buffer;
+            if (TestContext->EventLogMarkerLength != 0)
+            {
+                for (Offset = 0;
+                     Offset + TestContext->EventLogMarkerLength <=
+                         Record.Xml.Length;
+                     Offset++)
+                {
+                    if (RtlCompareMemory(
+                            &Xml[Offset],
+                            TestContext->EventLogMarker,
+                            (SIZE_T)TestContext->EventLogMarkerLength *
+                                sizeof(WCHAR)) ==
+                        (SIZE_T)TestContext->EventLogMarkerLength *
+                            sizeof(WCHAR))
+                    {
+                        TestContext->FoundEventLogMarker = TRUE;
+                        break;
+                    }
+                }
+            }
         }
     }
     InterlockedExchange(&TestContext->EventLogPageStatus, Status);
@@ -561,6 +585,15 @@ SDKIntegration_EventLogRecordCallback(
         Record->Bookmark.Length != 0)
     {
         TestContext->EventLogSequence = Sequence;
+        if (Record->Bookmark.Length <
+            ARRAYSIZE(TestContext->EventLogRecordBookmark))
+        {
+            TestContext->EventLogRecordBookmarkLength =
+                Record->Bookmark.Length;
+            RtlCopyMemory(TestContext->EventLogRecordBookmark,
+                          Record->Bookmark.Buffer,
+                          (SIZE_T)Record->Bookmark.Length * sizeof(WCHAR));
+        }
         for (Index = 0;
              Index + TestContext->EventLogMarkerLength <= Record->Xml.Length;
              Index++)
@@ -1297,6 +1330,8 @@ TEST_FUNC(SDKQuicIntegration)
     static const WCHAR TerminalCancelCommandLine[] =
         L"powershell.exe -NoLogo -NoProfile -Command \"Start-Sleep -Seconds 30\"";
     static const WCHAR EventLogSource[] = L"KNSoft.ZPigeon.UnitTest";
+    static const WCHAR EventLogQuery[] =
+        L"*[System[Provider[@Name='KNSoft.ZPigeon.UnitTest']]]";
     static const BYTE TerminalInput[] =
         "(for /L %i in (1,1,2048) do @echo "
         "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX) "
@@ -1596,8 +1631,8 @@ TEST_FUNC(SDKQuicIntegration)
         ZpEventLogStartFuture,
         L"Application",
         ARRAYSIZE(L"Application") - 1,
-        NULL,
-        0,
+        EventLogQuery,
+        ARRAYSIZE(EventLogQuery) - 1,
         NULL,
         0,
         SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
@@ -1639,6 +1674,156 @@ TEST_FUNC(SDKQuicIntegration)
     if (WaitForSingleObject(TestContext.EventLogRecordEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         TestContext.EventLogSequence != 1 ||
+        TestContext.EventLogRecordBookmarkLength == 0 ||
+        !TestContext.FoundEventLogMarker ||
+        !NT_SUCCESS(ZpSubscription_Cancel(
+            TestContext.EventLogSubscription)) ||
+        WaitForSingleObject(TestContext.EventLogTerminalEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        TestContext.EventLogTerminalStatus != STATUS_CANCELLED)
+    {
+        goto Cleanup;
+    }
+    ZpSubscription_Close(TestContext.EventLogSubscription);
+    TestContext.EventLogSubscription = NULL;
+
+    FirstEventBookmarkLength = TestContext.EventLogRecordBookmarkLength;
+    RtlCopyMemory(FirstEventBookmark,
+                  TestContext.EventLogRecordBookmark,
+                  (SIZE_T)FirstEventBookmarkLength * sizeof(WCHAR));
+    TestContext.EventLogMarkerLength = (ULONG)_snwprintf_s(
+        TestContext.EventLogMarker,
+        ARRAYSIZE(TestContext.EventLogMarker),
+        _TRUNCATE,
+        L"ZPigeon-gap-%lu-%llu",
+        GetCurrentProcessId(),
+        GetTickCount64());
+    EventSource = RegisterEventSourceW(NULL, EventLogSource);
+    EventStrings[0] = TestContext.EventLogMarker;
+    if (TestContext.EventLogMarkerLength == (ULONG)-1 ||
+        EventSource == NULL ||
+        !ReportEventW(EventSource,
+                      EVENTLOG_INFORMATION_TYPE,
+                      0,
+                      0x40001002,
+                      NULL,
+                      ARRAYSIZE(EventStrings),
+                      0,
+                      EventStrings,
+                      NULL))
+    {
+        goto Cleanup;
+    }
+    DeregisterEventSource(EventSource);
+    EventSource = NULL;
+    ResetEvent(TestContext.EventLogPageEvent);
+    InterlockedExchange(&TestContext.EventLogPageStatus, STATUS_PENDING);
+    TestContext.EventLogPageCount = 0;
+    TestContext.EventLogBookmarkLength = 0;
+    TestContext.EventLogXmlLength = 0;
+    TestContext.FoundEventLogMarker = FALSE;
+    Status = ZpClient_QueryEventLogPage(
+        Client,
+        ZpEventLogStartAfterBookmark,
+        1,
+        L"Application",
+        ARRAYSIZE(L"Application") - 1,
+        EventLogQuery,
+        ARRAYSIZE(EventLogQuery) - 1,
+        FirstEventBookmark,
+        FirstEventBookmarkLength,
+        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+        SDKIntegration_EventLogPageCallback,
+        &TestContext,
+        &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.EventLogPageEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.EventLogPageStatus) ||
+        TestContext.EventLogPageCount != 1 ||
+        TestContext.EventLogBookmarkLength == 0 ||
+        !TestContext.FoundEventLogMarker)
+    {
+        goto Cleanup;
+    }
+
+    FirstEventBookmarkLength = TestContext.EventLogBookmarkLength;
+    RtlCopyMemory(FirstEventBookmark,
+                  TestContext.EventLogBookmark,
+                  (SIZE_T)FirstEventBookmarkLength * sizeof(WCHAR));
+    ResetEvent(TestContext.EventLogSubscribeEvent);
+    ResetEvent(TestContext.EventLogRecordEvent);
+    ResetEvent(TestContext.EventLogTerminalEvent);
+    InterlockedExchange(&TestContext.EventLogSubscribeStatus, STATUS_PENDING);
+    InterlockedExchange(&TestContext.EventLogTerminalStatus, STATUS_PENDING);
+    TestContext.EventLogSequence = 0;
+    TestContext.EventLogRecordBookmarkLength = 0;
+    TestContext.FoundEventLogMarker = FALSE;
+    TestContext.EventLogMarkerLength = (ULONG)_snwprintf_s(
+        TestContext.EventLogMarker,
+        ARRAYSIZE(TestContext.EventLogMarker),
+        _TRUNCATE,
+        L"ZPigeon-resume-%lu-%llu",
+        GetCurrentProcessId(),
+        GetTickCount64());
+    if (TestContext.EventLogMarkerLength == (ULONG)-1)
+    {
+        goto Cleanup;
+    }
+    Status = ZpClient_SubscribeEventLog(
+        Client,
+        ZpEventLogStartAfterBookmark,
+        L"Application",
+        ARRAYSIZE(L"Application") - 1,
+        EventLogQuery,
+        ARRAYSIZE(EventLogQuery) - 1,
+        FirstEventBookmark,
+        FirstEventBookmarkLength,
+        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+        SDKIntegration_EventLogSubscribeCallback,
+        SDKIntegration_EventLogRecordCallback,
+        SDKIntegration_EventLogTerminalCallback,
+        &TestContext,
+        &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.EventLogSubscribeEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.EventLogSubscribeStatus) ||
+        TestContext.EventLogSubscription == NULL)
+    {
+        goto Cleanup;
+    }
+    EventSource = RegisterEventSourceW(NULL, EventLogSource);
+    EventStrings[0] = TestContext.EventLogMarker;
+    if (EventSource == NULL ||
+        !ReportEventW(EventSource,
+                      EVENTLOG_INFORMATION_TYPE,
+                      0,
+                      0x40001003,
+                      NULL,
+                      ARRAYSIZE(EventStrings),
+                      0,
+                      EventStrings,
+                      NULL))
+    {
+        goto Cleanup;
+    }
+    DeregisterEventSource(EventSource);
+    EventSource = NULL;
+    if (WaitForSingleObject(TestContext.EventLogRecordEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        TestContext.EventLogSequence != 1 ||
+        TestContext.EventLogRecordBookmarkLength == 0 ||
         !TestContext.FoundEventLogMarker ||
         !NT_SUCCESS(ZpSubscription_Cancel(
             TestContext.EventLogSubscription)) ||
@@ -2342,8 +2527,8 @@ TEST_FUNC(SDKQuicIntegration)
         ZpEventLogStartFuture,
         L"Application",
         ARRAYSIZE(L"Application") - 1,
-        NULL,
-        0,
+        EventLogQuery,
+        ARRAYSIZE(EventLogQuery) - 1,
         NULL,
         0,
         SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
