@@ -170,11 +170,14 @@ StartClient(
 
 ## 异步 Handle 与 Buffer 规则
 
+- 异步 API 的输出 Handle 只在函数返回成功时有效；同步拒绝不会触发完成回调。调用方不得读取失败调用留下的输出值。
 - `ZpClient_*` 请求 API 成功返回时会交付 `ZP_REQUEST_HANDLE`；调用方不再需要取消或查询它时调用 `ZpRequest_Close` 释放自己的引用。
 - 完成回调可能在发起 API 返回前同步发生；回调可直接 `ZpRequest_Close`，应用不得依赖“函数先返回、回调后发生”的时序。
 - Request 回调恰好完成一次。超时在 Client 本地完成为 `STATUS_IO_TIMEOUT`，并尽力向 Server 发送 Cancel。
 - 回调参数中的 View/Buffer 只在当前回调返回前有效；需要长期持有时由应用自行复制。
-- Channel 和 Subscription 也使用引用计数 Handle；本地取消与远端结束均只产生一次终止回调，随后分别调用 `ZpChannel_Close` 或 `ZpSubscription_Close` 释放调用方引用。
+- 回调可能来自任意 SDK 工作线程或 Transport 回调线程；不同连接和对象可并发回调。SDK 不在对象锁内调用应用回调，应用仍应避免长期阻塞并自行同步共享状态。
+- Client/Server 的 `Close` 不能在其回调栈内执行，此时会返回 `STATUS_DEVICE_BUSY`；Request、Channel、Subscription 的调用方引用可以在对应回调中通过各自 `Close` 释放，释放后不得再次使用该 Handle。
+- Channel 和 Subscription 也使用引用计数 Handle；本地取消与远端结束均只产生一次终止回调，最迟在终止回调返回后分别调用 `ZpChannel_Close` 或 `ZpSubscription_Close` 释放调用方引用。
 - `ZpChannel_Send` 不做隐藏排队；额度不足时返回 `STATUS_RETRY`，应等待 Writable 回调后重试。
 
 ## 第一版资源边界

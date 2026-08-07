@@ -339,6 +339,10 @@ ZpClient_RetryTimerCallback(
 
     UNREFERENCED_PARAMETER(Instance);
     UNREFERENCED_PARAMETER(Timer);
+    if (Object == NULL)
+    {
+        return;
+    }
     RtlAcquireSRWLockExclusive(&Object->Lock);
     Start = Object->State == ZpClientStateRetryWait &&
             Object->RetryPending &&
@@ -627,6 +631,10 @@ ZpClient_RequestTimerCallback(
 
     UNREFERENCED_PARAMETER(Instance);
     UNREFERENCED_PARAMETER(Timer);
+    if (Object == NULL)
+    {
+        return;
+    }
     for (;;)
     {
         Request = NULL;

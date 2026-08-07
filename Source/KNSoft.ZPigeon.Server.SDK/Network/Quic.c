@@ -1158,6 +1158,10 @@ ZpServerQuic_SubscriptionCleanupCallback(
 {
     UNREFERENCED_PARAMETER(Instance);
     UNREFERENCED_PARAMETER(Work);
+    if (Context == NULL)
+    {
+        return;
+    }
     ZpServerQuic_DestroySubscription(Context);
 }
 
@@ -1283,7 +1287,7 @@ ZpServerQuic_SubscriptionWaitCallback(
     _In_ TP_WAIT_RESULT WaitResult)
 {
     PZP_SERVER_QUIC_SUBSCRIPTION Subscription = Context;
-    PZP_SERVER_QUIC_CONNECTION QuicConnection = Subscription->Connection;
+    PZP_SERVER_QUIC_CONNECTION QuicConnection;
     EVT_HANDLE Events[ZP_SERVER_EVENT_LOG_BATCH_COUNT] = { 0 };
     DWORD ReturnedCount = 0, BatchCount, Error;
     ULONG Index;
@@ -1293,6 +1297,11 @@ ZpServerQuic_SubscriptionWaitCallback(
     UNREFERENCED_PARAMETER(Instance);
     UNREFERENCED_PARAMETER(Wait);
     UNREFERENCED_PARAMETER(WaitResult);
+    if (Subscription == NULL)
+    {
+        return;
+    }
+    QuicConnection = Subscription->Connection;
     RtlAcquireSRWLockShared(&QuicConnection->SubscriptionLock);
     Pending = Subscription->Pending && !QuicConnection->Closing;
     RtlReleaseSRWLockShared(&QuicConnection->SubscriptionLock);
@@ -2798,12 +2807,17 @@ ZpServerQuic_ChannelCallback(
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_QUIC_CHANNEL Channel = Context;
-    PZP_SERVER_QUIC_CONNECTION QuicConnection = Channel->Connection;
+    PZP_SERVER_QUIC_CONNECTION QuicConnection;
     PBYTE Body;
     ULONG ReadLength, BytesRead, BodyLength;
     NTSTATUS Status;
 
     UNREFERENCED_PARAMETER(Instance);
+    if (Channel == NULL)
+    {
+        return;
+    }
+    QuicConnection = Channel->Connection;
     Body = Mem_Alloc(sizeof(ULONGLONG) + ZP_SERVER_FILE_CHANNEL_CHUNK_SIZE);
     if (Body == NULL)
     {
@@ -2924,13 +2938,21 @@ ZpServerQuic_ClosePseudoConsoleCallback(
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_QUIC_CHANNEL Channel = Context;
-    HPCON PseudoConsole = (HPCON)InterlockedCompareExchangePointer(
+    HPCON PseudoConsole;
+
+    UNREFERENCED_PARAMETER(Instance);
+    if (Channel == NULL)
+    {
+        return;
+    }
+    PseudoConsole = (HPCON)InterlockedCompareExchangePointer(
         (PVOID volatile*)&Channel->PseudoConsole,
         NULL,
         NULL);
-
-    UNREFERENCED_PARAMETER(Instance);
-    ClosePseudoConsole(PseudoConsole);
+    if (PseudoConsole != NULL)
+    {
+        ClosePseudoConsole(PseudoConsole);
+    }
     InterlockedExchangePointer((PVOID volatile*)&Channel->PseudoConsole,
                                NULL);
 }
@@ -2943,7 +2965,7 @@ ZpServerQuic_TerminalChannelCallback(
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_QUIC_CHANNEL Channel = Context;
-    PZP_SERVER_QUIC_CONNECTION QuicConnection = Channel->Connection;
+    PZP_SERVER_QUIC_CONNECTION QuicConnection;
     PBYTE Body;
     DWORD Available, BytesRead, ExitCode;
     ULONG ReadLength, BodyLength;
@@ -2951,6 +2973,11 @@ ZpServerQuic_TerminalChannelCallback(
     LOGICAL ProcessExited = FALSE;
     LOGICAL PseudoConsoleCloseQueued = FALSE;
 
+    if (Channel == NULL)
+    {
+        return;
+    }
+    QuicConnection = Channel->Connection;
     CallbackMayRunLong(Instance);
     Body = Mem_Alloc(sizeof(ULONGLONG) +
                      ZP_SERVER_TERMINAL_CHANNEL_CHUNK_SIZE);

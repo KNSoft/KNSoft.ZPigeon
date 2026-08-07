@@ -363,7 +363,7 @@ Core Version 1 使用以下固定 Codec：
 - `Create` 成功后返回初始停止状态对象；`Start` 启动异步工作；`Stop` 可重复调用并异步终止连接；
 - `Close` 只接受已停止且不存在未完成回调的对象，否则返回 `STATUS_DEVICE_BUSY`；不隐式阻塞等待；
 - 回调可能来自任意 SDK 工作线程，同一连接的状态与消息回调保持顺序，但不同连接可并发；
-- SDK 在调用回调期间持有 Handle 的有效引用，调用方不得在回调栈内关闭当前对象；
+- SDK 在调用回调期间持有必要的内部引用；Client/Server `Close` 在其回调栈内返回 `STATUS_DEVICE_BUSY`，Request/Channel/Subscription 的调用方引用则可在对应回调内通过各自 `Close` 释放；
 - 配置和 Endpoint 字符串在 `Create` 返回前由 SDK 复制，调用方随后可释放源数据；
 - 接收 Payload/View 只在当前回调返回前有效；需要长期保存时由调用方复制；
 - 异步发送 Buffer 由调用方保持到完成回调，SDK 不修改其内容；同步拒绝发送时不会触发完成回调；

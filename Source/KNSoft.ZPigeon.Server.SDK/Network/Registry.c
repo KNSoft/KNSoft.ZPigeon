@@ -79,26 +79,27 @@ ZpServerRegistry_CopyString(
     _In_ PCZP_STRING_VIEW String,
     _Outptr_result_z_ PWCHAR* Copy)
 {
-    SIZE_T Size;
+    SIZE_T StringSize, Size;
     PWCHAR Buffer;
 
-    Size = ((SIZE_T)String->Length + 1) * sizeof(WCHAR);
-    if (Size < sizeof(WCHAR))
+    StringSize = (SIZE_T)String->Length * sizeof(WCHAR);
+    if (StringSize > MAXSIZE_T - sizeof(WCHAR))
     {
         return STATUS_INTEGER_OVERFLOW;
     }
+    Size = StringSize + sizeof(WCHAR);
     Buffer = Mem_Alloc(Size);
     if (Buffer == NULL)
     {
         return STATUS_NO_MEMORY;
     }
-    if (String->Length != 0)
+    if (StringSize != 0)
     {
         RtlCopyMemory(Buffer,
                       String->Buffer,
-                      (SIZE_T)String->Length * sizeof(WCHAR));
+                      StringSize);
     }
-    Buffer[String->Length] = UNICODE_NULL;
+    *(PWCHAR)Add2Ptr(Buffer, StringSize) = UNICODE_NULL;
     *Copy = Buffer;
     return STATUS_SUCCESS;
 }
