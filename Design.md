@@ -504,7 +504,7 @@ Bookmark 和单条事件 XML 分别限制为 64 Ki 个 UTF-16 code unit 和 1 Mi
 
 Registry Root 使用 `UINT16`：`ClassesRoot = 1`、`CurrentUser = 2`、`LocalMachine = 3`、`Users = 4`、`CurrentConfig = 5`。Registry View 使用 `UINT16`：`Default = 1`、`Registry32 = 2`、`Registry64 = 3`，后两者分别映射 `KEY_WOW64_32KEY` 和 `KEY_WOW64_64KEY`；不允许调用方直接传入任意访问掩码或原生 HKEY。`CurrentUser` 明确定义为 Server 进程安全上下文的 HKEY_CURRENT_USER，不推断交互式登录用户。Path 是相对于 Root 的 UTF-16LE 子键路径，允许空值表示 Root 本身，最长 32767 个 code unit。
 
-EnumerateKeysPage 和 EnumerateValuesPage 请求依次编码 Root、View、`UINT32 MaxEntries`、Path 和可空 Cursor，MaxEntries 范围为 1～4096。Server 收集当前快照后按不区分大小写的 ordinal 名称排序，返回严格大于 Cursor 的下一页；同名比较以区分大小写 ordinal 作为稳定次序补充。响应先编码可空 NextCursor，再编码记录数组；存在后续记录时 NextCursor 必须等于本页最后一个名称，否则为空。子键记录编码 Name 和 `UINT64 LastWriteTime`；值记录编码 Name、Windows 原生 `UINT32 Type` 和 `UINT32 DataLength`。空 Name 是合法的默认值名称。分页是 best-effort 快照，并发增删时调用方可从空 Cursor 重新开始。
+EnumerateKeysPage 和 EnumerateValuesPage 请求依次编码 Root、View、`UINT32 MaxEntries`、`BOOLEAN CursorPresent`、Path 和 Cursor，MaxEntries 范围为 1～4096。CursorPresent 为 0 表示从头开始，为 1 表示返回严格大于 Cursor 的记录；显式存在的空 Cursor 可表示默认值名称之后的位置。Server 收集当前快照后按不区分大小写的 ordinal 名称排序，同名比较以区分大小写 ordinal 作为稳定次序补充。响应依次编码 `BOOLEAN HasMore`、NextCursor 和记录数组；HasMore 为 1 时 NextCursor 必须等于本页最后一个名称，为 0 时 NextCursor 必须为空。子键记录编码 Name 和 `UINT64 LastWriteTime`；值记录编码 Name、Windows 原生 `UINT32 Type` 和 `UINT32 DataLength`。空 Name 是合法的默认值名称。分页是 best-effort 快照，并发增删时调用方以 CursorPresent=0 重新开始。
 
 QueryValue 请求编码 Root、View、Path 和可空 ValueName；成功响应编码 Windows 原生 `UINT32 Type` 和长度前缀原始 Data。SetValue 请求编码 Root、View、Type、Path、ValueName 和原始 Data；Version 1 保留 Windows Value Type 与字节表示，不做文本转码或环境变量展开。单值 Data 最大 1 MiB；`REG_SZ`、`REG_EXPAND_SZ` 和 `REG_MULTI_SZ` 的终止符语义由调用方负责，Server 精确写入线上字节。DeleteValue 复用 QueryValue 请求，允许删除默认值。
 

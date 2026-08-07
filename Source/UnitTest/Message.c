@@ -4,6 +4,7 @@
 #include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Protocol.h>
 #include <KNSoft/ZPigeon/Process.h>
+#include <KNSoft/ZPigeon/Registry.h>
 #include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
 #include <KNSoft/ZPigeon/Terminal.h>
@@ -14,6 +15,9 @@ TEST_FUNC(ProtocolMessage)
     static const WCHAR EventQuery[] = L"*[System/Level<=3]";
     static const WCHAR EventBookmark[] = L"<Bookmark>1</Bookmark>";
     static const WCHAR EventXml[] = L"<Event/>";
+    static const WCHAR RegistryPath[] = L"Software\\KNSoft";
+    static const WCHAR RegistryValueName[] = L"Enabled";
+    static const BYTE RegistryData[] = { 1, 2, 3, 4 };
     ZP_MODULE_RECORD Modules[] = {
         { 1, 1, 0x01020304 },
         { 3, 2, 0xA0B0C0D0 }
@@ -132,6 +136,21 @@ TEST_FUNC(ProtocolMessage)
     ZP_EVENT_LOG_RECORD_VIEW EventLogRecord;
     ZP_EVENT_LOG_EVENT_RECORD_VIEW EventLogRecordEvent;
     ZP_EVENT_LOG_EVENT_TERMINAL_VIEW EventLogTerminalEvent;
+    ZP_REGISTRY_ENUMERATE_VIEW RegistryEnumerate;
+    ZP_REGISTRY_VALUE_REQUEST_VIEW RegistryValueRequest;
+    ZP_REGISTRY_SET_VALUE_VIEW RegistrySetValue;
+    ZP_REGISTRY_KEY_REQUEST_VIEW RegistryKeyRequest;
+    ZP_REGISTRY_KEY_RECORD RegistryKeys[] = {
+        { L"Alpha", 5, 100 },
+        { L"Beta", 4, 200 }
+    };
+    ZP_REGISTRY_VALUE_RECORD RegistryValues[] = {
+        { L"", 0, 1, 8 }
+    };
+    ZP_REGISTRY_PAGE_VIEW RegistryPage;
+    ZP_REGISTRY_KEY_RECORD_VIEW RegistryKey;
+    ZP_REGISTRY_VALUE_RECORD_VIEW RegistryValueRecord;
+    ZP_REGISTRY_VALUE_VIEW RegistryValue;
     ZP_TERMINAL_CREATE_VIEW TerminalCreate;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
@@ -798,6 +817,146 @@ TEST_FUNC(ProtocolMessage)
                                            Buffer,
                                            sizeof(Buffer),
                                            &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpRegistry_EncodeEnumerateRequest(
+                           ZpRegistryLocalMachine,
+                           ZpRegistryView64,
+                           32,
+                           TRUE,
+                           RegistryPath,
+                           ARRAYSIZE(RegistryPath) - 1,
+                           L"",
+                           0,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpRegistry_DecodeEnumerateRequest(Buffer,
+                                                         Length,
+                                                         &RegistryEnumerate)) &&
+            RegistryEnumerate.Root == ZpRegistryLocalMachine &&
+            RegistryEnumerate.View == ZpRegistryView64 &&
+            RegistryEnumerate.MaxEntries == 32 &&
+            RegistryEnumerate.CursorPresent &&
+            RegistryEnumerate.Path.Length == ARRAYSIZE(RegistryPath) - 1 &&
+            RegistryEnumerate.Cursor.Length == 0);
+    TEST_OK(ZpRegistry_EncodeEnumerateRequest(
+                0,
+                ZpRegistryViewDefault,
+                1,
+                FALSE,
+                NULL,
+                0,
+                L"cursor",
+                6,
+                Buffer,
+                sizeof(Buffer),
+                &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpRegistry_EncodeKeyPage(
+                           TRUE,
+                           RegistryKeys,
+                           ARRAYSIZE(RegistryKeys),
+                           L"Beta",
+                           4,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpRegistry_DecodeKeyPage(Buffer,
+                                                Length,
+                                                &RegistryPage)) &&
+            RegistryPage.HasMore &&
+            RegistryPage.Records.Count == ARRAYSIZE(RegistryKeys) &&
+            NT_SUCCESS(ZpRegistry_GetKeyRecord(&RegistryPage.Records,
+                                               1,
+                                               &RegistryKey)) &&
+            RegistryKey.Name.Length == 4 &&
+            RegistryKey.LastWriteTime == 200);
+    TEST_OK(NT_SUCCESS(ZpRegistry_EncodeValuePage(
+                           TRUE,
+                           RegistryValues,
+                           ARRAYSIZE(RegistryValues),
+                           L"",
+                           0,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpRegistry_DecodeValuePage(Buffer,
+                                                  Length,
+                                                  &RegistryPage)) &&
+            RegistryPage.HasMore &&
+            RegistryPage.NextCursor.Length == 0 &&
+            NT_SUCCESS(ZpRegistry_GetValueRecord(&RegistryPage.Records,
+                                                 0,
+                                                 &RegistryValueRecord)) &&
+            RegistryValueRecord.Name.Length == 0 &&
+            RegistryValueRecord.Type == 1 &&
+            RegistryValueRecord.DataLength == 8);
+    TEST_OK(NT_SUCCESS(ZpRegistry_EncodeValueRequest(
+                           ZpRegistryCurrentUser,
+                           ZpRegistryViewDefault,
+                           RegistryPath,
+                           ARRAYSIZE(RegistryPath) - 1,
+                           RegistryValueName,
+                           ARRAYSIZE(RegistryValueName) - 1,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpRegistry_DecodeValueRequest(Buffer,
+                                                     Length,
+                                                     &RegistryValueRequest)) &&
+            RegistryValueRequest.Root == ZpRegistryCurrentUser &&
+            RegistryValueRequest.ValueName.Length ==
+                ARRAYSIZE(RegistryValueName) - 1);
+    TEST_OK(NT_SUCCESS(ZpRegistry_EncodeValue(4,
+                                              RegistryData,
+                                              sizeof(RegistryData),
+                                              Buffer,
+                                              sizeof(Buffer),
+                                              &Length)) &&
+            NT_SUCCESS(ZpRegistry_DecodeValue(Buffer,
+                                              Length,
+                                              &RegistryValue)) &&
+            RegistryValue.Type == 4 &&
+            RegistryValue.Data.Length == sizeof(RegistryData) &&
+            RtlCompareMemory(RegistryValue.Data.Buffer,
+                             RegistryData,
+                             sizeof(RegistryData)) == sizeof(RegistryData));
+    TEST_OK(NT_SUCCESS(ZpRegistry_EncodeSetValueRequest(
+                           ZpRegistryCurrentUser,
+                           ZpRegistryView32,
+                           3,
+                           RegistryPath,
+                           ARRAYSIZE(RegistryPath) - 1,
+                           RegistryValueName,
+                           ARRAYSIZE(RegistryValueName) - 1,
+                           RegistryData,
+                           sizeof(RegistryData),
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpRegistry_DecodeSetValueRequest(Buffer,
+                                                        Length,
+                                                        &RegistrySetValue)) &&
+            RegistrySetValue.View == ZpRegistryView32 &&
+            RegistrySetValue.Type == 3 &&
+            RegistrySetValue.Data.Length == sizeof(RegistryData));
+    TEST_OK(NT_SUCCESS(ZpRegistry_EncodeKeyRequest(
+                           ZpRegistryLocalMachine,
+                           ZpRegistryView64,
+                           RegistryPath,
+                           ARRAYSIZE(RegistryPath) - 1,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpRegistry_DecodeKeyRequest(Buffer,
+                                                   Length,
+                                                   &RegistryKeyRequest)) &&
+            RegistryKeyRequest.Path.Length == ARRAYSIZE(RegistryPath) - 1 &&
+            ZpRegistry_EncodeKeyRequest(ZpRegistryLocalMachine,
+                                        ZpRegistryView64,
+                                        NULL,
+                                        0,
+                                        Buffer,
+                                        sizeof(Buffer),
+                                        &Length) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpTerminal_EncodeCreate(120,
                                                30,
                                                L"cmd.exe /Q",
