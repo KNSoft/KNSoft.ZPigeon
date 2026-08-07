@@ -42,9 +42,11 @@ typedef struct _ZP_SERVER_QUIC_CONNECTION
     RTL_SRWLOCK ChannelLock;
     LIST_ENTRY Channels;
     ULONGLONG NextChannelId;
+    ULONG ChannelReservations;
     RTL_SRWLOCK SubscriptionLock;
     LIST_ENTRY Subscriptions;
     ULONGLONG NextSubscriptionId;
+    ULONG SubscriptionReservations;
     volatile LONG ReferenceCount;
     LOGICAL Closing;
     ULONG ActiveRequestCount;
@@ -1362,6 +1364,56 @@ ZpServerQuic_SubscriptionWaitCallback(
 
 static
 NTSTATUS
+ZpServerQuic_ReserveSubscription(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection)
+{
+    ULONG Limit, RemainingLimit;
+    NTSTATUS Status;
+
+    RtlAcquireSRWLockExclusive(&QuicConnection->SubscriptionLock);
+    Limit = QuicConnection->Transport->Owner->Config
+                .MaxSubscriptionsPerConnection;
+    if (QuicConnection->Closing)
+    {
+        Status = STATUS_CONNECTION_DISCONNECTED;
+    }
+    else if (QuicConnection->SubscriptionReservations >= Limit)
+    {
+        Status = STATUS_QUOTA_EXCEEDED;
+    }
+    else
+    {
+        RemainingLimit = Limit - QuicConnection->SubscriptionReservations;
+        if (ZpServerQuic_CountListUntil(&QuicConnection->Subscriptions,
+                                        RemainingLimit) >= RemainingLimit)
+        {
+            Status = STATUS_QUOTA_EXCEEDED;
+        }
+        else
+        {
+            QuicConnection->SubscriptionReservations++;
+            Status = STATUS_SUCCESS;
+        }
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->SubscriptionLock);
+    return Status;
+}
+
+static
+VOID
+ZpServerQuic_ReleaseSubscriptionReservation(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection)
+{
+    RtlAcquireSRWLockExclusive(&QuicConnection->SubscriptionLock);
+    if (QuicConnection->SubscriptionReservations != 0)
+    {
+        QuicConnection->SubscriptionReservations--;
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->SubscriptionLock);
+}
+
+static
+NTSTATUS
 ZpServerQuic_CreateEventLogSubscription(
     _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
     _In_ const ZP_EVENT_LOG_SUBSCRIBE_VIEW* Request,
@@ -1372,12 +1424,20 @@ ZpServerQuic_CreateEventLogSubscription(
     PWCHAR ChannelPath = NULL, Query = NULL, Bookmark = NULL;
     DWORD Flags;
     NTSTATUS Status;
+    LOGICAL Reserved = FALSE;
 
     *Subscription = NULL;
+    Status = ZpServerQuic_ReserveSubscription(QuicConnection);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    Reserved = TRUE;
     SubscriptionObject = Mem_Alloc(sizeof(*SubscriptionObject));
     if (SubscriptionObject == NULL)
     {
-        return STATUS_NO_MEMORY;
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
     }
     RtlZeroMemory(SubscriptionObject, sizeof(*SubscriptionObject));
     Status = ZpServerQuic_CopyStringView(&Request->ChannelPath,
@@ -1459,23 +1519,24 @@ ZpServerQuic_CreateEventLogSubscription(
     SubscriptionObject->Pending = TRUE;
     SubscriptionObject->NextSequence = 1;
     RtlAcquireSRWLockExclusive(&QuicConnection->SubscriptionLock);
-    if (QuicConnection->Closing ||
-        QuicConnection->NextSubscriptionId > MAXULONGLONG - 2)
+    if (QuicConnection->SubscriptionReservations == 0)
+    {
+        Status = STATUS_INTERNAL_ERROR;
+    }
+    else
+    {
+        QuicConnection->SubscriptionReservations--;
+        Reserved = FALSE;
+    }
+    if (NT_SUCCESS(Status) &&
+        (QuicConnection->Closing ||
+         QuicConnection->NextSubscriptionId > MAXULONGLONG - 2))
     {
         Status = QuicConnection->Closing ?
                      STATUS_CONNECTION_DISCONNECTED :
                      STATUS_INTEGER_OVERFLOW;
     }
-    else if (ZpServerQuic_CountListUntil(
-                 &QuicConnection->Subscriptions,
-                 QuicConnection->Transport->Owner->Config
-                     .MaxSubscriptionsPerConnection) >=
-             QuicConnection->Transport->Owner->Config
-                 .MaxSubscriptionsPerConnection)
-    {
-        Status = STATUS_QUOTA_EXCEEDED;
-    }
-    else
+    if (NT_SUCCESS(Status))
     {
         SubscriptionObject->SubscriptionId =
             QuicConnection->NextSubscriptionId;
@@ -1489,6 +1550,10 @@ ZpServerQuic_CreateEventLogSubscription(
     RtlReleaseSRWLockExclusive(&QuicConnection->SubscriptionLock);
 
 Cleanup:
+    if (Reserved)
+    {
+        ZpServerQuic_ReleaseSubscriptionReservation(QuicConnection);
+    }
     if (StartBookmark != NULL)
     {
         EvtClose(StartBookmark);
@@ -1496,7 +1561,7 @@ Cleanup:
     Mem_Free(Bookmark);
     Mem_Free(Query);
     Mem_Free(ChannelPath);
-    if (!NT_SUCCESS(Status))
+    if (!NT_SUCCESS(Status) && SubscriptionObject != NULL)
     {
         if (SubscriptionObject->Wait != NULL)
         {
@@ -2156,6 +2221,55 @@ ZpServerQuic_FindChannel(
 
 static
 NTSTATUS
+ZpServerQuic_ReserveChannel(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection)
+{
+    ULONG Limit, RemainingLimit;
+    NTSTATUS Status;
+
+    RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
+    Limit = QuicConnection->Transport->Owner->Config.MaxChannelsPerConnection;
+    if (QuicConnection->Closing)
+    {
+        Status = STATUS_CONNECTION_DISCONNECTED;
+    }
+    else if (QuicConnection->ChannelReservations >= Limit)
+    {
+        Status = STATUS_QUOTA_EXCEEDED;
+    }
+    else
+    {
+        RemainingLimit = Limit - QuicConnection->ChannelReservations;
+        if (ZpServerQuic_CountListUntil(&QuicConnection->Channels,
+                                        RemainingLimit) >= RemainingLimit)
+        {
+            Status = STATUS_QUOTA_EXCEEDED;
+        }
+        else
+        {
+            QuicConnection->ChannelReservations++;
+            Status = STATUS_SUCCESS;
+        }
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+    return Status;
+}
+
+static
+VOID
+ZpServerQuic_ReleaseChannelReservation(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection)
+{
+    RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
+    if (QuicConnection->ChannelReservations != 0)
+    {
+        QuicConnection->ChannelReservations--;
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+}
+
+static
+NTSTATUS
 ZpServerQuic_CreateFileChannel(
     _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
     _In_ PCZP_STRING_VIEW PathView,
@@ -2615,20 +2729,17 @@ ZpServerQuic_ActivateChannel(
     PZP_SERVER_QUIC_CONNECTION QuicConnection = Channel->Connection;
 
     RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
+    if (QuicConnection->ChannelReservations == 0)
+    {
+        RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+        return STATUS_INTERNAL_ERROR;
+    }
+    QuicConnection->ChannelReservations--;
     if (QuicConnection->Closing ||
         ZpServerQuic_FindChannel(QuicConnection, Channel->ChannelId) != NULL)
     {
         RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
         return STATUS_CONNECTION_DISCONNECTED;
-    }
-    if (ZpServerQuic_CountListUntil(
-            &QuicConnection->Channels,
-            QuicConnection->Transport->Owner->Config
-                .MaxChannelsPerConnection) >=
-        QuicConnection->Transport->Owner->Config.MaxChannelsPerConnection)
-    {
-        RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
-        return STATUS_QUOTA_EXCEEDED;
     }
     Channel->Pending = TRUE;
     InsertTailList(&QuicConnection->Channels, &Channel->ListEntry);
@@ -3362,7 +3473,7 @@ ZpServerQuic_RequestCallback(
     USHORT Columns, Rows;
     ZP_REQUEST_ACCESS Access;
     NTSTATUS Status = STATUS_SUCCESS;
-    LOGICAL SendResponse;
+    LOGICAL ChannelReserved = FALSE, SendResponse;
 
     UNREFERENCED_PARAMETER(Instance);
     RtlAcquireSRWLockShared(&QuicConnection->RequestLock);
@@ -3561,6 +3672,11 @@ ZpServerQuic_RequestCallback(
                                                   &FileOffset);
             if (NT_SUCCESS(Status))
             {
+                Status = ZpServerQuic_ReserveChannel(QuicConnection);
+                ChannelReserved = NT_SUCCESS(Status);
+            }
+            if (NT_SUCCESS(Status))
+            {
                 Status = ZpServerQuic_CreateFileChannel(QuicConnection,
                                                         &FilePath,
                                                         FileOffset,
@@ -3615,6 +3731,11 @@ ZpServerQuic_RequestCallback(
                                                    &FileDisposition);
             if (NT_SUCCESS(Status))
             {
+                Status = ZpServerQuic_ReserveChannel(QuicConnection);
+                ChannelReserved = NT_SUCCESS(Status);
+            }
+            if (NT_SUCCESS(Status))
+            {
                 Status = ZpServerQuic_CreateFileWriteChannel(
                     QuicConnection,
                     &FilePath,
@@ -3638,6 +3759,11 @@ ZpServerQuic_RequestCallback(
             Status = ZpTerminal_DecodeCreate(Request->Payload,
                                              Request->PayloadLength,
                                              &TerminalCreate);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_ReserveChannel(QuicConnection);
+                ChannelReserved = NT_SUCCESS(Status);
+            }
             if (NT_SUCCESS(Status))
             {
                 Status = ZpServerQuic_CreateTerminalChannel(
@@ -3756,9 +3882,15 @@ ZpServerQuic_RequestCallback(
         RemoveEntryList(&Request->ListEntry);
         QuicConnection->ActiveRequestCount--;
         QuicConnection->ActiveRequestPayloadBytes -= Request->PayloadLength;
-        if (NT_SUCCESS(Status) && Channel != NULL)
+        if (Channel != NULL && NT_SUCCESS(Status))
         {
             Status = ZpServerQuic_ActivateChannel(Channel);
+            ChannelReserved = FALSE;
+        }
+        else if (ChannelReserved)
+        {
+            ZpServerQuic_ReleaseChannelReservation(QuicConnection);
+            ChannelReserved = FALSE;
         }
         SendStatus = ZpServerQuic_SendResponse(
             QuicConnection,
@@ -3846,6 +3978,10 @@ ZpServerQuic_RequestCallback(
     RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
 
 Cleanup:
+    if (ChannelReserved)
+    {
+        ZpServerQuic_ReleaseChannelReservation(QuicConnection);
+    }
     if (AllocatedPayload != NULL)
     {
         Mem_Free(AllocatedPayload);

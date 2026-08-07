@@ -437,7 +437,7 @@ Client 的非零 `TimeoutMilliseconds` 同时建立基于 `GetTickCount64` 的�
 
 Server 完整收到 Request 后复制 Payload 并投递线程池，MsQuic 接收回调不执行系统查询等业务工作；每条连接维护活动 Request 表和引用计数。Cancel、连接关闭与工作完成通过请求表锁竞争一次终止，连接对象延迟到所有工作退出后释放，Server Stop 也等待这些连接引用归零。
 
-Server 配置的 `MaxRequestsPerConnection` 限制每连接已投递且尚未完成的 Request；0 使用默认值 64，第一版配置硬上限为 4096。`MaxRequestPayloadBytesPerConnection` 限制这些 Request 被 Server 深拷贝并持有的 Payload 字节总量；0 使用默认值 64 MiB，配置硬上限为 1 GiB，单个请求超过该值时在复制前拒绝。`MaxChannelsPerConnection` 和 `MaxSubscriptionsPerConnection` 分别限制已激活 Channel 与 Subscription；两者的 0 均使用默认值 16，配置硬上限均为 1024。达到任一上限的新对象返回 `STATUS_QUOTA_EXCEEDED`，不终止连接；对象在 Response 发送失败、主动取消、远端关闭或工作完成后立即释放名额及 Payload 预算。
+Server 配置的 `MaxRequestsPerConnection` 限制每连接已投递且尚未完成的 Request；0 使用默认值 64，第一版配置硬上限为 4096。`MaxRequestPayloadBytesPerConnection` 限制这些 Request 被 Server 深拷贝并持有的 Payload 字节总量；0 使用默认值 64 MiB，配置硬上限为 1 GiB，单个请求超过该值时在复制前拒绝。`MaxChannelsPerConnection` 和 `MaxSubscriptionsPerConnection` 分别限制正在创建或已经激活的 Channel 与 Subscription；两者的 0 均使用默认值 16，配置硬上限均为 1024。名额在打开文件、创建 ConPTY 子进程或建立 EventLog 订阅之前预留，避免并发请求以“尚未激活”为窗口制造短时资源尖峰。达到任一上限的新对象返回 `STATUS_QUOTA_EXCEEDED`，不终止连接；对象在创建失败、Response 发送失败、主动取消、远端关闭或工作完成后立即释放名额及 Payload 预算。
 
 Server 在线程池执行具体业务操作前统一经过授权门禁。授权回调接收已认证连接的 32 字节 ClientId、`Read` 或 `Control` 访问级别、ModuleId、OperationId 以及只在回调期间有效的原始 Payload View，并以 `NTSTATUS` 决定是否继续；失败状态原样作为 Response 返回。未配置回调时只读操作默认放行，控制类操作默认返回 `STATUS_ACCESS_DENIED`。授权回调在对象锁外执行并计入活动回调，不能在回调栈内关闭 Server。
 

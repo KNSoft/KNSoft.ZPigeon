@@ -82,6 +82,7 @@
 - 实现 Server 原生 Registry 操作：映射固定 Root 与 WOW64 View，按 ordinal 名称排序并分页子键/值快照，保留原生 Type/Data，Control 门禁覆盖写值、删值、建键和非递归删键；
 - 扩展 localhost QUIC Registry 集成测试：仅操作 HKCU 随机临时子键，验证未授权拒绝、建键、默认/命名值写入、空名称游标连续翻页、查询、删除和失败路径清理；
 - 增加每连接 Channel 与 Subscription 配额：默认均为 16、配置硬上限均为 1024，真实 localhost 测试以配额 1 验证第二个并发 ConPTY Channel 和 EventLog Subscription 返回 `STATUS_QUOTA_EXCEEDED`，既有对象仍可正常结束；
+- 将 Channel/Subscription 配额判断前移为资源创建前的锁内名额预留，文件句柄、ConPTY 子进程和 EventLog 订阅不再先创建后判额，并发创建与激活共享同一硬上限；
 - 限制 Registry 排序快照最多 65536 条、估算名称 Buffer 最多 16 MiB，超限明确返回 `STATUS_QUOTA_EXCEEDED`，避免单次分页请求以全量排序耗尽 Server 内存；
 - 增加每连接 Request Payload 总量配额：默认 64 MiB、配置硬上限 1 GiB，聚合预算在 Request 完成、取消、投递失败及连接关闭路径精确归还，单个超限请求在深拷贝前拒绝；
 - 限制 File 目录排序快照最多 65536 条、记录与排序指针总量最多 16 MiB，超限明确返回 `STATUS_QUOTA_EXCEEDED`；
