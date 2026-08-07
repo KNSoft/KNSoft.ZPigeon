@@ -64,6 +64,8 @@ typedef struct _SDK_TEST_CONTEXT
     ULONGLONG EventNextSequence;
     NTSTATUS EventTerminalStatus;
     ULONG EventLastBookmarkLength;
+    LOGICAL CancelSubscriptionInRecord;
+    NTSTATUS SubscriptionCancelStatus;
     ZP_CHANNEL_HANDLE FileChannel;
     ULONGLONG FileSize;
     ULONGLONG FileOffset;
@@ -386,6 +388,11 @@ SDKTest_EventLogRecordCallback(
     TestContext->EventSequence = Sequence;
     TestContext->EventBookmarkLength = Record->Bookmark.Length;
     TestContext->EventXmlLength = Record->Xml.Length;
+    if (TestContext->CancelSubscriptionInRecord)
+    {
+        TestContext->SubscriptionCancelStatus =
+            ZpSubscription_Cancel(Subscription);
+    }
 }
 
 static
@@ -1411,20 +1418,33 @@ TEST_FUNC(SDKContract)
             TestContext.EventSubscribeCount == 2 &&
             TestContext.EventSubscription != NULL);
     ZpRequest_Close(Request);
-    TEST_OK(NT_SUCCESS(ZpSubscription_Cancel(
-                           TestContext.EventSubscription)) &&
+    TestContext.CompleteRequestInSend = TRUE;
+    TestContext.CancelSubscriptionInRecord = TRUE;
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeRecordEvent(
+                           1,
+                           EventBookmark,
+                           ARRAYSIZE(EventBookmark) - 1,
+                           EventXml,
+                           ARRAYSIZE(EventXml) - 1,
+                           EventPayload,
+                           sizeof(EventPayload),
+                           &EventPayloadLength)));
+    Event.SubscriptionId = 4;
+    Event.EventId = ZP_EVENT_LOG_EVENT_RECORD;
+    Event.Payload.Length = EventPayloadLength;
+    TEST_OK(NT_SUCCESS(ZpClient_ReceiveEvent(Client, &Event)) &&
+            NT_SUCCESS(TestContext.SubscriptionCancelStatus) &&
             TestContext.SendModuleId == ZP_EVENT_LOG_MODULE_ID &&
             TestContext.SendOperationId ==
-                ZP_EVENT_LOG_OPERATION_UNSUBSCRIBE);
-    Response.RequestId = TestContext.SendRequestId;
-    Response.Status = STATUS_SUCCESS;
-    Response.Payload = EmptyPayload;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+                ZP_EVENT_LOG_OPERATION_UNSUBSCRIBE &&
+            TestContext.EventRecordCount == 2 &&
             TestContext.EventTerminalCount == 2 &&
-            TestContext.EventNextSequence == 1 &&
+            TestContext.EventNextSequence == 2 &&
             TestContext.EventTerminalStatus == STATUS_CANCELLED &&
             ZpSubscription_Cancel(TestContext.EventSubscription) ==
                 STATUS_INVALID_DEVICE_STATE);
+    TestContext.CancelSubscriptionInRecord = FALSE;
+    TestContext.CompleteRequestInSend = FALSE;
     ZpSubscription_Close(TestContext.EventSubscription);
     TestContext.EventSubscription = NULL;
     TEST_OK(NT_SUCCESS(ZpClient_OpenFileRead(Client,

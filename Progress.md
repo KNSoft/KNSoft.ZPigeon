@@ -90,6 +90,7 @@
 - 修复 Client Request 同步回包重入竞态：提交期间增加临时引用，完成回调即使在发起 API 返回前调用 `ZpRequest_Close` 也不会造成后续访问已释放对象；SDK 契约测试以同步 Transport 回包覆盖该路径；
 - 完成首轮 MSVC x64 Debug 静态分析与人工分流：Protocol 已无静态分析告警；显式收紧分页游标空指针、Registry 内部分页零计数、配置对象最小分配、系统查询成功空输出、临时上传路径格式化与分配失败、请求柔性数组最小对象大小，并补齐 MsQuic 回调函数类别和空 Context 防御；
 - 完成公共 API 声明/实现机械核对，11 个公共头文件中的 `Zp*` API 均有实现；补齐异步失败输出、回调线程、并发、重入和回调内释放 Handle 的公开契约，并为线程池 Timer/Wait/Work 异常空 Context 增加防御；
+- 审计 EventLog pull 批处理与取消竞争：64 条满批保持信号并立即续取，仅在 `ERROR_NO_MORE_ITEMS` 后复位；Unsubscribe 在活动 Wait 回调退出后才响应，Pending 单次交换避免清理竞态；SDK 回归覆盖 Record 回调栈内 Cancel 及同步 Unsubscribe 完成重入；
 - 扩展 localhost QUIC 集成测试，写入真实 Application 事件并验证 Record 内容、主动取消 Terminal，以及活动订阅随连接断开完成；
 - 扩展 localhost QUIC EventLog 恢复测试：持久化实时 Record Bookmark，离线产生事件后以 QueryPage 补页，再从补页 Bookmark 严格重新订阅并接收后续事件；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
