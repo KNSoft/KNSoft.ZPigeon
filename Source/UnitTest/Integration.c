@@ -1147,11 +1147,13 @@ TEST_FUNC(SDKQuicIntegration)
     static const WCHAR ServerName[] = L"localhost";
     static const WCHAR MissingServiceName[] =
         L"KNSoft.ZPigeon.UnitTest.DoesNotExist";
-    static const WCHAR TerminalCommandLine[] =
-        L"powershell.exe -NoLogo -NoProfile -Command \"Write-Output "
-        L"ZPIGEON_TERMINAL_OK; Start-Sleep -Milliseconds 500; exit 7\"";
+    static const WCHAR TerminalCommandLine[] = L"cmd.exe /D /Q";
+    static const WCHAR TerminalCancelCommandLine[] =
+        L"powershell.exe -NoLogo -NoProfile -Command \"Start-Sleep -Seconds 30\"";
     static const BYTE TerminalInput[] =
-        "ZPIGEON_TERMINAL_OK\r\n";
+        "(for /L %i in (1,1,2048) do @echo "
+        "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX) "
+        "& exit /b 7\r\n";
     SDK_INTEGRATION_CONTEXT TestContext = { 0 };
     ZP_MODULE_RECORD ClientModules[] = {
         { 1, 3, 0x0F },
@@ -1980,7 +1982,50 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.TerminalCloseEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         TestContext.TerminalCloseStatus != 7 ||
-        TestContext.TerminalDataBytes == 0)
+        TestContext.TerminalDataBytes < 100000)
+    {
+        goto Cleanup;
+    }
+    ZpChannel_Close(TestContext.TerminalChannel);
+    TestContext.TerminalChannel = NULL;
+
+    ResetEvent(TestContext.TerminalWritableEvent);
+    ResetEvent(TestContext.TerminalCloseEvent);
+    TestContext.TerminalWritableCredit = 0;
+    TestContext.TerminalDataBytes = 0;
+    TestContext.TerminalProcessId = 0;
+    InterlockedExchange(&TestContext.TerminalCreateStatus, STATUS_PENDING);
+    InterlockedExchange(&TestContext.TerminalCloseStatus, STATUS_PENDING);
+    Status = ZpClient_CreateTerminal(
+        Client,
+        80,
+        25,
+        TerminalCancelCommandLine,
+        ARRAYSIZE(TerminalCancelCommandLine) - 1,
+        NULL,
+        0,
+        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+        SDKIntegration_TerminalCreateCallback,
+        SDKIntegration_TerminalDataCallback,
+        SDKIntegration_TerminalWritableCallback,
+        SDKIntegration_TerminalCloseCallback,
+        &TestContext,
+        &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.TerminalWritableEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.TerminalCreateStatus) ||
+        TestContext.TerminalChannel == NULL ||
+        TestContext.TerminalProcessId == 0 ||
+        !NT_SUCCESS(ZpChannel_Cancel(TestContext.TerminalChannel)) ||
+        WaitForSingleObject(TestContext.TerminalCloseEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        TestContext.TerminalCloseStatus != STATUS_CANCELLED)
     {
         goto Cleanup;
     }

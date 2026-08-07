@@ -1584,6 +1584,10 @@ ZpServerQuic_CreateTerminalChannel(
         goto Cleanup;
     }
     StartupInfo.StartupInfo.cb = sizeof(StartupInfo);
+    StartupInfo.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    StartupInfo.StartupInfo.hStdInput = NULL;
+    StartupInfo.StartupInfo.hStdOutput = NULL;
+    StartupInfo.StartupInfo.hStdError = NULL;
     StartupInfo.lpAttributeList = AttributeList;
     if (!CreateProcessW(NULL,
                         CommandLine,
