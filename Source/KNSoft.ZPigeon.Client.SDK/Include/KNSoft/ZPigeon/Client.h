@@ -78,6 +78,14 @@ VOID
     _In_opt_ PCZP_SERVICE_LIST_VIEW Services,
     _In_opt_ PVOID Context);
 
+typedef
+VOID
+(NTAPI *ZP_SERVICE_QUERY_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ const ZP_SERVICE_INFO_VIEW* Info,
+    _In_opt_ PVOID Context);
+
 typedef struct _ZP_CLIENT_CONFIG
 {
     ULONG Size;
@@ -165,6 +173,17 @@ ZpClient_EnumerateServices(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_SERVICE_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_QueryService(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_SERVICE_QUERY_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 

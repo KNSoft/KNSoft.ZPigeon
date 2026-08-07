@@ -62,6 +62,22 @@ TEST_FUNC(ProtocolMessage)
     };
     ZP_SERVICE_LIST_VIEW ServiceList;
     ZP_SERVICE_RECORD_VIEW ServiceRecord;
+    ZP_SERVICE_INFO ServiceInfo = {
+        0x10,
+        4,
+        4321,
+        2,
+        1,
+        L"SvcA",
+        4,
+        L"Service A",
+        9,
+        L"C:\\SvcA.exe",
+        11,
+        L"LocalSystem",
+        11
+    };
+    ZP_SERVICE_INFO_VIEW ServiceInfoView;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value;
@@ -246,4 +262,29 @@ TEST_FUNC(ProtocolMessage)
     TEST_OK(ZpService_GetRecord(&ServiceList,
                                 ServiceList.Count,
                                 &ServiceRecord) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpService_EncodeQuery(ServiceInfo.ServiceName,
+                                             ServiceInfo.ServiceNameLength,
+                                             Buffer,
+                                             sizeof(Buffer),
+                                             &Length)) &&
+            NT_SUCCESS(ZpService_DecodeQuery(Buffer,
+                                             Length,
+                                             &ServiceInfoView.ServiceName)) &&
+            ServiceInfoView.ServiceName.Length == ServiceInfo.ServiceNameLength);
+    TEST_OK(NT_SUCCESS(ZpService_EncodeInfo(&ServiceInfo,
+                                            Buffer,
+                                            sizeof(Buffer),
+                                            &Length)) &&
+            NT_SUCCESS(ZpService_DecodeInfo(Buffer,
+                                            Length,
+                                            &ServiceInfoView)) &&
+            ServiceInfoView.ServiceType == ServiceInfo.ServiceType &&
+            ServiceInfoView.CurrentState == ServiceInfo.CurrentState &&
+            ServiceInfoView.ProcessId == ServiceInfo.ProcessId &&
+            ServiceInfoView.StartType == ServiceInfo.StartType &&
+            ServiceInfoView.ErrorControl == ServiceInfo.ErrorControl &&
+            ServiceInfoView.ServiceName.Length == ServiceInfo.ServiceNameLength &&
+            ServiceInfoView.DisplayName.Length == ServiceInfo.DisplayNameLength &&
+            ServiceInfoView.BinaryPathName.Length == ServiceInfo.BinaryPathNameLength &&
+            ServiceInfoView.StartName.Length == ServiceInfo.StartNameLength);
 }

@@ -414,6 +414,132 @@ Cleanup:
 
 static
 NTSTATUS
+ZpServerQuic_QueryService(
+    _In_ PCZP_STRING_VIEW ServiceNameView,
+    _Outptr_result_bytebuffer_(*PayloadLength) PBYTE* Payload,
+    _Out_ PULONG PayloadLength)
+{
+    SERVICE_STATUS_PROCESS ServiceStatus;
+    LPQUERY_SERVICE_CONFIGW Config = NULL;
+    ZP_SERVICE_INFO Info;
+    SC_HANDLE Manager = NULL, Service = NULL;
+    PWCHAR ServiceName;
+    DWORD BytesNeeded = 0;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    *Payload = NULL;
+    *PayloadLength = 0;
+    ServiceName = Mem_Alloc(((SIZE_T)ServiceNameView->Length + 1) *
+                            sizeof(WCHAR));
+    if (ServiceName == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    RtlCopyMemory(ServiceName,
+                  ServiceNameView->Buffer,
+                  (SIZE_T)ServiceNameView->Length * sizeof(WCHAR));
+    ServiceName[ServiceNameView->Length] = UNICODE_NULL;
+    Manager = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+    if (Manager == NULL)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    Service = OpenServiceW(Manager,
+                           ServiceName,
+                           SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG);
+    if (Service == NULL)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    if (!QueryServiceStatusEx(Service,
+                              SC_STATUS_PROCESS_INFO,
+                              (PBYTE)&ServiceStatus,
+                              sizeof(ServiceStatus),
+                              &BytesNeeded))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    if (QueryServiceConfigW(Service, NULL, 0, &BytesNeeded) ||
+        GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    Config = Mem_Alloc(BytesNeeded);
+    if (Config == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
+    }
+    if (!QueryServiceConfigW(Service, Config, BytesNeeded, &BytesNeeded))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+
+    Info.ServiceType = ServiceStatus.dwServiceType;
+    Info.CurrentState = ServiceStatus.dwCurrentState;
+    Info.ProcessId = ServiceStatus.dwProcessId;
+    Info.StartType = Config->dwStartType;
+    Info.ErrorControl = Config->dwErrorControl;
+    Info.ServiceName = ServiceName;
+    Info.ServiceNameLength = ServiceNameView->Length;
+    Info.DisplayName = Config->lpDisplayName;
+    Info.DisplayNameLength = Config->lpDisplayName != NULL ?
+                                 (ULONG)wcslen(Config->lpDisplayName) :
+                                 0;
+    Info.BinaryPathName = Config->lpBinaryPathName;
+    Info.BinaryPathNameLength = Config->lpBinaryPathName != NULL ?
+                                    (ULONG)wcslen(Config->lpBinaryPathName) :
+                                    0;
+    Info.StartName = Config->lpServiceStartName;
+    Info.StartNameLength = Config->lpServiceStartName != NULL ?
+                               (ULONG)wcslen(Config->lpServiceStartName) :
+                               0;
+    Status = ZpService_EncodeInfo(&Info,
+                                  NULL,
+                                  0,
+                                  PayloadLength);
+    *Payload = NT_SUCCESS(Status) ? Mem_Alloc(*PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && *Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpService_EncodeInfo(&Info,
+                                      *Payload,
+                                      *PayloadLength,
+                                      PayloadLength);
+    }
+    if (!NT_SUCCESS(Status) && *Payload != NULL)
+    {
+        Mem_Free(*Payload);
+        *Payload = NULL;
+    }
+
+Cleanup:
+    if (Config != NULL)
+    {
+        Mem_Free(Config);
+    }
+    if (Service != NULL)
+    {
+        CloseServiceHandle(Service);
+    }
+    if (Manager != NULL)
+    {
+        CloseServiceHandle(Manager);
+    }
+    Mem_Free(ServiceName);
+    return Status;
+}
+
+static
+NTSTATUS
 ZpServerQuic_SendResponse(
     _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
     _Inout_ PZP_CONNECTION Connection,
@@ -497,6 +623,7 @@ ZpServerQuic_RequestCallback(
     PBYTE AllocatedPayload = NULL;
     ULONG PayloadLength = 0;
     ULONG ProcessId;
+    ZP_STRING_VIEW ServiceName;
     NTSTATUS Status = STATUS_SUCCESS;
     LOGICAL SendResponse;
 
@@ -561,6 +688,20 @@ ZpServerQuic_RequestCallback(
                                                     &PayloadLength) :
                      STATUS_INVALID_PARAMETER;
         ResponsePayload = AllocatedPayload;
+    }
+    else if (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
+             Request->OperationId == ZP_SERVICE_OPERATION_QUERY)
+    {
+        Status = ZpService_DecodeQuery(Request->Payload,
+                                       Request->PayloadLength,
+                                       &ServiceName);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpServerQuic_QueryService(&ServiceName,
+                                               &AllocatedPayload,
+                                               &PayloadLength);
+            ResponsePayload = AllocatedPayload;
+        }
     }
     else
     {

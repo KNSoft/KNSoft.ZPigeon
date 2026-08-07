@@ -26,6 +26,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE ProcessListEvent;
     HANDLE ProcessInfoEvent;
     HANDLE ServiceListEvent;
+    HANDLE ServiceInfoEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
@@ -50,6 +51,14 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     volatile LONG ServiceListStatus;
     ULONG ServiceCount;
     LOGICAL FoundNamedService;
+    WCHAR ServiceName[256];
+    ULONG ServiceNameLength;
+    volatile LONG ServiceInfoStatus;
+    ULONG ServiceInfoType;
+    ULONG ServiceInfoStartType;
+    ULONG ServiceInfoNameLength;
+    ULONG ServiceInfoDisplayNameLength;
+    ULONG ServiceInfoBinaryPathLength;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -207,11 +216,48 @@ SDKIntegration_ServiceListCallback(
                 Service.DisplayName.Length != 0)
             {
                 TestContext->FoundNamedService = TRUE;
+                if (TestContext->ServiceNameLength == 0 &&
+                    Service.ServiceName.Length <
+                        ARRAYSIZE(TestContext->ServiceName))
+                {
+                    RtlCopyMemory(TestContext->ServiceName,
+                                  Service.ServiceName.Buffer,
+                                  (SIZE_T)Service.ServiceName.Length *
+                                      sizeof(WCHAR));
+                    TestContext->ServiceName[Service.ServiceName.Length] =
+                        UNICODE_NULL;
+                    TestContext->ServiceNameLength =
+                        Service.ServiceName.Length;
+                }
             }
         }
     }
     InterlockedExchange(&TestContext->ServiceListStatus, Status);
     SetEvent(TestContext->ServiceListEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_ServiceInfoCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ const ZP_SERVICE_INFO_VIEW* Info,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->ServiceInfoType = Info->ServiceType;
+        TestContext->ServiceInfoStartType = Info->StartType;
+        TestContext->ServiceInfoNameLength = Info->ServiceName.Length;
+        TestContext->ServiceInfoDisplayNameLength = Info->DisplayName.Length;
+        TestContext->ServiceInfoBinaryPathLength = Info->BinaryPathName.Length;
+    }
+    InterlockedExchange(&TestContext->ServiceInfoStatus, Status);
+    SetEvent(TestContext->ServiceInfoEvent);
 }
 
 static
@@ -544,6 +590,7 @@ TEST_FUNC(SDKQuicIntegration)
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL)
     };
 
@@ -565,6 +612,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.ProcessListEvent = Events[8];
     TestContext.ProcessInfoEvent = Events[9];
     TestContext.ServiceListEvent = Events[10];
+    TestContext.ServiceInfoEvent = Events[11];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -743,6 +791,30 @@ TEST_FUNC(SDKQuicIntegration)
         !NT_SUCCESS(TestContext.ServiceListStatus) ||
         TestContext.ServiceCount == 0 ||
         !TestContext.FoundNamedService)
+    {
+        goto Cleanup;
+    }
+
+    Status = ZpClient_QueryService(Client,
+                                   TestContext.ServiceName,
+                                   TestContext.ServiceNameLength,
+                                   SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                   SDKIntegration_ServiceInfoCallback,
+                                   &TestContext,
+                                   &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.ServiceInfoEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.ServiceInfoStatus) ||
+        TestContext.ServiceInfoType == 0 ||
+        TestContext.ServiceInfoNameLength != TestContext.ServiceNameLength ||
+        TestContext.ServiceInfoDisplayNameLength == 0 ||
+        TestContext.ServiceInfoBinaryPathLength == 0)
     {
         goto Cleanup;
     }
