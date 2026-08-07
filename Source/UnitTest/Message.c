@@ -26,6 +26,8 @@ TEST_FUNC(ProtocolMessage)
     ZP_REQUEST_VIEW RequestView;
     ZP_RESPONSE Response = { 7, STATUS_SUCCESS, ResponsePayload, sizeof(ResponsePayload) };
     ZP_RESPONSE_VIEW ResponseView;
+    ZP_CHANNEL_DATA_VIEW ChannelDataView;
+    ZP_CHANNEL_CLOSE ChannelClose;
     ZP_SYSTEM_INFO SystemInfo = {
         ZpSystemArchitectureX64,
         10,
@@ -100,7 +102,7 @@ TEST_FUNC(ProtocolMessage)
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value;
-    ULONG Length, Index, ExitCode;
+    ULONG Length, Index, ExitCode, CreditBytes;
 
     for (Index = 0; Index < ARRAYSIZE(Challenge); Index++)
     {
@@ -209,6 +211,54 @@ TEST_FUNC(ProtocolMessage)
             NT_SUCCESS(ZpMessage_DecodePing(ZpMessagePong, Buffer, Length, &Value)) &&
             Value == MAXULONGLONG);
     TEST_OK(ZpMessage_DecodePing(ZpMessageRequest, Buffer, Length, &Value) == STATUS_INVALID_PARAMETER);
+
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeChannelData(9,
+                                                   RequestPayload,
+                                                   sizeof(RequestPayload),
+                                                   Buffer,
+                                                   sizeof(Buffer),
+                                                   &Length)) &&
+            Length == sizeof(ULONGLONG) + sizeof(RequestPayload) &&
+            NT_SUCCESS(ZpMessage_DecodeChannelData(Buffer,
+                                                   Length,
+                                                   &ChannelDataView)) &&
+            ChannelDataView.ChannelId == 9 &&
+            ChannelDataView.Data.Length == sizeof(RequestPayload) &&
+            RtlCompareMemory(ChannelDataView.Data.Buffer,
+                             RequestPayload,
+                             sizeof(RequestPayload)) == sizeof(RequestPayload));
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeChannelClose(9,
+                                                    STATUS_CANCELLED,
+                                                    Buffer,
+                                                    sizeof(Buffer),
+                                                    &Length)) &&
+            NT_SUCCESS(ZpMessage_DecodeChannelClose(Buffer,
+                                                    Length,
+                                                    &ChannelClose)) &&
+            ChannelClose.ChannelId == 9 &&
+            ChannelClose.Status == STATUS_CANCELLED);
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeChannelWindow(9,
+                                                     ZP_CHANNEL_DATA_MAX_SIZE,
+                                                     Buffer,
+                                                     sizeof(Buffer),
+                                                     &Length)) &&
+            NT_SUCCESS(ZpMessage_DecodeChannelWindow(Buffer,
+                                                     Length,
+                                                     &Value,
+                                                     &CreditBytes)) &&
+            Value == 9 &&
+            CreditBytes == ZP_CHANNEL_DATA_MAX_SIZE);
+    TEST_OK(ZpMessage_EncodeChannelData(9,
+                                        NULL,
+                                        0,
+                                        NULL,
+                                        0,
+                                        &Length) == STATUS_INVALID_PARAMETER &&
+            ZpMessage_EncodeChannelWindow(9,
+                                          ZP_CHANNEL_WINDOW_MAX_SIZE + 1,
+                                          NULL,
+                                          0,
+                                          &Length) == STATUS_INVALID_PARAMETER);
 
     TEST_OK(NT_SUCCESS(ZpSystem_EncodeInfo(&SystemInfo, Buffer, sizeof(Buffer), &Length)) &&
             Length == 48 &&

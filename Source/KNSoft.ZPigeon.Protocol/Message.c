@@ -6,7 +6,7 @@ ZpMessage_IsTypeValid(
     _In_ ZP_MESSAGE_TYPE MessageType)
 {
     return (MessageType >= ZpMessageClientHello && MessageType <= ZpMessageDisconnect) ||
-           (MessageType >= ZpMessageRequest && MessageType <= ZpMessagePong);
+           (MessageType >= ZpMessageRequest && MessageType <= ZpMessageChannelWindow);
 }
 
 static
@@ -209,6 +209,14 @@ ZpMessage_ValidateBody(
 
         case ZpMessageChannelClose:
             return BodyLength == 12 && ZpReadUInt64(Body) != 0 ? STATUS_SUCCESS : STATUS_DATA_ERROR;
+
+        case ZpMessageChannelWindow:
+            return BodyLength == 12 &&
+                   ZpReadUInt64(Body) != 0 &&
+                   ZpReadUInt32(Body + 8) != 0 &&
+                   ZpReadUInt32(Body + 8) <= ZP_CHANNEL_WINDOW_MAX_SIZE ?
+                       STATUS_SUCCESS :
+                       STATUS_DATA_ERROR;
 
         case ZpMessagePing:
         case ZpMessagePong:
@@ -640,6 +648,172 @@ ZpMessage_DecodeCancel(
     if (NT_SUCCESS(Status))
     {
         *RequestId = ZpReadUInt64(Body);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpMessage_EncodeChannelData(
+    _In_ ULONGLONG ChannelId,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+    ULONG RequiredSize;
+
+    if (ChannelId == 0 ||
+        DataLength == 0 ||
+        DataLength > ZP_CHANNEL_DATA_MAX_SIZE ||
+        Data == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = sizeof(ChannelId) + DataLength;
+    Status = ZpMessage_PrepareOutput(Buffer,
+                                     BufferSize,
+                                     RequiredSize,
+                                     BytesWritten);
+    if (!NT_SUCCESS(Status) || Buffer == NULL)
+    {
+        return Status;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt64(&Writer, ChannelId);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteData(&Writer, Data, DataLength);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpMessage_DecodeChannelData(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_CHANNEL_DATA_VIEW View)
+{
+    const BYTE* Buffer = Body;
+    NTSTATUS Status;
+
+    Status = ZpMessage_ValidateBody(ZpMessageChannelData,
+                                    Buffer,
+                                    BodyLength);
+    if (NT_SUCCESS(Status))
+    {
+        View->ChannelId = ZpReadUInt64(Buffer);
+        View->Data.Buffer = Buffer + sizeof(ULONGLONG);
+        View->Data.Length = BodyLength - sizeof(ULONGLONG);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpMessage_EncodeChannelClose(
+    _In_ ULONGLONG ChannelId,
+    _In_ NTSTATUS StatusCode,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+
+    if (ChannelId == 0)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpMessage_PrepareOutput(Buffer,
+                                     BufferSize,
+                                     sizeof(ULONGLONG) + sizeof(ULONG),
+                                     BytesWritten);
+    if (!NT_SUCCESS(Status) || Buffer == NULL)
+    {
+        return Status;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt64(&Writer, ChannelId);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt32(&Writer, (ULONG)StatusCode);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpMessage_DecodeChannelClose(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_CHANNEL_CLOSE Message)
+{
+    const BYTE* Buffer = Body;
+    NTSTATUS Status;
+
+    Status = ZpMessage_ValidateBody(ZpMessageChannelClose,
+                                    Buffer,
+                                    BodyLength);
+    if (NT_SUCCESS(Status))
+    {
+        Message->ChannelId = ZpReadUInt64(Buffer);
+        Message->Status = (NTSTATUS)ZpReadUInt32(Buffer + sizeof(ULONGLONG));
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpMessage_EncodeChannelWindow(
+    _In_ ULONGLONG ChannelId,
+    _In_ ULONG CreditBytes,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+
+    if (ChannelId == 0 ||
+        CreditBytes == 0 ||
+        CreditBytes > ZP_CHANNEL_WINDOW_MAX_SIZE)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpMessage_PrepareOutput(Buffer,
+                                     BufferSize,
+                                     sizeof(ULONGLONG) + sizeof(ULONG),
+                                     BytesWritten);
+    if (!NT_SUCCESS(Status) || Buffer == NULL)
+    {
+        return Status;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt64(&Writer, ChannelId);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt32(&Writer, CreditBytes);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpMessage_DecodeChannelWindow(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONG CreditBytes)
+{
+    const BYTE* Buffer = Body;
+    NTSTATUS Status;
+
+    Status = ZpMessage_ValidateBody(ZpMessageChannelWindow,
+                                    Buffer,
+                                    BodyLength);
+    if (NT_SUCCESS(Status))
+    {
+        *ChannelId = ZpReadUInt64(Buffer);
+        *CreditBytes = ZpReadUInt32(Buffer + sizeof(ULONGLONG));
     }
     return Status;
 }

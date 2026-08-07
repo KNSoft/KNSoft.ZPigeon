@@ -35,15 +35,16 @@ TEST_FUNC(NetworkConnection)
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE] = { 0x04 };
     BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE] = { 0 };
     BYTE Signature[ZP_CLIENT_SIGNATURE_SIZE] = { 0 };
-    BYTE PingBody[sizeof(ULONGLONG)] = { 1 };
+    BYTE PingBody[sizeof(ULONGLONG)] = { 1 }, ChannelWindowBody[16];
     BYTE HelloBody[128], ReadyBody[16], DisconnectBody[32], HelloFrame[160];
-    BYTE ChallengeFrame[64], AuthenticateFrame[96], ReadyFrame[32], PingFrame[32], DisconnectFrame[64];
+    BYTE ChallengeFrame[64], AuthenticateFrame[96], ReadyFrame[32], PingFrame[32], ChannelWindowFrame[32];
+    BYTE DisconnectFrame[64];
     BYTE CoalescedFrames[64], InvalidPrefix[sizeof(ULONG)] = { 0 };
     BYTE MaximumPrefix[sizeof(ULONG)] = { 0, 0, 0, 1 };
     CONNECTION_TEST_CONTEXT Context = { 0 };
     ZP_CONNECTION Connection;
     ULONG BodyLength, FrameLength, HelloFrameLength, ChallengeFrameLength, AuthenticateFrameLength;
-    ULONG ReadyFrameLength, PingFrameLength, DisconnectFrameLength;
+    ULONG ReadyFrameLength, PingFrameLength, ChannelWindowFrameLength, DisconnectFrameLength;
 
     ClientHello.ClientPublicKey = PublicKey;
     TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(&ClientHello,
@@ -81,6 +82,17 @@ TEST_FUNC(NetworkConnection)
                                      PingFrame,
                                      sizeof(PingFrame),
                                      &PingFrameLength)));
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeChannelWindow(2,
+                                                     ZP_CHANNEL_DATA_MAX_SIZE,
+                                                     ChannelWindowBody,
+                                                     sizeof(ChannelWindowBody),
+                                                     &BodyLength)));
+    TEST_OK(NT_SUCCESS(ZpFrame_Encode(ZpMessageChannelWindow,
+                                     ChannelWindowBody,
+                                     BodyLength,
+                                     ChannelWindowFrame,
+                                     sizeof(ChannelWindowFrame),
+                                     &ChannelWindowFrameLength)));
     TEST_OK(NT_SUCCESS(ZpMessage_EncodeDisconnect(&Disconnect,
                                                   DisconnectBody,
                                                   sizeof(DisconnectBody),
@@ -137,6 +149,13 @@ TEST_FUNC(NetworkConnection)
             Context.States[2] == ZpConnectionStateReady &&
             ZpConnection_GetState(&Connection) == ZpConnectionStateReady);
     TEST_OK(NT_SUCCESS(ZpConnection_NotifyMessageSent(&Connection, ZpMessagePong)));
+    TEST_OK(NT_SUCCESS(ZpConnection_Receive(&Connection,
+                                           ChannelWindowFrame,
+                                           ChannelWindowFrameLength)) &&
+            Context.Count == 4 &&
+            Context.MessageTypes[3] == ZpMessageChannelWindow &&
+            Context.States[3] == ZpConnectionStateReady);
+    TEST_OK(NT_SUCCESS(ZpConnection_NotifyMessageSent(&Connection, ZpMessageChannelWindow)));
     TEST_OK(ZpConnection_NotifyMessageSent(&Connection, ZpMessageReady) == STATUS_INVALID_DEVICE_STATE);
     ZpConnection_Uninitialize(&Connection);
 

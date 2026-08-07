@@ -147,7 +147,8 @@ ZpConnection_GetReceiveState(
             break;
 
         case ZpConnectionStateReady:
-            if (MessageType >= ZpMessageRequest && MessageType <= ZpMessagePong)
+            if (MessageType >= ZpMessageRequest &&
+                MessageType <= ZpMessageChannelWindow)
             {
                 *State = ZpConnectionStateReady;
                 return STATUS_SUCCESS;
@@ -286,7 +287,8 @@ ZpConnection_NotifyMessageSent(
             break;
 
         case ZpConnectionStateReady:
-            if (MessageType >= ZpMessageRequest && MessageType <= ZpMessagePong)
+            if (MessageType >= ZpMessageRequest &&
+                MessageType <= ZpMessageChannelWindow)
             {
                 return STATUS_SUCCESS;
             }

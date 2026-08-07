@@ -287,8 +287,9 @@ BYTE[] Type-specific body
 | `0x15` | `ChannelClose` | 双向 | `UINT64 ChannelId`、`INT32 Status` |
 | `0x16` | `Ping` | 双向 | `UINT64 Token` |
 | `0x17` | `Pong` | 双向 | `UINT64 Token` |
+| `0x18` | `ChannelWindow` | 双向 | `UINT64 ChannelId`、非零 `UINT32 CreditBytes` |
 
-其他值在 Core Version 1 中非法。消息类型的最小 Body 长度由 Protocol 解码器校验。`ChannelData` 单帧数据最大为 1 MiB，避免大块传输长期占用连接发送队列；其他消息仍受 16 MiB Frame 上限约束。
+其他值在 Core Version 1 中非法。消息类型的最小 Body 长度由 Protocol 解码器校验。`ChannelData` 单帧数据最大为 1 MiB，单次 `ChannelWindow` Credit 最大为 16 MiB，避免大块传输长期占用连接发送队列；其他消息仍受 16 MiB Frame 上限约束。
 
 模块记录编码为：
 
@@ -309,11 +310,14 @@ UINT32 Capabilities
 - `Response`：返回对应请求的 `NTSTATUS` 和结果；
 - `Event`：传递已建立订阅的事件；
 - `ChannelData`：传递文件或终端等长生命周期数据；
+- `ChannelWindow`：由接收方增加指定 Channel 的可发送字节额度；
 - `Ping`、`Pong`：连接存活检测。
 
 `RequestId`、`ChannelId` 和 `SubscriptionId` 均为连接内非零 `UINT64`，由创建它的一方分配，在对应对象结束前不得复用。`ModuleId`、`OperationId` 和 `EventId` 为非零 `UINT16`。未匹配的标识视为协议违规。
 
 `TimeoutMilliseconds` 是接收方从完整收到 Request 起计算的处理预算；0 表示协议层不额外施加超时。发送方 SDK 仍维护本地 Deadline：Deadline 到期后在本地以 `STATUS_IO_TIMEOUT` 完成操作，尽力发送 `Cancel`，并忽略迟到的 Response。显式取消在本地以 `STATUS_CANCELLED` 完成，`Cancel` 不要求单独响应。
+
+Channel 使用接收方授信的字节窗口提供背压：新 Channel 建立后发送额度为 0，接收方发送 `ChannelWindow` 后发送方才能发送不超过累计剩余额度的 `ChannelData`；每次授信非零且不超过 16 MiB，剩余额度不得溢出 64 位计数。SDK 把 Data 回调返回视为对应 Buffer 已消费，并自动补回等量窗口。任一方发送一次 `ChannelClose` 即终止 Channel，Status 为终止结果且不回送第二个 Close；未知、已关闭或额度违规的 ChannelId 视为协议违规。Client 创建的 ChannelId 使用奇数，Server 创建的 ChannelId 使用偶数，连接内单调分配且关闭前不复用。
 
 ### 7.2 固定 Codec
 

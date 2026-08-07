@@ -7,6 +7,7 @@ EXTERN_C_START
 #define ZP_CORE_VERSION 1
 #define ZP_FRAME_MAX_BODY_SIZE 0x01000000UL
 #define ZP_CHANNEL_DATA_MAX_SIZE 0x00100000UL
+#define ZP_CHANNEL_WINDOW_MAX_SIZE 0x01000000UL
 #define ZP_CODEC_MAX_ELEMENT_COUNT 0x00100000UL
 #define ZP_MODULE_MAX_COUNT 64
 #define ZP_CLIENT_PUBLIC_KEY_SIZE 65
@@ -28,7 +29,8 @@ typedef enum _ZP_MESSAGE_TYPE
     ZpMessageChannelData = 0x14,
     ZpMessageChannelClose = 0x15,
     ZpMessagePing = 0x16,
-    ZpMessagePong = 0x17
+    ZpMessagePong = 0x17,
+    ZpMessageChannelWindow = 0x18
 } ZP_MESSAGE_TYPE;
 
 typedef struct _ZP_BUFFER_VIEW
@@ -171,6 +173,18 @@ typedef struct _ZP_RESPONSE_VIEW
 } ZP_RESPONSE_VIEW, *PZP_RESPONSE_VIEW;
 
 typedef const ZP_RESPONSE_VIEW* PCZP_RESPONSE_VIEW;
+
+typedef struct _ZP_CHANNEL_DATA_VIEW
+{
+    ULONGLONG ChannelId;
+    ZP_BUFFER_VIEW Data;
+} ZP_CHANNEL_DATA_VIEW, *PZP_CHANNEL_DATA_VIEW;
+
+typedef struct _ZP_CHANNEL_CLOSE
+{
+    ULONGLONG ChannelId;
+    NTSTATUS Status;
+} ZP_CHANNEL_CLOSE, *PZP_CHANNEL_CLOSE;
 
 VOID
 ZpCodec_InitializeWriter(
@@ -387,6 +401,50 @@ ZpMessage_DecodeCancel(
     _In_reads_bytes_(BodyLength) const VOID* Body,
     _In_ ULONG BodyLength,
     _Out_ PULONGLONG RequestId);
+
+NTSTATUS
+ZpMessage_EncodeChannelData(
+    _In_ ULONGLONG ChannelId,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodeChannelData(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_CHANNEL_DATA_VIEW View);
+
+NTSTATUS
+ZpMessage_EncodeChannelClose(
+    _In_ ULONGLONG ChannelId,
+    _In_ NTSTATUS Status,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodeChannelClose(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PZP_CHANNEL_CLOSE Message);
+
+NTSTATUS
+ZpMessage_EncodeChannelWindow(
+    _In_ ULONGLONG ChannelId,
+    _In_ ULONG CreditBytes,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpMessage_DecodeChannelWindow(
+    _In_reads_bytes_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONG CreditBytes);
 
 NTSTATUS
 ZpMessage_EncodePing(
