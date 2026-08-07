@@ -54,6 +54,144 @@ ZpFile_DecodePath(
 }
 
 NTSTATUS
+ZpFile_EncodeOpenReadRequest(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG Offset,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize;
+    NTSTATUS Status;
+
+    if (PathLength == 0 ||
+        PathLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Path == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = sizeof(ULONGLONG) +
+                   sizeof(ULONG) +
+                   (ULONGLONG)PathLength * sizeof(WCHAR);
+    if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
+    {
+        return STATUS_BUFFER_OVERFLOW;
+    }
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < RequiredSize)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt64(&Writer, Offset);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer, Path, PathLength);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpFile_DecodeOpenReadRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW Path,
+    _Out_ PULONGLONG Offset)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt64(&Reader, Offset);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(&Reader, Path);
+    }
+    if (!NT_SUCCESS(Status) || Path->Length == 0 || Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpFile_EncodeOpenReadResponse(
+    _In_ ULONGLONG ChannelId,
+    _In_ ULONGLONG FileSize,
+    _In_ ULONGLONG Offset,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+
+    if (ChannelId == 0 || (ChannelId & 1) != 0 || Offset > FileSize)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *BytesWritten = 3 * sizeof(ULONGLONG);
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < *BytesWritten)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt64(&Writer, ChannelId);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt64(&Writer, FileSize);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt64(&Writer, Offset);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpFile_DecodeOpenReadResponse(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONGLONG FileSize,
+    _Out_ PULONGLONG Offset)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    if (PayloadLength != 3 * sizeof(ULONGLONG))
+    {
+        return STATUS_DATA_ERROR;
+    }
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt64(&Reader, ChannelId);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt64(&Reader, FileSize);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt64(&Reader, Offset);
+    }
+    if (NT_SUCCESS(Status) &&
+        (*ChannelId == 0 || (*ChannelId & 1) != 0 || *Offset > *FileSize))
+    {
+        Status = STATUS_DATA_ERROR;
+    }
+    return Status;
+}
+
+NTSTATUS
 ZpFile_EncodeInfo(
     _In_ PCZP_FILE_INFO Info,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,

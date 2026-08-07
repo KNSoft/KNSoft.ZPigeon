@@ -8,6 +8,7 @@ EXTERN_C_START
 #define ZP_FILE_MODULE_VERSION 1
 #define ZP_FILE_OPERATION_ENUMERATE 1
 #define ZP_FILE_OPERATION_QUERY 2
+#define ZP_FILE_OPERATION_OPEN_READ 3
 
 typedef struct _ZP_FILE_INFO
 {
@@ -57,6 +58,39 @@ ZpFile_DecodePath(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_STRING_VIEW Path);
+
+NTSTATUS
+ZpFile_EncodeOpenReadRequest(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG Offset,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeOpenReadRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW Path,
+    _Out_ PULONGLONG Offset);
+
+NTSTATUS
+ZpFile_EncodeOpenReadResponse(
+    _In_ ULONGLONG ChannelId,
+    _In_ ULONGLONG FileSize,
+    _In_ ULONGLONG Offset,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeOpenReadResponse(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONGLONG FileSize,
+    _Out_ PULONGLONG Offset);
 
 NTSTATUS
 ZpFile_EncodeInfo(

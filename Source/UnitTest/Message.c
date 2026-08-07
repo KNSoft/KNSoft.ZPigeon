@@ -101,7 +101,7 @@ TEST_FUNC(ProtocolMessage)
     ZP_FILE_RECORD_VIEW FileRecord;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
-    ULONGLONG Value;
+    ULONGLONG Value, FileSize, FileOffset;
     ULONG Length, Index, ExitCode, CreditBytes;
 
     for (Index = 0; Index < ARRAYSIZE(Challenge); Index++)
@@ -380,6 +380,45 @@ TEST_FUNC(ProtocolMessage)
                                          &Length)) &&
             NT_SUCCESS(ZpFile_DecodePath(Buffer, Length, &FilePathView)) &&
             FilePathView.Length == 11);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenReadRequest(L"C:\\Test.bin",
+                                                    11,
+                                                    4096,
+                                                    Buffer,
+                                                    sizeof(Buffer),
+                                                    &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeOpenReadRequest(Buffer,
+                                                    Length,
+                                                    &FilePathView,
+                                                    &FileOffset)) &&
+            FilePathView.Length == 11 &&
+            FileOffset == 4096);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenReadResponse(2,
+                                                     8192,
+                                                     4096,
+                                                     Buffer,
+                                                     sizeof(Buffer),
+                                                     &Length)) &&
+            Length == 3 * sizeof(ULONGLONG) &&
+            NT_SUCCESS(ZpFile_DecodeOpenReadResponse(Buffer,
+                                                     Length,
+                                                     &Value,
+                                                     &FileSize,
+                                                     &FileOffset)) &&
+            Value == 2 &&
+            FileSize == 8192 &&
+            FileOffset == 4096);
+    TEST_OK(ZpFile_EncodeOpenReadResponse(3,
+                                          8192,
+                                          4096,
+                                          Buffer,
+                                          sizeof(Buffer),
+                                          &Length) == STATUS_INVALID_PARAMETER &&
+            ZpFile_EncodeOpenReadResponse(2,
+                                          4095,
+                                          4096,
+                                          Buffer,
+                                          sizeof(Buffer),
+                                          &Length) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpFile_EncodeInfo(&FileInfo,
                                          Buffer,
                                          sizeof(Buffer),

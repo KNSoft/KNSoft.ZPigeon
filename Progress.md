@@ -57,10 +57,11 @@
 - 固定 File 模块 Version 1 和 Query 操作，实现路径 Codec、文件属性/大小/创建/访问/修改时间 Codec、Server 原生属性查询及 Client `ZpClient_QueryFile` 异步 API，并以 UnitTest 自身文件完成真实端到端验证；
 - 实现 File.Enumerate：返回排除点目录项的名称、属性、大小和时间元数据，Client 提供 View 异步 API，并在真实输出目录中定位 UnitTest 自身文件完成端到端验证；
 - 定稿通用 Channel 背压语义：新增 `ChannelWindow` 消息、零初始额度、接收方消费后补窗、单次 Close 终止及 Client 奇数/Server 偶数 ChannelId 规则，并实现 ChannelData/ChannelClose/ChannelWindow 类型化 Codec 与 Ready 状态门禁；
+- 固定 File.OpenRead 为 OperationId 3：请求编码断点 Offset 与 Path，成功响应编码 Server 偶数 ChannelId、FileSize 和确认 Offset，并实现严格的请求/响应 Codec；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 225 项断言全部通过，其中包含通用 Channel Codec、File.Enumerate/File.Query 和既有管理操作端到端验证。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 228 项断言全部通过，其中包含通用 Channel Codec、File.OpenRead Payload、File.Enumerate/File.Query 和既有管理操作端到端验证。
 
 ## 下一步
 
