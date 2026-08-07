@@ -142,6 +142,7 @@
     </ClCompile>
     <ClCompile Include="Network\Main.c" />
     <ClCompile Include="Network\Quic.c" />
+    <ClCompile Include="Network\Registry.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Network\Config.inl" />

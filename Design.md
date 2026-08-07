@@ -508,6 +508,8 @@ EnumerateKeysPage 和 EnumerateValuesPage 请求依次编码 Root、View、`UINT
 
 QueryValue 请求编码 Root、View、Path 和可空 ValueName；成功响应编码 Windows 原生 `UINT32 Type` 和长度前缀原始 Data。SetValue 请求编码 Root、View、Type、Path、ValueName 和原始 Data；Version 1 保留 Windows Value Type 与字节表示，不做文本转码或环境变量展开。单值 Data 最大 1 MiB；`REG_SZ`、`REG_EXPAND_SZ` 和 `REG_MULTI_SZ` 的终止符语义由调用方负责，Server 精确写入线上字节。DeleteValue 复用 QueryValue 请求，允许删除默认值。
 
+Client 分页 API 以 `Cursor == NULL` 表示 CursorPresent=0；非空 Cursor 指针配合零长度表示 CursorPresent=1 且名称为空，即从默认值名称之后继续。响应 Page 和 Value 中的 View 仅在回调期间有效，与其他 Client 异步 API 的 Buffer 生命周期一致。
+
 CreateKey 请求编码 Root、View 和 Path，Path 必须非空；操作是幂等的，键已存在仍成功。DeleteKey 复用同一请求，只允许删除非空且无子键的目标，使用所选 WOW64 View，不提供递归删除，避免一次请求隐式扩大破坏范围。所有 Registry 原生错误映射为 `NTSTATUS` 原样返回；成功的 SetValue、DeleteValue、CreateKey 和 DeleteKey Response Payload 均为空。
 
 大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口和断点续传按上述通用 Channel 与 File.OpenRead 规则处理，不预先建设通用虚拟流框架。

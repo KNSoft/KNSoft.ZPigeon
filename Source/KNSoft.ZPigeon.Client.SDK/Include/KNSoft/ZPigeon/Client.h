@@ -4,6 +4,7 @@
 #include <KNSoft/ZPigeon/EventLog.h>
 #include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Process.h>
+#include <KNSoft/ZPigeon/Registry.h>
 #include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
 #include <KNSoft/ZPigeon/Terminal.h>
@@ -127,6 +128,22 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ NTSTATUS Status,
     _In_opt_ PCZP_FILE_HASH_VIEW Hash,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_REGISTRY_PAGE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_REGISTRY_PAGE_VIEW Page,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_REGISTRY_VALUE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_REGISTRY_VALUE_VIEW Value,
     _In_opt_ PVOID Context);
 
 typedef
@@ -340,6 +357,112 @@ ZpClient_StopService(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_reads_(ServiceNameLength) PCWCH ServiceName,
     _In_ ULONG ServiceNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_EnumerateRegistryKeysPage(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(CursorLength) PCWCH Cursor,
+    _In_ ULONG CursorLength,
+    _In_ ULONG MaxEntries,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REGISTRY_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_EnumerateRegistryValuesPage(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(CursorLength) PCWCH Cursor,
+    _In_ ULONG CursorLength,
+    _In_ ULONG MaxEntries,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REGISTRY_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_QueryRegistryValue(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(ValueNameLength) PCWCH ValueName,
+    _In_ ULONG ValueNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REGISTRY_VALUE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_SetRegistryValue(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(ValueNameLength) PCWCH ValueName,
+    _In_ ULONG ValueNameLength,
+    _In_ ULONG Type,
+    _In_reads_bytes_opt_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_DeleteRegistryValue(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(ValueNameLength) PCWCH ValueName,
+    _In_ ULONG ValueNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_CreateRegistryKey(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_DeleteRegistryKey(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,

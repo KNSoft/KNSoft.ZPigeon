@@ -15,6 +15,9 @@
     <ClCompile Include="Network\Quic.c">
       <Filter>Network</Filter>
     </ClCompile>
+    <ClCompile Include="Network\Registry.c">
+      <Filter>Network</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Network\Authentication.inl">

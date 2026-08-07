@@ -42,6 +42,13 @@ typedef struct _SDK_TEST_CONTEXT
     ULONG FilePageFileCount;
     WCHAR FilePageCursor[32];
     ULONG FilePageCursorLength;
+    ULONG RegistryPageCount;
+    NTSTATUS RegistryPageStatus;
+    ULONG RegistryRecordCount;
+    ULONG RegistryValueCount;
+    NTSTATUS RegistryValueStatus;
+    ULONG RegistryValueType;
+    ULONG RegistryValueDataLength;
     ULONG EventPageCount;
     NTSTATUS EventPageStatus;
     ULONG EventPageRecordCount;
@@ -265,6 +272,47 @@ SDKTest_FilePageCallback(
                           Page->NextCursor.Buffer,
                           (SIZE_T)Page->NextCursor.Length * sizeof(WCHAR));
         }
+    }
+}
+
+static
+VOID
+NTAPI
+SDKTest_RegistryPageCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_REGISTRY_PAGE_VIEW Page,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->RegistryPageCount++;
+    TestContext->RegistryPageStatus = Status;
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->RegistryRecordCount = Page->Records.Count;
+    }
+}
+
+static
+VOID
+NTAPI
+SDKTest_RegistryValueCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_REGISTRY_VALUE_VIEW Value,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->RegistryValueCount++;
+    TestContext->RegistryValueStatus = Status;
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->RegistryValueType = Value->Type;
+        TestContext->RegistryValueDataLength = Value->Data.Length;
     }
 }
 
@@ -687,6 +735,15 @@ TEST_FUNC(SDKContract)
     };
     BYTE FilePageResponse[256];
     ULONG FilePageResponseLength;
+    ZP_REGISTRY_KEY_RECORD RegistryKeyRecords[] = {
+        { L"Child", 5, 123 }
+    };
+    ZP_REGISTRY_VALUE_RECORD RegistryValueRecords[] = {
+        { L"", 0, 4, sizeof(ULONG) }
+    };
+    BYTE RegistryResponse[256];
+    ULONG RegistryResponseLength;
+    ULONG RegistryValueData = 42;
     ZP_EVENT_LOG_RECORD EventRecords[] = {
         {
             EventBookmark,
@@ -1004,6 +1061,167 @@ TEST_FUNC(SDKContract)
                              FileDigest,
                              sizeof(FileDigest)) == sizeof(FileDigest));
     ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_EnumerateRegistryKeysPage(
+                           Client,
+                           ZpRegistryCurrentUser,
+                           ZpRegistryViewDefault,
+                           L"Software\\KNSoft",
+                           15,
+                           NULL,
+                           0,
+                           4,
+                           1000,
+                           SDKTest_RegistryPageCallback,
+                           &TestContext,
+                           &Request)) &&
+            TestContext.SendModuleId == ZP_REGISTRY_MODULE_ID &&
+            TestContext.SendOperationId ==
+                ZP_REGISTRY_OPERATION_ENUMERATE_KEYS_PAGE);
+    TEST_OK(NT_SUCCESS(ZpRegistry_EncodeKeyPage(
+                           FALSE,
+                           RegistryKeyRecords,
+                           ARRAYSIZE(RegistryKeyRecords),
+                           NULL,
+                           0,
+                           RegistryResponse,
+                           sizeof(RegistryResponse),
+                           &RegistryResponseLength)));
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload.Buffer = RegistryResponse;
+    Response.Payload.Length = RegistryResponseLength;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.RegistryPageCount == 1 &&
+            TestContext.RegistryPageStatus == STATUS_SUCCESS &&
+            TestContext.RegistryRecordCount == 1);
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_EnumerateRegistryValuesPage(
+                           Client,
+                           ZpRegistryCurrentUser,
+                           ZpRegistryView32,
+                           L"Software\\KNSoft",
+                           15,
+                           L"",
+                           0,
+                           4,
+                           1000,
+                           SDKTest_RegistryPageCallback,
+                           &TestContext,
+                           &Request)) &&
+            TestContext.SendOperationId ==
+                ZP_REGISTRY_OPERATION_ENUMERATE_VALUES_PAGE);
+    TEST_OK(NT_SUCCESS(ZpRegistry_EncodeValuePage(
+                           FALSE,
+                           RegistryValueRecords,
+                           ARRAYSIZE(RegistryValueRecords),
+                           NULL,
+                           0,
+                           RegistryResponse,
+                           sizeof(RegistryResponse),
+                           &RegistryResponseLength)));
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Payload.Length = RegistryResponseLength;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.RegistryPageCount == 2 &&
+            TestContext.RegistryRecordCount == 1);
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_QueryRegistryValue(
+                           Client,
+                           ZpRegistryCurrentUser,
+                           ZpRegistryViewDefault,
+                           L"Software\\KNSoft",
+                           15,
+                           L"Value",
+                           5,
+                           1000,
+                           SDKTest_RegistryValueCallback,
+                           &TestContext,
+                           &Request)) &&
+            TestContext.SendOperationId == ZP_REGISTRY_OPERATION_QUERY_VALUE);
+    TEST_OK(NT_SUCCESS(ZpRegistry_EncodeValue(4,
+                                              &RegistryValueData,
+                                              sizeof(RegistryValueData),
+                                              RegistryResponse,
+                                              sizeof(RegistryResponse),
+                                              &RegistryResponseLength)));
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Payload.Length = RegistryResponseLength;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.RegistryValueCount == 1 &&
+            TestContext.RegistryValueStatus == STATUS_SUCCESS &&
+            TestContext.RegistryValueType == 4 &&
+            TestContext.RegistryValueDataLength == sizeof(ULONG));
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_SetRegistryValue(
+                           Client,
+                           ZpRegistryCurrentUser,
+                           ZpRegistryViewDefault,
+                           L"Software\\KNSoft",
+                           15,
+                           L"Value",
+                           5,
+                           4,
+                           &RegistryValueData,
+                           sizeof(RegistryValueData),
+                           1000,
+                           SDKTest_RequestStatusCallback,
+                           &TestContext,
+                           &Request)) &&
+            TestContext.SendOperationId == ZP_REGISTRY_OPERATION_SET_VALUE);
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Payload.Buffer = NULL;
+    Response.Payload.Length = 0;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.RequestStatusCount == 1);
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_DeleteRegistryValue(
+                           Client,
+                           ZpRegistryCurrentUser,
+                           ZpRegistryViewDefault,
+                           L"Software\\KNSoft",
+                           15,
+                           L"Value",
+                           5,
+                           1000,
+                           SDKTest_RequestStatusCallback,
+                           &TestContext,
+                           &Request)) &&
+            TestContext.SendOperationId == ZP_REGISTRY_OPERATION_DELETE_VALUE);
+    Response.RequestId = TestContext.SendRequestId;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.RequestStatusCount == 2);
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_CreateRegistryKey(
+                           Client,
+                           ZpRegistryCurrentUser,
+                           ZpRegistryViewDefault,
+                           L"Software\\KNSoft\\Child",
+                           21,
+                           1000,
+                           SDKTest_RequestStatusCallback,
+                           &TestContext,
+                           &Request)) &&
+            TestContext.SendOperationId == ZP_REGISTRY_OPERATION_CREATE_KEY);
+    Response.RequestId = TestContext.SendRequestId;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.RequestStatusCount == 3);
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_DeleteRegistryKey(
+                           Client,
+                           ZpRegistryCurrentUser,
+                           ZpRegistryViewDefault,
+                           L"Software\\KNSoft\\Child",
+                           21,
+                           1000,
+                           SDKTest_RequestStatusCallback,
+                           &TestContext,
+                           &Request)) &&
+            TestContext.SendOperationId == ZP_REGISTRY_OPERATION_DELETE_KEY);
+    Response.RequestId = TestContext.SendRequestId;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.RequestStatusCount == 4);
+    ZpRequest_Close(Request);
+    TestContext.RequestStatusCount = 0;
     TEST_OK(NT_SUCCESS(ZpClient_QueryEventLogPage(
                            Client,
                            ZpEventLogStartOldest,
