@@ -9,6 +9,7 @@
 #include <KNSoft/ZPigeon/Terminal.h>
 
 #include <Bcrypt.h>
+#include <stdlib.h>
 #include <Winsvc.h>
 
 #pragma comment(lib, "Advapi32.lib")
@@ -886,22 +887,54 @@ ZpServerQuic_GetFileInfo(
 }
 
 static
+int
+__cdecl
+ZpServerQuic_CompareFileEntries(
+    _In_ const VOID* Left,
+    _In_ const VOID* Right)
+{
+    const PZP_SERVER_FILE_ENTRY* LeftEntry = Left;
+    const PZP_SERVER_FILE_ENTRY* RightEntry = Right;
+    int Result;
+
+    Result = CompareStringOrdinal((*LeftEntry)->Data.cFileName,
+                                  -1,
+                                  (*RightEntry)->Data.cFileName,
+                                  -1,
+                                  TRUE);
+    if (Result == CSTR_EQUAL)
+    {
+        Result = CompareStringOrdinal((*LeftEntry)->Data.cFileName,
+                                      -1,
+                                      (*RightEntry)->Data.cFileName,
+                                      -1,
+                                      FALSE);
+    }
+    return Result == CSTR_LESS_THAN ? -1 : Result == CSTR_GREATER_THAN ? 1 : 0;
+}
+
+static
 NTSTATUS
 ZpServerQuic_EnumerateFiles(
     _In_ PCZP_STRING_VIEW PathView,
+    _In_opt_ PCZP_STRING_VIEW Cursor,
+    _In_ ULONG MaxEntries,
+    _In_ LOGICAL Paged,
     _Outptr_result_bytebuffer_(*PayloadLength) PBYTE* Payload,
     _Out_ PULONG PayloadLength)
 {
     LIST_ENTRY Entries;
     WIN32_FIND_DATAW Data;
     PZP_SERVER_FILE_ENTRY Entry;
+    PZP_SERVER_FILE_ENTRY* SortedEntries = NULL;
     PZP_FILE_RECORD Files = NULL;
     PLIST_ENTRY ListEntry;
     HANDLE FindHandle = INVALID_HANDLE_VALUE;
     PWCHAR SearchPath = NULL;
     SIZE_T SearchLength;
-    ULONG Count = 0, Index = 0;
+    ULONG Count = 0, Index = 0, StartIndex = 0, PageCount;
     DWORD Error;
+    int CompareResult;
     NTSTATUS Status = STATUS_SUCCESS;
 
     *Payload = NULL;
@@ -938,7 +971,7 @@ ZpServerQuic_EnumerateFiles(
         {
             continue;
         }
-        if (Count == ZP_CODEC_MAX_ELEMENT_COUNT)
+        if (Count == MAXULONG)
         {
             Status = STATUS_BUFFER_OVERFLOW;
             goto Cleanup;
@@ -960,8 +993,10 @@ ZpServerQuic_EnumerateFiles(
         goto Cleanup;
     }
 
-    Files = Count != 0 ? Mem_Alloc((SIZE_T)Count * sizeof(*Files)) : NULL;
-    if (Count != 0 && Files == NULL)
+    SortedEntries = Count != 0 ?
+                        Mem_Alloc((SIZE_T)Count * sizeof(*SortedEntries)) :
+                        NULL;
+    if (Count != 0 && SortedEntries == NULL)
     {
         Status = STATUS_NO_MEMORY;
         goto Cleanup;
@@ -974,12 +1009,72 @@ ZpServerQuic_EnumerateFiles(
         Entry = CONTAINING_RECORD(ListEntry,
                                   ZP_SERVER_FILE_ENTRY,
                                   ListEntry);
+        SortedEntries[Index++] = Entry;
+    }
+    qsort(SortedEntries,
+          Count,
+          sizeof(*SortedEntries),
+          ZpServerQuic_CompareFileEntries);
+    if (Paged && Cursor->Length != 0)
+    {
+        while (StartIndex < Count)
+        {
+            CompareResult = CompareStringOrdinal(
+                SortedEntries[StartIndex]->Data.cFileName,
+                -1,
+                (PCWCH)Cursor->Buffer,
+                Cursor->Length,
+                TRUE);
+            if (CompareResult == CSTR_EQUAL)
+            {
+                CompareResult = CompareStringOrdinal(
+                    SortedEntries[StartIndex]->Data.cFileName,
+                    -1,
+                    (PCWCH)Cursor->Buffer,
+                    Cursor->Length,
+                    FALSE);
+            }
+            if (CompareResult == CSTR_GREATER_THAN)
+            {
+                break;
+            }
+            StartIndex++;
+        }
+    }
+    PageCount = min(MaxEntries, Count - StartIndex);
+    Files = PageCount != 0 ?
+                Mem_Alloc((SIZE_T)PageCount * sizeof(*Files)) :
+                NULL;
+    if (PageCount != 0 && Files == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
+    }
+    for (Index = 0; Index < PageCount; Index++)
+    {
+        Entry = SortedEntries[StartIndex + Index];
         ZpServerQuic_GetFileInfo(&Entry->Data, &Files[Index].Info);
         Files[Index].Name = Entry->Data.cFileName;
         Files[Index].NameLength = (ULONG)wcslen(Entry->Data.cFileName);
-        Index++;
     }
-    Status = ZpFile_EncodeList(Files, Count, NULL, 0, PayloadLength);
+    Status = Paged ?
+                 ZpFile_EncodePage(
+                     Files,
+                     PageCount,
+                     StartIndex + PageCount < Count ?
+                         Files[PageCount - 1].Name :
+                         NULL,
+                     StartIndex + PageCount < Count ?
+                         Files[PageCount - 1].NameLength :
+                         0,
+                     NULL,
+                     0,
+                     PayloadLength) :
+                 ZpFile_EncodeList(Files,
+                                   PageCount,
+                                   NULL,
+                                   0,
+                                   PayloadLength);
     *Payload = NT_SUCCESS(Status) ? Mem_Alloc(*PayloadLength) : NULL;
     if (NT_SUCCESS(Status) && *Payload == NULL)
     {
@@ -987,11 +1082,24 @@ ZpServerQuic_EnumerateFiles(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpFile_EncodeList(Files,
-                                   Count,
-                                   *Payload,
-                                   *PayloadLength,
-                                   PayloadLength);
+        Status = Paged ?
+                     ZpFile_EncodePage(
+                         Files,
+                         PageCount,
+                         StartIndex + PageCount < Count ?
+                             Files[PageCount - 1].Name :
+                             NULL,
+                         StartIndex + PageCount < Count ?
+                             Files[PageCount - 1].NameLength :
+                             0,
+                         *Payload,
+                         *PayloadLength,
+                         PayloadLength) :
+                     ZpFile_EncodeList(Files,
+                                       PageCount,
+                                       *Payload,
+                                       *PayloadLength,
+                                       PayloadLength);
     }
     if (!NT_SUCCESS(Status) && *Payload != NULL)
     {
@@ -1003,6 +1111,10 @@ Cleanup:
     if (Files != NULL)
     {
         Mem_Free(Files);
+    }
+    if (SortedEntries != NULL)
+    {
+        Mem_Free(SortedEntries);
     }
     while (!IsListEmpty(&Entries))
     {
@@ -2301,8 +2413,8 @@ ZpServerQuic_RequestCallback(
     PBYTE AllocatedPayload = NULL;
     PZP_SERVER_QUIC_CHANNEL Channel = NULL;
     ULONG PayloadLength = 0;
-    ULONG ProcessId, ExitCode;
-    ZP_STRING_VIEW ServiceName, FilePath;
+    ULONG ProcessId, ExitCode, MaxEntries;
+    ZP_STRING_VIEW ServiceName, FilePath, FileCursor;
     ZP_FILE_INFO FileInfo;
     ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
     ZP_FILE_CREATE_DISPOSITION FileDisposition;
@@ -2472,6 +2584,28 @@ ZpServerQuic_RequestCallback(
             if (NT_SUCCESS(Status))
             {
                 Status = ZpServerQuic_EnumerateFiles(&FilePath,
+                                                     NULL,
+                                                     MAXULONG,
+                                                     FALSE,
+                                                     &AllocatedPayload,
+                                                     &PayloadLength);
+                ResponsePayload = AllocatedPayload;
+            }
+        }
+        else if (Request->ModuleId == ZP_FILE_MODULE_ID &&
+                 Request->OperationId == ZP_FILE_OPERATION_ENUMERATE_PAGE)
+        {
+            Status = ZpFile_DecodeEnumeratePageRequest(Request->Payload,
+                                                       Request->PayloadLength,
+                                                       &FilePath,
+                                                       &FileCursor,
+                                                       &MaxEntries);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_EnumerateFiles(&FilePath,
+                                                     &FileCursor,
+                                                     MaxEntries,
+                                                     TRUE,
                                                      &AllocatedPayload,
                                                      &PayloadLength);
                 ResponsePayload = AllocatedPayload;

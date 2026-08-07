@@ -114,6 +114,14 @@ VOID
 
 typedef
 VOID
+(NTAPI *ZP_FILE_ENUMERATE_PAGE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_FILE_PAGE_VIEW Page,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
 (NTAPI *ZP_FILE_HASH_CALLBACK)(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ NTSTATUS Status,
@@ -322,6 +330,20 @@ ZpClient_EnumerateFiles(
     _In_ ULONG PathLength,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_FILE_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_EnumerateFilesPage(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(CursorLength) PCWCH Cursor,
+    _In_ ULONG CursorLength,
+    _In_ ULONG MaxEntries,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_ENUMERATE_PAGE_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 

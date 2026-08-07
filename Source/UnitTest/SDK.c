@@ -37,6 +37,11 @@ typedef struct _SDK_TEST_CONTEXT
     ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
     ULONGLONG FileHashSize;
     BYTE FileDigest[ZP_FILE_SHA256_SIZE];
+    ULONG FilePageCount;
+    NTSTATUS FilePageStatus;
+    ULONG FilePageFileCount;
+    WCHAR FilePageCursor[32];
+    ULONG FilePageCursorLength;
     ZP_CHANNEL_HANDLE FileChannel;
     ULONGLONG FileSize;
     ULONGLONG FileOffset;
@@ -218,6 +223,33 @@ SDKTest_FileHashCallback(
         RtlCopyMemory(TestContext->FileDigest,
                       Hash->Digest.Buffer,
                       Hash->Digest.Length);
+    }
+}
+
+static
+VOID
+NTAPI
+SDKTest_FilePageCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_FILE_PAGE_VIEW Page,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->FilePageCount++;
+    TestContext->FilePageStatus = Status;
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->FilePageFileCount = Page->Files.Count;
+        TestContext->FilePageCursorLength = Page->NextCursor.Length;
+        if (Page->NextCursor.Length != 0)
+        {
+            RtlCopyMemory(TestContext->FilePageCursor,
+                          Page->NextCursor.Buffer,
+                          (SIZE_T)Page->NextCursor.Length * sizeof(WCHAR));
+        }
     }
 }
 
@@ -551,6 +583,15 @@ TEST_FUNC(SDKContract)
     ULONG FileOpenWriteResponseLength;
     BYTE FileWriteData[16] = { 0 };
     BYTE FileWriteTooLongData[17] = { 0 };
+    ZP_FILE_RECORD FilePageRecords[] = {
+        {
+            { FILE_ATTRIBUTE_ARCHIVE, 16, 1, 2, 3 },
+            L"Upload.bin",
+            10
+        }
+    };
+    BYTE FilePageResponse[256];
+    ULONG FilePageResponseLength;
     BYTE TerminalCreateResponse[sizeof(ULONGLONG) + sizeof(ULONG)];
     ULONG TerminalCreateResponseLength;
     BYTE TerminalInput[] = { 'e', 'x', 'i', 't' };
@@ -785,6 +826,41 @@ TEST_FUNC(SDKContract)
             TestContext.RequestCompleteCount == 1 &&
             TestContext.RequestStatus == STATUS_SUCCESS &&
             TestContext.RequestPayloadLength == sizeof(RootCertificate));
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_EnumerateFilesPage(Client,
+                                                   L"C:\\Test",
+                                                   7,
+                                                   NULL,
+                                                   0,
+                                                   1,
+                                                   1000,
+                                                   SDKTest_FilePageCallback,
+                                                   &TestContext,
+                                                   &Request)) &&
+            TestContext.SendModuleId == ZP_FILE_MODULE_ID &&
+            TestContext.SendOperationId ==
+                ZP_FILE_OPERATION_ENUMERATE_PAGE);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodePage(FilePageRecords,
+                                         ARRAYSIZE(FilePageRecords),
+                                         FilePageRecords[0].Name,
+                                         FilePageRecords[0].NameLength,
+                                         FilePageResponse,
+                                         sizeof(FilePageResponse),
+                                         &FilePageResponseLength)));
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload.Buffer = FilePageResponse;
+    Response.Payload.Length = FilePageResponseLength;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.FilePageCount == 1 &&
+            TestContext.FilePageStatus == STATUS_SUCCESS &&
+            TestContext.FilePageFileCount == 1 &&
+            TestContext.FilePageCursorLength ==
+                FilePageRecords[0].NameLength &&
+            RtlCompareMemory(TestContext.FilePageCursor,
+                             FilePageRecords[0].Name,
+                             FilePageRecords[0].NameLength * sizeof(WCHAR)) ==
+                FilePageRecords[0].NameLength * sizeof(WCHAR));
     ZpRequest_Close(Request);
     TEST_OK(NT_SUCCESS(ZpClient_HashFile(Client,
                                          L"C:\\Test.bin",
