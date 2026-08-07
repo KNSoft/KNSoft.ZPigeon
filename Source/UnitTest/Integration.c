@@ -17,6 +17,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
 {
     HANDLE ServerRunningEvent;
     HANDLE ClientReadyEvent;
+    HANDLE ClientRetryWaitEvent;
     HANDLE ClientStoppedEvent;
     HANDLE ServerReadyEvent;
     HANDLE ServerStoppedEvent;
@@ -42,6 +43,10 @@ SDKIntegration_ClientStateCallback(
     {
         InterlockedExchange(&TestContext->ClientReadyStatus, Status);
         SetEvent(TestContext->ClientReadyEvent);
+    }
+    else if (State == ZpClientStateRetryWait)
+    {
+        SetEvent(TestContext->ClientRetryWaitEvent);
     }
     else if (State == ZpClientStateStopped)
     {
@@ -364,6 +369,7 @@ TEST_FUNC(SDKQuicIntegration)
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL)
     };
 
@@ -376,9 +382,10 @@ TEST_FUNC(SDKQuicIntegration)
     }
     TestContext.ServerRunningEvent = Events[0];
     TestContext.ClientReadyEvent = Events[1];
-    TestContext.ClientStoppedEvent = Events[2];
-    TestContext.ServerReadyEvent = Events[3];
-    TestContext.ServerStoppedEvent = Events[4];
+    TestContext.ClientRetryWaitEvent = Events[2];
+    TestContext.ClientStoppedEvent = Events[3];
+    TestContext.ServerReadyEvent = Events[4];
+    TestContext.ServerStoppedEvent = Events[5];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -452,6 +459,33 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
     if (
+        WaitForSingleObject(TestContext.ClientReadyEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        WaitForSingleObject(TestContext.ServerReadyEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.ClientReadyStatus) ||
+        !NT_SUCCESS(TestContext.ServerReadyStatus))
+    {
+        goto Cleanup;
+    }
+
+    ResetEvent(TestContext.ServerRunningEvent);
+    ResetEvent(TestContext.ClientReadyEvent);
+    ResetEvent(TestContext.ServerReadyEvent);
+    Status = ZpServer_Stop(Server);
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.ServerStoppedEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        WaitForSingleObject(TestContext.ClientRetryWaitEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0)
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.ServerStoppedEvent);
+    Status = ZpServer_Start(Server);
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.ServerRunningEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         WaitForSingleObject(TestContext.ClientReadyEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         WaitForSingleObject(TestContext.ServerReadyEvent,

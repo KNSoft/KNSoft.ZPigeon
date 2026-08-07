@@ -1,4 +1,5 @@
 ﻿#include "../Client.inl"
+#include "Retry.inl"
 #include "../../Network/Authentication.inl"
 #include "../../Network/Quic.inl"
 
@@ -11,6 +12,23 @@ static const QUIC_REGISTRATION_CONFIG ZpClientQuicRegistrationConfig = {
     "KNSoft.ZPigeon.Client",
     QUIC_EXECUTION_PROFILE_LOW_LATENCY
 };
+
+static
+VOID
+ZpClientQuic_UninitializeAttempt(
+    _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport);
+
+static
+VOID
+ZpClientQuic_ScheduleRetry(
+    _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport,
+    _In_ NTSTATUS Status,
+    _In_ LOGICAL RestartRound);
+
+static
+NTSTATUS
+ZpClientQuic_StartEndpoints(
+    _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport);
 
 static
 NTSTATUS
@@ -244,6 +262,9 @@ ZpClientQuic_MessageCallback(
             }
             if (NT_SUCCESS(Status))
             {
+                RtlAcquireSRWLockExclusive(&Transport->Owner->Lock);
+                Transport->ReadyTickCount = GetTickCount64();
+                RtlReleaseSRWLockExclusive(&Transport->Owner->Lock);
                 Status = ZpClient_NotifyState((ZP_CLIENT_HANDLE)Transport->Owner,
                                               ZpClientStateReady,
                                               STATUS_SUCCESS);
@@ -399,6 +420,91 @@ ZpClientQuic_StreamCallback(
 }
 
 static
+LOGICAL
+ZpClientQuic_FindNextEndpoint(
+    _In_ PZP_CLIENT_QUIC_TRANSPORT Transport,
+    _In_ ULONG StartIndex,
+    _Out_ PULONG EndpointIndex)
+{
+    PZP_CLIENT_OBJECT Object = Transport->Owner;
+    ULONG Index;
+
+    for (Index = StartIndex; Index < Object->Config.EndpointCount; Index++)
+    {
+        if (Object->Config.Endpoints[Index].Transport == ZpTransportQuic)
+        {
+            *EndpointIndex = Index;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static
+VOID
+ZpClientQuic_ScheduleRetry(
+    _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport,
+    _In_ NTSTATUS Status,
+    _In_ LOGICAL RestartRound)
+{
+    PZP_CLIENT_OBJECT Object = Transport->Owner;
+    LARGE_INTEGER DueTime;
+    ULONG Delay, EndpointIndex, RandomValue;
+
+    if (RestartRound)
+    {
+        Transport->NextEndpointIndex = 0;
+    }
+    if (ZpClientQuic_FindNextEndpoint(Transport,
+                                      Transport->NextEndpointIndex,
+                                      &EndpointIndex))
+    {
+        Transport->NextEndpointIndex = EndpointIndex;
+        Delay = 1;
+    }
+    else
+    {
+        Transport->NextEndpointIndex = 0;
+        if (!NT_SUCCESS(BCryptGenRandom(NULL,
+                                        (PUCHAR)&RandomValue,
+                                        sizeof(RandomValue),
+                                        BCRYPT_USE_SYSTEM_PREFERRED_RNG)))
+        {
+            RandomValue = ZpClientRetry_GetBaseDelay(Transport->FailureRound) *
+                          ZP_CLIENT_DEFAULT_RETRY_JITTER_PERCENT / 100;
+        }
+        Delay = ZpClientRetry_GetDelay(Transport->FailureRound,
+                                       RandomValue);
+        if (Transport->FailureRound != MAXULONG)
+        {
+            Transport->FailureRound++;
+        }
+    }
+    if (!NT_SUCCESS(ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
+                                         ZpClientStateRetryWait,
+                                         Status)))
+    {
+        return;
+    }
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (Object->State == ZpClientStateRetryWait)
+    {
+        Transport->RetryPending = TRUE;
+        Transport->RetryDelay = Delay;
+        if (!Transport->StartPending)
+        {
+            DueTime.QuadPart = -(LONGLONG)Delay * 10000;
+            SetThreadpoolTimer(Transport->RetryTimer,
+                               (PFILETIME)&DueTime,
+                               0,
+                               0);
+        }
+    }
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+}
+
+static
 QUIC_STATUS
 QUIC_API
 ZpClientQuic_ConnectionCallback(
@@ -411,6 +517,7 @@ ZpClientQuic_ConnectionCallback(
     PZP_CLIENT_OBJECT Object = Transport->Owner;
     HQUIC Stream;
     NTSTATUS Status;
+    ZP_CLIENT_STATE State;
     BOOLEAN Valid;
 
     switch (Event->Type)
@@ -482,11 +589,29 @@ ZpClientQuic_ConnectionCallback(
                 Transport->Connection = NULL;
             }
             Status = Transport->ShutdownStatus;
+            State = Object->State;
+            if (State == ZpClientStateReady &&
+                GetTickCount64() - Transport->ReadyTickCount >=
+                    ZP_CLIENT_DEFAULT_STABLE_RESET_MILLISECONDS)
+            {
+                Transport->FailureRound = 0;
+            }
             RtlReleaseSRWLockExclusive(&Object->Lock);
             MsQuicConnectionClose(Connection);
-            ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
-                                 ZpClientStateStopped,
-                                 Status);
+            if (State == ZpClientStateStopping)
+            {
+                ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
+                                     ZpClientStateStopped,
+                                     Status);
+            }
+            else if (State == ZpClientStateConnecting ||
+                     State == ZpClientStateAuthenticating ||
+                     State == ZpClientStateReady)
+            {
+                ZpClientQuic_ScheduleRetry(Transport,
+                                           Status,
+                                           State == ZpClientStateReady);
+            }
             break;
     }
     return QUIC_STATUS_SUCCESS;
@@ -547,7 +672,7 @@ ZpClientQuic_StartEndpoint(
     PSTR ServerName;
     ULONG ServerNameSize;
 
-    ZpClientQuic_Uninitialize(Transport);
+    ZpClientQuic_UninitializeAttempt(Transport);
     Transport->Owner = Object;
     Transport->ShutdownStatus = STATUS_SUCCESS;
 
@@ -642,29 +767,30 @@ ZpClientQuic_StartEndpoint(
     return STATUS_SUCCESS;
 
 Cleanup:
-    ZpClientQuic_Uninitialize(Transport);
+    ZpClientQuic_UninitializeAttempt(Transport);
     Transport->Owner = Object;
     return Status;
 }
 
 static
 NTSTATUS
-NTAPI
-ZpClientQuic_Start(
-    _In_opt_ PVOID Context)
+ZpClientQuic_StartEndpoints(
+    _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport)
 {
-    PZP_CLIENT_QUIC_TRANSPORT Transport = Context;
     PZP_CLIENT_OBJECT Object = Transport->Owner;
     NTSTATUS Status = STATUS_NOT_SUPPORTED;
     ULONG Index;
 
-    for (Index = 0; Index < Object->Config.EndpointCount; Index++)
+    for (Index = Transport->NextEndpointIndex;
+         Index < Object->Config.EndpointCount;
+         Index++)
     {
         if (Object->Config.Endpoints[Index].Transport != ZpTransportQuic)
         {
             continue;
         }
         Transport->EndpointIndex = Index;
+        Transport->NextEndpointIndex = Index + 1;
         Status = ZpClientQuic_StartEndpoint(Transport);
         if (NT_SUCCESS(Status))
         {
@@ -676,27 +802,177 @@ ZpClientQuic_Start(
 
 static
 VOID
+ZpClientQuic_CompleteStart(
+    _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport,
+    _In_ NTSTATUS Status)
+{
+    PZP_CLIENT_OBJECT Object = Transport->Owner;
+    LARGE_INTEGER DueTime;
+    ZP_CLIENT_STATE State;
+    HQUIC Connection;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Transport->StartPending = FALSE;
+    State = Object->State;
+    Connection = Transport->Connection;
+    if (State == ZpClientStateStopping && Connection != NULL)
+    {
+        InterlockedExchange((volatile LONG*)&Transport->ShutdownStatus,
+                            STATUS_SUCCESS);
+    }
+    else if (State == ZpClientStateRetryWait && Transport->RetryPending)
+    {
+        DueTime.QuadPart = -(LONGLONG)Transport->RetryDelay * 10000;
+        SetThreadpoolTimer(Transport->RetryTimer,
+                           (PFILETIME)&DueTime,
+                           0,
+                           0);
+    }
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+
+    if (State == ZpClientStateStopping)
+    {
+        if (Connection != NULL)
+        {
+            MsQuicConnectionShutdown(Connection,
+                                     QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                     0);
+        }
+        else
+        {
+            ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
+                                 ZpClientStateStopped,
+                                 STATUS_SUCCESS);
+        }
+    }
+    else if (!NT_SUCCESS(Status) && State == ZpClientStateConnecting)
+    {
+        ZpClientQuic_ScheduleRetry(Transport, Status, FALSE);
+    }
+}
+
+static
+VOID
+CALLBACK
+ZpClientQuic_RetryTimerCallback(
+    _Inout_ PTP_CALLBACK_INSTANCE Instance,
+    _In_opt_ PVOID Context,
+    _Inout_ PTP_TIMER Timer)
+{
+    PZP_CLIENT_QUIC_TRANSPORT Transport = Context;
+    PZP_CLIENT_OBJECT Object = Transport->Owner;
+    NTSTATUS Status;
+    LOGICAL Start;
+
+    UNREFERENCED_PARAMETER(Instance);
+    UNREFERENCED_PARAMETER(Timer);
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Start = Object->State == ZpClientStateRetryWait &&
+            Transport->RetryPending &&
+            !Transport->StartPending;
+    if (Start)
+    {
+        Transport->RetryPending = FALSE;
+        Transport->StartPending = TRUE;
+    }
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    if (!Start)
+    {
+        return;
+    }
+
+    Status = ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
+                                  ZpClientStateConnecting,
+                                  STATUS_SUCCESS);
+    if (NT_SUCCESS(Status))
+    {
+        RtlAcquireSRWLockShared(&Object->Lock);
+        Start = Object->State == ZpClientStateConnecting;
+        RtlReleaseSRWLockShared(&Object->Lock);
+        if (Start)
+        {
+            Status = ZpClientQuic_StartEndpoints(Transport);
+        }
+    }
+    ZpClientQuic_CompleteStart(Transport, Status);
+}
+
+static
+NTSTATUS
+NTAPI
+ZpClientQuic_Start(
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_QUIC_TRANSPORT Transport = Context;
+    PZP_CLIENT_OBJECT Object = Transport->Owner;
+    NTSTATUS Status;
+
+    if (Transport->RetryTimer == NULL)
+    {
+        Transport->RetryTimer = CreateThreadpoolTimer(
+            ZpClientQuic_RetryTimerCallback,
+            Transport,
+            NULL);
+        if (Transport->RetryTimer == NULL)
+        {
+            return NTSTATUS_FROM_WIN32(GetLastError());
+        }
+    }
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (Object->State != ZpClientStateConnecting)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_SUCCESS;
+    }
+    Transport->NextEndpointIndex = 0;
+    Transport->FailureRound = 0;
+    Transport->ReadyTickCount = 0;
+    Transport->StartPending = TRUE;
+    Transport->RetryPending = FALSE;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+
+    Status = ZpClientQuic_StartEndpoints(Transport);
+    ZpClientQuic_CompleteStart(Transport, Status);
+    return STATUS_SUCCESS;
+}
+
+static
+VOID
 NTAPI
 ZpClientQuic_Stop(
     _In_opt_ PVOID Context)
 {
     PZP_CLIENT_QUIC_TRANSPORT Transport = Context;
     PZP_CLIENT_OBJECT Object = Transport->Owner;
+    HQUIC Connection;
+    LOGICAL StartPending;
 
-    RtlAcquireSRWLockShared(&Object->Lock);
-    if (Transport->Connection != NULL)
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Transport->RetryPending = FALSE;
+    if (Transport->RetryTimer != NULL)
+    {
+        SetThreadpoolTimer(Transport->RetryTimer, NULL, 0, 0);
+    }
+    Connection = Transport->Connection;
+    StartPending = Transport->StartPending;
+    if (Connection != NULL)
     {
         InterlockedExchange((volatile LONG*)&Transport->ShutdownStatus, STATUS_SUCCESS);
-        MsQuicConnectionShutdown(Transport->Connection,
+    }
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    if (Connection != NULL)
+    {
+        MsQuicConnectionShutdown(Connection,
                                  QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
                                  0);
-        RtlReleaseSRWLockShared(&Object->Lock);
         return;
     }
-    RtlReleaseSRWLockShared(&Object->Lock);
-    ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
-                         ZpClientStateStopped,
-                         STATUS_SUCCESS);
+    if (!StartPending)
+    {
+        ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
+                             ZpClientStateStopped,
+                             STATUS_SUCCESS);
+    }
 }
 
 static const ZP_TRANSPORT_OPERATIONS ZpClientQuicOperations = {
@@ -724,8 +1000,9 @@ ZpClientQuic_Configure(
     }
 }
 
+static
 VOID
-ZpClientQuic_Uninitialize(
+ZpClientQuic_UninitializeAttempt(
     _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport)
 {
     if (Transport->Stream != NULL)
@@ -783,4 +1060,18 @@ ZpClientQuic_Uninitialize(
         KNSoftQuicUninitialize();
         Transport->Initialized = FALSE;
     }
+}
+
+VOID
+ZpClientQuic_Uninitialize(
+    _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport)
+{
+    if (Transport->RetryTimer != NULL)
+    {
+        SetThreadpoolTimer(Transport->RetryTimer, NULL, 0, 0);
+        WaitForThreadpoolTimerCallbacks(Transport->RetryTimer, TRUE);
+        CloseThreadpoolTimer(Transport->RetryTimer);
+        Transport->RetryTimer = NULL;
+    }
+    ZpClientQuic_UninitializeAttempt(Transport);
 }
