@@ -88,6 +88,15 @@ TEST_FUNC(ProtocolMessage)
     };
     ZP_FILE_INFO FileInfoView;
     ZP_STRING_VIEW FilePathView;
+    ZP_FILE_RECORD FileRecords[] = {
+        {
+            { FILE_ATTRIBUTE_ARCHIVE, 123456789, 100, 200, 300 },
+            L"Test.bin",
+            8
+        }
+    };
+    ZP_FILE_LIST_VIEW FileList;
+    ZP_FILE_RECORD_VIEW FileRecord;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value;
@@ -332,4 +341,18 @@ TEST_FUNC(ProtocolMessage)
             FileInfoView.CreationTime == FileInfo.CreationTime &&
             FileInfoView.LastAccessTime == FileInfo.LastAccessTime &&
             FileInfoView.LastWriteTime == FileInfo.LastWriteTime);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeList(FileRecords,
+                                         ARRAYSIZE(FileRecords),
+                                         Buffer,
+                                         sizeof(Buffer),
+                                         &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeList(Buffer, Length, &FileList)) &&
+            FileList.Count == ARRAYSIZE(FileRecords) &&
+            NT_SUCCESS(ZpFile_GetRecord(&FileList, 0, &FileRecord)) &&
+            FileRecord.Info.Attributes == FileRecords[0].Info.Attributes &&
+            FileRecord.Info.Size == FileRecords[0].Info.Size &&
+            FileRecord.Name.Length == FileRecords[0].NameLength);
+    TEST_OK(ZpFile_GetRecord(&FileList,
+                             FileList.Count,
+                             &FileRecord) == STATUS_INVALID_PARAMETER);
 }

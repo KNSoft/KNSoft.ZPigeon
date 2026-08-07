@@ -30,6 +30,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE ProcessTerminateEvent;
     HANDLE ServiceControlEvent;
     HANDLE FileInfoEvent;
+    HANDLE FileListEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
@@ -71,6 +72,11 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONG FileAttributes;
     ULONGLONG FileSize;
     ULONGLONG FileLastWriteTime;
+    volatile LONG FileListStatus;
+    ULONG FileCount;
+    WCHAR ExpectedFileName[MAX_PATH];
+    ULONG ExpectedFileNameLength;
+    LOGICAL FoundExpectedFile;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -322,6 +328,44 @@ SDKIntegration_FileInfoCallback(
     }
     InterlockedExchange(&TestContext->FileInfoStatus, Status);
     SetEvent(TestContext->FileInfoEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_FileListCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_FILE_LIST_VIEW Files,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+    ZP_FILE_RECORD_VIEW File;
+    ULONG Index;
+
+    UNREFERENCED_PARAMETER(Request);
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->FileCount = Files->Count;
+        for (Index = 0; Index < Files->Count; Index++)
+        {
+            Status = ZpFile_GetRecord(Files, Index, &File);
+            if (!NT_SUCCESS(Status))
+            {
+                break;
+            }
+            if (File.Name.Length == TestContext->ExpectedFileNameLength &&
+                RtlCompareMemory(File.Name.Buffer,
+                                 TestContext->ExpectedFileName,
+                                 (SIZE_T)File.Name.Length * sizeof(WCHAR)) ==
+                    (SIZE_T)File.Name.Length * sizeof(WCHAR))
+            {
+                TestContext->FoundExpectedFile = TRUE;
+            }
+        }
+    }
+    InterlockedExchange(&TestContext->FileListStatus, Status);
+    SetEvent(TestContext->FileListEvent);
 }
 
 static
@@ -659,13 +703,13 @@ TEST_FUNC(SDKQuicIntegration)
         { 1, 3, 0x0F },
         { 2, 1, 0x03 },
         { 3, 1, 0x01 },
-        { 4, 1, 0x02 }
+        { 4, 1, 0x03 }
     };
     ZP_MODULE_RECORD ServerModules[] = {
         { 1, 2, 0x05 },
         { 2, 1, 0x03 },
         { 3, 1, 0x01 },
-        { 4, 1, 0x02 }
+        { 4, 1, 0x03 }
     };
     ZP_ENDPOINT Endpoint = { ZpTransportQuic, L"127.0.0.1", 0, ServerName, NULL };
     ZP_LISTENER_ENDPOINT Listener = { ZpTransportQuic, L"127.0.0.1", 0, NULL };
@@ -689,6 +733,7 @@ TEST_FUNC(SDKQuicIntegration)
     ULONG Index;
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -728,6 +773,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.ProcessTerminateEvent = Events[12];
     TestContext.ServiceControlEvent = Events[13];
     TestContext.FileInfoEvent = Events[14];
+    TestContext.FileListEvent = Events[15];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -1061,6 +1107,47 @@ TEST_FUNC(SDKQuicIntegration)
         TestContext.FileAttributes == INVALID_FILE_ATTRIBUTES ||
         TestContext.FileSize == 0 ||
         TestContext.FileLastWriteTime == 0)
+    {
+        goto Cleanup;
+    }
+    for (; Index != 0; Index--)
+    {
+        if (ModulePath[Index - 1] == L'\\' || ModulePath[Index - 1] == L'/')
+        {
+            break;
+        }
+    }
+    if (Index <= 1 ||
+        ARRAYSIZE(ModulePath) - Index >=
+            ARRAYSIZE(TestContext.ExpectedFileName))
+    {
+        goto Cleanup;
+    }
+    TestContext.ExpectedFileNameLength =
+        (ULONG)wcslen(&ModulePath[Index]);
+    RtlCopyMemory(TestContext.ExpectedFileName,
+                  &ModulePath[Index],
+                  ((SIZE_T)TestContext.ExpectedFileNameLength + 1) *
+                      sizeof(WCHAR));
+    ModulePath[Index - 1] = UNICODE_NULL;
+    Status = ZpClient_EnumerateFiles(Client,
+                                     ModulePath,
+                                     Index - 1,
+                                     SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                     SDKIntegration_FileListCallback,
+                                     &TestContext,
+                                     &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.FileListEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.FileListStatus) ||
+        TestContext.FileCount == 0 ||
+        !TestContext.FoundExpectedFile)
     {
         goto Cleanup;
     }

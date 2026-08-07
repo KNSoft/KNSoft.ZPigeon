@@ -45,6 +45,12 @@ typedef struct _ZP_SERVER_QUIC_REQUEST
     BYTE Payload[ANYSIZE_ARRAY];
 } ZP_SERVER_QUIC_REQUEST, *PZP_SERVER_QUIC_REQUEST;
 
+typedef struct _ZP_SERVER_FILE_ENTRY
+{
+    LIST_ENTRY ListEntry;
+    WIN32_FIND_DATAW Data;
+} ZP_SERVER_FILE_ENTRY, *PZP_SERVER_FILE_ENTRY;
+
 static
 VOID
 ZpServerQuic_TryCompleteStop(
@@ -666,6 +672,166 @@ Cleanup:
 }
 
 static
+VOID
+ZpServerQuic_GetFileInfo(
+    _In_ const WIN32_FIND_DATAW* Data,
+    _Out_ PZP_FILE_INFO Info)
+{
+    ULARGE_INTEGER Value;
+
+    Info->Attributes = Data->dwFileAttributes;
+    Value.HighPart = Data->nFileSizeHigh;
+    Value.LowPart = Data->nFileSizeLow;
+    Info->Size = Value.QuadPart;
+    Value.HighPart = Data->ftCreationTime.dwHighDateTime;
+    Value.LowPart = Data->ftCreationTime.dwLowDateTime;
+    Info->CreationTime = Value.QuadPart;
+    Value.HighPart = Data->ftLastAccessTime.dwHighDateTime;
+    Value.LowPart = Data->ftLastAccessTime.dwLowDateTime;
+    Info->LastAccessTime = Value.QuadPart;
+    Value.HighPart = Data->ftLastWriteTime.dwHighDateTime;
+    Value.LowPart = Data->ftLastWriteTime.dwLowDateTime;
+    Info->LastWriteTime = Value.QuadPart;
+}
+
+static
+NTSTATUS
+ZpServerQuic_EnumerateFiles(
+    _In_ PCZP_STRING_VIEW PathView,
+    _Outptr_result_bytebuffer_(*PayloadLength) PBYTE* Payload,
+    _Out_ PULONG PayloadLength)
+{
+    LIST_ENTRY Entries;
+    WIN32_FIND_DATAW Data;
+    PZP_SERVER_FILE_ENTRY Entry;
+    PZP_FILE_RECORD Files = NULL;
+    PLIST_ENTRY ListEntry;
+    HANDLE FindHandle = INVALID_HANDLE_VALUE;
+    PWCHAR SearchPath = NULL;
+    SIZE_T SearchLength;
+    ULONG Count = 0, Index = 0;
+    DWORD Error;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    *Payload = NULL;
+    *PayloadLength = 0;
+    InitializeListHead(&Entries);
+    SearchLength = (SIZE_T)PathView->Length + 3;
+    SearchPath = Mem_Alloc(SearchLength * sizeof(WCHAR));
+    if (SearchPath == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    RtlCopyMemory(SearchPath,
+                  PathView->Buffer,
+                  (SIZE_T)PathView->Length * sizeof(WCHAR));
+    Index = PathView->Length;
+    if (SearchPath[Index - 1] != L'\\' && SearchPath[Index - 1] != L'/')
+    {
+        SearchPath[Index++] = L'\\';
+    }
+    SearchPath[Index++] = L'*';
+    SearchPath[Index] = UNICODE_NULL;
+
+    FindHandle = FindFirstFileW(SearchPath, &Data);
+    if (FindHandle == INVALID_HANDLE_VALUE)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    do
+    {
+        if ((Data.cFileName[0] == L'.' && Data.cFileName[1] == UNICODE_NULL) ||
+            (Data.cFileName[0] == L'.' && Data.cFileName[1] == L'.' &&
+             Data.cFileName[2] == UNICODE_NULL))
+        {
+            continue;
+        }
+        if (Count == ZP_CODEC_MAX_ELEMENT_COUNT)
+        {
+            Status = STATUS_BUFFER_OVERFLOW;
+            goto Cleanup;
+        }
+        Entry = Mem_Alloc(sizeof(*Entry));
+        if (Entry == NULL)
+        {
+            Status = STATUS_NO_MEMORY;
+            goto Cleanup;
+        }
+        Entry->Data = Data;
+        InsertTailList(&Entries, &Entry->ListEntry);
+        Count++;
+    } while (FindNextFileW(FindHandle, &Data));
+    Error = GetLastError();
+    if (Error != ERROR_NO_MORE_FILES)
+    {
+        Status = NTSTATUS_FROM_WIN32(Error);
+        goto Cleanup;
+    }
+
+    Files = Count != 0 ? Mem_Alloc((SIZE_T)Count * sizeof(*Files)) : NULL;
+    if (Count != 0 && Files == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
+    }
+    Index = 0;
+    for (ListEntry = Entries.Flink;
+         ListEntry != &Entries;
+         ListEntry = ListEntry->Flink)
+    {
+        Entry = CONTAINING_RECORD(ListEntry,
+                                  ZP_SERVER_FILE_ENTRY,
+                                  ListEntry);
+        ZpServerQuic_GetFileInfo(&Entry->Data, &Files[Index].Info);
+        Files[Index].Name = Entry->Data.cFileName;
+        Files[Index].NameLength = (ULONG)wcslen(Entry->Data.cFileName);
+        Index++;
+    }
+    Status = ZpFile_EncodeList(Files, Count, NULL, 0, PayloadLength);
+    *Payload = NT_SUCCESS(Status) ? Mem_Alloc(*PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && *Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodeList(Files,
+                                   Count,
+                                   *Payload,
+                                   *PayloadLength,
+                                   PayloadLength);
+    }
+    if (!NT_SUCCESS(Status) && *Payload != NULL)
+    {
+        Mem_Free(*Payload);
+        *Payload = NULL;
+    }
+
+Cleanup:
+    if (Files != NULL)
+    {
+        Mem_Free(Files);
+    }
+    while (!IsListEmpty(&Entries))
+    {
+        Entry = CONTAINING_RECORD(RemoveHeadList(&Entries),
+                                  ZP_SERVER_FILE_ENTRY,
+                                  ListEntry);
+        Mem_Free(Entry);
+    }
+    if (FindHandle != INVALID_HANDLE_VALUE)
+    {
+        FindClose(FindHandle);
+    }
+    if (SearchPath != NULL)
+    {
+        Mem_Free(SearchPath);
+    }
+    return Status;
+}
+
+static
 NTSTATUS
 ZpServerQuic_SendResponse(
     _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
@@ -900,6 +1066,20 @@ ZpServerQuic_RequestCallback(
                                            sizeof(Payload),
                                            &PayloadLength);
                 ResponsePayload = Payload;
+            }
+        }
+        else if (Request->ModuleId == ZP_FILE_MODULE_ID &&
+                 Request->OperationId == ZP_FILE_OPERATION_ENUMERATE)
+        {
+            Status = ZpFile_DecodePath(Request->Payload,
+                                       Request->PayloadLength,
+                                       &FilePath);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_EnumerateFiles(&FilePath,
+                                                     &AllocatedPayload,
+                                                     &PayloadLength);
+                ResponsePayload = AllocatedPayload;
             }
         }
         else

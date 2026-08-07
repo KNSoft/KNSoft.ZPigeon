@@ -1447,6 +1447,107 @@ ZpClient_QueryFile(
     return Status;
 }
 
+typedef struct _ZP_CLIENT_FILE_ENUMERATE_CONTEXT
+{
+    ZP_FILE_ENUMERATE_CALLBACK Callback;
+    PVOID Context;
+} ZP_CLIENT_FILE_ENUMERATE_CONTEXT, *PZP_CLIENT_FILE_ENUMERATE_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpClient_FileEnumerateComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_FILE_ENUMERATE_CONTEXT FileContext = Context;
+    ZP_FILE_LIST_VIEW Files;
+
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_DecodeList(Payload->Buffer,
+                                   Payload->Length,
+                                   &Files);
+    }
+    FileContext->Callback(Request,
+                          Status,
+                          NT_SUCCESS(Status) ? &Files : NULL,
+                          FileContext->Context);
+    Mem_Free(FileContext);
+}
+
+NTSTATUS
+NTAPI
+ZpClient_EnumerateFiles(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_CLIENT_FILE_ENUMERATE_CONTEXT FileContext;
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpFile_EncodePath(Path,
+                               PathLength,
+                               NULL,
+                               0,
+                               &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodePath(Path,
+                                   PathLength,
+                                   Payload,
+                                   PayloadLength,
+                                   &PayloadLength);
+    }
+    FileContext = NT_SUCCESS(Status) ?
+                      Mem_Alloc(sizeof(*FileContext)) :
+                      NULL;
+    if (NT_SUCCESS(Status) && FileContext == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        FileContext->Callback = Callback;
+        FileContext->Context = Context;
+        Status = ZpClient_SendRequest(Client,
+                                      ZP_FILE_MODULE_ID,
+                                      ZP_FILE_OPERATION_ENUMERATE,
+                                      TimeoutMilliseconds,
+                                      Payload,
+                                      PayloadLength,
+                                      ZpClient_FileEnumerateComplete,
+                                      FileContext,
+                                      Request);
+        if (!NT_SUCCESS(Status))
+        {
+            Mem_Free(FileContext);
+        }
+    }
+    if (Payload != NULL)
+    {
+        Mem_Free(Payload);
+    }
+    return Status;
+}
+
 NTSTATUS
 NTAPI
 ZpRequest_Cancel(

@@ -461,7 +461,7 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 
 `Service.Start` 和 `Service.Stop` 分别固定为 `OperationId = 3` 和 `4`，访问级别均为 `Control`，请求 Payload 复用非空 UTF-16LE ServiceName 字符串，成功响应 Payload 为空。Server 只有在授权门禁放行后才打开 Service Control Manager 句柄并执行启动或停止控制；未配置授权回调时固定返回 `STATUS_ACCESS_DENIED`。
 
-`File` 模块第一版固定为 `ModuleId = 4`、`ModuleVersion = 1`；`Enumerate` 预留 `OperationId = 1`，`Query` 固定为 `OperationId = 2`。Query 请求 Payload 为非空 UTF-16LE Path 字符串，成功响应依次编码 `UINT32 Attributes` 以及四个 `UINT64`：Size、CreationTime、LastAccessTime、LastWriteTime；属性值和 100ns 时间值沿用 Windows 文件系统定义。File 请求属于 `Read`，Server 授权回调可依据原始路径 Payload 收窄可访问范围。
+`File` 模块第一版固定为 `ModuleId = 4`、`ModuleVersion = 1`；`Enumerate` 固定为 `OperationId = 1`，`Query` 固定为 `OperationId = 2`。两者请求 Payload 均为非空 UTF-16LE Path 字符串。Query 成功响应依次编码 `UINT32 Attributes` 以及四个 `UINT64`：Size、CreationTime、LastAccessTime、LastWriteTime。Enumerate 成功响应为数组，单项编码同一组元数据后追加 UTF-16LE Name 字符串，并排除 `.` 与 `..`；结果超过单 Frame 上限时返回 `STATUS_BUFFER_OVERFLOW`，后续按真实规模需求增加分页。属性值和 100ns 时间值沿用 Windows 文件系统定义。File 请求属于 `Read`，Server 授权回调可依据原始路径 Payload 收窄可访问范围。
 
 大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口、断点续传和哈希规则在实现对应模块前按真实需求确定，不预先建设通用虚拟流框架。
 
@@ -509,7 +509,7 @@ QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接�
 
 以下内容不阻塞 Network 和通用 Protocol 编码，在实现对应模块前定稿：
 
-1. 除已固定的 System、Process、Service 操作和 File.Query 外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
+1. 除已固定的 System、Process、Service 操作以及 File.Enumerate/File.Query 外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
 2. File 通道的窗口、哈希、断点续传和落盘契约；
 3. Terminal 通道的输入输出分流、窗口调整和退出状态 Payload；
 4. EventLog 等订阅模块的事件丢失与恢复语义；
