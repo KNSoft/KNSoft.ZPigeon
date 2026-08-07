@@ -59,6 +59,8 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONG ServiceInfoNameLength;
     ULONG ServiceInfoDisplayNameLength;
     ULONG ServiceInfoBinaryPathLength;
+    volatile LONG AuthorizationCount;
+    volatile LONG SawAuthenticatedClientId;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -305,6 +307,43 @@ SDKIntegration_ServerConnectionCallback(
         InterlockedExchange(&TestContext->ServerReadyStatus, Status);
         SetEvent(TestContext->ServerReadyEvent);
     }
+}
+
+static
+NTSTATUS
+NTAPI
+SDKIntegration_ServerAuthorizeCallback(
+    _In_ ZP_SERVER_HANDLE Server,
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ZP_CLIENT_ID_SIZE) const BYTE ClientId[ZP_CLIENT_ID_SIZE],
+    _In_ ZP_REQUEST_ACCESS Access,
+    _In_ USHORT ModuleId,
+    _In_ USHORT OperationId,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+    ULONG Index;
+
+    UNREFERENCED_PARAMETER(Server);
+    UNREFERENCED_PARAMETER(Connection);
+    UNREFERENCED_PARAMETER(ModuleId);
+    UNREFERENCED_PARAMETER(OperationId);
+    UNREFERENCED_PARAMETER(Payload);
+    if (Access != ZpRequestAccessRead)
+    {
+        return STATUS_ACCESS_DENIED;
+    }
+    for (Index = 0; Index < ZP_CLIENT_ID_SIZE; Index++)
+    {
+        if (ClientId[Index] != 0)
+        {
+            InterlockedExchange(&TestContext->SawAuthenticatedClientId, TRUE);
+            break;
+        }
+    }
+    InterlockedIncrement(&TestContext->AuthorizationCount);
+    return STATUS_SUCCESS;
 }
 
 static
@@ -659,6 +698,7 @@ TEST_FUNC(SDKQuicIntegration)
     ServerConfig.StateCallback = SDKIntegration_ServerStateCallback;
     ServerConfig.ConnectionCallback = SDKIntegration_ServerConnectionCallback;
     ServerConfig.CallbackContext = &TestContext;
+    ServerConfig.AuthorizeCallback = SDKIntegration_ServerAuthorizeCallback;
 
     Status = ZpServer_Create(&ServerConfig, &Server);
     if (!NT_SUCCESS(Status))
@@ -814,7 +854,9 @@ TEST_FUNC(SDKQuicIntegration)
         TestContext.ServiceInfoType == 0 ||
         TestContext.ServiceInfoNameLength != TestContext.ServiceNameLength ||
         TestContext.ServiceInfoDisplayNameLength == 0 ||
-        TestContext.ServiceInfoBinaryPathLength == 0)
+        TestContext.ServiceInfoBinaryPathLength == 0 ||
+        TestContext.AuthorizationCount < 5 ||
+        !TestContext.SawAuthenticatedClientId)
     {
         goto Cleanup;
     }

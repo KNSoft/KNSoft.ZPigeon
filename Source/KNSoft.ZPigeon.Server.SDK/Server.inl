@@ -34,3 +34,13 @@ ZpServer_NotifyConnection(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_CONNECTION_PHASE Phase,
     _In_ NTSTATUS Status);
+
+NTSTATUS
+ZpServer_AuthorizeRequest(
+    _In_ ZP_SERVER_HANDLE Server,
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ZP_CLIENT_ID_SIZE) const BYTE ClientId[ZP_CLIENT_ID_SIZE],
+    _In_ ZP_REQUEST_ACCESS Access,
+    _In_ USHORT ModuleId,
+    _In_ USHORT OperationId,
+    _In_ PCZP_BUFFER_VIEW Payload);

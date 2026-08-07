@@ -22,7 +22,7 @@ typedef struct _ZP_SERVER_QUIC_CONNECTION
     HQUIC Stream;
     NTSTATUS ShutdownStatus;
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE];
-    BYTE ClientId[32];
+    BYTE ClientId[ZP_CLIENT_ID_SIZE];
     BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE];
     ZP_MODULE_RECORD Modules[ZP_MODULE_MAX_COUNT];
     USHORT ModuleCount;
@@ -640,72 +640,91 @@ ZpServerQuic_RequestCallback(
     {
         Status = STATUS_NOT_SUPPORTED;
     }
-    else if (Request->ModuleId == ZP_SYSTEM_MODULE_ID &&
-             Request->OperationId == ZP_SYSTEM_OPERATION_INFO)
-    {
-        Status = Request->PayloadLength == 0 ?
-                     ZpServerQuic_GetSystemInfo(&SystemInfo,
-                                                ComputerName,
-                                                ARRAYSIZE(ComputerName)) :
-                     STATUS_INVALID_PARAMETER;
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpSystem_EncodeInfo(&SystemInfo,
-                                         Payload,
-                                         sizeof(Payload),
-                                         &PayloadLength);
-            ResponsePayload = Payload;
-        }
-    }
-    else if (Request->ModuleId == ZP_PROCESS_MODULE_ID &&
-             Request->OperationId == ZP_PROCESS_OPERATION_ENUMERATE)
-    {
-        Status = Request->PayloadLength == 0 ?
-                     ZpServerQuic_EnumerateProcesses(&AllocatedPayload,
-                                                     &PayloadLength) :
-                     STATUS_INVALID_PARAMETER;
-        ResponsePayload = AllocatedPayload;
-    }
-    else if (Request->ModuleId == ZP_PROCESS_MODULE_ID &&
-             Request->OperationId == ZP_PROCESS_OPERATION_QUERY)
-    {
-        Status = ZpProcess_DecodeQuery(Request->Payload,
-                                       Request->PayloadLength,
-                                       &ProcessId);
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpServerQuic_QueryProcess(ProcessId,
-                                               &AllocatedPayload,
-                                               &PayloadLength);
-            ResponsePayload = AllocatedPayload;
-        }
-    }
-    else if (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
-             Request->OperationId == ZP_SERVICE_OPERATION_ENUMERATE)
-    {
-        Status = Request->PayloadLength == 0 ?
-                     ZpServerQuic_EnumerateServices(&AllocatedPayload,
-                                                    &PayloadLength) :
-                     STATUS_INVALID_PARAMETER;
-        ResponsePayload = AllocatedPayload;
-    }
-    else if (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
-             Request->OperationId == ZP_SERVICE_OPERATION_QUERY)
-    {
-        Status = ZpService_DecodeQuery(Request->Payload,
-                                       Request->PayloadLength,
-                                       &ServiceName);
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpServerQuic_QueryService(&ServiceName,
-                                               &AllocatedPayload,
-                                               &PayloadLength);
-            ResponsePayload = AllocatedPayload;
-        }
-    }
     else
     {
-        Status = STATUS_NOT_SUPPORTED;
+        ZP_BUFFER_VIEW RequestPayload = {
+            Request->Payload,
+            Request->PayloadLength
+        };
+
+        Status = ZpServer_AuthorizeRequest(
+            (ZP_SERVER_HANDLE)QuicConnection->Transport->Owner,
+            (ZP_CONNECTION_HANDLE)QuicConnection,
+            QuicConnection->ClientId,
+            ZpRequestAccessRead,
+            Request->ModuleId,
+            Request->OperationId,
+            &RequestPayload);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        if (Request->ModuleId == ZP_SYSTEM_MODULE_ID &&
+            Request->OperationId == ZP_SYSTEM_OPERATION_INFO)
+        {
+            Status = Request->PayloadLength == 0 ?
+                         ZpServerQuic_GetSystemInfo(&SystemInfo,
+                                                    ComputerName,
+                                                    ARRAYSIZE(ComputerName)) :
+                         STATUS_INVALID_PARAMETER;
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpSystem_EncodeInfo(&SystemInfo,
+                                             Payload,
+                                             sizeof(Payload),
+                                             &PayloadLength);
+                ResponsePayload = Payload;
+            }
+        }
+        else if (Request->ModuleId == ZP_PROCESS_MODULE_ID &&
+                 Request->OperationId == ZP_PROCESS_OPERATION_ENUMERATE)
+        {
+            Status = Request->PayloadLength == 0 ?
+                         ZpServerQuic_EnumerateProcesses(&AllocatedPayload,
+                                                         &PayloadLength) :
+                         STATUS_INVALID_PARAMETER;
+            ResponsePayload = AllocatedPayload;
+        }
+        else if (Request->ModuleId == ZP_PROCESS_MODULE_ID &&
+                 Request->OperationId == ZP_PROCESS_OPERATION_QUERY)
+        {
+            Status = ZpProcess_DecodeQuery(Request->Payload,
+                                           Request->PayloadLength,
+                                           &ProcessId);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_QueryProcess(ProcessId,
+                                                   &AllocatedPayload,
+                                                   &PayloadLength);
+                ResponsePayload = AllocatedPayload;
+            }
+        }
+        else if (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
+                 Request->OperationId == ZP_SERVICE_OPERATION_ENUMERATE)
+        {
+            Status = Request->PayloadLength == 0 ?
+                         ZpServerQuic_EnumerateServices(&AllocatedPayload,
+                                                        &PayloadLength) :
+                         STATUS_INVALID_PARAMETER;
+            ResponsePayload = AllocatedPayload;
+        }
+        else if (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
+                 Request->OperationId == ZP_SERVICE_OPERATION_QUERY)
+        {
+            Status = ZpService_DecodeQuery(Request->Payload,
+                                           Request->PayloadLength,
+                                           &ServiceName);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_QueryService(&ServiceName,
+                                                   &AllocatedPayload,
+                                                   &PayloadLength);
+                ResponsePayload = AllocatedPayload;
+            }
+        }
+        else
+        {
+            Status = STATUS_NOT_SUPPORTED;
+        }
     }
     if (NT_SUCCESS(Status) &&
         Request->TimeoutMilliseconds != 0 &&

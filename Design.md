@@ -407,7 +407,8 @@ Server 配置包含：
 - Listener 数组；Listener 的 `Host` 为空表示通配绑定，只有 WSS 使用非空 Path；
 - Deployment 数组，每项由 `ServerName` 和带可用私钥的 Windows `PCCERT_CONTEXT` 组成；SDK 在 `Create` 中复制证书 Context，调用方随后可释放原引用；
 - 严格按 `ModuleId` 升序排列的模块版本与能力；
-- Server 生命周期回调、单连接阶段回调和调用方 Context。
+- 单连接未完成 Request 上限，0 使用 64 默认值；
+- Server 生命周期回调、单连接阶段回调、可选的请求授权回调和调用方 Context。
 
 Client 状态为 `Stopped`、`Connecting`、`Authenticating`、`Ready`、`RetryWait` 和 `Stopping`；Server 状态为 `Stopped`、`Starting`、`Running` 和 `Stopping`；Server 单连接以及需要统一表达的连接阶段使用 `Connecting`、`Authenticating`、`Ready` 和 `Closed`。状态回调中的 `NTSTATUS` 表示触发当前转换的结果，成功转换使用 `STATUS_SUCCESS`。
 
@@ -428,6 +429,8 @@ Client 的非零 `TimeoutMilliseconds` 同时建立基于 `GetTickCount64` 的�
 Server 完整收到 Request 后复制 Payload 并投递线程池，MsQuic 接收回调不执行系统查询等业务工作；每条连接维护活动 Request 表和引用计数。Cancel、连接关闭与工作完成通过请求表锁竞争一次终止，连接对象延迟到所有工作退出后释放，Server Stop 也等待这些连接引用归零。
 
 Server 配置的 `MaxRequestsPerConnection` 限制每连接已投递且尚未完成的 Request；0 使用默认值 64，第一版配置硬上限为 4096。达到上限的新请求返回 `STATUS_QUOTA_EXCEEDED`，不进入工作队列且不终止连接。
+
+Server 在线程池执行具体业务操作前统一经过授权门禁。授权回调接收已认证连接的 32 字节 ClientId、`Read` 或 `Control` 访问级别、ModuleId、OperationId 以及只在回调期间有效的原始 Payload View，并以 `NTSTATUS` 决定是否继续；失败状态原样作为 Response 返回。未配置回调时只读操作默认放行，控制类操作默认返回 `STATUS_ACCESS_DENIED`。授权回调在对象锁外执行并计入活动回调，不能在回调栈内关闭 Server。
 
 Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多 64 项；Deployment 根证书 DER 最大 1 MiB。非空数组与源指针必须成对提供；可选字符串使用 `NULL` 表示缺省，提供空字符串视为无效配置。ServerName 在同一 Server 配置中按不区分大小写方式保持唯一。所有深拷贝使用单块对象内存，Server 额外持有通过 `CertDuplicateCertificateContext` 获得的证书引用，并在 `Close` 时逐项释放。
 
@@ -463,6 +466,7 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 - 未匹配 RequestId、ChannelId 或订阅的数据直接丢弃，达到违规阈值时断开；
 - 新连接按来源 IP、Deployment 和全局维度实施连接及握手速率限制；
 - S 限制同时握手数量、自动登记记录数量以及单连接未完成请求和通道数量；
+- 所有控制类操作必须标记为 `Control` 并通过 Server 授权门禁；不得因已完成身份认证而隐式放行；
 - 不把静态公钥、协议格式或客户端程序的不可见性当作安全边界；
 - 不自制会话密码、逐包非对称加密、Nonce 或重放保护方案，使用成熟 TLS 实现提供这些能力。
 

@@ -33,6 +33,12 @@ typedef struct _SDK_TEST_CONTEXT
     NTSTATUS ServerStatuses[8];
     LOGICAL CloseServerOnStopped;
     NTSTATUS ServerCloseStatus;
+    NTSTATUS AuthorizeStatus;
+    ULONG AuthorizeCount;
+    ZP_REQUEST_ACCESS AuthorizedAccess;
+    USHORT AuthorizedModuleId;
+    USHORT AuthorizedOperationId;
+    ULONG AuthorizedPayloadLength;
 } SDK_TEST_CONTEXT, *PSDK_TEST_CONTEXT;
 
 static
@@ -258,6 +264,32 @@ SDKTest_ServerConnectionCallback(
     UNREFERENCED_PARAMETER(Context);
 }
 
+static
+NTSTATUS
+NTAPI
+SDKTest_ServerAuthorizeCallback(
+    _In_ ZP_SERVER_HANDLE Server,
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ZP_CLIENT_ID_SIZE) const BYTE ClientId[ZP_CLIENT_ID_SIZE],
+    _In_ ZP_REQUEST_ACCESS Access,
+    _In_ USHORT ModuleId,
+    _In_ USHORT OperationId,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Server);
+    UNREFERENCED_PARAMETER(Connection);
+    UNREFERENCED_PARAMETER(ClientId);
+    TestContext->AuthorizeCount++;
+    TestContext->AuthorizedAccess = Access;
+    TestContext->AuthorizedModuleId = ModuleId;
+    TestContext->AuthorizedOperationId = OperationId;
+    TestContext->AuthorizedPayloadLength = Payload->Length;
+    return TestContext->AuthorizeStatus;
+}
+
 TEST_FUNC(SDKContract)
 {
     WCHAR Host[] = L"127.0.0.1", ServerName[] = L"server.example", ClientKeyName[] = L"ClientKey";
@@ -304,6 +336,8 @@ TEST_FUNC(SDKContract)
     PZP_SERVER_OBJECT ServerObject;
     ZP_REQUEST_HANDLE Request;
     ZP_RESPONSE_VIEW Response;
+    ZP_BUFFER_VIEW EmptyPayload = { NULL, 0 };
+    BYTE ClientId[ZP_CLIENT_ID_SIZE] = { 0 };
     SDK_TEST_CONTEXT TestContext = { STATUS_SUCCESS };
     SDK_TEST_CONTEXT TlsContext = { STATUS_ACCESS_DENIED };
     SDK_TEST_CONTEXT QuicContext = { STATUS_SUCCESS };
@@ -433,6 +467,38 @@ TEST_FUNC(SDKContract)
             ZP_SERVER_DEFAULT_MAX_REQUESTS_PER_CONNECTION);
     TEST_OK(wcscmp(ServerObject->Config.Listeners[0].Host, L"::") == 0);
     TEST_OK(ServerObject->Config.Modules[0].ModuleVersion == 1);
+    TEST_OK(NT_SUCCESS(ZpServer_AuthorizeRequest(
+                Server,
+                (ZP_CONNECTION_HANDLE)(ULONG_PTR)1,
+                ClientId,
+                ZpRequestAccessRead,
+                1,
+                1,
+                &EmptyPayload)) &&
+            ZpServer_AuthorizeRequest(
+                Server,
+                (ZP_CONNECTION_HANDLE)(ULONG_PTR)1,
+                ClientId,
+                ZpRequestAccessControl,
+                2,
+                3,
+                &EmptyPayload) == STATUS_ACCESS_DENIED);
+    TestContext.AuthorizeStatus = STATUS_PRIVILEGE_NOT_HELD;
+    ServerObject->Config.AuthorizeCallback = SDKTest_ServerAuthorizeCallback;
+    ServerObject->Config.CallbackContext = &TestContext;
+    TEST_OK(ZpServer_AuthorizeRequest(
+                Server,
+                (ZP_CONNECTION_HANDLE)(ULONG_PTR)1,
+                ClientId,
+                ZpRequestAccessControl,
+                2,
+                3,
+                &EmptyPayload) == STATUS_PRIVILEGE_NOT_HELD &&
+            TestContext.AuthorizeCount == 1 &&
+            TestContext.AuthorizedAccess == ZpRequestAccessControl &&
+            TestContext.AuthorizedModuleId == 2 &&
+            TestContext.AuthorizedOperationId == 3 &&
+            TestContext.AuthorizedPayloadLength == 0);
     ServerObject->State = ZpServerStateRunning;
     TEST_OK(ZpServer_Close(Server) == STATUS_DEVICE_BUSY);
     ServerObject->State = ZpServerStateStopped;

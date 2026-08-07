@@ -19,6 +19,12 @@ typedef enum _ZP_SERVER_STATE
     ZpServerStateStopping
 } ZP_SERVER_STATE, *PZP_SERVER_STATE;
 
+typedef enum _ZP_REQUEST_ACCESS
+{
+    ZpRequestAccessRead = 1,
+    ZpRequestAccessControl = 2
+} ZP_REQUEST_ACCESS, *PZP_REQUEST_ACCESS;
+
 typedef
 VOID
 (NTAPI *ZP_SERVER_STATE_CALLBACK)(
@@ -34,6 +40,18 @@ VOID
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_CONNECTION_PHASE Phase,
     _In_ NTSTATUS Status,
+    _In_opt_ PVOID Context);
+
+typedef
+NTSTATUS
+(NTAPI *ZP_SERVER_AUTHORIZE_CALLBACK)(
+    _In_ ZP_SERVER_HANDLE Server,
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ZP_CLIENT_ID_SIZE) const BYTE ClientId[ZP_CLIENT_ID_SIZE],
+    _In_ ZP_REQUEST_ACCESS Access,
+    _In_ USHORT ModuleId,
+    _In_ USHORT OperationId,
+    _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context);
 
 typedef struct _ZP_SERVER_DEPLOYMENT
@@ -57,6 +75,7 @@ typedef struct _ZP_SERVER_CONFIG
     ZP_SERVER_STATE_CALLBACK StateCallback;
     ZP_SERVER_CONNECTION_CALLBACK ConnectionCallback;
     PVOID CallbackContext;
+    ZP_SERVER_AUTHORIZE_CALLBACK AuthorizeCallback;
 } ZP_SERVER_CONFIG, *PZP_SERVER_CONFIG;
 
 typedef const ZP_SERVER_CONFIG* PCZP_SERVER_CONFIG;

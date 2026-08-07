@@ -357,6 +357,46 @@ ZpServer_NotifyConnection(
 }
 
 NTSTATUS
+ZpServer_AuthorizeRequest(
+    _In_ ZP_SERVER_HANDLE Server,
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ZP_CLIENT_ID_SIZE) const BYTE ClientId[ZP_CLIENT_ID_SIZE],
+    _In_ ZP_REQUEST_ACCESS Access,
+    _In_ USHORT ModuleId,
+    _In_ USHORT OperationId,
+    _In_ PCZP_BUFFER_VIEW Payload)
+{
+    PZP_SERVER_OBJECT Object = (PZP_SERVER_OBJECT)Server;
+    NTSTATUS Status;
+
+    if (Access != ZpRequestAccessRead && Access != ZpRequestAccessControl)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (Object->Config.AuthorizeCallback == NULL)
+    {
+        return Access == ZpRequestAccessRead ?
+                   STATUS_SUCCESS :
+                   STATUS_ACCESS_DENIED;
+    }
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount++;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    Status = Object->Config.AuthorizeCallback(Server,
+                                              Connection,
+                                              ClientId,
+                                              Access,
+                                              ModuleId,
+                                              OperationId,
+                                              Payload,
+                                              Object->Config.CallbackContext);
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount--;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    return Status;
+}
+
+NTSTATUS
 NTAPI
 ZpServer_Close(
     _In_ ZP_SERVER_HANDLE Server)
