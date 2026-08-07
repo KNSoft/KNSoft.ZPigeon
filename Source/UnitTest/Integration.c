@@ -45,6 +45,9 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE TerminalWritableEvent;
     HANDLE TerminalResizeEvent;
     HANDLE TerminalCloseEvent;
+    HANDLE RegistryPageEvent;
+    HANDLE RegistryValueEvent;
+    HANDLE RegistryStatusEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
@@ -137,6 +140,19 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONG TerminalProcessId;
     ULONG TerminalWritableCredit;
     ULONGLONG TerminalDataBytes;
+    volatile LONG RegistryPageStatus;
+    ULONG RegistryRecordCount;
+    LOGICAL RegistryPageValues;
+    BOOLEAN RegistryHasMore;
+    WCHAR RegistryRecordName[256];
+    ULONG RegistryRecordNameLength;
+    WCHAR RegistryCursor[256];
+    ULONG RegistryCursorLength;
+    volatile LONG RegistryValueStatus;
+    ULONG RegistryValueType;
+    BYTE RegistryValueData[64];
+    ULONG RegistryValueDataLength;
+    volatile LONG RegistryStatus;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -879,6 +895,97 @@ SDKIntegration_TerminalCloseCallback(
 }
 
 static
+VOID
+NTAPI
+SDKIntegration_RegistryPageCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_REGISTRY_PAGE_VIEW Page,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+    ZP_REGISTRY_VALUE_RECORD_VIEW Record;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->RegistryRecordCount = 0;
+    TestContext->RegistryRecordNameLength = 0;
+    TestContext->RegistryCursorLength = 0;
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->RegistryRecordCount = Page->Records.Count;
+        TestContext->RegistryHasMore = Page->HasMore;
+        TestContext->RegistryCursorLength = Page->NextCursor.Length;
+        if (Page->NextCursor.Length <= ARRAYSIZE(TestContext->RegistryCursor) &&
+            Page->NextCursor.Length != 0)
+        {
+            RtlCopyMemory(TestContext->RegistryCursor,
+                          Page->NextCursor.Buffer,
+                          (SIZE_T)Page->NextCursor.Length * sizeof(WCHAR));
+        }
+        if (TestContext->RegistryPageValues &&
+            Page->Records.Count != 0 &&
+            NT_SUCCESS(ZpRegistry_GetValueRecord(&Page->Records, 0, &Record)))
+        {
+            TestContext->RegistryRecordNameLength = Record.Name.Length;
+            if (Record.Name.Length <=
+                    ARRAYSIZE(TestContext->RegistryRecordName) &&
+                Record.Name.Length != 0)
+            {
+                RtlCopyMemory(TestContext->RegistryRecordName,
+                              Record.Name.Buffer,
+                              (SIZE_T)Record.Name.Length * sizeof(WCHAR));
+            }
+        }
+    }
+    InterlockedExchange(&TestContext->RegistryPageStatus, Status);
+    SetEvent(TestContext->RegistryPageEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_RegistryValueCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_REGISTRY_VALUE_VIEW Value,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->RegistryValueDataLength = 0;
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->RegistryValueType = Value->Type;
+        TestContext->RegistryValueDataLength = Value->Data.Length;
+        if (Value->Data.Length <= sizeof(TestContext->RegistryValueData) &&
+            Value->Data.Length != 0)
+        {
+            RtlCopyMemory(TestContext->RegistryValueData,
+                          Value->Data.Buffer,
+                          Value->Data.Length);
+        }
+    }
+    InterlockedExchange(&TestContext->RegistryValueStatus, Status);
+    SetEvent(TestContext->RegistryValueEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_RegistryStatusCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    InterlockedExchange(&TestContext->RegistryStatus, Status);
+    SetEvent(TestContext->RegistryStatusEvent);
+}
+
+static
 LOGICAL
 SDKIntegration_HashFile(
     _In_ PCWSTR Path,
@@ -1343,7 +1450,8 @@ TEST_FUNC(SDKQuicIntegration)
         { 3, 1, 0x01 },
         { 4, 1, 0x03 },
         { 5, 1, 0x00 },
-        { 6, 1, 0x00 }
+        { 6, 1, 0x00 },
+        { 7, 1, 0x00 }
     };
     ZP_MODULE_RECORD ServerModules[] = {
         { 1, 2, 0x05 },
@@ -1351,7 +1459,8 @@ TEST_FUNC(SDKQuicIntegration)
         { 3, 1, 0x01 },
         { 4, 1, 0x03 },
         { 5, 1, 0x00 },
-        { 6, 1, 0x00 }
+        { 6, 1, 0x00 },
+        { 7, 1, 0x00 }
     };
     ZP_ENDPOINT Endpoint = { ZpTransportQuic, L"127.0.0.1", 0, ServerName, NULL };
     ZP_LISTENER_ENDPOINT Listener = { ZpTransportQuic, L"127.0.0.1", 0, NULL };
@@ -1371,6 +1480,11 @@ TEST_FUNC(SDKQuicIntegration)
     WCHAR ModulePath[MAX_PATH];
     WCHAR UploadPath[MAX_PATH] = { 0 };
     WCHAR UploadSearchPath[MAX_PATH];
+    WCHAR RegistryPath[256] = { 0 };
+    WCHAR RegistryChildPath[256];
+    static const WCHAR RegistryValueName[] = L"Named";
+    static const ULONG RegistryDefaultData = 17;
+    static const ULONG RegistryNamedData = 42;
     WCHAR FirstPageName[MAX_PATH];
     ULONG FirstPageNameLength;
     WCHAR FirstEventBookmark[4096];
@@ -1389,6 +1503,9 @@ TEST_FUNC(SDKQuicIntegration)
     BYTE ExpectedFileDigest[ZP_FILE_SHA256_SIZE];
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -1452,6 +1569,9 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.TerminalWritableEvent = Events[24];
     TestContext.TerminalResizeEvent = Events[25];
     TestContext.TerminalCloseEvent = Events[26];
+    TestContext.RegistryPageEvent = Events[27];
+    TestContext.RegistryValueEvent = Events[28];
+    TestContext.RegistryStatusEvent = Events[29];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -2405,6 +2525,384 @@ TEST_FUNC(SDKQuicIntegration)
     }
     UploadPath[0] = UNICODE_NULL;
 
+    if (swprintf_s(RegistryPath,
+                   ARRAYSIZE(RegistryPath),
+                   L"Software\\KNSoft\\KNSoft.ZPigeon.UnitTest.%lu.%llu",
+                   GetCurrentProcessId(),
+                   GetTickCount64()) < 0 ||
+        swprintf_s(RegistryChildPath,
+                   ARRAYSIZE(RegistryChildPath),
+                   L"%s\\Child",
+                   RegistryPath) < 0)
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.RegistryStatusEvent);
+    InterlockedExchange(&TestContext.AllowControl, FALSE);
+    Status = ZpClient_CreateRegistryKey(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryPath,
+                 (ULONG)wcslen(RegistryPath),
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryStatusCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryStatusEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        TestContext.RegistryStatus != STATUS_ACCESS_DENIED)
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.RegistryStatusEvent);
+    InterlockedExchange(&TestContext.AllowControl, TRUE);
+    Status = ZpClient_CreateRegistryKey(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryPath,
+                 (ULONG)wcslen(RegistryPath),
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryStatusCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryStatusEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.RegistryStatus))
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.RegistryStatusEvent);
+    Status = ZpClient_CreateRegistryKey(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryChildPath,
+                 (ULONG)wcslen(RegistryChildPath),
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryStatusCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryStatusEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.RegistryStatus))
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.RegistryStatusEvent);
+    Status = ZpClient_SetRegistryValue(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryPath,
+                 (ULONG)wcslen(RegistryPath),
+                 NULL,
+                 0,
+                 REG_DWORD,
+                 &RegistryDefaultData,
+                 sizeof(RegistryDefaultData),
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryStatusCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryStatusEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.RegistryStatus))
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.RegistryStatusEvent);
+    Status = ZpClient_SetRegistryValue(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryPath,
+                 (ULONG)wcslen(RegistryPath),
+                 RegistryValueName,
+                 ARRAYSIZE(RegistryValueName) - 1,
+                 REG_DWORD,
+                 &RegistryNamedData,
+                 sizeof(RegistryNamedData),
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryStatusCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryStatusEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.RegistryStatus))
+    {
+        goto Cleanup;
+    }
+
+    ResetEvent(TestContext.RegistryPageEvent);
+    TestContext.RegistryPageValues = FALSE;
+    Status = ZpClient_EnumerateRegistryKeysPage(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryPath,
+                 (ULONG)wcslen(RegistryPath),
+                 NULL,
+                 0,
+                 8,
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryPageCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryPageEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.RegistryPageStatus) ||
+        TestContext.RegistryRecordCount != 1)
+    {
+        goto Cleanup;
+    }
+
+    ResetEvent(TestContext.RegistryPageEvent);
+    TestContext.RegistryPageValues = TRUE;
+    Status = ZpClient_EnumerateRegistryValuesPage(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryPath,
+                 (ULONG)wcslen(RegistryPath),
+                 NULL,
+                 0,
+                 1,
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryPageCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryPageEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.RegistryPageStatus) ||
+        TestContext.RegistryRecordCount != 1 ||
+        !TestContext.RegistryHasMore ||
+        TestContext.RegistryRecordNameLength != 0 ||
+        TestContext.RegistryCursorLength != 0)
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.RegistryPageEvent);
+    Status = ZpClient_EnumerateRegistryValuesPage(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryPath,
+                 (ULONG)wcslen(RegistryPath),
+                 L"",
+                 0,
+                 1,
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryPageCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryPageEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.RegistryPageStatus) ||
+        TestContext.RegistryRecordCount != 1 ||
+        TestContext.RegistryHasMore ||
+        TestContext.RegistryRecordNameLength !=
+            ARRAYSIZE(RegistryValueName) - 1 ||
+        RtlCompareMemory(TestContext.RegistryRecordName,
+                         RegistryValueName,
+                         sizeof(RegistryValueName) - sizeof(WCHAR)) !=
+            sizeof(RegistryValueName) - sizeof(WCHAR))
+    {
+        goto Cleanup;
+    }
+
+    ResetEvent(TestContext.RegistryValueEvent);
+    Status = ZpClient_QueryRegistryValue(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryPath,
+                 (ULONG)wcslen(RegistryPath),
+                 RegistryValueName,
+                 ARRAYSIZE(RegistryValueName) - 1,
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryValueCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryValueEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.RegistryValueStatus) ||
+        TestContext.RegistryValueType != REG_DWORD ||
+        TestContext.RegistryValueDataLength != sizeof(RegistryNamedData) ||
+        RtlCompareMemory(TestContext.RegistryValueData,
+                         &RegistryNamedData,
+                         sizeof(RegistryNamedData)) !=
+            sizeof(RegistryNamedData))
+    {
+        goto Cleanup;
+    }
+
+    ResetEvent(TestContext.RegistryStatusEvent);
+    Status = ZpClient_DeleteRegistryValue(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryPath,
+                 (ULONG)wcslen(RegistryPath),
+                 RegistryValueName,
+                 ARRAYSIZE(RegistryValueName) - 1,
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryStatusCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryStatusEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.RegistryStatus))
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.RegistryStatusEvent);
+    Status = ZpClient_DeleteRegistryValue(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryPath,
+                 (ULONG)wcslen(RegistryPath),
+                 NULL,
+                 0,
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryStatusCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryStatusEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.RegistryStatus))
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.RegistryStatusEvent);
+    Status = ZpClient_DeleteRegistryKey(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryChildPath,
+                 (ULONG)wcslen(RegistryChildPath),
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryStatusCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryStatusEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.RegistryStatus))
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.RegistryStatusEvent);
+    Status = ZpClient_DeleteRegistryKey(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryPath,
+                 (ULONG)wcslen(RegistryPath),
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryStatusCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryStatusEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.RegistryStatus))
+    {
+        goto Cleanup;
+    }
+    RegistryPath[0] = UNICODE_NULL;
+
     Status = ZpClient_CreateTerminal(Client,
                                       80,
                                       25,
@@ -2660,6 +3158,10 @@ Cleanup:
     if (UploadPath[0] != UNICODE_NULL)
     {
         DeleteFileW(UploadPath);
+    }
+    if (RegistryPath[0] != UNICODE_NULL)
+    {
+        RegDeleteTreeW(HKEY_CURRENT_USER, RegistryPath);
     }
     if (EventSource != NULL)
     {

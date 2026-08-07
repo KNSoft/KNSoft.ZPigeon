@@ -79,16 +79,19 @@
 - 定稿 Registry Version 1：显式 Root 与 WOW64 View、子键和值分页、原始 Value Type/Data、幂等建键及非递归删键语义；
 - 实现 Registry Version 1 类型化 Codec：显式区分“无游标”和默认值空名称游标，覆盖子键/值分页、单值查询、原始值写入以及建删键请求，并校验分页游标与 Frame 边界；
 - 实现 Registry Version 1 Client API：提供键/值分页、查询、写值、删值、建键及删键七个异步入口，统一沿用 Request Handle、Deadline、取消和回调期 View 生命周期；
+- 实现 Server 原生 Registry 操作：映射固定 Root 与 WOW64 View，按 ordinal 名称排序并分页子键/值快照，保留原生 Type/Data，Control 门禁覆盖写值、删值、建键和非递归删键；
+- 扩展 localhost QUIC Registry 集成测试：仅操作 HKCU 随机临时子键，验证未授权拒绝、建键、默认/命名值写入、空名称游标连续翻页、查询、删除和失败路径清理；
 - 扩展 localhost QUIC 集成测试，写入真实 Application 事件并验证 Record 内容、主动取消 Terminal，以及活动订阅随连接断开完成；
 - 扩展 localhost QUIC EventLog 恢复测试：持久化实时 Record Bookmark，离线产生事件后以 QueryPage 补页，再从补页 Bookmark 严格重新订阅并接收后续事件；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 332 项断言全部通过，其中包含 Registry Client API 路由与回调解码、Registry/EventLog/Core Event Codec、Client Subscription 生命周期/乱序拒绝/取消、真实 File.EnumeratePage 连续翻页、File.OpenWrite 原子上传/取消清理、File.Hash SHA-256、ConPTY Terminal Create/输入/输出/Resize/退出/取消、真实 File.OpenRead 下载和既有管理操作端到端验证。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 332 项断言全部通过，其中包含真实 Registry 全操作与默认值游标分页、Registry Client API 路由与回调解码、Registry/EventLog/Core Event Codec、Client Subscription 生命周期/乱序拒绝/取消、真实 File.EnumeratePage 连续翻页、File.OpenWrite 原子上传/取消清理、File.Hash SHA-256、ConPTY Terminal Create/输入/输出/Resize/退出/取消、真实 File.OpenRead 下载和既有管理操作端到端验证。
 
 ## 下一步
 
-1. 实现 Server 原生 Registry 操作和 localhost QUIC 端到端测试。
+1. 执行 Version 1 完整性与资源安全审计，优先核对 Channel、Subscription、Registry 快照和 EventLog 队列的有界性；
+2. 根据审计结果补齐配置上限、压力路径和公开使用说明。
 
 ## 待确认与阻塞
 

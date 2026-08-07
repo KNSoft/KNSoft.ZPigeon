@@ -1,6 +1,7 @@
 ﻿#include "../Server.inl"
 #include "../../Network/Authentication.inl"
 #include "../../Network/Quic.inl"
+#include "Registry.h"
 
 #include <KNSoft/ZPigeon/EventLog.h>
 #include <KNSoft/ZPigeon/File.h>
@@ -3348,7 +3349,10 @@ ZpServerQuic_RequestCallback(
                    Request->OperationId == ZP_SERVICE_OPERATION_STOP)) ||
                  Request->ModuleId == ZP_TERMINAL_MODULE_ID ||
                  (Request->ModuleId == ZP_FILE_MODULE_ID &&
-                  Request->OperationId == ZP_FILE_OPERATION_OPEN_WRITE) ?
+                  Request->OperationId == ZP_FILE_OPERATION_OPEN_WRITE) ||
+                 (Request->ModuleId == ZP_REGISTRY_MODULE_ID &&
+                  Request->OperationId >= ZP_REGISTRY_OPERATION_SET_VALUE &&
+                  Request->OperationId <= ZP_REGISTRY_OPERATION_DELETE_KEY) ?
                      ZpRequestAccessControl :
                      ZpRequestAccessRead;
         Status = ZpServer_AuthorizeRequest(
@@ -3677,6 +3681,15 @@ ZpServerQuic_RequestCallback(
                 Status = ZpServerQuic_UnsubscribeEventLog(QuicConnection,
                                                           SubscriptionId);
             }
+        }
+        else if (Request->ModuleId == ZP_REGISTRY_MODULE_ID)
+        {
+            Status = ZpServerRegistry_ProcessRequest(Request->OperationId,
+                                                      Request->Payload,
+                                                      Request->PayloadLength,
+                                                      &AllocatedPayload,
+                                                      &PayloadLength);
+            ResponsePayload = AllocatedPayload;
         }
         else
         {
