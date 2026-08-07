@@ -25,6 +25,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE SystemInfoEvent;
     HANDLE ProcessListEvent;
     HANDLE ProcessInfoEvent;
+    HANDLE ServiceListEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
@@ -46,6 +47,9 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONG ProcessInfoThreadCount;
     ULONGLONG ProcessInfoCreateTime;
     ULONG ProcessInfoImageNameLength;
+    volatile LONG ServiceListStatus;
+    ULONG ServiceCount;
+    LOGICAL FoundNamedService;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -173,6 +177,41 @@ SDKIntegration_ProcessInfoCallback(
     }
     InterlockedExchange(&TestContext->ProcessInfoStatus, Status);
     SetEvent(TestContext->ProcessInfoEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_ServiceListCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_SERVICE_LIST_VIEW Services,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+    ZP_SERVICE_RECORD_VIEW Service;
+    ULONG Index;
+
+    UNREFERENCED_PARAMETER(Request);
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->ServiceCount = Services->Count;
+        for (Index = 0; Index < Services->Count; Index++)
+        {
+            Status = ZpService_GetRecord(Services, Index, &Service);
+            if (!NT_SUCCESS(Status))
+            {
+                break;
+            }
+            if (Service.ServiceName.Length != 0 &&
+                Service.DisplayName.Length != 0)
+            {
+                TestContext->FoundNamedService = TRUE;
+            }
+        }
+    }
+    InterlockedExchange(&TestContext->ServiceListStatus, Status);
+    SetEvent(TestContext->ServiceListEvent);
 }
 
 static
@@ -467,7 +506,11 @@ TEST_FUNC(SDKQuicIntegration)
 {
     static const WCHAR ServerName[] = L"localhost";
     SDK_INTEGRATION_CONTEXT TestContext = { 0 };
-    ZP_MODULE_RECORD ClientModules[] = { { 1, 3, 0x0F }, { 2, 1, 0x03 } };
+    ZP_MODULE_RECORD ClientModules[] = {
+        { 1, 3, 0x0F },
+        { 2, 1, 0x03 },
+        { 3, 1, 0x01 }
+    };
     ZP_MODULE_RECORD ServerModules[] = {
         { 1, 2, 0x05 },
         { 2, 1, 0x03 },
@@ -500,6 +543,7 @@ TEST_FUNC(SDKQuicIntegration)
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL)
     };
 
@@ -520,6 +564,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.SystemInfoEvent = Events[7];
     TestContext.ProcessListEvent = Events[8];
     TestContext.ProcessInfoEvent = Events[9];
+    TestContext.ServiceListEvent = Events[10];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -678,6 +723,26 @@ TEST_FUNC(SDKQuicIntegration)
         TestContext.ProcessInfoThreadCount == 0 ||
         TestContext.ProcessInfoCreateTime == 0 ||
         TestContext.ProcessInfoImageNameLength == 0)
+    {
+        goto Cleanup;
+    }
+
+    Status = ZpClient_EnumerateServices(Client,
+                                        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                        SDKIntegration_ServiceListCallback,
+                                        &TestContext,
+                                        &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.ServiceListEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.ServiceListStatus) ||
+        TestContext.ServiceCount == 0 ||
+        !TestContext.FoundNamedService)
     {
         goto Cleanup;
     }

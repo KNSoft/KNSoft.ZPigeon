@@ -2,6 +2,7 @@
 
 #include <KNSoft/ZPigeon/Protocol.h>
 #include <KNSoft/ZPigeon/Process.h>
+#include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
 
 TEST_FUNC(ProtocolMessage)
@@ -56,6 +57,11 @@ TEST_FUNC(ProtocolMessage)
         11
     };
     ZP_PROCESS_INFO_VIEW ProcessInfoView;
+    ZP_SERVICE_RECORD Services[] = {
+        { 0x10, 4, 4321, L"SvcA", 4, L"Service A", 9 }
+    };
+    ZP_SERVICE_LIST_VIEW ServiceList;
+    ZP_SERVICE_RECORD_VIEW ServiceRecord;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value;
@@ -223,4 +229,21 @@ TEST_FUNC(ProtocolMessage)
             ProcessInfoView.WorkingSetBytes == ProcessInfo.WorkingSetBytes &&
             ProcessInfoView.PrivateBytes == ProcessInfo.PrivateBytes &&
             ProcessInfoView.ImageName.Length == ProcessInfo.ImageNameLength);
+    TEST_OK(NT_SUCCESS(ZpService_EncodeList(Services,
+                                           ARRAYSIZE(Services),
+                                           Buffer,
+                                           sizeof(Buffer),
+                                           &Length)) &&
+            Length == 50 &&
+            NT_SUCCESS(ZpService_DecodeList(Buffer, Length, &ServiceList)) &&
+            ServiceList.Count == ARRAYSIZE(Services) &&
+            NT_SUCCESS(ZpService_GetRecord(&ServiceList, 0, &ServiceRecord)) &&
+            ServiceRecord.ServiceType == Services[0].ServiceType &&
+            ServiceRecord.CurrentState == Services[0].CurrentState &&
+            ServiceRecord.ProcessId == Services[0].ProcessId &&
+            ServiceRecord.ServiceName.Length == Services[0].ServiceNameLength &&
+            ServiceRecord.DisplayName.Length == Services[0].DisplayNameLength);
+    TEST_OK(ZpService_GetRecord(&ServiceList,
+                                ServiceList.Count,
+                                &ServiceRecord) == STATUS_INVALID_PARAMETER);
 }

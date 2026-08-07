@@ -985,6 +985,76 @@ ZpClient_QueryProcess(
     return Status;
 }
 
+typedef struct _ZP_CLIENT_SERVICE_ENUMERATE_CONTEXT
+{
+    ZP_SERVICE_ENUMERATE_CALLBACK Callback;
+    PVOID Context;
+} ZP_CLIENT_SERVICE_ENUMERATE_CONTEXT, *PZP_CLIENT_SERVICE_ENUMERATE_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpClient_ServiceEnumerateComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_SERVICE_ENUMERATE_CONTEXT ServiceContext = Context;
+    ZP_SERVICE_LIST_VIEW Services;
+
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpService_DecodeList(Payload->Buffer,
+                                      Payload->Length,
+                                      &Services);
+    }
+    ServiceContext->Callback(Request,
+                             Status,
+                             NT_SUCCESS(Status) ? &Services : NULL,
+                             ServiceContext->Context);
+    Mem_Free(ServiceContext);
+}
+
+NTSTATUS
+NTAPI
+ZpClient_EnumerateServices(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_SERVICE_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_CLIENT_SERVICE_ENUMERATE_CONTEXT ServiceContext;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    ServiceContext = Mem_Alloc(sizeof(*ServiceContext));
+    if (ServiceContext == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    ServiceContext->Callback = Callback;
+    ServiceContext->Context = Context;
+    Status = ZpClient_SendRequest(Client,
+                                  ZP_SERVICE_MODULE_ID,
+                                  ZP_SERVICE_OPERATION_ENUMERATE,
+                                  TimeoutMilliseconds,
+                                  NULL,
+                                  0,
+                                  ZpClient_ServiceEnumerateComplete,
+                                  ServiceContext,
+                                  Request);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(ServiceContext);
+    }
+    return Status;
+}
+
 NTSTATUS
 NTAPI
 ZpRequest_Cancel(

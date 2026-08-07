@@ -450,6 +450,8 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 
 `Process.Query` 固定为 `OperationId = 2`，请求 Payload 为 `UINT32 ProcessId`。成功响应依次编码 `UINT32 ProcessId`、父 ProcessId、SessionId、ThreadCount、HandleCount，随后为五个 `UINT64`：CreateTime、UserTime、KernelTime、WorkingSetBytes、PrivateBytes，最后为 UTF-16LE ImageName；时间值沿用 Windows 100ns 原生计数。
 
+`Service` 模块第一版固定为 `ModuleId = 3`、`ModuleVersion = 1`；`Enumerate` 固定为 `OperationId = 1`，请求 Payload 必须为空。成功响应 Payload 为数组，单项依次编码 `UINT32 ServiceType`、`CurrentState`、`ProcessId`，随后为 UTF-16LE ServiceName 和 DisplayName 字符串。字段值沿用 Windows Service Control Manager 定义；停止中的服务可返回 PID 0。
+
 大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口、断点续传和哈希规则在实现对应模块前按真实需求确定，不预先建设通用虚拟流框架。
 
 ## 10. 安全与资源限制
@@ -495,7 +497,7 @@ QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接�
 
 以下内容不阻塞 Network 和通用 Protocol 编码，在实现对应模块前定稿：
 
-1. 除已固定的 System.Info 和 Process.Enumerate 外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
+1. 除已固定的 System.Info、Process.Enumerate、Process.Query 和 Service.Enumerate 外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
 2. File 通道的窗口、哈希、断点续传和落盘契约；
 3. Terminal 通道的输入输出分流、窗口调整和退出状态 Payload；
 4. EventLog 等订阅模块的事件丢失与恢复语义；

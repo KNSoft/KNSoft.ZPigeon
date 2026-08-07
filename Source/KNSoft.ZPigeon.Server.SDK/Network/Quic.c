@@ -3,7 +3,12 @@
 #include "../../Network/Quic.inl"
 
 #include <KNSoft/ZPigeon/Process.h>
+#include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
+
+#include <Winsvc.h>
+
+#pragma comment(lib, "Advapi32.lib")
 
 typedef struct _ZP_SERVER_QUIC_CONNECTION
 {
@@ -290,6 +295,125 @@ ZpServerQuic_QueryProcess(
 
 static
 NTSTATUS
+ZpServerQuic_EnumerateServices(
+    _Outptr_result_bytebuffer_(*PayloadLength) PBYTE* Payload,
+    _Out_ PULONG PayloadLength)
+{
+    LPENUM_SERVICE_STATUS_PROCESSW Entries = NULL;
+    PZP_SERVICE_RECORD Services = NULL;
+    SC_HANDLE Manager;
+    PBYTE Buffer = NULL;
+    DWORD BytesNeeded = 0, Count = 0, ResumeHandle = 0;
+    NTSTATUS Status = STATUS_SUCCESS;
+    ULONG Index;
+
+    *Payload = NULL;
+    *PayloadLength = 0;
+    Manager = OpenSCManagerW(NULL, NULL, SC_MANAGER_ENUMERATE_SERVICE);
+    if (Manager == NULL)
+    {
+        return NTSTATUS_FROM_WIN32(GetLastError());
+    }
+    if (EnumServicesStatusExW(Manager,
+                              SC_ENUM_PROCESS_INFO,
+                              SERVICE_WIN32,
+                              SERVICE_STATE_ALL,
+                              NULL,
+                              0,
+                              &BytesNeeded,
+                              &Count,
+                              &ResumeHandle,
+                              NULL))
+    {
+        Count = 0;
+        goto Encode;
+    }
+    if (GetLastError() != ERROR_MORE_DATA)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    Buffer = Mem_Alloc(BytesNeeded);
+    if (Buffer == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
+    }
+    ResumeHandle = 0;
+    if (!EnumServicesStatusExW(Manager,
+                               SC_ENUM_PROCESS_INFO,
+                               SERVICE_WIN32,
+                               SERVICE_STATE_ALL,
+                               Buffer,
+                               BytesNeeded,
+                               &BytesNeeded,
+                               &Count,
+                               &ResumeHandle,
+                               NULL))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    Entries = (LPENUM_SERVICE_STATUS_PROCESSW)Buffer;
+    Services = Count != 0 ?
+                   Mem_Alloc((SIZE_T)Count * sizeof(*Services)) :
+                   NULL;
+    if (Count != 0 && Services == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
+    }
+    for (Index = 0; Index < Count; Index++)
+    {
+        Services[Index].ServiceType = Entries[Index].ServiceStatusProcess.dwServiceType;
+        Services[Index].CurrentState = Entries[Index].ServiceStatusProcess.dwCurrentState;
+        Services[Index].ProcessId = Entries[Index].ServiceStatusProcess.dwProcessId;
+        Services[Index].ServiceName = Entries[Index].lpServiceName;
+        Services[Index].ServiceNameLength = (ULONG)wcslen(Entries[Index].lpServiceName);
+        Services[Index].DisplayName = Entries[Index].lpDisplayName;
+        Services[Index].DisplayNameLength = (ULONG)wcslen(Entries[Index].lpDisplayName);
+    }
+
+Encode:
+    Status = ZpService_EncodeList(Services,
+                                  Count,
+                                  NULL,
+                                  0,
+                                  PayloadLength);
+    *Payload = NT_SUCCESS(Status) ? Mem_Alloc(*PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && *Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpService_EncodeList(Services,
+                                      Count,
+                                      *Payload,
+                                      *PayloadLength,
+                                      PayloadLength);
+    }
+    if (!NT_SUCCESS(Status) && *Payload != NULL)
+    {
+        Mem_Free(*Payload);
+        *Payload = NULL;
+    }
+
+Cleanup:
+    if (Services != NULL)
+    {
+        Mem_Free(Services);
+    }
+    if (Buffer != NULL)
+    {
+        Mem_Free(Buffer);
+    }
+    CloseServiceHandle(Manager);
+    return Status;
+}
+
+static
+NTSTATUS
 ZpServerQuic_SendResponse(
     _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
     _Inout_ PZP_CONNECTION Connection,
@@ -428,6 +552,15 @@ ZpServerQuic_RequestCallback(
                                                &PayloadLength);
             ResponsePayload = AllocatedPayload;
         }
+    }
+    else if (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
+             Request->OperationId == ZP_SERVICE_OPERATION_ENUMERATE)
+    {
+        Status = Request->PayloadLength == 0 ?
+                     ZpServerQuic_EnumerateServices(&AllocatedPayload,
+                                                    &PayloadLength) :
+                     STATUS_INVALID_PARAMETER;
+        ResponsePayload = AllocatedPayload;
     }
     else
     {

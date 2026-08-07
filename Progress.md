@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-项目已完成第一版 Protocol/API 规格、通用 Protocol、Transport 无关的 Connection 核心、Client/Server SDK 公开 API 契约、配置对象所有权以及 Start/Stop 生命周期；QUIC Transport 的连接、监听、证书链、单 Stream、密码学握手和本地进程内端到端验证均已接通。系统管理模块尚未开始。
+项目已完成第一版 Protocol/API 规格、通用 Protocol、Transport 无关的 Connection 核心、Client/Server SDK 公开 API 契约、配置对象所有权以及 Start/Stop 生命周期；QUIC Transport 的连接、监听、证书链、单 Stream、密码学握手和本地进程内端到端验证均已接通。System、Process 及 Service 的首批只读管理操作已接通。
 
 当前解决方案包含：
 
@@ -49,15 +49,16 @@
 - 扩展 localhost QUIC 集成测试，覆盖 System.Info 的真实 Request/Response 往返和结果解码；
 - 固定 Process 模块 Version 1 的 `Enumerate` 操作和变长记录 Codec，实现 Server 原生进程快照、Client `ZpClient_EnumerateProcesses` 异步 API，以及当前进程可见性的真实端到端验证；
 - 实现 Process.Query：按 PID 返回父 PID、Session、线程/句柄数、创建与 CPU 时间、工作集、私有内存和映像名，并以 UnitTest 当前进程完成真实端到端验证；
+- 固定 Service 模块 Version 1 的 `Enumerate` 操作和变长记录 Codec，实现 Server 通过 Service Control Manager 枚举服务类型、状态、宿主 PID、服务名与显示名，以及 Client `ZpClient_EnumerateServices` 异步 API；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 205 项断言全部通过，其中包含真实 localhost QUIC 认证、重连、Ping/Pong、System.Info、Process.Enumerate 和 Process.Query 端到端链路。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 207 项断言全部通过，其中包含真实 localhost QUIC 认证、重连、Ping/Pong、System.Info、Process.Enumerate、Process.Query 和 Service.Enumerate 端到端链路。
 
 ## 下一步
 
-1. 增加 Service.Enumerate 的最小协议与只读实现；
-2. Process.Control 等破坏性操作在权限门禁规格确定后再实现，随后推进 File、Terminal 等模块。
+1. 增加 Service.Query 的只读配置与状态详情；
+2. Process.Control 与 Service.Control 等破坏性操作在权限门禁规格确定后再实现，随后推进 File、Terminal 等模块。
 
 ## 待确认与阻塞
 
