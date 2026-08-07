@@ -779,6 +779,7 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpClient_NotifyState(Client, ZpClientStateStopped, STATUS_SUCCESS)) &&
             TestContext.ClientStates[4] == ZpClientStateStopped &&
             TestContext.ClientCloseStatus == STATUS_DEVICE_BUSY);
+    WaitForThreadpoolTimerCallbacks(ClientObject->RequestTimer, FALSE);
     TEST_OK(NT_SUCCESS(ZpClient_Close(Client)));
 
     RtlZeroMemory(&TestContext, sizeof(TestContext));

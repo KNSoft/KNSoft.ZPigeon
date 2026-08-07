@@ -21,6 +21,9 @@
     <ClInclude Include="Include\KNSoft\ZPigeon\System.h">
       <Filter>Include</Filter>
     </ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Terminal.h">
+      <Filter>Include</Filter>
+    </ClInclude>
     <ClInclude Include="Protocol.inl" />
   </ItemGroup>
   <ItemGroup>
@@ -31,6 +34,7 @@
     <ClCompile Include="Process.c" />
     <ClCompile Include="Service.c" />
     <ClCompile Include="System.c" />
+    <ClCompile Include="Terminal.c" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

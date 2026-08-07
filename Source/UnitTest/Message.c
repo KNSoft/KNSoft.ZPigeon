@@ -5,6 +5,7 @@
 #include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
+#include <KNSoft/ZPigeon/Terminal.h>
 
 TEST_FUNC(ProtocolMessage)
 {
@@ -99,10 +100,12 @@ TEST_FUNC(ProtocolMessage)
     };
     ZP_FILE_LIST_VIEW FileList;
     ZP_FILE_RECORD_VIEW FileRecord;
+    ZP_TERMINAL_CREATE_VIEW TerminalCreate;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value, FileSize, FileOffset;
-    ULONG Length, Index, ExitCode, CreditBytes;
+    ULONG Length, Index, ExitCode, CreditBytes, ProcessId;
+    USHORT Columns, Rows;
 
     for (Index = 0; Index < ARRAYSIZE(Challenge); Index++)
     {
@@ -442,6 +445,58 @@ TEST_FUNC(ProtocolMessage)
             FileRecord.Info.Size == FileRecords[0].Info.Size &&
             FileRecord.Name.Length == FileRecords[0].NameLength);
     TEST_OK(ZpFile_GetRecord(&FileList,
-                             FileList.Count,
-                             &FileRecord) == STATUS_INVALID_PARAMETER);
+                              FileList.Count,
+                              &FileRecord) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpTerminal_EncodeCreate(120,
+                                               30,
+                                               L"cmd.exe /Q",
+                                               10,
+                                               L"C:\\",
+                                               3,
+                                               Buffer,
+                                               sizeof(Buffer),
+                                               &Length)) &&
+            NT_SUCCESS(ZpTerminal_DecodeCreate(Buffer,
+                                               Length,
+                                               &TerminalCreate)) &&
+            TerminalCreate.Columns == 120 &&
+            TerminalCreate.Rows == 30 &&
+            TerminalCreate.CommandLine.Length == 10 &&
+            TerminalCreate.WorkingDirectory.Length == 3);
+    TEST_OK(NT_SUCCESS(ZpTerminal_EncodeCreateResponse(2,
+                                                       4321,
+                                                       Buffer,
+                                                       sizeof(Buffer),
+                                                       &Length)) &&
+            NT_SUCCESS(ZpTerminal_DecodeCreateResponse(Buffer,
+                                                       Length,
+                                                       &Value,
+                                                       &ProcessId)) &&
+            Value == 2 &&
+            ProcessId == 4321);
+    TEST_OK(NT_SUCCESS(ZpTerminal_EncodeResize(2,
+                                               80,
+                                               25,
+                                               Buffer,
+                                               sizeof(Buffer),
+                                               &Length)) &&
+            NT_SUCCESS(ZpTerminal_DecodeResize(Buffer,
+                                               Length,
+                                               &Value,
+                                               &Columns,
+                                               &Rows)) &&
+            Value == 2 &&
+            Columns == 80 &&
+            Rows == 25);
+    TEST_OK(ZpTerminal_EncodeCreateResponse(3,
+                                             4321,
+                                             Buffer,
+                                             sizeof(Buffer),
+                                             &Length) == STATUS_INVALID_PARAMETER &&
+            ZpTerminal_EncodeResize(2,
+                                     0,
+                                     25,
+                                     Buffer,
+                                     sizeof(Buffer),
+                                     &Length) == STATUS_INVALID_PARAMETER);
 }
