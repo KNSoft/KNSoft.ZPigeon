@@ -36,6 +36,9 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE FileListEvent;
     HANDLE FilePageEvent;
     HANDLE EventLogPageEvent;
+    HANDLE EventLogSubscribeEvent;
+    HANDLE EventLogRecordEvent;
+    HANDLE EventLogTerminalEvent;
     HANDLE FileHashEvent;
     HANDLE FileReadEvent;
     HANDLE FileWriteEvent;
@@ -100,6 +103,13 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     WCHAR EventLogBookmark[4096];
     ULONG EventLogBookmarkLength;
     ULONG EventLogXmlLength;
+    volatile LONG EventLogSubscribeStatus;
+    volatile LONG EventLogTerminalStatus;
+    ZP_SUBSCRIPTION_HANDLE EventLogSubscription;
+    ULONGLONG EventLogSequence;
+    LOGICAL FoundEventLogMarker;
+    WCHAR EventLogMarker[128];
+    ULONG EventLogMarkerLength;
     volatile LONG FileHashStatus;
     ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
     ULONGLONG FileHashSize;
@@ -512,6 +522,85 @@ SDKIntegration_EventLogPageCallback(
     }
     InterlockedExchange(&TestContext->EventLogPageStatus, Status);
     SetEvent(TestContext->EventLogPageEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_EventLogSubscribeCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ ZP_SUBSCRIPTION_HANDLE Subscription,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->EventLogSubscription = Subscription;
+    }
+    InterlockedExchange(&TestContext->EventLogSubscribeStatus, Status);
+    SetEvent(TestContext->EventLogSubscribeEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_EventLogRecordCallback(
+    _In_ ZP_SUBSCRIPTION_HANDLE Subscription,
+    _In_ ULONGLONG Sequence,
+    _In_ const ZP_EVENT_LOG_RECORD_VIEW* Record,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+    PCWCH Xml = (PCWCH)Record->Xml.Buffer;
+    ULONG Index;
+
+    if (Subscription == TestContext->EventLogSubscription &&
+        Record->Bookmark.Length != 0)
+    {
+        TestContext->EventLogSequence = Sequence;
+        for (Index = 0;
+             Index + TestContext->EventLogMarkerLength <= Record->Xml.Length;
+             Index++)
+        {
+            if (RtlCompareMemory(&Xml[Index],
+                                 TestContext->EventLogMarker,
+                                 (SIZE_T)TestContext->EventLogMarkerLength *
+                                     sizeof(WCHAR)) ==
+                (SIZE_T)TestContext->EventLogMarkerLength * sizeof(WCHAR))
+            {
+                TestContext->FoundEventLogMarker = TRUE;
+                break;
+            }
+        }
+    }
+    if (TestContext->FoundEventLogMarker)
+    {
+        SetEvent(TestContext->EventLogRecordEvent);
+    }
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_EventLogTerminalCallback(
+    _In_ ZP_SUBSCRIPTION_HANDLE Subscription,
+    _In_ ULONGLONG NextSequence,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_STRING_VIEW LastBookmark,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(LastBookmark);
+    if (Subscription == TestContext->EventLogSubscription &&
+        NextSequence == TestContext->EventLogSequence + 1)
+    {
+        InterlockedExchange(&TestContext->EventLogTerminalStatus, Status);
+    }
+    SetEvent(TestContext->EventLogTerminalEvent);
 }
 
 static
@@ -1207,6 +1296,7 @@ TEST_FUNC(SDKQuicIntegration)
     static const WCHAR TerminalCommandLine[] = L"cmd.exe /D /Q";
     static const WCHAR TerminalCancelCommandLine[] =
         L"powershell.exe -NoLogo -NoProfile -Command \"Start-Sleep -Seconds 30\"";
+    static const WCHAR EventLogSource[] = L"KNSoft.ZPigeon.UnitTest";
     static const BYTE TerminalInput[] =
         "(for /L %i in (1,1,2048) do @echo "
         "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX) "
@@ -1259,9 +1349,14 @@ TEST_FUNC(SDKQuicIntegration)
     ULONGLONG UploadedBytes, UploadedHash, ExpectedUploadHash;
     WIN32_FIND_DATAW UploadFindData;
     HANDLE UploadFindHandle;
+    HANDLE EventSource = NULL;
+    LPCWSTR EventStrings[1];
     BYTE ExpectedFileDigest[ZP_FILE_SHA256_SIZE];
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -1313,12 +1408,15 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.FileListEvent = Events[15];
     TestContext.FilePageEvent = Events[16];
     TestContext.EventLogPageEvent = Events[17];
-    TestContext.FileHashEvent = Events[18];
-    TestContext.FileReadEvent = Events[19];
-    TestContext.FileWriteEvent = Events[20];
-    TestContext.TerminalWritableEvent = Events[21];
-    TestContext.TerminalResizeEvent = Events[22];
-    TestContext.TerminalCloseEvent = Events[23];
+    TestContext.EventLogSubscribeEvent = Events[18];
+    TestContext.EventLogRecordEvent = Events[19];
+    TestContext.EventLogTerminalEvent = Events[20];
+    TestContext.FileHashEvent = Events[21];
+    TestContext.FileReadEvent = Events[22];
+    TestContext.FileWriteEvent = Events[23];
+    TestContext.TerminalWritableEvent = Events[24];
+    TestContext.TerminalResizeEvent = Events[25];
+    TestContext.TerminalCloseEvent = Events[26];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -1481,6 +1579,77 @@ TEST_FUNC(SDKQuicIntegration)
     {
         goto Cleanup;
     }
+
+    TestContext.EventLogMarkerLength = (ULONG)_snwprintf_s(
+        TestContext.EventLogMarker,
+        ARRAYSIZE(TestContext.EventLogMarker),
+        _TRUNCATE,
+        L"ZPigeon-%lu-%llu",
+        GetCurrentProcessId(),
+        GetTickCount64());
+    if (TestContext.EventLogMarkerLength == (ULONG)-1)
+    {
+        goto Cleanup;
+    }
+    Status = ZpClient_SubscribeEventLog(
+        Client,
+        ZpEventLogStartFuture,
+        L"Application",
+        ARRAYSIZE(L"Application") - 1,
+        NULL,
+        0,
+        NULL,
+        0,
+        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+        SDKIntegration_EventLogSubscribeCallback,
+        SDKIntegration_EventLogRecordCallback,
+        SDKIntegration_EventLogTerminalCallback,
+        &TestContext,
+        &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.EventLogSubscribeEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.EventLogSubscribeStatus) ||
+        TestContext.EventLogSubscription == NULL)
+    {
+        goto Cleanup;
+    }
+    EventSource = RegisterEventSourceW(NULL, EventLogSource);
+    EventStrings[0] = TestContext.EventLogMarker;
+    if (EventSource == NULL ||
+        !ReportEventW(EventSource,
+                      EVENTLOG_INFORMATION_TYPE,
+                      0,
+                      0x40001001,
+                      NULL,
+                      ARRAYSIZE(EventStrings),
+                      0,
+                      EventStrings,
+                      NULL))
+    {
+        goto Cleanup;
+    }
+    DeregisterEventSource(EventSource);
+    EventSource = NULL;
+    if (WaitForSingleObject(TestContext.EventLogRecordEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        TestContext.EventLogSequence != 1 ||
+        !TestContext.FoundEventLogMarker ||
+        !NT_SUCCESS(ZpSubscription_Cancel(
+            TestContext.EventLogSubscription)) ||
+        WaitForSingleObject(TestContext.EventLogTerminalEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        TestContext.EventLogTerminalStatus != STATUS_CANCELLED)
+    {
+        goto Cleanup;
+    }
+    ZpSubscription_Close(TestContext.EventLogSubscription);
+    TestContext.EventLogSubscription = NULL;
 
     Status = ZpClient_GetSystemInfo(Client,
                                     SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
@@ -2163,6 +2332,40 @@ TEST_FUNC(SDKQuicIntegration)
     ZpChannel_Close(TestContext.TerminalChannel);
     TestContext.TerminalChannel = NULL;
 
+    ResetEvent(TestContext.EventLogSubscribeEvent);
+    ResetEvent(TestContext.EventLogTerminalEvent);
+    InterlockedExchange(&TestContext.EventLogSubscribeStatus, STATUS_PENDING);
+    InterlockedExchange(&TestContext.EventLogTerminalStatus, STATUS_PENDING);
+    TestContext.EventLogSequence = 0;
+    Status = ZpClient_SubscribeEventLog(
+        Client,
+        ZpEventLogStartFuture,
+        L"Application",
+        ARRAYSIZE(L"Application") - 1,
+        NULL,
+        0,
+        NULL,
+        0,
+        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+        SDKIntegration_EventLogSubscribeCallback,
+        SDKIntegration_EventLogRecordCallback,
+        SDKIntegration_EventLogTerminalCallback,
+        &TestContext,
+        &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.EventLogSubscribeEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.EventLogSubscribeStatus) ||
+        TestContext.EventLogSubscription == NULL)
+    {
+        goto Cleanup;
+    }
+
     ResetEvent(TestContext.ServerRunningEvent);
     ResetEvent(TestContext.ClientReadyEvent);
     ResetEvent(TestContext.ServerReadyEvent);
@@ -2191,15 +2394,21 @@ TEST_FUNC(SDKQuicIntegration)
                                     SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
     ProcessWait = WaitForSingleObject(TestContext.ProcessListEvent,
                                       SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
+    WaitStatus = WaitForSingleObject(TestContext.EventLogTerminalEvent,
+                                     SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
     if (!NT_SUCCESS(Status) ||
         ServerStopWait != WAIT_OBJECT_0 ||
         RetryWait != WAIT_OBJECT_0 ||
         ProcessWait != WAIT_OBJECT_0 ||
+        WaitStatus != WAIT_OBJECT_0 ||
+        NT_SUCCESS(TestContext.EventLogTerminalStatus) ||
         TestContext.ProcessCompletionCount !=
             TestContext.ExpectedProcessCompletions)
     {
         goto Cleanup;
     }
+    ZpSubscription_Close(TestContext.EventLogSubscription);
+    TestContext.EventLogSubscription = NULL;
     ResetEvent(TestContext.ServerStoppedEvent);
     Status = ZpServer_Start(Server);
     if (!NT_SUCCESS(Status) ||
@@ -2239,6 +2448,12 @@ Cleanup:
         ZpChannel_Close(TestContext.TerminalChannel);
         TestContext.TerminalChannel = NULL;
     }
+    if (TestContext.EventLogSubscription != NULL)
+    {
+        ZpSubscription_Cancel(TestContext.EventLogSubscription);
+        ZpSubscription_Close(TestContext.EventLogSubscription);
+        TestContext.EventLogSubscription = NULL;
+    }
     if (Client != NULL)
     {
         ZpClient_Stop(Client);
@@ -2260,6 +2475,10 @@ Cleanup:
     if (UploadPath[0] != UNICODE_NULL)
     {
         DeleteFileW(UploadPath);
+    }
+    if (EventSource != NULL)
+    {
+        DeregisterEventSource(EventSource);
     }
     if (IdentityKey != 0)
     {

@@ -74,6 +74,8 @@
 - 实现 Client EventLog API 与引用计数 Subscription Handle：打开阶段复用 Request，Record 严格校验连续 Sequence，Terminal/断线/取消单次完成，Unsubscribe 成功 Response 作为发送截止点，SDK 内部取消 Request 自动回收；
 - 实现 Server EventLog.QueryPage：使用 Windows Event Log API 按 Channel/XPath 正向查询，以 `EvtSeekStrict` 从 Bookmark 后精确续页，渲染原生 Bookmark 与事件 XML，并按 Frame 容量安全截页；
 - 扩展 localhost QUIC 集成测试，覆盖 System 日志首个事件分页和严格 Bookmark 续页；
+- 实现 Server EventLog 实时订阅：以 Windows 拉取订阅和手动复位事件驱动 64 条有界批次，严格递增 Sequence、持续更新 Bookmark，并实现 Unsubscribe 响应截止点、错误 Terminal 与连接关闭清理；
+- 扩展 localhost QUIC 集成测试，写入真实 Application 事件并验证 Record 内容、主动取消 Terminal，以及活动订阅随连接断开完成；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
@@ -81,8 +83,8 @@
 
 ## 下一步
 
-1. 实现 Server Windows Event Log 实时订阅、Unsubscribe 和 Terminal 执行路径；
-2. 增加 localhost QUIC EventLog 实时 Record、取消、断线 Terminal 和恢复端到端测试。
+1. 增加 localhost QUIC EventLog 从最后 Bookmark 补页后严格重新订阅的恢复端到端测试；
+2. 复核 EventLog 高速生产下的批次调度与显式日志过期 Terminal。
 
 ## 待确认与阻塞
 

@@ -22,6 +22,7 @@
 #define ZP_SERVER_FILE_WRITE_WINDOW_SIZE 0x00100000UL
 #define ZP_SERVER_TERMINAL_CHANNEL_CHUNK_SIZE 0x00010000UL
 #define ZP_SERVER_TERMINAL_INPUT_WINDOW_SIZE 0x00001000UL
+#define ZP_SERVER_EVENT_LOG_BATCH_COUNT 64
 
 typedef enum _ZP_SERVER_QUIC_CHANNEL_TYPE
 {
@@ -38,6 +39,9 @@ typedef struct _ZP_SERVER_QUIC_CONNECTION
     RTL_SRWLOCK ChannelLock;
     LIST_ENTRY Channels;
     ULONGLONG NextChannelId;
+    RTL_SRWLOCK SubscriptionLock;
+    LIST_ENTRY Subscriptions;
+    ULONGLONG NextSubscriptionId;
     volatile LONG ReferenceCount;
     LOGICAL Closing;
     ULONG ActiveRequestCount;
@@ -88,6 +92,22 @@ typedef struct _ZP_SERVER_QUIC_CHANNEL
     PWCHAR TemporaryPath;
     ZP_FILE_CREATE_DISPOSITION FileDisposition;
 } ZP_SERVER_QUIC_CHANNEL, *PZP_SERVER_QUIC_CHANNEL;
+
+typedef struct _ZP_SERVER_QUIC_SUBSCRIPTION
+{
+    LIST_ENTRY ListEntry;
+    PZP_SERVER_QUIC_CONNECTION Connection;
+    volatile LONG Pending;
+    ULONGLONG SubscriptionId;
+    ULONGLONG NextSequence;
+    EVT_HANDLE EventLogHandle;
+    EVT_HANDLE BookmarkHandle;
+    HANDLE SignalEvent;
+    PTP_WAIT Wait;
+    PTP_WORK CleanupWork;
+    PWCHAR LastBookmark;
+    ULONG LastBookmarkLength;
+} ZP_SERVER_QUIC_SUBSCRIPTION, *PZP_SERVER_QUIC_SUBSCRIPTION;
 
 typedef struct _ZP_SERVER_FILE_ENTRY
 {
@@ -977,6 +997,549 @@ Cleanup:
         *PayloadLength = 0;
     }
     return Status;
+}
+
+static
+NTSTATUS
+ZpServerQuic_SendEvent(
+    _Inout_ PZP_SERVER_QUIC_SUBSCRIPTION Subscription,
+    _In_ USHORT EventId,
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength)
+{
+    ZP_EVENT Event = {
+        Subscription->SubscriptionId,
+        ZP_EVENT_LOG_MODULE_ID,
+        EventId,
+        Payload,
+        PayloadLength
+    };
+    PBYTE Body;
+    ULONG BodyLength;
+    NTSTATUS Status;
+
+    Status = ZpMessage_EncodeEvent(&Event, NULL, 0, &BodyLength);
+    Body = NT_SUCCESS(Status) ? Mem_Alloc(BodyLength) : NULL;
+    if (NT_SUCCESS(Status) && Body == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpMessage_EncodeEvent(&Event,
+                                       Body,
+                                       BodyLength,
+                                       &BodyLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpQuic_SendFrame(
+            Subscription->Connection->Stream,
+            &Subscription->Connection->ProtocolConnection,
+            ZpMessageEvent,
+            Body,
+            BodyLength);
+    }
+    Mem_Free(Body);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpServerQuic_SendEventLogTerminal(
+    _Inout_ PZP_SERVER_QUIC_SUBSCRIPTION Subscription,
+    _In_ NTSTATUS TerminalStatus)
+{
+    PBYTE Payload;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    Status = ZpEventLog_EncodeTerminalEvent(Subscription->NextSequence,
+                                            TerminalStatus,
+                                            Subscription->LastBookmark,
+                                            Subscription->LastBookmarkLength,
+                                            NULL,
+                                            0,
+                                            &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpEventLog_EncodeTerminalEvent(
+            Subscription->NextSequence,
+            TerminalStatus,
+            Subscription->LastBookmark,
+            Subscription->LastBookmarkLength,
+            Payload,
+            PayloadLength,
+            &PayloadLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpServerQuic_SendEvent(Subscription,
+                                        ZP_EVENT_LOG_EVENT_TERMINAL,
+                                        Payload,
+                                        PayloadLength);
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+static
+VOID
+ZpServerQuic_DestroySubscription(
+    _Inout_ PZP_SERVER_QUIC_SUBSCRIPTION Subscription)
+{
+    PZP_SERVER_QUIC_CONNECTION QuicConnection = Subscription->Connection;
+
+    if (Subscription->Wait != NULL)
+    {
+        SetThreadpoolWait(Subscription->Wait, NULL, NULL);
+        WaitForThreadpoolWaitCallbacks(Subscription->Wait, TRUE);
+        CloseThreadpoolWait(Subscription->Wait);
+    }
+    if (Subscription->CleanupWork != NULL)
+    {
+        CloseThreadpoolWork(Subscription->CleanupWork);
+    }
+    if (Subscription->EventLogHandle != NULL)
+    {
+        EvtClose(Subscription->EventLogHandle);
+    }
+    if (Subscription->BookmarkHandle != NULL)
+    {
+        EvtClose(Subscription->BookmarkHandle);
+    }
+    if (Subscription->SignalEvent != NULL)
+    {
+        CloseHandle(Subscription->SignalEvent);
+    }
+    Mem_Free(Subscription->LastBookmark);
+    Mem_Free(Subscription);
+    ZpServerQuic_ReleaseConnection(QuicConnection);
+}
+
+static
+VOID
+CALLBACK
+ZpServerQuic_SubscriptionCleanupCallback(
+    _Inout_ PTP_CALLBACK_INSTANCE Instance,
+    _In_opt_ PVOID Context,
+    _Inout_ PTP_WORK Work)
+{
+    UNREFERENCED_PARAMETER(Instance);
+    UNREFERENCED_PARAMETER(Work);
+    ZpServerQuic_DestroySubscription(Context);
+}
+
+static
+VOID
+ZpServerQuic_FinishSubscription(
+    _Inout_ PZP_SERVER_QUIC_SUBSCRIPTION Subscription,
+    _In_ NTSTATUS TerminalStatus)
+{
+    PZP_SERVER_QUIC_CONNECTION QuicConnection = Subscription->Connection;
+    LOGICAL Complete, SendTerminal;
+
+    RtlAcquireSRWLockExclusive(&QuicConnection->SubscriptionLock);
+    Complete = InterlockedExchange(&Subscription->Pending, FALSE);
+    if (Complete)
+    {
+        RemoveEntryList(&Subscription->ListEntry);
+        SetThreadpoolWait(Subscription->Wait, NULL, NULL);
+    }
+    SendTerminal = Complete && !QuicConnection->Closing;
+    RtlReleaseSRWLockExclusive(&QuicConnection->SubscriptionLock);
+    if (!Complete)
+    {
+        return;
+    }
+    if (SendTerminal)
+    {
+        ZpServerQuic_SendEventLogTerminal(Subscription, TerminalStatus);
+    }
+    SubmitThreadpoolWork(Subscription->CleanupWork);
+}
+
+static
+NTSTATUS
+ZpServerQuic_SendEventLogRecord(
+    _Inout_ PZP_SERVER_QUIC_SUBSCRIPTION Subscription,
+    _In_ EVT_HANDLE EventHandle)
+{
+    PWCHAR Bookmark = NULL, Xml = NULL;
+    PBYTE Payload = NULL;
+    ULONG BookmarkLength = 0, XmlLength = 0, PayloadLength;
+    NTSTATUS Status;
+
+    if (Subscription->NextSequence == MAXULONGLONG)
+    {
+        return STATUS_INTEGER_OVERFLOW;
+    }
+    if (!EvtUpdateBookmark(Subscription->BookmarkHandle, EventHandle))
+    {
+        return NTSTATUS_FROM_WIN32(GetLastError());
+    }
+    Status = ZpServerQuic_RenderEventLogString(
+        NULL,
+        Subscription->BookmarkHandle,
+        EvtRenderBookmark,
+        ZP_EVENT_LOG_BOOKMARK_MAX_LENGTH,
+        &Bookmark,
+        &BookmarkLength);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpServerQuic_RenderEventLogString(NULL,
+                                                   EventHandle,
+                                                   EvtRenderEventXml,
+                                                   ZP_EVENT_LOG_XML_MAX_LENGTH,
+                                                   &Xml,
+                                                   &XmlLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpEventLog_EncodeRecordEvent(Subscription->NextSequence,
+                                              Bookmark,
+                                              BookmarkLength,
+                                              Xml,
+                                              XmlLength,
+                                              NULL,
+                                              0,
+                                              &PayloadLength);
+    }
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpEventLog_EncodeRecordEvent(Subscription->NextSequence,
+                                              Bookmark,
+                                              BookmarkLength,
+                                              Xml,
+                                              XmlLength,
+                                              Payload,
+                                              PayloadLength,
+                                              &PayloadLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpServerQuic_SendEvent(Subscription,
+                                        ZP_EVENT_LOG_EVENT_RECORD,
+                                        Payload,
+                                        PayloadLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Mem_Free(Subscription->LastBookmark);
+        Subscription->LastBookmark = Bookmark;
+        Subscription->LastBookmarkLength = BookmarkLength;
+        Subscription->NextSequence++;
+        Bookmark = NULL;
+    }
+    Mem_Free(Payload);
+    Mem_Free(Xml);
+    Mem_Free(Bookmark);
+    return Status;
+}
+
+static
+VOID
+CALLBACK
+ZpServerQuic_SubscriptionWaitCallback(
+    _Inout_ PTP_CALLBACK_INSTANCE Instance,
+    _In_opt_ PVOID Context,
+    _Inout_ PTP_WAIT Wait,
+    _In_ TP_WAIT_RESULT WaitResult)
+{
+    PZP_SERVER_QUIC_SUBSCRIPTION Subscription = Context;
+    PZP_SERVER_QUIC_CONNECTION QuicConnection = Subscription->Connection;
+    EVT_HANDLE Events[ZP_SERVER_EVENT_LOG_BATCH_COUNT] = { 0 };
+    DWORD ReturnedCount = 0, Error;
+    ULONG Index;
+    NTSTATUS Status = STATUS_SUCCESS;
+    LOGICAL Pending;
+
+    UNREFERENCED_PARAMETER(Instance);
+    UNREFERENCED_PARAMETER(Wait);
+    UNREFERENCED_PARAMETER(WaitResult);
+    RtlAcquireSRWLockShared(&QuicConnection->SubscriptionLock);
+    Pending = Subscription->Pending && !QuicConnection->Closing;
+    RtlReleaseSRWLockShared(&QuicConnection->SubscriptionLock);
+    if (!Pending)
+    {
+        return;
+    }
+    if (!EvtNext(Subscription->EventLogHandle,
+                 ARRAYSIZE(Events),
+                 Events,
+                 0,
+                 0,
+                 &ReturnedCount))
+    {
+        Error = GetLastError();
+        if (Error != ERROR_NO_MORE_ITEMS)
+        {
+            Status = NTSTATUS_FROM_WIN32(Error);
+        }
+    }
+    for (Index = 0; NT_SUCCESS(Status) && Index < ReturnedCount; Index++)
+    {
+        RtlAcquireSRWLockShared(&QuicConnection->SubscriptionLock);
+        Pending = Subscription->Pending && !QuicConnection->Closing;
+        RtlReleaseSRWLockShared(&QuicConnection->SubscriptionLock);
+        if (!Pending)
+        {
+            break;
+        }
+        Status = ZpServerQuic_SendEventLogRecord(Subscription,
+                                                 Events[Index]);
+    }
+    for (Index = 0; Index < ReturnedCount; Index++)
+    {
+        EvtClose(Events[Index]);
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        ZpServerQuic_FinishSubscription(Subscription, Status);
+        return;
+    }
+    RtlAcquireSRWLockExclusive(&QuicConnection->SubscriptionLock);
+    Pending = Subscription->Pending && !QuicConnection->Closing;
+    if (Pending)
+    {
+        if (ReturnedCount < ARRAYSIZE(Events))
+        {
+            ResetEvent(Subscription->SignalEvent);
+        }
+        SetThreadpoolWait(Subscription->Wait,
+                          Subscription->SignalEvent,
+                          NULL);
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->SubscriptionLock);
+}
+
+static
+NTSTATUS
+ZpServerQuic_CreateEventLogSubscription(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
+    _In_ const ZP_EVENT_LOG_SUBSCRIBE_VIEW* Request,
+    _Out_ PZP_SERVER_QUIC_SUBSCRIPTION* Subscription)
+{
+    PZP_SERVER_QUIC_SUBSCRIPTION SubscriptionObject = NULL;
+    EVT_HANDLE StartBookmark = NULL;
+    PWCHAR ChannelPath = NULL, Query = NULL, Bookmark = NULL;
+    DWORD Flags;
+    NTSTATUS Status;
+
+    *Subscription = NULL;
+    SubscriptionObject = Mem_Alloc(sizeof(*SubscriptionObject));
+    if (SubscriptionObject == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(SubscriptionObject, sizeof(*SubscriptionObject));
+    Status = ZpServerQuic_CopyStringView(&Request->ChannelPath,
+                                         &ChannelPath);
+    if (NT_SUCCESS(Status) && Request->Query.Length != 0)
+    {
+        Status = ZpServerQuic_CopyStringView(&Request->Query, &Query);
+    }
+    if (NT_SUCCESS(Status) && Request->Bookmark.Length != 0)
+    {
+        Status = ZpServerQuic_CopyStringView(&Request->Bookmark, &Bookmark);
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        goto Cleanup;
+    }
+    if (Request->StartMode == ZpEventLogStartFuture)
+    {
+        Flags = EvtSubscribeToFutureEvents;
+    }
+    else if (Request->StartMode == ZpEventLogStartOldest)
+    {
+        Flags = EvtSubscribeStartAtOldestRecord;
+    }
+    else
+    {
+        StartBookmark = EvtCreateBookmark(Bookmark);
+        if (StartBookmark == NULL)
+        {
+            Status = NTSTATUS_FROM_WIN32(GetLastError());
+            goto Cleanup;
+        }
+        Flags = EvtSubscribeStartAfterBookmark | EvtSubscribeStrict;
+    }
+    SubscriptionObject->SignalEvent = CreateEventW(NULL,
+                                                    TRUE,
+                                                    TRUE,
+                                                    NULL);
+    if (SubscriptionObject->SignalEvent == NULL)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    SubscriptionObject->EventLogHandle = EvtSubscribe(
+        NULL,
+        SubscriptionObject->SignalEvent,
+        ChannelPath,
+        Query,
+        StartBookmark,
+        NULL,
+        NULL,
+        Flags);
+    if (SubscriptionObject->EventLogHandle == NULL)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    SubscriptionObject->BookmarkHandle = EvtCreateBookmark(NULL);
+    if (SubscriptionObject->BookmarkHandle == NULL)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    SubscriptionObject->Wait = CreateThreadpoolWait(
+        ZpServerQuic_SubscriptionWaitCallback,
+        SubscriptionObject,
+        NULL);
+    SubscriptionObject->CleanupWork = CreateThreadpoolWork(
+        ZpServerQuic_SubscriptionCleanupCallback,
+        SubscriptionObject,
+        NULL);
+    if (SubscriptionObject->Wait == NULL ||
+        SubscriptionObject->CleanupWork == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
+    }
+    SubscriptionObject->Connection = QuicConnection;
+    SubscriptionObject->Pending = TRUE;
+    SubscriptionObject->NextSequence = 1;
+    RtlAcquireSRWLockExclusive(&QuicConnection->SubscriptionLock);
+    if (QuicConnection->Closing ||
+        QuicConnection->NextSubscriptionId > MAXULONGLONG - 2)
+    {
+        Status = QuicConnection->Closing ?
+                     STATUS_CONNECTION_DISCONNECTED :
+                     STATUS_INTEGER_OVERFLOW;
+    }
+    else
+    {
+        SubscriptionObject->SubscriptionId =
+            QuicConnection->NextSubscriptionId;
+        QuicConnection->NextSubscriptionId += 2;
+        InsertTailList(&QuicConnection->Subscriptions,
+                       &SubscriptionObject->ListEntry);
+        InterlockedIncrement(&QuicConnection->ReferenceCount);
+        *Subscription = SubscriptionObject;
+        Status = STATUS_SUCCESS;
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->SubscriptionLock);
+
+Cleanup:
+    if (StartBookmark != NULL)
+    {
+        EvtClose(StartBookmark);
+    }
+    Mem_Free(Bookmark);
+    Mem_Free(Query);
+    Mem_Free(ChannelPath);
+    if (!NT_SUCCESS(Status))
+    {
+        if (SubscriptionObject->Wait != NULL)
+        {
+            CloseThreadpoolWait(SubscriptionObject->Wait);
+        }
+        if (SubscriptionObject->CleanupWork != NULL)
+        {
+            CloseThreadpoolWork(SubscriptionObject->CleanupWork);
+        }
+        if (SubscriptionObject->BookmarkHandle != NULL)
+        {
+            EvtClose(SubscriptionObject->BookmarkHandle);
+        }
+        if (SubscriptionObject->EventLogHandle != NULL)
+        {
+            EvtClose(SubscriptionObject->EventLogHandle);
+        }
+        if (SubscriptionObject->SignalEvent != NULL)
+        {
+            CloseHandle(SubscriptionObject->SignalEvent);
+        }
+        Mem_Free(SubscriptionObject);
+    }
+    return Status;
+}
+
+static
+VOID
+ZpServerQuic_ActivateSubscription(
+    _Inout_ PZP_SERVER_QUIC_SUBSCRIPTION Subscription)
+{
+    PZP_SERVER_QUIC_CONNECTION QuicConnection = Subscription->Connection;
+
+    RtlAcquireSRWLockExclusive(&QuicConnection->SubscriptionLock);
+    if (Subscription->Pending && !QuicConnection->Closing)
+    {
+        SetThreadpoolWait(Subscription->Wait,
+                          Subscription->SignalEvent,
+                          NULL);
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->SubscriptionLock);
+}
+
+static
+PZP_SERVER_QUIC_SUBSCRIPTION
+ZpServerQuic_FindSubscription(
+    _In_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
+    _In_ ULONGLONG SubscriptionId)
+{
+    PZP_SERVER_QUIC_SUBSCRIPTION Subscription;
+    PLIST_ENTRY Entry;
+
+    for (Entry = QuicConnection->Subscriptions.Flink;
+         Entry != &QuicConnection->Subscriptions;
+         Entry = Entry->Flink)
+    {
+        Subscription = CONTAINING_RECORD(Entry,
+                                         ZP_SERVER_QUIC_SUBSCRIPTION,
+                                         ListEntry);
+        if (Subscription->SubscriptionId == SubscriptionId)
+        {
+            return Subscription;
+        }
+    }
+    return NULL;
+}
+
+static
+NTSTATUS
+ZpServerQuic_UnsubscribeEventLog(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
+    _In_ ULONGLONG SubscriptionId)
+{
+    PZP_SERVER_QUIC_SUBSCRIPTION Subscription;
+
+    RtlAcquireSRWLockExclusive(&QuicConnection->SubscriptionLock);
+    Subscription = ZpServerQuic_FindSubscription(QuicConnection,
+                                                  SubscriptionId);
+    if (Subscription == NULL ||
+        !InterlockedExchange(&Subscription->Pending, FALSE))
+    {
+        RtlReleaseSRWLockExclusive(&QuicConnection->SubscriptionLock);
+        return STATUS_INVALID_HANDLE;
+    }
+    RemoveEntryList(&Subscription->ListEntry);
+    SetThreadpoolWait(Subscription->Wait, NULL, NULL);
+    RtlReleaseSRWLockExclusive(&QuicConnection->SubscriptionLock);
+    ZpServerQuic_DestroySubscription(Subscription);
+    return STATUS_SUCCESS;
 }
 
 static
@@ -2727,6 +3290,7 @@ ZpServerQuic_RequestCallback(
     const VOID* ResponsePayload = NULL;
     PBYTE AllocatedPayload = NULL;
     PZP_SERVER_QUIC_CHANNEL Channel = NULL;
+    PZP_SERVER_QUIC_SUBSCRIPTION Subscription = NULL;
     ULONG PayloadLength = 0;
     ULONG ProcessId, ExitCode, MaxEntries;
     ZP_STRING_VIEW ServiceName, FilePath, FileCursor;
@@ -2736,7 +3300,7 @@ ZpServerQuic_RequestCallback(
     BYTE FileDigest[ZP_FILE_SHA256_SIZE];
     ZP_TERMINAL_CREATE_VIEW TerminalCreate;
     ZP_EVENT_LOG_QUERY_VIEW EventLogQuery;
-    ULONGLONG FileSize, FileOffset, TerminalChannelId;
+    ULONGLONG FileSize, FileOffset, TerminalChannelId, SubscriptionId;
     USHORT Columns, Rows;
     ZP_REQUEST_ACCESS Access;
     NTSTATUS Status = STATUS_SUCCESS;
@@ -3062,6 +3626,43 @@ ZpServerQuic_RequestCallback(
                 ResponsePayload = AllocatedPayload;
             }
         }
+        else if (Request->ModuleId == ZP_EVENT_LOG_MODULE_ID &&
+                 Request->OperationId == ZP_EVENT_LOG_OPERATION_SUBSCRIBE)
+        {
+            ZP_EVENT_LOG_SUBSCRIBE_VIEW EventLogSubscribe;
+
+            Status = ZpEventLog_DecodeSubscribeRequest(Request->Payload,
+                                                       Request->PayloadLength,
+                                                       &EventLogSubscribe);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_CreateEventLogSubscription(
+                    QuicConnection,
+                    &EventLogSubscribe,
+                    &Subscription);
+            }
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpEventLog_EncodeSubscribeResponse(
+                    Subscription->SubscriptionId,
+                    Payload,
+                    sizeof(Payload),
+                    &PayloadLength);
+                ResponsePayload = Payload;
+            }
+        }
+        else if (Request->ModuleId == ZP_EVENT_LOG_MODULE_ID &&
+                 Request->OperationId == ZP_EVENT_LOG_OPERATION_UNSUBSCRIBE)
+        {
+            Status = ZpEventLog_DecodeUnsubscribeRequest(Request->Payload,
+                                                         Request->PayloadLength,
+                                                         &SubscriptionId);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_UnsubscribeEventLog(QuicConnection,
+                                                          SubscriptionId);
+            }
+        }
         else
         {
             Status = STATUS_NOT_SUPPORTED;
@@ -3156,6 +3757,20 @@ ZpServerQuic_RequestCallback(
                 Channel = NULL;
             }
         }
+        if (Subscription != NULL)
+        {
+            if (NT_SUCCESS(Status) && NT_SUCCESS(SendStatus))
+            {
+                ZpServerQuic_ActivateSubscription(Subscription);
+            }
+            else
+            {
+                ZpServerQuic_UnsubscribeEventLog(
+                    QuicConnection,
+                    Subscription->SubscriptionId);
+            }
+            Subscription = NULL;
+        }
     }
     RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
 
@@ -3167,6 +3782,11 @@ Cleanup:
     if (Channel != NULL)
     {
         ZpServerQuic_DestroyChannel(Channel);
+    }
+    if (Subscription != NULL)
+    {
+        ZpServerQuic_UnsubscribeEventLog(QuicConnection,
+                                         Subscription->SubscriptionId);
     }
     Mem_Free(Request);
     ZpServerQuic_ReleaseConnection(QuicConnection);
@@ -3706,6 +4326,33 @@ ZpServerQuic_CancelChannels(
 }
 
 static
+VOID
+ZpServerQuic_CancelSubscriptions(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection)
+{
+    PZP_SERVER_QUIC_SUBSCRIPTION Subscription;
+
+    for (;;)
+    {
+        RtlAcquireSRWLockExclusive(&QuicConnection->SubscriptionLock);
+        if (IsListEmpty(&QuicConnection->Subscriptions))
+        {
+            RtlReleaseSRWLockExclusive(&QuicConnection->SubscriptionLock);
+            break;
+        }
+        Subscription = CONTAINING_RECORD(
+            QuicConnection->Subscriptions.Flink,
+            ZP_SERVER_QUIC_SUBSCRIPTION,
+            ListEntry);
+        InterlockedExchange(&Subscription->Pending, FALSE);
+        RemoveEntryList(&Subscription->ListEntry);
+        SetThreadpoolWait(Subscription->Wait, NULL, NULL);
+        RtlReleaseSRWLockExclusive(&QuicConnection->SubscriptionLock);
+        ZpServerQuic_DestroySubscription(Subscription);
+    }
+}
+
+static
 QUIC_STATUS
 QUIC_API
 ZpServerQuic_ConnectionCallback(
@@ -3770,6 +4417,7 @@ ZpServerQuic_ConnectionCallback(
             Status = QuicConnection->ShutdownStatus;
             ZpServerQuic_CancelRequests(QuicConnection);
             ZpServerQuic_CancelChannels(QuicConnection);
+            ZpServerQuic_CancelSubscriptions(QuicConnection);
             MsQuicConnectionClose(Connection);
             QuicConnection->Connection = NULL;
             ZpServer_NotifyConnection((ZP_SERVER_HANDLE)Object,
@@ -3845,6 +4493,9 @@ ZpServerQuic_ListenerCallback(
             RtlInitializeSRWLock(&QuicConnection->ChannelLock);
             InitializeListHead(&QuicConnection->Channels);
             QuicConnection->NextChannelId = 2;
+            RtlInitializeSRWLock(&QuicConnection->SubscriptionLock);
+            InitializeListHead(&QuicConnection->Subscriptions);
+            QuicConnection->NextSubscriptionId = 2;
             QuicConnection->ReferenceCount = 1;
             QuicConnection->Connection = Event->NEW_CONNECTION.Connection;
             QuicConnection->ShutdownStatus = STATUS_SUCCESS;
