@@ -473,6 +473,8 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 
 Client 以 `ZpClient_CreateTerminal` 异步建立终端并在成功回调中交付 Channel Handle 和 ProcessId；输出 Buffer 只在 Data 回调期间有效，回调返回后 SDK 自动补回接收窗口。Server 通过 `ChannelWindow` 增加 Client 输入发送额度，SDK 以 Writable 回调通知本次新增额度；`ZpChannel_Send` 不做隐藏排队，额度不足返回 `STATUS_RETRY`，成功发送后立即扣减额度。`ZpClient_ResizeTerminal` 复用 Channel Handle 定位会话并返回独立 Request Handle。
 
+Server 使用 ConPTY 建立同步输入/输出管道；传给 `CreatePseudoConsole` 的 Input Read 与 Output Write 端必须保持到附加终端属性的子进程创建成功后再关闭。输出在长生命周期线程池工作中持续排空并受 Client Window 限制；输入首窗固定为 4 KiB，Server 将获准数据写入 ConPTY 后等量补窗，限制同步写入对网络回调的占用。进程退出后由独立线程池回调关闭 ConPTY，输出工作继续排空最终 VT Frame，随后以原始进程退出码发送 ChannelClose；连接终止或本地关闭会终止仍存活的终端进程并回收全部句柄。
+
 大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口、断点续传和哈希规则在实现对应模块前按真实需求确定，不预先建设通用虚拟流框架。
 
 ## 10. 安全与资源限制

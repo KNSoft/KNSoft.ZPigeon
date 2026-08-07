@@ -6,12 +6,21 @@
 #include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
+#include <KNSoft/ZPigeon/Terminal.h>
 
 #include <Winsvc.h>
 
 #pragma comment(lib, "Advapi32.lib")
 
 #define ZP_SERVER_FILE_CHANNEL_CHUNK_SIZE 0x00010000UL
+#define ZP_SERVER_TERMINAL_CHANNEL_CHUNK_SIZE 0x00010000UL
+#define ZP_SERVER_TERMINAL_INPUT_WINDOW_SIZE 0x00001000UL
+
+typedef enum _ZP_SERVER_QUIC_CHANNEL_TYPE
+{
+    ZpServerQuicChannelFile,
+    ZpServerQuicChannelTerminal
+} ZP_SERVER_QUIC_CHANNEL_TYPE;
 
 typedef struct _ZP_SERVER_QUIC_CONNECTION
 {
@@ -56,10 +65,17 @@ typedef struct _ZP_SERVER_QUIC_CHANNEL
     PZP_SERVER_QUIC_CONNECTION Connection;
     volatile LONG Pending;
     LOGICAL WorkerActive;
+    ZP_SERVER_QUIC_CHANNEL_TYPE Type;
     ULONGLONG ChannelId;
     ULONGLONG Credit;
+    ULONGLONG ReceiveCredit;
     ULONGLONG RemainingBytes;
     HANDLE File;
+    HPCON PseudoConsole;
+    HANDLE Input;
+    HANDLE Output;
+    HANDLE Process;
+    ULONG ProcessId;
 } ZP_SERVER_QUIC_CHANNEL, *PZP_SERVER_QUIC_CHANNEL;
 
 typedef struct _ZP_SERVER_FILE_ENTRY
@@ -880,7 +896,32 @@ VOID
 ZpServerQuic_DestroyChannel(
     _Inout_ PZP_SERVER_QUIC_CHANNEL Channel)
 {
-    if (Channel->File != INVALID_HANDLE_VALUE)
+    if (Channel->Type == ZpServerQuicChannelTerminal)
+    {
+        if (Channel->Process != NULL &&
+            WaitForSingleObject(Channel->Process, 0) == WAIT_TIMEOUT)
+        {
+            TerminateProcess(Channel->Process, STATUS_CANCELLED);
+            WaitForSingleObject(Channel->Process, 1000);
+        }
+        if (Channel->PseudoConsole != NULL)
+        {
+            ClosePseudoConsole(Channel->PseudoConsole);
+        }
+        if (Channel->Input != NULL)
+        {
+            CloseHandle(Channel->Input);
+        }
+        if (Channel->Output != NULL)
+        {
+            CloseHandle(Channel->Output);
+        }
+        if (Channel->Process != NULL)
+        {
+            CloseHandle(Channel->Process);
+        }
+    }
+    if (Channel->File != NULL && Channel->File != INVALID_HANDLE_VALUE)
     {
         CloseHandle(Channel->File);
     }
@@ -930,6 +971,7 @@ ZpServerQuic_CreateFileChannel(
     if (ChannelObject != NULL)
     {
         RtlZeroMemory(ChannelObject, sizeof(*ChannelObject));
+        ChannelObject->Type = ZpServerQuicChannelFile;
         ChannelObject->File = INVALID_HANDLE_VALUE;
     }
     if (Path == NULL || ChannelObject == NULL)
@@ -994,6 +1036,245 @@ Cleanup:
     if (Path != NULL)
     {
         Mem_Free(Path);
+    }
+    return Status;
+}
+
+static
+NTSTATUS
+ZpServerQuic_SendChannelWindow(
+    _Inout_ PZP_SERVER_QUIC_CHANNEL Channel,
+    _In_ ULONG CreditBytes)
+{
+    PZP_SERVER_QUIC_CONNECTION QuicConnection = Channel->Connection;
+    BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
+    ULONG BodyLength;
+    NTSTATUS Status;
+
+    Status = ZpMessage_EncodeChannelWindow(Channel->ChannelId,
+                                           CreditBytes,
+                                           Body,
+                                           sizeof(Body),
+                                           &BodyLength);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
+    if (!Channel->Pending ||
+        MAXULONGLONG - Channel->ReceiveCredit < CreditBytes)
+    {
+        RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    Channel->ReceiveCredit += CreditBytes;
+    Status = ZpQuic_SendFrame(QuicConnection->Stream,
+                              &QuicConnection->ProtocolConnection,
+                              ZpMessageChannelWindow,
+                              Body,
+                              BodyLength);
+    if (!NT_SUCCESS(Status))
+    {
+        Channel->ReceiveCredit -= CreditBytes;
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpServerQuic_CreateTerminalChannel(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
+    _In_ const ZP_TERMINAL_CREATE_VIEW* Create,
+    _Out_ PZP_SERVER_QUIC_CHANNEL* Channel)
+{
+    STARTUPINFOEXW StartupInfo = { 0 };
+    PROCESS_INFORMATION ProcessInfo = { 0 };
+    PZP_SERVER_QUIC_CHANNEL ChannelObject = NULL;
+    PPROC_THREAD_ATTRIBUTE_LIST AttributeList = NULL;
+    HANDLE InputRead = NULL, InputWrite = NULL;
+    HANDLE OutputRead = NULL, OutputWrite = NULL;
+    HPCON PseudoConsole = NULL;
+    PWCHAR CommandLine = NULL, WorkingDirectory = NULL;
+    SIZE_T AttributeListSize = 0;
+    COORD Size;
+    HRESULT Result;
+    NTSTATUS Status = STATUS_SUCCESS;
+    LOGICAL AttributeListInitialized = FALSE;
+
+    if (Create->Columns > MAXSHORT || Create->Rows > MAXSHORT)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    ChannelObject = Mem_Alloc(sizeof(*ChannelObject));
+    CommandLine = Mem_Alloc(((SIZE_T)Create->CommandLine.Length + 1) *
+                            sizeof(WCHAR));
+    if (Create->WorkingDirectory.Length != 0)
+    {
+        WorkingDirectory = Mem_Alloc(
+            ((SIZE_T)Create->WorkingDirectory.Length + 1) * sizeof(WCHAR));
+    }
+    if (ChannelObject == NULL ||
+        CommandLine == NULL ||
+        (Create->WorkingDirectory.Length != 0 && WorkingDirectory == NULL))
+    {
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
+    }
+    RtlZeroMemory(ChannelObject, sizeof(*ChannelObject));
+    ChannelObject->Type = ZpServerQuicChannelTerminal;
+    RtlCopyMemory(CommandLine,
+                  Create->CommandLine.Buffer,
+                  (SIZE_T)Create->CommandLine.Length * sizeof(WCHAR));
+    CommandLine[Create->CommandLine.Length] = UNICODE_NULL;
+    if (WorkingDirectory != NULL)
+    {
+        RtlCopyMemory(WorkingDirectory,
+                      Create->WorkingDirectory.Buffer,
+                      (SIZE_T)Create->WorkingDirectory.Length * sizeof(WCHAR));
+        WorkingDirectory[Create->WorkingDirectory.Length] = UNICODE_NULL;
+    }
+    if (!CreatePipe(&InputRead, &InputWrite, NULL, 0) ||
+        !CreatePipe(&OutputRead, &OutputWrite, NULL, 0))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    Size.X = (SHORT)Create->Columns;
+    Size.Y = (SHORT)Create->Rows;
+    Result = CreatePseudoConsole(Size,
+                                 InputRead,
+                                 OutputWrite,
+                                 0,
+                                 &PseudoConsole);
+    if (FAILED(Result))
+    {
+        Status = NTSTATUS_FROM_WIN32(HRESULT_CODE(Result));
+        goto Cleanup;
+    }
+    InitializeProcThreadAttributeList(NULL,
+                                      1,
+                                      0,
+                                      &AttributeListSize);
+    AttributeList = Mem_Alloc(AttributeListSize);
+    if (AttributeList == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
+    }
+    if (!InitializeProcThreadAttributeList(AttributeList,
+                                           1,
+                                           0,
+                                           &AttributeListSize))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    AttributeListInitialized = TRUE;
+    if (!UpdateProcThreadAttribute(AttributeList,
+                                   0,
+                                   PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                                   PseudoConsole,
+                                   sizeof(PseudoConsole),
+                                   NULL,
+                                   NULL))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    StartupInfo.StartupInfo.cb = sizeof(StartupInfo);
+    StartupInfo.lpAttributeList = AttributeList;
+    if (!CreateProcessW(NULL,
+                        CommandLine,
+                        NULL,
+                        NULL,
+                        FALSE,
+                        EXTENDED_STARTUPINFO_PRESENT |
+                            CREATE_UNICODE_ENVIRONMENT,
+                        NULL,
+                        WorkingDirectory,
+                        &StartupInfo.StartupInfo,
+                        &ProcessInfo))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    CloseHandle(InputRead);
+    InputRead = NULL;
+    CloseHandle(OutputWrite);
+    OutputWrite = NULL;
+    CloseHandle(ProcessInfo.hThread);
+    ProcessInfo.hThread = NULL;
+    ChannelObject->Connection = QuicConnection;
+    ChannelObject->PseudoConsole = PseudoConsole;
+    ChannelObject->Input = InputWrite;
+    ChannelObject->Output = OutputRead;
+    ChannelObject->Process = ProcessInfo.hProcess;
+    ChannelObject->ProcessId = ProcessInfo.dwProcessId;
+    PseudoConsole = NULL;
+    InputWrite = NULL;
+    OutputRead = NULL;
+    ProcessInfo.hProcess = NULL;
+    RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
+    ChannelObject->ChannelId = QuicConnection->NextChannelId;
+    QuicConnection->NextChannelId += 2;
+    if (QuicConnection->NextChannelId == 0)
+    {
+        QuicConnection->NextChannelId = 2;
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+    *Channel = ChannelObject;
+    ChannelObject = NULL;
+
+Cleanup:
+    if (AttributeListInitialized)
+    {
+        DeleteProcThreadAttributeList(AttributeList);
+    }
+    if (AttributeList != NULL)
+    {
+        Mem_Free(AttributeList);
+    }
+    if (ProcessInfo.hThread != NULL)
+    {
+        CloseHandle(ProcessInfo.hThread);
+    }
+    if (ProcessInfo.hProcess != NULL)
+    {
+        TerminateProcess(ProcessInfo.hProcess, STATUS_CANCELLED);
+        CloseHandle(ProcessInfo.hProcess);
+    }
+    if (PseudoConsole != NULL)
+    {
+        ClosePseudoConsole(PseudoConsole);
+    }
+    if (InputRead != NULL)
+    {
+        CloseHandle(InputRead);
+    }
+    if (InputWrite != NULL)
+    {
+        CloseHandle(InputWrite);
+    }
+    if (OutputRead != NULL)
+    {
+        CloseHandle(OutputRead);
+    }
+    if (OutputWrite != NULL)
+    {
+        CloseHandle(OutputWrite);
+    }
+    if (WorkingDirectory != NULL)
+    {
+        Mem_Free(WorkingDirectory);
+    }
+    if (CommandLine != NULL)
+    {
+        Mem_Free(CommandLine);
+    }
+    if (ChannelObject != NULL)
+    {
+        ZpServerQuic_DestroyChannel(ChannelObject);
     }
     return Status;
 }
@@ -1171,6 +1452,222 @@ ZpServerQuic_ChannelCallback(
 }
 
 static
+VOID
+CALLBACK
+ZpServerQuic_ClosePseudoConsoleCallback(
+    _Inout_ PTP_CALLBACK_INSTANCE Instance,
+    _In_opt_ PVOID Context)
+{
+    PZP_SERVER_QUIC_CHANNEL Channel = Context;
+    HPCON PseudoConsole = (HPCON)InterlockedCompareExchangePointer(
+        (PVOID volatile*)&Channel->PseudoConsole,
+        NULL,
+        NULL);
+
+    UNREFERENCED_PARAMETER(Instance);
+    ClosePseudoConsole(PseudoConsole);
+    InterlockedExchangePointer((PVOID volatile*)&Channel->PseudoConsole,
+                               NULL);
+}
+
+static
+VOID
+CALLBACK
+ZpServerQuic_TerminalChannelCallback(
+    _Inout_ PTP_CALLBACK_INSTANCE Instance,
+    _In_opt_ PVOID Context)
+{
+    PZP_SERVER_QUIC_CHANNEL Channel = Context;
+    PZP_SERVER_QUIC_CONNECTION QuicConnection = Channel->Connection;
+    PBYTE Body;
+    DWORD Available, BytesRead, ExitCode;
+    ULONG ReadLength, BodyLength;
+    NTSTATUS Status;
+    LOGICAL ProcessExited = FALSE;
+    LOGICAL PseudoConsoleCloseQueued = FALSE;
+
+    CallbackMayRunLong(Instance);
+    Body = Mem_Alloc(sizeof(ULONGLONG) +
+                     ZP_SERVER_TERMINAL_CHANNEL_CHUNK_SIZE);
+    if (Body == NULL)
+    {
+        ZpServerQuic_CompleteChannelWorker(Channel,
+                                           STATUS_NO_MEMORY,
+                                           TRUE);
+        return;
+    }
+    for (;;)
+    {
+        RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
+        if (!Channel->Pending)
+        {
+            if (PseudoConsoleCloseQueued &&
+                InterlockedCompareExchangePointer(
+                    (PVOID volatile*)&Channel->PseudoConsole,
+                    NULL,
+                    NULL) != NULL)
+            {
+                RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+                Sleep(1);
+                continue;
+            }
+            Channel->WorkerActive = FALSE;
+            RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+            break;
+        }
+        RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+
+        if (!ProcessExited &&
+            WaitForSingleObject(Channel->Process, 0) == WAIT_OBJECT_0)
+        {
+            ProcessExited = TRUE;
+        }
+        Available = 0;
+        if (!PeekNamedPipe(Channel->Output,
+                           NULL,
+                           0,
+                           NULL,
+                           &Available,
+                           NULL))
+        {
+            if (GetLastError() == ERROR_BROKEN_PIPE && ProcessExited)
+            {
+                Available = 0;
+            }
+            else
+            {
+                Status = NTSTATUS_FROM_WIN32(GetLastError());
+                Mem_Free(Body);
+                ZpServerQuic_CompleteChannelWorker(Channel, Status, TRUE);
+                return;
+            }
+        }
+        if (Available == 0)
+        {
+            if (ProcessExited)
+            {
+                if (InterlockedCompareExchangePointer(
+                        (PVOID volatile*)&Channel->PseudoConsole,
+                        NULL,
+                        NULL) != NULL)
+                {
+                    if (!PseudoConsoleCloseQueued)
+                    {
+                        if (!TrySubmitThreadpoolCallback(
+                                ZpServerQuic_ClosePseudoConsoleCallback,
+                                Channel,
+                                NULL))
+                        {
+                            Status = STATUS_NO_MEMORY;
+                            Mem_Free(Body);
+                            ZpServerQuic_CompleteChannelWorker(Channel,
+                                                               Status,
+                                                               TRUE);
+                            return;
+                        }
+                        PseudoConsoleCloseQueued = TRUE;
+                    }
+                    Sleep(1);
+                    continue;
+                }
+                if (!GetExitCodeProcess(Channel->Process, &ExitCode))
+                {
+                    Status = NTSTATUS_FROM_WIN32(GetLastError());
+                }
+                else
+                {
+                    Status = (NTSTATUS)ExitCode;
+                }
+                Mem_Free(Body);
+                ZpServerQuic_CompleteChannelWorker(Channel, Status, TRUE);
+                return;
+            }
+            WaitForSingleObject(Channel->Process, 10);
+            continue;
+        }
+
+        RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
+        if (!Channel->Pending)
+        {
+            Channel->WorkerActive = FALSE;
+            RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+            break;
+        }
+        ReadLength = (ULONG)min(min(Channel->Credit,
+                                    (ULONGLONG)Available),
+                                ZP_SERVER_TERMINAL_CHANNEL_CHUNK_SIZE);
+        if (ReadLength == 0)
+        {
+            RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+            WaitForSingleObject(Channel->Process, 10);
+            continue;
+        }
+        Channel->Credit -= ReadLength;
+        RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+
+        if (!ReadFile(Channel->Output,
+                      Body + sizeof(ULONGLONG),
+                      ReadLength,
+                      &BytesRead,
+                      NULL))
+        {
+            Status = NTSTATUS_FROM_WIN32(GetLastError());
+            Mem_Free(Body);
+            ZpServerQuic_CompleteChannelWorker(Channel, Status, TRUE);
+            return;
+        }
+        Status = ZpMessage_EncodeChannelData(Channel->ChannelId,
+                                             Body + sizeof(ULONGLONG),
+                                             BytesRead,
+                                             Body,
+                                             sizeof(ULONGLONG) +
+                                                 ZP_SERVER_TERMINAL_CHANNEL_CHUNK_SIZE,
+                                             &BodyLength);
+        if (!NT_SUCCESS(Status))
+        {
+            Mem_Free(Body);
+            ZpServerQuic_CompleteChannelWorker(Channel, Status, TRUE);
+            return;
+        }
+        RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
+        if (!Channel->Pending)
+        {
+            Channel->WorkerActive = FALSE;
+            RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+            break;
+        }
+        Channel->Credit += ReadLength - BytesRead;
+        Status = ZpQuic_SendFrame(QuicConnection->Stream,
+                                  &QuicConnection->ProtocolConnection,
+                                  ZpMessageChannelData,
+                                  Body,
+                                  BodyLength);
+        if (!NT_SUCCESS(Status))
+        {
+            InterlockedExchange(&Channel->Pending, FALSE);
+            RemoveEntryList(&Channel->ListEntry);
+            Channel->WorkerActive = FALSE;
+        }
+        RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+        if (!NT_SUCCESS(Status))
+        {
+            Mem_Free(Body);
+            ZpServerQuic_DestroyChannel(Channel);
+            InterlockedExchange((volatile LONG*)&QuicConnection->ShutdownStatus,
+                                Status);
+            MsQuicConnectionShutdown(QuicConnection->Connection,
+                                     QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                     0);
+            ZpServerQuic_ReleaseConnection(QuicConnection);
+            return;
+        }
+    }
+    Mem_Free(Body);
+    ZpServerQuic_DestroyChannel(Channel);
+    ZpServerQuic_ReleaseConnection(QuicConnection);
+}
+
+static
 NTSTATUS
 ZpServerQuic_AddChannelWindow(
     _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
@@ -1206,9 +1703,12 @@ ZpServerQuic_AddChannelWindow(
     }
     RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
     if (QueueWorker &&
-        !TrySubmitThreadpoolCallback(ZpServerQuic_ChannelCallback,
-                                     Channel,
-                                     NULL))
+        !TrySubmitThreadpoolCallback(
+            Channel->Type == ZpServerQuicChannelTerminal ?
+                ZpServerQuic_TerminalChannelCallback :
+                ZpServerQuic_ChannelCallback,
+            Channel,
+            NULL))
     {
         ZpServerQuic_CompleteChannelWorker(Channel,
                                            STATUS_NO_MEMORY,
@@ -1252,6 +1752,107 @@ ZpServerQuic_CloseRemoteChannel(
         ZpServerQuic_DestroyChannel(Channel);
     }
     return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpServerQuic_ReceiveChannelData(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
+    _In_ const ZP_CHANNEL_DATA_VIEW* Message)
+{
+    PZP_SERVER_QUIC_CHANNEL Channel;
+    BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
+    ULONG BodyLength, BytesWritten;
+    NTSTATUS Status;
+    LOGICAL Destroy = FALSE;
+    LOGICAL WriteSucceeded;
+
+    Status = ZpMessage_EncodeChannelWindow(Message->ChannelId,
+                                           Message->Data.Length,
+                                           Body,
+                                           sizeof(Body),
+                                           &BodyLength);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
+    Channel = ZpServerQuic_FindChannel(QuicConnection, Message->ChannelId);
+    if (Channel == NULL ||
+        Channel->Type != ZpServerQuicChannelTerminal ||
+        Message->Data.Length > Channel->ReceiveCredit)
+    {
+        RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    Channel->ReceiveCredit -= Message->Data.Length;
+    WriteSucceeded = WriteFile(Channel->Input,
+                               Message->Data.Buffer,
+                               Message->Data.Length,
+                               &BytesWritten,
+                               NULL);
+    if (!WriteSucceeded || BytesWritten != Message->Data.Length)
+    {
+        Status = WriteSucceeded ?
+                     STATUS_UNSUCCESSFUL :
+                     NTSTATUS_FROM_WIN32(GetLastError());
+        InterlockedExchange(&Channel->Pending, FALSE);
+        RemoveEntryList(&Channel->ListEntry);
+        Destroy = !Channel->WorkerActive;
+        ZpServerQuic_SendChannelClose(Channel, Status);
+        RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+        if (Destroy)
+        {
+            ZpServerQuic_DestroyChannel(Channel);
+        }
+        return STATUS_SUCCESS;
+    }
+    Channel->ReceiveCredit += Message->Data.Length;
+    Status = ZpQuic_SendFrame(QuicConnection->Stream,
+                              &QuicConnection->ProtocolConnection,
+                              ZpMessageChannelWindow,
+                              Body,
+                              BodyLength);
+    if (!NT_SUCCESS(Status))
+    {
+        Channel->ReceiveCredit -= Message->Data.Length;
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpServerQuic_ResizeTerminalChannel(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
+    _In_ ULONGLONG ChannelId,
+    _In_ USHORT Columns,
+    _In_ USHORT Rows)
+{
+    PZP_SERVER_QUIC_CHANNEL Channel;
+    COORD Size;
+    HRESULT Result;
+
+    if (Columns > MAXSHORT || Rows > MAXSHORT)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
+    Channel = ZpServerQuic_FindChannel(QuicConnection, ChannelId);
+    if (Channel == NULL ||
+        Channel->Type != ZpServerQuicChannelTerminal ||
+        !Channel->Pending)
+    {
+        RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+        return STATUS_INVALID_HANDLE;
+    }
+    Size.X = (SHORT)Columns;
+    Size.Y = (SHORT)Rows;
+    Result = ResizePseudoConsole(Channel->PseudoConsole, Size);
+    RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+    return SUCCEEDED(Result) ?
+               STATUS_SUCCESS :
+               NTSTATUS_FROM_WIN32(HRESULT_CODE(Result));
 }
 
 static
@@ -1342,7 +1943,9 @@ ZpServerQuic_RequestCallback(
     ULONG ProcessId, ExitCode;
     ZP_STRING_VIEW ServiceName, FilePath;
     ZP_FILE_INFO FileInfo;
-    ULONGLONG FileSize, FileOffset;
+    ZP_TERMINAL_CREATE_VIEW TerminalCreate;
+    ULONGLONG FileSize, FileOffset, TerminalChannelId;
+    USHORT Columns, Rows;
     ZP_REQUEST_ACCESS Access;
     NTSTATUS Status = STATUS_SUCCESS;
     LOGICAL SendResponse;
@@ -1371,7 +1974,8 @@ ZpServerQuic_RequestCallback(
                   Request->OperationId == ZP_PROCESS_OPERATION_TERMINATE) ||
                  (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
                   (Request->OperationId == ZP_SERVICE_OPERATION_START ||
-                   Request->OperationId == ZP_SERVICE_OPERATION_STOP)) ?
+                   Request->OperationId == ZP_SERVICE_OPERATION_STOP)) ||
+                 Request->ModuleId == ZP_TERMINAL_MODULE_ID ?
                      ZpRequestAccessControl :
                      ZpRequestAccessRead;
         Status = ZpServer_AuthorizeRequest(
@@ -1533,6 +2137,46 @@ ZpServerQuic_RequestCallback(
                 ResponsePayload = Payload;
             }
         }
+        else if (Request->ModuleId == ZP_TERMINAL_MODULE_ID &&
+                 Request->OperationId == ZP_TERMINAL_OPERATION_CREATE)
+        {
+            Status = ZpTerminal_DecodeCreate(Request->Payload,
+                                             Request->PayloadLength,
+                                             &TerminalCreate);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_CreateTerminalChannel(
+                    QuicConnection,
+                    &TerminalCreate,
+                    &Channel);
+            }
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpTerminal_EncodeCreateResponse(Channel->ChannelId,
+                                                          Channel->ProcessId,
+                                                          Payload,
+                                                          sizeof(Payload),
+                                                          &PayloadLength);
+                ResponsePayload = Payload;
+            }
+        }
+        else if (Request->ModuleId == ZP_TERMINAL_MODULE_ID &&
+                 Request->OperationId == ZP_TERMINAL_OPERATION_RESIZE)
+        {
+            Status = ZpTerminal_DecodeResize(Request->Payload,
+                                             Request->PayloadLength,
+                                             &TerminalChannelId,
+                                             &Columns,
+                                             &Rows);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_ResizeTerminalChannel(
+                    QuicConnection,
+                    TerminalChannelId,
+                    Columns,
+                    Rows);
+            }
+        }
         else
         {
             Status = STATUS_NOT_SUPPORTED;
@@ -1577,6 +2221,20 @@ ZpServerQuic_RequestCallback(
             {
                 ZpServerQuic_CloseRemoteChannel(QuicConnection,
                                                 Channel->ChannelId);
+                Channel = NULL;
+            }
+            else if (Channel->Type == ZpServerQuicChannelTerminal)
+            {
+                NTSTATUS WindowStatus = ZpServerQuic_SendChannelWindow(
+                    Channel,
+                    ZP_SERVER_TERMINAL_INPUT_WINDOW_SIZE);
+
+                if (!NT_SUCCESS(WindowStatus))
+                {
+                    ZpServerQuic_SendChannelClose(Channel, WindowStatus);
+                    ZpServerQuic_CloseRemoteChannel(QuicConnection,
+                                                    Channel->ChannelId);
+                }
                 Channel = NULL;
             }
             else
@@ -1792,6 +2450,7 @@ ZpServerQuic_MessageCallback(
     ZP_BUFFER_VIEW Signature;
     ZP_DISCONNECT_VIEW Disconnect;
     ZP_REQUEST_VIEW Request;
+    ZP_CHANNEL_DATA_VIEW ChannelData;
     ZP_CHANNEL_CLOSE ChannelClose;
     ZP_READY Ready;
     BYTE Body[sizeof(USHORT) + ZP_MODULE_MAX_COUNT * 8];
@@ -1945,6 +2604,15 @@ ZpServerQuic_MessageCallback(
                        ZpServerQuic_AddChannelWindow(QuicConnection,
                                                      Token,
                                                      CreditBytes) :
+                       Status;
+
+        case ZpMessageChannelData:
+            Status = ZpMessage_DecodeChannelData(Frame->Body,
+                                                  Frame->BodyLength,
+                                                  &ChannelData);
+            return NT_SUCCESS(Status) ?
+                       ZpServerQuic_ReceiveChannelData(QuicConnection,
+                                                       &ChannelData) :
                        Status;
 
         case ZpMessageChannelClose:

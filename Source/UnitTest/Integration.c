@@ -32,6 +32,9 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE FileInfoEvent;
     HANDLE FileListEvent;
     HANDLE FileReadEvent;
+    HANDLE TerminalWritableEvent;
+    HANDLE TerminalResizeEvent;
+    HANDLE TerminalCloseEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
@@ -85,6 +88,13 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONGLONG FileReadOffset;
     ULONGLONG FileReadBytes;
     ULONGLONG FileReadHash;
+    volatile LONG TerminalCreateStatus;
+    volatile LONG TerminalResizeStatus;
+    volatile LONG TerminalCloseStatus;
+    ZP_CHANNEL_HANDLE TerminalChannel;
+    ULONG TerminalProcessId;
+    ULONG TerminalWritableCredit;
+    ULONGLONG TerminalDataBytes;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -433,6 +443,87 @@ SDKIntegration_ChannelCloseCallback(
     UNREFERENCED_PARAMETER(Channel);
     InterlockedExchange(&TestContext->FileReadCloseStatus, Status);
     SetEvent(TestContext->FileReadEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_TerminalCreateCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONG ProcessId,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->TerminalChannel = Channel;
+    TestContext->TerminalProcessId = ProcessId;
+    InterlockedExchange(&TestContext->TerminalCreateStatus, Status);
+    if (!NT_SUCCESS(Status))
+    {
+        SetEvent(TestContext->TerminalCloseEvent);
+    }
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_TerminalDataCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ PCZP_BUFFER_VIEW Data,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Channel);
+    TestContext->TerminalDataBytes += Data->Length;
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_TerminalWritableCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONG CreditBytes,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Channel);
+    TestContext->TerminalWritableCredit += CreditBytes;
+    SetEvent(TestContext->TerminalWritableEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_TerminalResizeCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    InterlockedExchange(&TestContext->TerminalResizeStatus, Status);
+    SetEvent(TestContext->TerminalResizeEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_TerminalCloseCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ NTSTATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Channel);
+    InterlockedExchange(&TestContext->TerminalCloseStatus, Status);
+    SetEvent(TestContext->TerminalCloseEvent);
 }
 
 static
@@ -818,18 +909,25 @@ TEST_FUNC(SDKQuicIntegration)
     static const WCHAR ServerName[] = L"localhost";
     static const WCHAR MissingServiceName[] =
         L"KNSoft.ZPigeon.UnitTest.DoesNotExist";
+    static const WCHAR TerminalCommandLine[] =
+        L"powershell.exe -NoLogo -NoProfile -Command \"Write-Output "
+        L"ZPIGEON_TERMINAL_OK; Start-Sleep -Milliseconds 500; exit 7\"";
+    static const BYTE TerminalInput[] =
+        "ZPIGEON_TERMINAL_OK\r\n";
     SDK_INTEGRATION_CONTEXT TestContext = { 0 };
     ZP_MODULE_RECORD ClientModules[] = {
         { 1, 3, 0x0F },
         { 2, 1, 0x03 },
         { 3, 1, 0x01 },
-        { 4, 1, 0x03 }
+        { 4, 1, 0x03 },
+        { 5, 1, 0x00 }
     };
     ZP_MODULE_RECORD ServerModules[] = {
         { 1, 2, 0x05 },
         { 2, 1, 0x03 },
         { 3, 1, 0x01 },
-        { 4, 1, 0x03 }
+        { 4, 1, 0x03 },
+        { 5, 1, 0x00 }
     };
     ZP_ENDPOINT Endpoint = { ZpTransportQuic, L"127.0.0.1", 0, ServerName, NULL };
     ZP_LISTENER_ENDPOINT Listener = { ZpTransportQuic, L"127.0.0.1", 0, NULL };
@@ -854,6 +952,9 @@ TEST_FUNC(SDKQuicIntegration)
     ULONGLONG ExpectedFileReadBytes, ExpectedFileReadHash;
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -897,6 +998,9 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.FileInfoEvent = Events[14];
     TestContext.FileListEvent = Events[15];
     TestContext.FileReadEvent = Events[16];
+    TestContext.TerminalWritableEvent = Events[17];
+    TestContext.TerminalResizeEvent = Events[18];
+    TestContext.TerminalCloseEvent = Events[19];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -1313,6 +1417,75 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
+    Status = ZpClient_CreateTerminal(Client,
+                                      80,
+                                      25,
+                                      TerminalCommandLine,
+                                      ARRAYSIZE(TerminalCommandLine) - 1,
+                                      NULL,
+                                      0,
+                                      SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                      SDKIntegration_TerminalCreateCallback,
+                                      SDKIntegration_TerminalDataCallback,
+                                      SDKIntegration_TerminalWritableCallback,
+                                      SDKIntegration_TerminalCloseCallback,
+                                      &TestContext,
+                                      &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.TerminalWritableEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.TerminalCreateStatus) ||
+        TestContext.TerminalChannel == NULL ||
+        TestContext.TerminalProcessId == 0 ||
+        TestContext.TerminalWritableCredit < sizeof(TerminalInput) - 1)
+    {
+        goto Cleanup;
+    }
+    Status = ZpClient_ResizeTerminal(TestContext.TerminalChannel,
+                                     100,
+                                     30,
+                                     SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                     SDKIntegration_TerminalResizeCallback,
+                                     &TestContext,
+                                     &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.TerminalResizeEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.TerminalResizeStatus))
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.TerminalWritableEvent);
+    Status = ZpChannel_Send(TestContext.TerminalChannel,
+                            TerminalInput,
+                            sizeof(TerminalInput) - 1);
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.TerminalWritableEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0)
+    {
+        goto Cleanup;
+    }
+    if (
+        WaitForSingleObject(TestContext.TerminalCloseEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        TestContext.TerminalCloseStatus != 7 ||
+        TestContext.TerminalDataBytes == 0)
+    {
+        goto Cleanup;
+    }
+    ZpChannel_Close(TestContext.TerminalChannel);
+    TestContext.TerminalChannel = NULL;
+
     ResetEvent(TestContext.ServerRunningEvent);
     ResetEvent(TestContext.ClientReadyEvent);
     ResetEvent(TestContext.ServerReadyEvent);
@@ -1376,6 +1549,12 @@ Cleanup:
         ZpChannel_Cancel(TestContext.FileReadChannel);
         ZpChannel_Close(TestContext.FileReadChannel);
         TestContext.FileReadChannel = NULL;
+    }
+    if (TestContext.TerminalChannel != NULL)
+    {
+        ZpChannel_Cancel(TestContext.TerminalChannel);
+        ZpChannel_Close(TestContext.TerminalChannel);
+        TestContext.TerminalChannel = NULL;
     }
     if (Client != NULL)
     {
