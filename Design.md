@@ -467,7 +467,7 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 
 `Service.Start` 和 `Service.Stop` 分别固定为 `OperationId = 3` 和 `4`，访问级别均为 `Control`，请求 Payload 复用非空 UTF-16LE ServiceName 字符串，成功响应 Payload 为空。Server 只有在授权门禁放行后才打开 Service Control Manager 句柄并执行启动或停止控制；未配置授权回调时固定返回 `STATUS_ACCESS_DENIED`。
 
-`File` 模块第一版固定为 `ModuleId = 4`、`ModuleVersion = 1`；`Enumerate` 固定为 `OperationId = 1`，`Query` 固定为 `OperationId = 2`，`OpenRead` 固定为 `OperationId = 3`。Enumerate 与 Query 请求 Payload 均为非空 UTF-16LE Path 字符串。Query 成功响应依次编码 `UINT32 Attributes` 以及四个 `UINT64`：Size、CreationTime、LastAccessTime、LastWriteTime。Enumerate 成功响应为数组，单项编码同一组元数据后追加 UTF-16LE Name 字符串，并排除 `.` 与 `..`；结果超过单 Frame 上限时返回 `STATUS_BUFFER_OVERFLOW`，后续按真实规模需求增加分页。OpenRead 请求依次编码 `UINT64 Offset` 和非空 UTF-16LE Path；成功响应依次编码 Server 创建的偶数 `UINT64 ChannelId`、`UINT64 FileSize` 和服务端确认的 `UINT64 Offset`，Offset 大于 FileSize 时请求失败，等于 FileSize 时建立后正常空流结束。Client 在成功响应回调返回后授予首个接收窗口，Server 才能发送文件数据。属性值和 100ns 时间值沿用 Windows 文件系统定义。File 请求属于 `Read`，Server 授权回调可依据原始 Payload 收窄可访问范围。
+`File` 模块第一版固定为 `ModuleId = 4`、`ModuleVersion = 1`；`Enumerate` 固定为 `OperationId = 1`，`Query` 固定为 `OperationId = 2`，`OpenRead` 固定为 `OperationId = 3`，`Hash` 固定为 `OperationId = 4`。Enumerate 与 Query 请求 Payload 均为非空 UTF-16LE Path 字符串。Query 成功响应依次编码 `UINT32 Attributes` 以及四个 `UINT64`：Size、CreationTime、LastAccessTime、LastWriteTime。Enumerate 成功响应为数组，单项编码同一组元数据后追加 UTF-16LE Name 字符串，并排除 `.` 与 `..`；结果超过单 Frame 上限时返回 `STATUS_BUFFER_OVERFLOW`，后续按真实规模需求增加分页。OpenRead 请求依次编码 `UINT64 Offset` 和非空 UTF-16LE Path；成功响应依次编码 Server 创建的偶数 `UINT64 ChannelId`、`UINT64 FileSize` 和服务端确认的 `UINT64 Offset`，Offset 大于 FileSize 时请求失败，等于 FileSize 时建立后正常空流结束。Client 在成功响应回调返回后授予首个接收窗口，Server 才能发送文件数据。Hash 请求依次编码 `UINT16 Algorithm` 和非空 UTF-16LE Path，Version 1 仅定义 `Algorithm = 1` 的 SHA-256；成功响应编码相同 Algorithm、`UINT64 FileSize` 和固定 32 字节 Digest。Server 分块读取文件并在请求取消后停止计算，Digest 表示本次打开并顺序读取到的完整字节流。属性值和 100ns 时间值沿用 Windows 文件系统定义。File 请求属于 `Read`，Server 授权回调可依据原始 Payload 收窄可访问范围。
 
 `Terminal` 模块第一版固定为 `ModuleId = 5`、`ModuleVersion = 1`；`Create` 固定为 `OperationId = 1`，请求依次编码非零 `UINT16 Columns`、`UINT16 Rows`、非空 UTF-16LE CommandLine 和可空 UTF-16LE WorkingDirectory，成功响应编码 Server 创建的偶数 `UINT64 ChannelId` 与非零 `UINT32 ProcessId`。同一 Channel 上 Server 到 Client 的 Data 是 ConPTY VT 输出，Client 到 Server 的 Data 是输入字节，两个方向分别由对端 Window 授信。`Resize` 固定为 `OperationId = 2`，请求编码 ChannelId、非零 Columns 和 Rows，成功响应为空。Client 或 Server 发送 ChannelClose 终止会话；正常进程退出的 Close Status 使用进程退出码的原始 32 位值，基础设施错误使用失败 `NTSTATUS`。Terminal 操作属于 `Control` 权限。
 
@@ -475,7 +475,7 @@ Client 以 `ZpClient_CreateTerminal` 异步建立终端并在成功回调中交�
 
 Server 使用 ConPTY 建立同步输入/输出管道；传给 `CreatePseudoConsole` 的 Input Read 与 Output Write 端必须保持到附加终端属性的子进程创建成功后再关闭。输出在长生命周期线程池工作中持续排空并受 Client Window 限制；输入首窗固定为 4 KiB，Server 将获准数据写入 ConPTY 后等量补窗，限制同步写入对网络回调的占用。进程退出后由独立线程池回调关闭 ConPTY，输出工作继续排空最终 VT Frame，随后以原始进程退出码发送 ChannelClose；连接终止或本地关闭会终止仍存活的终端进程并回收全部句柄。
 
-大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口、断点续传和哈希规则在实现对应模块前按真实需求确定，不预先建设通用虚拟流框架。
+大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口和断点续传按上述通用 Channel 与 File.OpenRead 规则处理，不预先建设通用虚拟流框架。
 
 ## 10. 安全与资源限制
 

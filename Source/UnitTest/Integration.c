@@ -5,9 +5,11 @@
 
 #include "../KNSoft.ZPigeon.Client.SDK/Client.inl"
 
+#include <Bcrypt.h>
 #include <Ncrypt.h>
 #include <Ws2tcpip.h>
 
+#pragma comment(lib, "Bcrypt.lib")
 #pragma comment(lib, "Ncrypt.lib")
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -31,6 +33,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE ServiceControlEvent;
     HANDLE FileInfoEvent;
     HANDLE FileListEvent;
+    HANDLE FileHashEvent;
     HANDLE FileReadEvent;
     HANDLE TerminalWritableEvent;
     HANDLE TerminalResizeEvent;
@@ -81,6 +84,10 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     WCHAR ExpectedFileName[MAX_PATH];
     ULONG ExpectedFileNameLength;
     LOGICAL FoundExpectedFile;
+    volatile LONG FileHashStatus;
+    ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
+    ULONGLONG FileHashSize;
+    BYTE FileDigest[ZP_FILE_SHA256_SIZE];
     volatile LONG FileOpenReadStatus;
     volatile LONG FileReadCloseStatus;
     ZP_CHANNEL_HANDLE FileReadChannel;
@@ -389,6 +396,30 @@ SDKIntegration_FileListCallback(
 static
 VOID
 NTAPI
+SDKIntegration_FileHashCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_FILE_HASH_VIEW Hash,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->FileHashAlgorithm = Hash->Algorithm;
+        TestContext->FileHashSize = Hash->FileSize;
+        RtlCopyMemory(TestContext->FileDigest,
+                      Hash->Digest.Buffer,
+                      Hash->Digest.Length);
+    }
+    InterlockedExchange(&TestContext->FileHashStatus, Status);
+    SetEvent(TestContext->FileHashEvent);
+}
+
+static
+VOID
+NTAPI
 SDKIntegration_FileOpenReadCallback(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ NTSTATUS Status,
@@ -575,6 +606,71 @@ SDKIntegration_HashFile(
     Result = TRUE;
 
 Cleanup:
+    CloseHandle(File);
+    return Result;
+}
+
+static
+LOGICAL
+SDKIntegration_HashFileSha256(
+    _In_ PCWSTR Path,
+    _Out_writes_bytes_(ZP_FILE_SHA256_SIZE) BYTE* Digest)
+{
+    BCRYPT_ALG_HANDLE Algorithm = NULL;
+    BCRYPT_HASH_HANDLE Hash = NULL;
+    BYTE Buffer[0x10000];
+    HANDLE File;
+    DWORD BytesRead;
+    NTSTATUS Status;
+    LOGICAL Result = FALSE;
+
+    File = CreateFileW(Path,
+                       GENERIC_READ,
+                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                       NULL,
+                       OPEN_EXISTING,
+                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+                       NULL);
+    if (File == INVALID_HANDLE_VALUE)
+    {
+        return FALSE;
+    }
+    Status = BCryptOpenAlgorithmProvider(&Algorithm,
+                                         BCRYPT_SHA256_ALGORITHM,
+                                         NULL,
+                                         0);
+    if (!NT_SUCCESS(Status))
+    {
+        goto Cleanup;
+    }
+    Status = BCryptCreateHash(Algorithm, &Hash, NULL, 0, NULL, 0, 0);
+    while (NT_SUCCESS(Status))
+    {
+        if (!ReadFile(File, Buffer, sizeof(Buffer), &BytesRead, NULL))
+        {
+            goto Cleanup;
+        }
+        if (BytesRead == 0)
+        {
+            break;
+        }
+        Status = BCryptHashData(Hash, Buffer, BytesRead, 0);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = BCryptFinishHash(Hash, Digest, ZP_FILE_SHA256_SIZE, 0);
+    }
+    Result = NT_SUCCESS(Status);
+
+Cleanup:
+    if (Hash != NULL)
+    {
+        BCryptDestroyHash(Hash);
+    }
+    if (Algorithm != NULL)
+    {
+        BCryptCloseAlgorithmProvider(Algorithm, 0);
+    }
     CloseHandle(File);
     return Result;
 }
@@ -950,8 +1046,10 @@ TEST_FUNC(SDKQuicIntegration)
     DWORD ServerStopWait = MAXDWORD, RetryWait = MAXDWORD, ProcessWait = MAXDWORD;
     ULONG Index;
     ULONGLONG ExpectedFileReadBytes, ExpectedFileReadHash;
+    BYTE ExpectedFileDigest[ZP_FILE_SHA256_SIZE];
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -997,10 +1095,11 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.ServiceControlEvent = Events[13];
     TestContext.FileInfoEvent = Events[14];
     TestContext.FileListEvent = Events[15];
-    TestContext.FileReadEvent = Events[16];
-    TestContext.TerminalWritableEvent = Events[17];
-    TestContext.TerminalResizeEvent = Events[18];
-    TestContext.TerminalCloseEvent = Events[19];
+    TestContext.FileHashEvent = Events[16];
+    TestContext.FileReadEvent = Events[17];
+    TestContext.TerminalWritableEvent = Events[18];
+    TestContext.TerminalResizeEvent = Events[19];
+    TestContext.TerminalCloseEvent = Events[20];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -1334,6 +1433,35 @@ TEST_FUNC(SDKQuicIntegration)
         TestContext.FileAttributes == INVALID_FILE_ATTRIBUTES ||
         TestContext.FileSize == 0 ||
         TestContext.FileLastWriteTime == 0)
+    {
+        goto Cleanup;
+    }
+    if (!SDKIntegration_HashFileSha256(ModulePath, ExpectedFileDigest))
+    {
+        goto Cleanup;
+    }
+    Status = ZpClient_HashFile(Client,
+                               ModulePath,
+                               Index,
+                               ZpFileHashSha256,
+                               SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                               SDKIntegration_FileHashCallback,
+                               &TestContext,
+                               &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.FileHashEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.FileHashStatus) ||
+        TestContext.FileHashAlgorithm != ZpFileHashSha256 ||
+        TestContext.FileHashSize != TestContext.FileSize ||
+        RtlCompareMemory(TestContext.FileDigest,
+                         ExpectedFileDigest,
+                         sizeof(ExpectedFileDigest)) != sizeof(ExpectedFileDigest))
     {
         goto Cleanup;
     }

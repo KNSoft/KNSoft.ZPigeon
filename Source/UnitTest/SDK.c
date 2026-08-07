@@ -32,6 +32,11 @@ typedef struct _SDK_TEST_CONTEXT
     HANDLE RequestCompleteEvent;
     ULONG FileOpenReadCount;
     NTSTATUS FileOpenReadStatus;
+    ULONG FileHashCount;
+    NTSTATUS FileHashStatus;
+    ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
+    ULONGLONG FileHashSize;
+    BYTE FileDigest[ZP_FILE_SHA256_SIZE];
     ZP_CHANNEL_HANDLE FileChannel;
     ULONGLONG FileSize;
     ULONGLONG FileOffset;
@@ -186,6 +191,30 @@ SDKTest_FileOpenReadCallback(
     TestContext->FileChannel = Channel;
     TestContext->FileSize = FileSize;
     TestContext->FileOffset = Offset;
+}
+
+static
+VOID
+NTAPI
+SDKTest_FileHashCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_FILE_HASH_VIEW Hash,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->FileHashCount++;
+    TestContext->FileHashStatus = Status;
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->FileHashAlgorithm = Hash->Algorithm;
+        TestContext->FileHashSize = Hash->FileSize;
+        RtlCopyMemory(TestContext->FileDigest,
+                      Hash->Digest.Buffer,
+                      Hash->Digest.Length);
+    }
 }
 
 static
@@ -491,6 +520,10 @@ TEST_FUNC(SDKContract)
     ZP_CHANNEL_CLOSE ChannelClose;
     BYTE FileOpenReadResponse[3 * sizeof(ULONGLONG)];
     ULONG FileOpenReadResponseLength;
+    BYTE FileHashResponse[sizeof(USHORT) + sizeof(ULONGLONG) +
+                          ZP_FILE_SHA256_SIZE];
+    ULONG FileHashResponseLength;
+    BYTE FileDigest[ZP_FILE_SHA256_SIZE];
     BYTE TerminalCreateResponse[sizeof(ULONGLONG) + sizeof(ULONG)];
     ULONG TerminalCreateResponseLength;
     BYTE TerminalInput[] = { 'e', 'x', 'i', 't' };
@@ -502,6 +535,8 @@ TEST_FUNC(SDKContract)
     SDK_TEST_CONTEXT QuicContext = { STATUS_SUCCESS };
     QUIC_ADDR QuicAddress;
     QUIC_STATUS QuicStatus;
+
+    RtlFillMemory(FileDigest, sizeof(FileDigest), 0x5A);
 
     TEST_OK(ZpTransportQuic == 1 && ZpTransportTlsTcp == 2 && ZpTransportWss == 3);
     TEST_OK(Endpoint.Transport == ZpTransportQuic &&
@@ -723,6 +758,37 @@ TEST_FUNC(SDKContract)
             TestContext.RequestCompleteCount == 1 &&
             TestContext.RequestStatus == STATUS_SUCCESS &&
             TestContext.RequestPayloadLength == sizeof(RootCertificate));
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_HashFile(Client,
+                                         L"C:\\Test.bin",
+                                         11,
+                                         ZpFileHashSha256,
+                                         1000,
+                                         SDKTest_FileHashCallback,
+                                         &TestContext,
+                                         &Request)) &&
+            TestContext.SendMessageType == ZpMessageRequest &&
+            TestContext.SendModuleId == ZP_FILE_MODULE_ID &&
+            TestContext.SendOperationId == ZP_FILE_OPERATION_HASH);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeHashResponse(ZpFileHashSha256,
+                                                 sizeof(RootCertificate),
+                                                 FileDigest,
+                                                 sizeof(FileDigest),
+                                                 FileHashResponse,
+                                                 sizeof(FileHashResponse),
+                                                 &FileHashResponseLength)));
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload.Buffer = FileHashResponse;
+    Response.Payload.Length = FileHashResponseLength;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.FileHashCount == 1 &&
+            TestContext.FileHashStatus == STATUS_SUCCESS &&
+            TestContext.FileHashAlgorithm == ZpFileHashSha256 &&
+            TestContext.FileHashSize == sizeof(RootCertificate) &&
+            RtlCompareMemory(TestContext.FileDigest,
+                             FileDigest,
+                             sizeof(FileDigest)) == sizeof(FileDigest));
     ZpRequest_Close(Request);
     TEST_OK(NT_SUCCESS(ZpClient_OpenFileRead(Client,
                                              L"C:\\Test.bin",

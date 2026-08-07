@@ -91,6 +91,9 @@ TEST_FUNC(ProtocolMessage)
     };
     ZP_FILE_INFO FileInfoView;
     ZP_STRING_VIEW FilePathView;
+    ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
+    ZP_FILE_HASH_VIEW FileHashView;
+    BYTE FileDigest[ZP_FILE_SHA256_SIZE];
     ZP_FILE_RECORD FileRecords[] = {
         {
             { FILE_ATTRIBUTE_ARCHIVE, 123456789, 100, 200, 300 },
@@ -114,6 +117,10 @@ TEST_FUNC(ProtocolMessage)
     for (Index = 0; Index < ARRAYSIZE(Signature); Index++)
     {
         Signature[Index] = (BYTE)(ARRAYSIZE(Signature) - Index);
+    }
+    for (Index = 0; Index < ARRAYSIZE(FileDigest); Index++)
+    {
+        FileDigest[Index] = (BYTE)(Index + 1);
     }
 
     TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(&ClientHello, NULL, 0, &Length)) && Length == 85);
@@ -422,6 +429,50 @@ TEST_FUNC(ProtocolMessage)
                                           Buffer,
                                           sizeof(Buffer),
                                           &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeHashRequest(ZpFileHashSha256,
+                                                L"C:\\Test.bin",
+                                                11,
+                                                Buffer,
+                                                sizeof(Buffer),
+                                                &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeHashRequest(Buffer,
+                                                Length,
+                                                &FileHashAlgorithm,
+                                                &FilePathView)) &&
+            FileHashAlgorithm == ZpFileHashSha256 &&
+            FilePathView.Length == 11);
+    TEST_OK(ZpFile_EncodeHashRequest((ZP_FILE_HASH_ALGORITHM)0,
+                                     L"C:\\Test.bin",
+                                     11,
+                                     Buffer,
+                                     sizeof(Buffer),
+                                     &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeHashResponse(ZpFileHashSha256,
+                                                 8192,
+                                                 FileDigest,
+                                                 sizeof(FileDigest),
+                                                 Buffer,
+                                                 sizeof(Buffer),
+                                                 &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeHashResponse(Buffer,
+                                                 Length,
+                                                 &FileHashView)) &&
+            FileHashView.Algorithm == ZpFileHashSha256 &&
+            FileHashView.FileSize == 8192 &&
+            FileHashView.Digest.Length == sizeof(FileDigest) &&
+            RtlCompareMemory(FileHashView.Digest.Buffer,
+                             FileDigest,
+                             sizeof(FileDigest)) == sizeof(FileDigest));
+    TEST_OK(ZpFile_EncodeHashResponse(ZpFileHashSha256,
+                                      8192,
+                                      FileDigest,
+                                      sizeof(FileDigest) - 1,
+                                      Buffer,
+                                      sizeof(Buffer),
+                                      &Length) == STATUS_INVALID_PARAMETER &&
+            ZpFile_DecodeHashResponse(Buffer,
+                                      sizeof(USHORT) + sizeof(ULONGLONG),
+                                      &FileHashView) == STATUS_DATA_ERROR);
     TEST_OK(NT_SUCCESS(ZpFile_EncodeInfo(&FileInfo,
                                          Buffer,
                                          sizeof(Buffer),

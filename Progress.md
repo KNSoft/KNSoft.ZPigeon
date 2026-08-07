@@ -65,14 +65,15 @@
 - 实现 Client Terminal API 与双向 Channel 发送额度：Create 成功后交付 Channel/PID 并自动授予输出首窗，远端 Window 通过 Writable 回调通知新增输入额度，`ZpChannel_Send` 无隐藏排队并在额度不足时返回 `STATUS_RETRY`，Resize 复用 Channel Handle 发起独立异步 Request；
 - 实现 Server ConPTY Terminal：创建同步输入/输出管道并附加子进程，4 KiB 输入授信写入后等量补窗，输出工作按 Client Window 持续排空 VT 数据，支持 Resize、原始进程退出码 Close、Client 取消和连接终止回收；ConPTY 关闭由独立工作触发，输出线程继续排空最终 Frame，避免同步关闭与输出管道互锁；
 - 扩展 localhost QUIC 集成测试，真实创建 PowerShell ConPTY 会话，验证 Terminal Create/PID、输入发送与额度补回、非空 VT 输出、Resize、退出码 7 和 Channel 生命周期；
+- 实现 File.Hash：Version 1 固定 SHA-256 算法标识及请求/响应 Codec，Client 提供异步 Hash API，Server 以 64 KiB 分块计算并响应取消；localhost QUIC 集成测试将远端结果与本地独立 SHA-256 计算逐字节比对；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 254 项断言全部通过，其中包含真实 ConPTY Terminal Create/输入/输出/Resize/退出、Terminal Payload、真实 File.OpenRead 下载、Client/Server Channel 生命周期、通用 Channel Codec 和既有管理操作端到端验证。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 261 项断言全部通过，其中包含真实 File.Hash SHA-256、ConPTY Terminal Create/输入/输出/Resize/退出、Terminal Payload、真实 File.OpenRead 下载、Client/Server Channel 生命周期、通用 Channel Codec 和既有管理操作端到端验证。
 
 ## 下一步
 
-1. 按实际需求补充 File 哈希协商、上传及目录分页；
+1. 按实际需求补充 File 上传及目录分页；
 2. 补充 Terminal 长会话、取消、异常退出和大输出压力测试；
 3. 设计 EventLog 等订阅模块的事件丢失与恢复语义。
 

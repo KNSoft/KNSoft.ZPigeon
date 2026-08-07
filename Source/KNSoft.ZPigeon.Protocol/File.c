@@ -191,6 +191,161 @@ ZpFile_DecodeOpenReadResponse(
     return Status;
 }
 
+static
+ULONG
+ZpFile_GetDigestLength(
+    _In_ ZP_FILE_HASH_ALGORITHM Algorithm)
+{
+    return Algorithm == ZpFileHashSha256 ? ZP_FILE_SHA256_SIZE : 0;
+}
+
+NTSTATUS
+ZpFile_EncodeHashRequest(
+    _In_ ZP_FILE_HASH_ALGORITHM Algorithm,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize;
+    NTSTATUS Status;
+
+    if (ZpFile_GetDigestLength(Algorithm) == 0 ||
+        PathLength == 0 ||
+        PathLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Path == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = sizeof(USHORT) + sizeof(ULONG) +
+                   (ULONGLONG)PathLength * sizeof(WCHAR);
+    if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
+    {
+        return STATUS_BUFFER_OVERFLOW;
+    }
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < RequiredSize)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Algorithm);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer, Path, PathLength);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpFile_DecodeHashRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_HASH_ALGORITHM Algorithm,
+    _Out_ PZP_STRING_VIEW Path)
+{
+    ZP_CODEC_READER Reader;
+    USHORT AlgorithmValue;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt16(&Reader, &AlgorithmValue);
+    if (NT_SUCCESS(Status))
+    {
+        *Algorithm = (ZP_FILE_HASH_ALGORITHM)AlgorithmValue;
+        Status = ZpCodec_ReadString(&Reader, Path);
+    }
+    if (!NT_SUCCESS(Status) ||
+        ZpFile_GetDigestLength((ZP_FILE_HASH_ALGORITHM)AlgorithmValue) == 0 ||
+        Path->Length == 0 ||
+        Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpFile_EncodeHashResponse(
+    _In_ ZP_FILE_HASH_ALGORITHM Algorithm,
+    _In_ ULONGLONG FileSize,
+    _In_reads_bytes_(DigestLength) const BYTE* Digest,
+    _In_ ULONG DigestLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+
+    if (DigestLength != ZpFile_GetDigestLength(Algorithm) || Digest == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *BytesWritten = sizeof(USHORT) + sizeof(ULONGLONG) + DigestLength;
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < *BytesWritten)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Algorithm);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt64(&Writer, FileSize);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteData(&Writer, Digest, DigestLength);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpFile_DecodeHashResponse(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_HASH_VIEW View)
+{
+    ZP_CODEC_READER Reader;
+    USHORT AlgorithmValue;
+    ULONG DigestLength;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt16(&Reader, &AlgorithmValue);
+    if (NT_SUCCESS(Status))
+    {
+        View->Algorithm = (ZP_FILE_HASH_ALGORITHM)AlgorithmValue;
+        DigestLength = ZpFile_GetDigestLength(View->Algorithm);
+        Status = ZpCodec_ReadUInt64(&Reader, &View->FileSize);
+    }
+    else
+    {
+        DigestLength = 0;
+    }
+    if (NT_SUCCESS(Status) && DigestLength != 0)
+    {
+        Status = ZpCodec_ReadData(&Reader, DigestLength, &View->Digest);
+    }
+    if (!NT_SUCCESS(Status) ||
+        DigestLength == 0 ||
+        Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS
 ZpFile_EncodeInfo(
     _In_ PCZP_FILE_INFO Info,

@@ -8,9 +8,11 @@
 #include <KNSoft/ZPigeon/System.h>
 #include <KNSoft/ZPigeon/Terminal.h>
 
+#include <Bcrypt.h>
 #include <Winsvc.h>
 
 #pragma comment(lib, "Advapi32.lib")
+#pragma comment(lib, "Bcrypt.lib")
 
 #define ZP_SERVER_FILE_CHANNEL_CHUNK_SIZE 0x00010000UL
 #define ZP_SERVER_TERMINAL_CHANNEL_CHUNK_SIZE 0x00010000UL
@@ -700,6 +702,157 @@ ZpServerQuic_QueryFile(
     Info->LastWriteTime = Value.QuadPart;
 
 Cleanup:
+    Mem_Free(Path);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpServerQuic_HashFile(
+    _In_ PCZP_STRING_VIEW PathView,
+    _In_ ZP_FILE_HASH_ALGORITHM Algorithm,
+    _In_ volatile LONG* Pending,
+    _Out_ PULONGLONG FileSize,
+    _Out_writes_bytes_(ZP_FILE_SHA256_SIZE) BYTE* Digest)
+{
+    BCRYPT_ALG_HANDLE AlgorithmHandle = NULL;
+    BCRYPT_HASH_HANDLE HashHandle = NULL;
+    PBYTE HashObject = NULL, Buffer = NULL;
+    HANDLE File = INVALID_HANDLE_VALUE;
+    LARGE_INTEGER Size;
+    PWCHAR Path = NULL;
+    ULONG HashObjectLength, HashLength, ResultLength;
+    DWORD BytesRead;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if (Algorithm != ZpFileHashSha256)
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+    Path = Mem_Alloc(((SIZE_T)PathView->Length + 1) * sizeof(WCHAR));
+    if (Path == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    RtlCopyMemory(Path,
+                  PathView->Buffer,
+                  (SIZE_T)PathView->Length * sizeof(WCHAR));
+    Path[PathView->Length] = UNICODE_NULL;
+    File = CreateFileW(Path,
+                       GENERIC_READ,
+                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                       NULL,
+                       OPEN_EXISTING,
+                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+                       NULL);
+    if (File == INVALID_HANDLE_VALUE)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    if (!GetFileSizeEx(File, &Size))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    Status = BCryptOpenAlgorithmProvider(&AlgorithmHandle,
+                                         BCRYPT_SHA256_ALGORITHM,
+                                         NULL,
+                                         0);
+    if (!NT_SUCCESS(Status))
+    {
+        goto Cleanup;
+    }
+    Status = BCryptGetProperty(AlgorithmHandle,
+                               BCRYPT_OBJECT_LENGTH,
+                               (PBYTE)&HashObjectLength,
+                               sizeof(HashObjectLength),
+                               &ResultLength,
+                               0);
+    if (!NT_SUCCESS(Status))
+    {
+        goto Cleanup;
+    }
+    Status = BCryptGetProperty(AlgorithmHandle,
+                               BCRYPT_HASH_LENGTH,
+                               (PBYTE)&HashLength,
+                               sizeof(HashLength),
+                               &ResultLength,
+                               0);
+    if (!NT_SUCCESS(Status) || HashLength != ZP_FILE_SHA256_SIZE)
+    {
+        Status = NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+        goto Cleanup;
+    }
+    HashObject = Mem_Alloc(HashObjectLength);
+    Buffer = Mem_Alloc(ZP_SERVER_FILE_CHANNEL_CHUNK_SIZE);
+    if (HashObject == NULL || Buffer == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
+    }
+    Status = BCryptCreateHash(AlgorithmHandle,
+                              &HashHandle,
+                              HashObject,
+                              HashObjectLength,
+                              NULL,
+                              0,
+                              0);
+    while (NT_SUCCESS(Status))
+    {
+        if (!InterlockedCompareExchange(Pending, TRUE, TRUE))
+        {
+            Status = STATUS_CANCELLED;
+            break;
+        }
+        if (!ReadFile(File,
+                      Buffer,
+                      ZP_SERVER_FILE_CHANNEL_CHUNK_SIZE,
+                      &BytesRead,
+                      NULL))
+        {
+            Status = NTSTATUS_FROM_WIN32(GetLastError());
+            break;
+        }
+        if (BytesRead == 0)
+        {
+            break;
+        }
+        Status = BCryptHashData(HashHandle, Buffer, BytesRead, 0);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = BCryptFinishHash(HashHandle,
+                                  Digest,
+                                  ZP_FILE_SHA256_SIZE,
+                                  0);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        *FileSize = (ULONGLONG)Size.QuadPart;
+    }
+
+Cleanup:
+    if (HashHandle != NULL)
+    {
+        BCryptDestroyHash(HashHandle);
+    }
+    if (AlgorithmHandle != NULL)
+    {
+        BCryptCloseAlgorithmProvider(AlgorithmHandle, 0);
+    }
+    if (File != INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(File);
+    }
+    if (Buffer != NULL)
+    {
+        Mem_Free(Buffer);
+    }
+    if (HashObject != NULL)
+    {
+        Mem_Free(HashObject);
+    }
     Mem_Free(Path);
     return Status;
 }
@@ -1943,6 +2096,8 @@ ZpServerQuic_RequestCallback(
     ULONG ProcessId, ExitCode;
     ZP_STRING_VIEW ServiceName, FilePath;
     ZP_FILE_INFO FileInfo;
+    ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
+    BYTE FileDigest[ZP_FILE_SHA256_SIZE];
     ZP_TERMINAL_CREATE_VIEW TerminalCreate;
     ULONGLONG FileSize, FileOffset, TerminalChannelId;
     USHORT Columns, Rows;
@@ -2134,6 +2289,33 @@ ZpServerQuic_RequestCallback(
                                                        Payload,
                                                        sizeof(Payload),
                                                        &PayloadLength);
+                ResponsePayload = Payload;
+            }
+        }
+        else if (Request->ModuleId == ZP_FILE_MODULE_ID &&
+                 Request->OperationId == ZP_FILE_OPERATION_HASH)
+        {
+            Status = ZpFile_DecodeHashRequest(Request->Payload,
+                                              Request->PayloadLength,
+                                              &FileHashAlgorithm,
+                                              &FilePath);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_HashFile(&FilePath,
+                                               FileHashAlgorithm,
+                                               &Request->Pending,
+                                               &FileSize,
+                                               FileDigest);
+            }
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpFile_EncodeHashResponse(FileHashAlgorithm,
+                                                   FileSize,
+                                                   FileDigest,
+                                                   sizeof(FileDigest),
+                                                   Payload,
+                                                   sizeof(Payload),
+                                                   &PayloadLength);
                 ResponsePayload = Payload;
             }
         }

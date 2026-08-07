@@ -9,6 +9,22 @@ EXTERN_C_START
 #define ZP_FILE_OPERATION_ENUMERATE 1
 #define ZP_FILE_OPERATION_QUERY 2
 #define ZP_FILE_OPERATION_OPEN_READ 3
+#define ZP_FILE_OPERATION_HASH 4
+#define ZP_FILE_SHA256_SIZE 32
+
+typedef enum _ZP_FILE_HASH_ALGORITHM
+{
+    ZpFileHashSha256 = 1
+} ZP_FILE_HASH_ALGORITHM, *PZP_FILE_HASH_ALGORITHM;
+
+typedef struct _ZP_FILE_HASH_VIEW
+{
+    ZP_FILE_HASH_ALGORITHM Algorithm;
+    ULONGLONG FileSize;
+    ZP_BUFFER_VIEW Digest;
+} ZP_FILE_HASH_VIEW, *PZP_FILE_HASH_VIEW;
+
+typedef const ZP_FILE_HASH_VIEW* PCZP_FILE_HASH_VIEW;
 
 typedef struct _ZP_FILE_INFO
 {
@@ -91,6 +107,38 @@ ZpFile_DecodeOpenReadResponse(
     _Out_ PULONGLONG ChannelId,
     _Out_ PULONGLONG FileSize,
     _Out_ PULONGLONG Offset);
+
+NTSTATUS
+ZpFile_EncodeHashRequest(
+    _In_ ZP_FILE_HASH_ALGORITHM Algorithm,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeHashRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_HASH_ALGORITHM Algorithm,
+    _Out_ PZP_STRING_VIEW Path);
+
+NTSTATUS
+ZpFile_EncodeHashResponse(
+    _In_ ZP_FILE_HASH_ALGORITHM Algorithm,
+    _In_ ULONGLONG FileSize,
+    _In_reads_bytes_(DigestLength) const BYTE* Digest,
+    _In_ ULONG DigestLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeHashResponse(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_HASH_VIEW View);
 
 NTSTATUS
 ZpFile_EncodeInfo(
