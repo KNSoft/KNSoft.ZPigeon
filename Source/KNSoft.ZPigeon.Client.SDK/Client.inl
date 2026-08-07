@@ -12,6 +12,7 @@ typedef struct _ZP_REQUEST_OBJECT
     volatile LONG ReferenceCount;
     volatile LONG Pending;
     ULONGLONG RequestId;
+    ULONGLONG DeadlineTickCount;
     ZP_REQUEST_COMPLETE_CALLBACK Callback;
     PVOID Context;
 } ZP_REQUEST_OBJECT, *PZP_REQUEST_OBJECT;
@@ -23,6 +24,7 @@ typedef struct _ZP_CLIENT_OBJECT
     ULONG CallbackCount;
     LIST_ENTRY Requests;
     ULONGLONG NextRequestId;
+    PTP_TIMER RequestTimer;
     ZP_CLIENT_CONFIG Config;
     PCZP_TRANSPORT_OPERATIONS TransportOperations[ZpTransportWss + 1];
     PVOID TransportContexts[ZpTransportWss + 1];

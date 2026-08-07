@@ -22,6 +22,7 @@ typedef struct _SDK_TEST_CONTEXT
     ULONG RequestCompleteCount;
     NTSTATUS RequestStatus;
     ULONG RequestPayloadLength;
+    HANDLE RequestCompleteEvent;
     ULONG ClientStateCount;
     ZP_CLIENT_STATE ClientStates[8];
     NTSTATUS ClientStatuses[8];
@@ -103,6 +104,10 @@ SDKTest_RequestCompleteCallback(
     TestContext->RequestCompleteCount++;
     TestContext->RequestStatus = Status;
     TestContext->RequestPayloadLength = Payload->Length;
+    if (TestContext->RequestCompleteEvent != NULL)
+    {
+        SetEvent(TestContext->RequestCompleteEvent);
+    }
 }
 
 static const ZP_TRANSPORT_OPERATIONS SDKTest_TransportOperations = {
@@ -502,6 +507,25 @@ TEST_FUNC(SDKContract)
             TestContext.RequestStatus == STATUS_CANCELLED &&
             TestContext.RequestPayloadLength == 0);
     ZpRequest_Close(Request);
+    TestContext.RequestCompleteEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    TEST_OK(TestContext.RequestCompleteEvent != NULL &&
+            NT_SUCCESS(ZpClient_SendRequest(Client,
+                                            1,
+                                            2,
+                                            10,
+                                            NULL,
+                                            0,
+                                            SDKTest_RequestCompleteCallback,
+                                            &TestContext,
+                                            &Request)) &&
+            WaitForSingleObject(TestContext.RequestCompleteEvent, 1000) == WAIT_OBJECT_0 &&
+            TestContext.SendMessageType == ZpMessageCancel &&
+            TestContext.RequestCompleteCount == 3 &&
+            TestContext.RequestStatus == STATUS_IO_TIMEOUT &&
+            TestContext.RequestPayloadLength == 0);
+    ZpRequest_Close(Request);
+    CloseHandle(TestContext.RequestCompleteEvent);
+    TestContext.RequestCompleteEvent = NULL;
     TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) &&
             ClientObject->State == ZpClientStateStopping &&
             TestContext.StopCount == 1 &&
