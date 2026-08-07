@@ -25,8 +25,11 @@ typedef struct _ZP_CHANNEL_OBJECT
     volatile LONG Pending;
     ULONGLONG ChannelId;
     ULONGLONG ReceiveCredit;
+    ULONGLONG SendCredit;
     ULONGLONG RemainingBytes;
+    LOGICAL BoundedReceive;
     ZP_CHANNEL_DATA_CALLBACK DataCallback;
+    ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback;
     ZP_CHANNEL_CLOSE_CALLBACK CloseCallback;
     PVOID Context;
 } ZP_CHANNEL_OBJECT, *PZP_CHANNEL_OBJECT;
@@ -93,3 +96,9 @@ NTSTATUS
 ZpClient_ReceiveChannelClose(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ const ZP_CHANNEL_CLOSE* Message);
+
+NTSTATUS
+ZpClient_ReceiveChannelWindow(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ULONGLONG ChannelId,
+    _In_ ULONG CreditBytes);

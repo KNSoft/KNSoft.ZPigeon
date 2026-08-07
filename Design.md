@@ -471,6 +471,8 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 
 `Terminal` 模块第一版固定为 `ModuleId = 5`、`ModuleVersion = 1`；`Create` 固定为 `OperationId = 1`，请求依次编码非零 `UINT16 Columns`、`UINT16 Rows`、非空 UTF-16LE CommandLine 和可空 UTF-16LE WorkingDirectory，成功响应编码 Server 创建的偶数 `UINT64 ChannelId` 与非零 `UINT32 ProcessId`。同一 Channel 上 Server 到 Client 的 Data 是 ConPTY VT 输出，Client 到 Server 的 Data 是输入字节，两个方向分别由对端 Window 授信。`Resize` 固定为 `OperationId = 2`，请求编码 ChannelId、非零 Columns 和 Rows，成功响应为空。Client 或 Server 发送 ChannelClose 终止会话；正常进程退出的 Close Status 使用进程退出码的原始 32 位值，基础设施错误使用失败 `NTSTATUS`。Terminal 操作属于 `Control` 权限。
 
+Client 以 `ZpClient_CreateTerminal` 异步建立终端并在成功回调中交付 Channel Handle 和 ProcessId；输出 Buffer 只在 Data 回调期间有效，回调返回后 SDK 自动补回接收窗口。Server 通过 `ChannelWindow` 增加 Client 输入发送额度，SDK 以 Writable 回调通知本次新增额度；`ZpChannel_Send` 不做隐藏排队，额度不足返回 `STATUS_RETRY`，成功发送后立即扣减额度。`ZpClient_ResizeTerminal` 复用 Channel Handle 定位会话并返回独立 Request Handle。
+
 大型结果不塞入单个 Response。文件和终端使用 `ChannelData` 承载连续数据；背压、窗口、断点续传和哈希规则在实现对应模块前按真实需求确定，不预先建设通用虚拟流框架。
 
 ## 10. 安全与资源限制
@@ -517,8 +519,7 @@ QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接�
 
 以下内容不阻塞 Network 和通用 Protocol 编码，在实现对应模块前定稿：
 
-1. 除已固定的 System、Process、Service 操作以及 File.Enumerate/File.Query 外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
-2. File 通道的窗口、哈希、断点续传和落盘契约；
-3. Terminal 通道的输入输出分流、窗口调整和退出状态 Payload；
-4. EventLog 等订阅模块的事件丢失与恢复语义；
-5. 压力测试后确定的 Server 资源限制默认值。
+1. 除已固定的 System、Process、Service、File 和 Terminal 操作外，其余业务模块的 `ModuleId`、`OperationId`、Payload 和版本演进；
+2. File 通道的哈希、上传、目录分页和落盘契约；
+3. EventLog 等订阅模块的事件丢失与恢复语义；
+4. 压力测试后确定的 Server 资源限制默认值。

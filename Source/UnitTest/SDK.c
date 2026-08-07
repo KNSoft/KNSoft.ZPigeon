@@ -19,8 +19,12 @@ typedef struct _SDK_TEST_CONTEXT
     ZP_MESSAGE_TYPE SendMessageType;
     ULONGLONG SendToken;
     ULONGLONG SendRequestId;
+    USHORT SendModuleId;
+    USHORT SendOperationId;
+    ULONG SendPayloadLength;
     ULONGLONG SendChannelId;
     ULONG SendChannelCredit;
+    ULONG SendChannelDataLength;
     NTSTATUS SendChannelStatus;
     ULONG RequestCompleteCount;
     NTSTATUS RequestStatus;
@@ -31,10 +35,17 @@ typedef struct _SDK_TEST_CONTEXT
     ZP_CHANNEL_HANDLE FileChannel;
     ULONGLONG FileSize;
     ULONGLONG FileOffset;
+    ULONG TerminalCreateCount;
+    NTSTATUS TerminalCreateStatus;
+    ZP_CHANNEL_HANDLE TerminalChannel;
+    ULONG TerminalProcessId;
     ULONG ChannelDataCount;
     ULONG ChannelDataLength;
+    ULONG ChannelWritableCount;
+    ULONG ChannelWritableCredit;
     ULONG ChannelCloseCount;
     NTSTATUS ChannelCloseStatus;
+    ULONG RequestStatusCount;
     ULONG ClientStateCount;
     ZP_CLIENT_STATE ClientStates[8];
     NTSTATUS ClientStatuses[8];
@@ -88,6 +99,7 @@ SDKTest_TransportSend(
 {
     PSDK_TEST_CONTEXT TestContext = Context;
     ZP_REQUEST_VIEW Request;
+    ZP_CHANNEL_DATA_VIEW ChannelData;
     ZP_CHANNEL_CLOSE ChannelClose;
 
     TestContext->SendCount++;
@@ -100,6 +112,9 @@ SDKTest_TransportSend(
              NT_SUCCESS(ZpMessage_DecodeRequest(Body, BodyLength, &Request)))
     {
         TestContext->SendRequestId = Request.RequestId;
+        TestContext->SendModuleId = Request.ModuleId;
+        TestContext->SendOperationId = Request.OperationId;
+        TestContext->SendPayloadLength = Request.Payload.Length;
     }
     else if (MessageType == ZpMessageCancel)
     {
@@ -111,6 +126,14 @@ SDKTest_TransportSend(
                                       BodyLength,
                                       &TestContext->SendChannelId,
                                       &TestContext->SendChannelCredit);
+    }
+    else if (MessageType == ZpMessageChannelData &&
+             NT_SUCCESS(ZpMessage_DecodeChannelData(Body,
+                                                     BodyLength,
+                                                     &ChannelData)))
+    {
+        TestContext->SendChannelId = ChannelData.ChannelId;
+        TestContext->SendChannelDataLength = ChannelData.Data.Length;
     }
     else if (MessageType == ZpMessageChannelClose &&
              NT_SUCCESS(ZpMessage_DecodeChannelClose(Body,
@@ -168,6 +191,25 @@ SDKTest_FileOpenReadCallback(
 static
 VOID
 NTAPI
+SDKTest_TerminalCreateCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONG ProcessId,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->TerminalCreateCount++;
+    TestContext->TerminalCreateStatus = Status;
+    TestContext->TerminalChannel = Channel;
+    TestContext->TerminalProcessId = ProcessId;
+}
+
+static
+VOID
+NTAPI
 SDKTest_ChannelDataCallback(
     _In_ ZP_CHANNEL_HANDLE Channel,
     _In_ PCZP_BUFFER_VIEW Data,
@@ -183,6 +225,21 @@ SDKTest_ChannelDataCallback(
 static
 VOID
 NTAPI
+SDKTest_ChannelWritableCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONG CreditBytes,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Channel);
+    TestContext->ChannelWritableCount++;
+    TestContext->ChannelWritableCredit = CreditBytes;
+}
+
+static
+VOID
+NTAPI
 SDKTest_ChannelCloseCallback(
     _In_ ZP_CHANNEL_HANDLE Channel,
     _In_ NTSTATUS Status,
@@ -193,6 +250,21 @@ SDKTest_ChannelCloseCallback(
     UNREFERENCED_PARAMETER(Channel);
     TestContext->ChannelCloseCount++;
     TestContext->ChannelCloseStatus = Status;
+}
+
+static
+VOID
+NTAPI
+SDKTest_RequestStatusCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->RequestStatusCount++;
+    TestContext->RequestStatus = Status;
 }
 
 static const ZP_TRANSPORT_OPERATIONS SDKTest_TransportOperations = {
@@ -419,6 +491,10 @@ TEST_FUNC(SDKContract)
     ZP_CHANNEL_CLOSE ChannelClose;
     BYTE FileOpenReadResponse[3 * sizeof(ULONGLONG)];
     ULONG FileOpenReadResponseLength;
+    BYTE TerminalCreateResponse[sizeof(ULONGLONG) + sizeof(ULONG)];
+    ULONG TerminalCreateResponseLength;
+    BYTE TerminalInput[] = { 'e', 'x', 'i', 't' };
+    BYTE TerminalTooLongInput[] = { 'e', 'x', 'i', 't', '\r' };
     ZP_BUFFER_VIEW EmptyPayload = { NULL, 0 };
     BYTE ClientId[ZP_CLIENT_ID_SIZE] = { 0 };
     SDK_TEST_CONTEXT TestContext = { STATUS_SUCCESS };
@@ -735,6 +811,94 @@ TEST_FUNC(SDKContract)
             TestContext.ChannelCloseCount == 2);
     ZpChannel_Close(TestContext.FileChannel);
     TestContext.FileChannel = NULL;
+    TEST_OK(NT_SUCCESS(ZpClient_CreateTerminal(Client,
+                                                120,
+                                                30,
+                                                L"cmd.exe",
+                                                7,
+                                                NULL,
+                                                0,
+                                                1000,
+                                                SDKTest_TerminalCreateCallback,
+                                                SDKTest_ChannelDataCallback,
+                                                SDKTest_ChannelWritableCallback,
+                                                SDKTest_ChannelCloseCallback,
+                                                &TestContext,
+                                                &Request)) &&
+            TestContext.SendMessageType == ZpMessageRequest &&
+            TestContext.SendModuleId == ZP_TERMINAL_MODULE_ID &&
+            TestContext.SendOperationId == ZP_TERMINAL_OPERATION_CREATE &&
+            TestContext.SendPayloadLength != 0);
+    TEST_OK(NT_SUCCESS(ZpTerminal_EncodeCreateResponse(
+                           6,
+                           1234,
+                           TerminalCreateResponse,
+                           sizeof(TerminalCreateResponse),
+                           &TerminalCreateResponseLength)));
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload.Buffer = TerminalCreateResponse;
+    Response.Payload.Length = TerminalCreateResponseLength;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.TerminalCreateCount == 1 &&
+            TestContext.TerminalCreateStatus == STATUS_SUCCESS &&
+            TestContext.TerminalChannel != NULL &&
+            TestContext.TerminalProcessId == 1234 &&
+            TestContext.SendMessageType == ZpMessageChannelWindow &&
+            TestContext.SendChannelId == 6 &&
+            TestContext.SendChannelCredit ==
+                ZP_CLIENT_DEFAULT_CHANNEL_WINDOW_SIZE);
+    ZpRequest_Close(Request);
+    TEST_OK(ZpChannel_Send(TestContext.TerminalChannel,
+                           TerminalInput,
+                           sizeof(TerminalInput)) == STATUS_RETRY);
+    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelWindow(Client,
+                                                     6,
+                                                     sizeof(TerminalInput))) &&
+            TestContext.ChannelWritableCount == 1 &&
+            TestContext.ChannelWritableCredit == sizeof(TerminalInput));
+    TEST_OK(ZpChannel_Send(TestContext.TerminalChannel,
+                           TerminalTooLongInput,
+                           sizeof(TerminalTooLongInput)) == STATUS_RETRY);
+    TEST_OK(NT_SUCCESS(ZpChannel_Send(TestContext.TerminalChannel,
+                                     TerminalInput,
+                                     sizeof(TerminalInput))) &&
+            TestContext.SendMessageType == ZpMessageChannelData &&
+            TestContext.SendChannelId == 6 &&
+            TestContext.SendChannelDataLength == sizeof(TerminalInput));
+    ChannelData.ChannelId = 6;
+    ChannelData.Data.Buffer = TerminalInput;
+    ChannelData.Data.Length = sizeof(TerminalInput);
+    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelData(Client, &ChannelData)) &&
+            TestContext.ChannelDataCount == 2 &&
+            TestContext.ChannelDataLength == sizeof(TerminalInput) &&
+            TestContext.SendMessageType == ZpMessageChannelWindow &&
+            TestContext.SendChannelId == 6 &&
+            TestContext.SendChannelCredit == sizeof(TerminalInput));
+    TEST_OK(NT_SUCCESS(ZpClient_ResizeTerminal(TestContext.TerminalChannel,
+                                               132,
+                                               40,
+                                               1000,
+                                               SDKTest_RequestStatusCallback,
+                                               &TestContext,
+                                               &Request)) &&
+            TestContext.SendMessageType == ZpMessageRequest &&
+            TestContext.SendModuleId == ZP_TERMINAL_MODULE_ID &&
+            TestContext.SendOperationId == ZP_TERMINAL_OPERATION_RESIZE);
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload = EmptyPayload;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.RequestStatusCount == 1 &&
+            TestContext.RequestStatus == STATUS_SUCCESS);
+    ZpRequest_Close(Request);
+    ChannelClose.ChannelId = 6;
+    ChannelClose.Status = STATUS_SUCCESS;
+    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelClose(Client, &ChannelClose)) &&
+            TestContext.ChannelCloseCount == 3 &&
+            TestContext.ChannelCloseStatus == STATUS_SUCCESS);
+    ZpChannel_Close(TestContext.TerminalChannel);
+    TestContext.TerminalChannel = NULL;
     TEST_OK(NT_SUCCESS(ZpClient_SendRequest(Client,
                                              1,
                                             2,

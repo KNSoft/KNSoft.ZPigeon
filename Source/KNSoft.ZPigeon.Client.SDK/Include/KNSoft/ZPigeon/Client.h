@@ -5,6 +5,7 @@
 #include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
+#include <KNSoft/ZPigeon/Terminal.h>
 
 EXTERN_C_START
 
@@ -127,12 +128,28 @@ VOID
 
 typedef
 VOID
+(NTAPI *ZP_CHANNEL_WRITABLE_CALLBACK)(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONG CreditBytes,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
 (NTAPI *ZP_FILE_OPEN_READ_CALLBACK)(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ NTSTATUS Status,
     _In_opt_ ZP_CHANNEL_HANDLE Channel,
     _In_ ULONGLONG FileSize,
     _In_ ULONGLONG Offset,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_TERMINAL_CREATE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONG ProcessId,
     _In_opt_ PVOID Context);
 
 typedef struct _ZP_CLIENT_CONFIG
@@ -307,6 +324,35 @@ ZpClient_OpenFileRead(
 
 NTSTATUS
 NTAPI
+ZpClient_CreateTerminal(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ USHORT Columns,
+    _In_ USHORT Rows,
+    _In_reads_(CommandLineLength) PCWCH CommandLine,
+    _In_ ULONG CommandLineLength,
+    _In_reads_opt_(WorkingDirectoryLength) PCWCH WorkingDirectory,
+    _In_ ULONG WorkingDirectoryLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_TERMINAL_CREATE_CALLBACK CreateCallback,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_ResizeTerminal(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ USHORT Columns,
+    _In_ USHORT Rows,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpRequest_Cancel(
     _In_ ZP_REQUEST_HANDLE Request);
 
@@ -319,6 +365,13 @@ NTSTATUS
 NTAPI
 ZpChannel_Cancel(
     _In_ ZP_CHANNEL_HANDLE Channel);
+
+NTSTATUS
+NTAPI
+ZpChannel_Send(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength);
 
 VOID
 NTAPI

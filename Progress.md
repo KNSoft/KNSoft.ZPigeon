@@ -62,18 +62,19 @@
 - 实现 Server File.OpenRead 发送 Channel：按窗口在线程池分块读盘和发送，额度耗尽时退出工作并由后续补窗重新调度，关闭/取消/连接终止与活动工作通过连接引用安全竞争；
 - 扩展 localhost QUIC 集成测试，从 Offset 17 下载 UnitTest 自身文件，以流式字节数和 FNV 哈希验证多帧数据完整性、断点位置及成功 Close；同时处理本地 Close 与反向迟到 Window/Close 的合法交叉在途消息；
 - 固定 Terminal 模块 Version 1：Create 编码窗口尺寸、命令行和可选工作目录并返回偶数 ChannelId/PID，Resize 编码 ChannelId 与新尺寸；同一 Channel 双向承载 VT 输出与输入并分别授信；
+- 实现 Client Terminal API 与双向 Channel 发送额度：Create 成功后交付 Channel/PID 并自动授予输出首窗，远端 Window 通过 Writable 回调通知新增输入额度，`ZpChannel_Send` 无隐藏排队并在额度不足时返回 `STATUS_RETRY`，Resize 复用 Channel Handle 发起独立异步 Request；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 243 项断言全部通过，其中包含 Terminal Payload、真实 File.OpenRead 下载、Client/Server Channel 生命周期、通用 Channel Codec 和既有管理操作端到端验证。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 254 项断言全部通过，其中包含 Client Terminal Create/Resize/输入额度、Terminal Payload、真实 File.OpenRead 下载、Client/Server Channel 生命周期、通用 Channel Codec 和既有管理操作端到端验证。
 
 ## 下一步
 
-1. 扩展通用 Channel 的反向发送额度并实现 Client Terminal API；
-2. 接入 Server ConPTY 创建、输入、输出、Resize 和退出回收；
+1. 接入 Server ConPTY 创建、输入、输出、Resize 和退出回收；
+2. 增加真实 Terminal localhost QUIC 集成测试；
 3. 按实际需求补充 File 哈希协商、上传及目录分页。
 
 ## 待确认与阻塞
 
 - 当前无外部阻塞。
-- File、Terminal、EventLog 等模块专属协议按 `Design.md` 的“仍按模块延后确定的规格”在实现前定稿。
+- File 扩展、EventLog 等模块专属协议按 `Design.md` 的“仍按模块延后确定的规格”在实现前定稿。

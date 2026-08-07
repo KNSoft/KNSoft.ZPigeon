@@ -319,6 +319,25 @@ ZpClientQuic_MessageCallback(
                     &ChannelClose);
             }
             return Status;
+
+        case ZpMessageChannelWindow:
+        {
+            ULONGLONG ChannelId;
+            ULONG CreditBytes;
+
+            Status = ZpMessage_DecodeChannelWindow(Frame->Body,
+                                                    Frame->BodyLength,
+                                                    &ChannelId,
+                                                    &CreditBytes);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpClient_ReceiveChannelWindow(
+                    (ZP_CLIENT_HANDLE)Transport->Owner,
+                    ChannelId,
+                    CreditBytes);
+            }
+            return Status;
+        }
     }
     return STATUS_PROTOCOL_UNREACHABLE;
 }
