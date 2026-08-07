@@ -7,6 +7,7 @@
 
 #include <Bcrypt.h>
 #include <Ncrypt.h>
+#include <stdio.h>
 #include <Ws2tcpip.h>
 
 #pragma comment(lib, "Bcrypt.lib")
@@ -35,6 +36,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE FileListEvent;
     HANDLE FileHashEvent;
     HANDLE FileReadEvent;
+    HANDLE FileWriteEvent;
     HANDLE TerminalWritableEvent;
     HANDLE TerminalResizeEvent;
     HANDLE TerminalCloseEvent;
@@ -95,6 +97,13 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONGLONG FileReadOffset;
     ULONGLONG FileReadBytes;
     ULONGLONG FileReadHash;
+    volatile LONG FileOpenWriteStatus;
+    volatile LONG FileWriteStatus;
+    ZP_CHANNEL_HANDLE FileWriteChannel;
+    const BYTE* FileWriteData;
+    ULONG FileWriteLength;
+    ULONG FileWriteOffset;
+    LOGICAL CancelFileWrite;
     volatile LONG TerminalCreateStatus;
     volatile LONG TerminalResizeStatus;
     volatile LONG TerminalCloseStatus;
@@ -439,6 +448,84 @@ SDKIntegration_FileOpenReadCallback(
     {
         SetEvent(TestContext->FileReadEvent);
     }
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_FileOpenWriteCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONGLONG FileSize,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->FileWriteChannel = Channel;
+    if (NT_SUCCESS(Status) && FileSize != TestContext->FileWriteLength)
+    {
+        Status = STATUS_DATA_ERROR;
+    }
+    InterlockedExchange(&TestContext->FileOpenWriteStatus, Status);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_FileWriteWritableCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONG CreditBytes,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+    ULONG WriteLength;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if (TestContext->CancelFileWrite)
+    {
+        ZpChannel_Cancel(Channel);
+        return;
+    }
+
+    while (CreditBytes != 0 &&
+           TestContext->FileWriteOffset < TestContext->FileWriteLength)
+    {
+        WriteLength = min(min(CreditBytes, 0x10000UL),
+                          TestContext->FileWriteLength -
+                              TestContext->FileWriteOffset);
+        Status = ZpChannel_Send(Channel,
+                                TestContext->FileWriteData +
+                                    TestContext->FileWriteOffset,
+                                WriteLength);
+        if (!NT_SUCCESS(Status))
+        {
+            break;
+        }
+        TestContext->FileWriteOffset += WriteLength;
+        CreditBytes -= WriteLength;
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        InterlockedExchange(&TestContext->FileWriteStatus, Status);
+        ZpChannel_Cancel(Channel);
+    }
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_FileWriteCloseCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ NTSTATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Channel);
+    InterlockedExchange(&TestContext->FileWriteStatus, Status);
+    SetEvent(TestContext->FileWriteEvent);
 }
 
 static
@@ -1041,14 +1128,21 @@ TEST_FUNC(SDKQuicIntegration)
     PROCESS_INFORMATION TemporaryProcess = { 0 };
     WCHAR TemporaryCommand[] = L"ping.exe -n 30 127.0.0.1";
     WCHAR ModulePath[MAX_PATH];
+    WCHAR UploadPath[MAX_PATH] = { 0 };
+    WCHAR UploadSearchPath[MAX_PATH];
+    BYTE FileWriteData[0x20000 + 17];
     NTSTATUS Status;
     DWORD WaitStatus;
     DWORD ServerStopWait = MAXDWORD, RetryWait = MAXDWORD, ProcessWait = MAXDWORD;
     ULONG Index;
     ULONGLONG ExpectedFileReadBytes, ExpectedFileReadHash;
+    ULONGLONG UploadedBytes, UploadedHash, ExpectedUploadHash;
+    WIN32_FIND_DATAW UploadFindData;
+    HANDLE UploadFindHandle;
     BYTE ExpectedFileDigest[ZP_FILE_SHA256_SIZE];
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -1097,9 +1191,10 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.FileListEvent = Events[15];
     TestContext.FileHashEvent = Events[16];
     TestContext.FileReadEvent = Events[17];
-    TestContext.TerminalWritableEvent = Events[18];
-    TestContext.TerminalResizeEvent = Events[19];
-    TestContext.TerminalCloseEvent = Events[20];
+    TestContext.FileWriteEvent = Events[18];
+    TestContext.TerminalWritableEvent = Events[19];
+    TestContext.TerminalResizeEvent = Events[20];
+    TestContext.TerminalCloseEvent = Events[21];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -1545,6 +1640,161 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
+    if (swprintf_s(UploadPath,
+                   ARRAYSIZE(UploadPath),
+                   L"%s\\ZPigeon-Upload-%lu.tmp",
+                   ModulePath,
+                   GetCurrentProcessId()) < 0)
+    {
+        goto Cleanup;
+    }
+    DeleteFileW(UploadPath);
+    ExpectedUploadHash = 1469598103934665603ULL;
+    for (Index = 0; Index < ARRAYSIZE(FileWriteData); Index++)
+    {
+        FileWriteData[Index] = (BYTE)(Index * 31 + 7);
+        ExpectedUploadHash ^= FileWriteData[Index];
+        ExpectedUploadHash *= 1099511628211ULL;
+    }
+    TestContext.FileWriteData = FileWriteData;
+    TestContext.FileWriteLength = sizeof(FileWriteData);
+    Status = ZpClient_OpenFileWrite(Client,
+                                    UploadPath,
+                                    (ULONG)wcslen(UploadPath),
+                                    sizeof(FileWriteData),
+                                    ZpFileCreateNew,
+                                    SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                    SDKIntegration_FileOpenWriteCallback,
+                                    SDKIntegration_FileWriteWritableCallback,
+                                    SDKIntegration_FileWriteCloseCallback,
+                                    &TestContext,
+                                    &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.FileWriteEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.FileOpenWriteStatus) ||
+        !NT_SUCCESS(TestContext.FileWriteStatus) ||
+        TestContext.FileWriteChannel == NULL ||
+        TestContext.FileWriteOffset != sizeof(FileWriteData) ||
+        !SDKIntegration_HashFile(UploadPath,
+                                 0,
+                                 &UploadedBytes,
+                                 &UploadedHash) ||
+        UploadedBytes != sizeof(FileWriteData) ||
+        UploadedHash != ExpectedUploadHash)
+    {
+        goto Cleanup;
+    }
+    ZpChannel_Close(TestContext.FileWriteChannel);
+    TestContext.FileWriteChannel = NULL;
+    ResetEvent(TestContext.FileWriteEvent);
+    TestContext.FileWriteLength = 0;
+    TestContext.FileWriteOffset = 0;
+    InterlockedExchange(&TestContext.FileOpenWriteStatus, STATUS_PENDING);
+    InterlockedExchange(&TestContext.FileWriteStatus, STATUS_PENDING);
+    Status = ZpClient_OpenFileWrite(Client,
+                                    UploadPath,
+                                    (ULONG)wcslen(UploadPath),
+                                    0,
+                                    ZpFileCreateAlways,
+                                    SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                    SDKIntegration_FileOpenWriteCallback,
+                                    SDKIntegration_FileWriteWritableCallback,
+                                    SDKIntegration_FileWriteCloseCallback,
+                                    &TestContext,
+                                    &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.FileWriteEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.FileOpenWriteStatus) ||
+        !NT_SUCCESS(TestContext.FileWriteStatus) ||
+        TestContext.FileWriteChannel == NULL ||
+        !SDKIntegration_HashFile(UploadPath,
+                                 0,
+                                 &UploadedBytes,
+                                 &UploadedHash) ||
+        UploadedBytes != 0)
+    {
+        goto Cleanup;
+    }
+    ZpChannel_Close(TestContext.FileWriteChannel);
+    TestContext.FileWriteChannel = NULL;
+    if (!DeleteFileW(UploadPath))
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.FileWriteEvent);
+    TestContext.FileWriteLength = sizeof(FileWriteData);
+    TestContext.FileWriteOffset = 0;
+    TestContext.CancelFileWrite = TRUE;
+    InterlockedExchange(&TestContext.FileOpenWriteStatus, STATUS_PENDING);
+    InterlockedExchange(&TestContext.FileWriteStatus, STATUS_PENDING);
+    Status = ZpClient_OpenFileWrite(Client,
+                                    UploadPath,
+                                    (ULONG)wcslen(UploadPath),
+                                    sizeof(FileWriteData),
+                                    ZpFileCreateNew,
+                                    SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                    SDKIntegration_FileOpenWriteCallback,
+                                    SDKIntegration_FileWriteWritableCallback,
+                                    SDKIntegration_FileWriteCloseCallback,
+                                    &TestContext,
+                                    &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.FileWriteEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.FileOpenWriteStatus) ||
+        TestContext.FileWriteStatus != STATUS_CANCELLED ||
+        TestContext.FileWriteChannel == NULL)
+    {
+        goto Cleanup;
+    }
+    ZpChannel_Close(TestContext.FileWriteChannel);
+    TestContext.FileWriteChannel = NULL;
+    if (swprintf_s(UploadSearchPath,
+                   ARRAYSIZE(UploadSearchPath),
+                   L"%s.*.zpigeon.tmp",
+                   UploadPath) < 0)
+    {
+        goto Cleanup;
+    }
+    for (Index = 0; Index < 100; Index++)
+    {
+        UploadFindHandle = FindFirstFileW(UploadSearchPath, &UploadFindData);
+        if (UploadFindHandle == INVALID_HANDLE_VALUE)
+        {
+            break;
+        }
+        FindClose(UploadFindHandle);
+        Sleep(10);
+    }
+    UploadFindHandle = FindFirstFileW(UploadSearchPath, &UploadFindData);
+    if (GetFileAttributesW(UploadPath) != INVALID_FILE_ATTRIBUTES ||
+        UploadFindHandle != INVALID_HANDLE_VALUE)
+    {
+        if (UploadFindHandle != INVALID_HANDLE_VALUE)
+        {
+            FindClose(UploadFindHandle);
+        }
+        goto Cleanup;
+    }
+    UploadPath[0] = UNICODE_NULL;
+
     Status = ZpClient_CreateTerminal(Client,
                                       80,
                                       25,
@@ -1678,6 +1928,12 @@ Cleanup:
         ZpChannel_Close(TestContext.FileReadChannel);
         TestContext.FileReadChannel = NULL;
     }
+    if (TestContext.FileWriteChannel != NULL)
+    {
+        ZpChannel_Cancel(TestContext.FileWriteChannel);
+        ZpChannel_Close(TestContext.FileWriteChannel);
+        TestContext.FileWriteChannel = NULL;
+    }
     if (TestContext.TerminalChannel != NULL)
     {
         ZpChannel_Cancel(TestContext.TerminalChannel);
@@ -1701,6 +1957,10 @@ Cleanup:
         Status = ZpServer_Close(Server);
         Result = Result && WaitStatus == WAIT_OBJECT_0 &&
                  NT_SUCCESS(TestContext.ServerStoppedStatus) && NT_SUCCESS(Status);
+    }
+    if (UploadPath[0] != UNICODE_NULL)
+    {
+        DeleteFileW(UploadPath);
     }
     if (IdentityKey != 0)
     {

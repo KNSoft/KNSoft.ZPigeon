@@ -15,12 +15,14 @@
 #pragma comment(lib, "Bcrypt.lib")
 
 #define ZP_SERVER_FILE_CHANNEL_CHUNK_SIZE 0x00010000UL
+#define ZP_SERVER_FILE_WRITE_WINDOW_SIZE 0x00100000UL
 #define ZP_SERVER_TERMINAL_CHANNEL_CHUNK_SIZE 0x00010000UL
 #define ZP_SERVER_TERMINAL_INPUT_WINDOW_SIZE 0x00001000UL
 
 typedef enum _ZP_SERVER_QUIC_CHANNEL_TYPE
 {
-    ZpServerQuicChannelFile,
+    ZpServerQuicChannelFileRead,
+    ZpServerQuicChannelFileWrite,
     ZpServerQuicChannelTerminal
 } ZP_SERVER_QUIC_CHANNEL_TYPE;
 
@@ -78,6 +80,9 @@ typedef struct _ZP_SERVER_QUIC_CHANNEL
     HANDLE Output;
     HANDLE Process;
     ULONG ProcessId;
+    PWCHAR FinalPath;
+    PWCHAR TemporaryPath;
+    ZP_FILE_CREATE_DISPOSITION FileDisposition;
 } ZP_SERVER_QUIC_CHANNEL, *PZP_SERVER_QUIC_CHANNEL;
 
 typedef struct _ZP_SERVER_FILE_ENTRY
@@ -1078,6 +1083,15 @@ ZpServerQuic_DestroyChannel(
     {
         CloseHandle(Channel->File);
     }
+    if (Channel->TemporaryPath != NULL)
+    {
+        DeleteFileW(Channel->TemporaryPath);
+        Mem_Free(Channel->TemporaryPath);
+    }
+    if (Channel->FinalPath != NULL)
+    {
+        Mem_Free(Channel->FinalPath);
+    }
     Mem_Free(Channel);
 }
 
@@ -1124,7 +1138,7 @@ ZpServerQuic_CreateFileChannel(
     if (ChannelObject != NULL)
     {
         RtlZeroMemory(ChannelObject, sizeof(*ChannelObject));
-        ChannelObject->Type = ZpServerQuicChannelFile;
+        ChannelObject->Type = ZpServerQuicChannelFileRead;
         ChannelObject->File = INVALID_HANDLE_VALUE;
     }
     if (Path == NULL || ChannelObject == NULL)
@@ -1191,6 +1205,128 @@ Cleanup:
         Mem_Free(Path);
     }
     return Status;
+}
+
+static
+NTSTATUS
+ZpServerQuic_CreateFileWriteChannel(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
+    _In_ PCZP_STRING_VIEW PathView,
+    _In_ ULONGLONG FileSize,
+    _In_ ZP_FILE_CREATE_DISPOSITION Disposition,
+    _Out_ PZP_SERVER_QUIC_CHANNEL* Channel)
+{
+    PZP_SERVER_QUIC_CHANNEL ChannelObject;
+    SIZE_T PathCapacity;
+    ULONGLONG RandomValue;
+    ULONG Attempt;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    ChannelObject = Mem_Alloc(sizeof(*ChannelObject));
+    if (ChannelObject == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(ChannelObject, sizeof(*ChannelObject));
+    ChannelObject->Type = ZpServerQuicChannelFileWrite;
+    ChannelObject->File = INVALID_HANDLE_VALUE;
+    PathCapacity = (SIZE_T)PathView->Length + 32;
+    ChannelObject->FinalPath = Mem_Alloc(
+        ((SIZE_T)PathView->Length + 1) * sizeof(WCHAR));
+    ChannelObject->TemporaryPath = Mem_Alloc(PathCapacity * sizeof(WCHAR));
+    if (ChannelObject->FinalPath == NULL ||
+        ChannelObject->TemporaryPath == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
+    }
+    RtlCopyMemory(ChannelObject->FinalPath,
+                  PathView->Buffer,
+                  (SIZE_T)PathView->Length * sizeof(WCHAR));
+    ChannelObject->FinalPath[PathView->Length] = UNICODE_NULL;
+    for (Attempt = 0; Attempt < 16; Attempt++)
+    {
+        Status = BCryptGenRandom(NULL,
+                                 (PBYTE)&RandomValue,
+                                 sizeof(RandomValue),
+                                 BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+        if (!NT_SUCCESS(Status))
+        {
+            goto Cleanup;
+        }
+        _snwprintf_s(ChannelObject->TemporaryPath,
+                     PathCapacity,
+                     _TRUNCATE,
+                     L"%s.%016llX.zpigeon.tmp",
+                     ChannelObject->FinalPath,
+                     RandomValue);
+        ChannelObject->File = CreateFileW(ChannelObject->TemporaryPath,
+                                           GENERIC_WRITE,
+                                           FILE_SHARE_READ,
+                                           NULL,
+                                           CREATE_NEW,
+                                           FILE_ATTRIBUTE_TEMPORARY |
+                                               FILE_FLAG_SEQUENTIAL_SCAN,
+                                           NULL);
+        if (ChannelObject->File != INVALID_HANDLE_VALUE ||
+            GetLastError() != ERROR_FILE_EXISTS)
+        {
+            break;
+        }
+    }
+    if (ChannelObject->File == INVALID_HANDLE_VALUE)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        goto Cleanup;
+    }
+    ChannelObject->Connection = QuicConnection;
+    ChannelObject->RemainingBytes = FileSize;
+    ChannelObject->FileDisposition = Disposition;
+    RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
+    ChannelObject->ChannelId = QuicConnection->NextChannelId;
+    QuicConnection->NextChannelId += 2;
+    if (QuicConnection->NextChannelId == 0)
+    {
+        QuicConnection->NextChannelId = 2;
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+    *Channel = ChannelObject;
+    return STATUS_SUCCESS;
+
+Cleanup:
+    ZpServerQuic_DestroyChannel(ChannelObject);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpServerQuic_CommitFileWriteChannel(
+    _Inout_ PZP_SERVER_QUIC_CHANNEL Channel)
+{
+    DWORD Flags = MOVEFILE_WRITE_THROUGH;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if (!FlushFileBuffers(Channel->File))
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+    }
+    CloseHandle(Channel->File);
+    Channel->File = INVALID_HANDLE_VALUE;
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    if (Channel->FileDisposition == ZpFileCreateAlways)
+    {
+        Flags |= MOVEFILE_REPLACE_EXISTING;
+    }
+    if (!MoveFileExW(Channel->TemporaryPath, Channel->FinalPath, Flags))
+    {
+        return NTSTATUS_FROM_WIN32(GetLastError());
+    }
+    Mem_Free(Channel->TemporaryPath);
+    Channel->TemporaryPath = NULL;
+    return STATUS_SUCCESS;
 }
 
 static
@@ -1842,6 +1978,11 @@ ZpServerQuic_AddChannelWindow(
         RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
         return Status;
     }
+    if (Channel->Type == ZpServerQuicChannelFileWrite)
+    {
+        RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
     if (MAXULONGLONG - Channel->Credit < CreditBytes)
     {
         RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
@@ -1915,7 +2056,7 @@ ZpServerQuic_ReceiveChannelData(
 {
     PZP_SERVER_QUIC_CHANNEL Channel;
     BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
-    ULONG BodyLength, BytesWritten;
+    ULONG BodyLength, BytesWritten, CreditBytes;
     NTSTATUS Status;
     LOGICAL Destroy = FALSE;
     LOGICAL WriteSucceeded;
@@ -1931,6 +2072,73 @@ ZpServerQuic_ReceiveChannelData(
     }
     RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
     Channel = ZpServerQuic_FindChannel(QuicConnection, Message->ChannelId);
+    if (Channel != NULL && Channel->Type == ZpServerQuicChannelFileWrite)
+    {
+        if (Message->Data.Length > Channel->ReceiveCredit ||
+            Message->Data.Length > Channel->RemainingBytes)
+        {
+            RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+            return STATUS_PROTOCOL_UNREACHABLE;
+        }
+        Channel->ReceiveCredit -= Message->Data.Length;
+        WriteSucceeded = WriteFile(Channel->File,
+                                   Message->Data.Buffer,
+                                   Message->Data.Length,
+                                   &BytesWritten,
+                                   NULL);
+        if (!WriteSucceeded || BytesWritten != Message->Data.Length)
+        {
+            Status = WriteSucceeded ?
+                         STATUS_UNSUCCESSFUL :
+                         NTSTATUS_FROM_WIN32(GetLastError());
+        }
+        else
+        {
+            Channel->RemainingBytes -= BytesWritten;
+            Status = Channel->RemainingBytes == 0 ?
+                         ZpServerQuic_CommitFileWriteChannel(Channel) :
+                         STATUS_SUCCESS;
+        }
+        if (!NT_SUCCESS(Status) || Channel->RemainingBytes == 0)
+        {
+            InterlockedExchange(&Channel->Pending, FALSE);
+            RemoveEntryList(&Channel->ListEntry);
+            ZpServerQuic_SendChannelClose(Channel, Status);
+            RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+            ZpServerQuic_DestroyChannel(Channel);
+            return STATUS_SUCCESS;
+        }
+        CreditBytes = (ULONG)min(Message->Data.Length,
+                                 Channel->RemainingBytes -
+                                     Channel->ReceiveCredit);
+        if (CreditBytes == 0)
+        {
+            RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+            return STATUS_SUCCESS;
+        }
+        Status = ZpMessage_EncodeChannelWindow(Message->ChannelId,
+                                               CreditBytes,
+                                               Body,
+                                               sizeof(Body),
+                                               &BodyLength);
+        if (!NT_SUCCESS(Status))
+        {
+            RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+            return Status;
+        }
+        Channel->ReceiveCredit += CreditBytes;
+        Status = ZpQuic_SendFrame(QuicConnection->Stream,
+                                  &QuicConnection->ProtocolConnection,
+                                  ZpMessageChannelWindow,
+                                  Body,
+                                  BodyLength);
+        if (!NT_SUCCESS(Status))
+        {
+            Channel->ReceiveCredit -= CreditBytes;
+        }
+        RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+        return Status;
+    }
     if (Channel == NULL ||
         Channel->Type != ZpServerQuicChannelTerminal ||
         Message->Data.Length > Channel->ReceiveCredit)
@@ -2097,6 +2305,7 @@ ZpServerQuic_RequestCallback(
     ZP_STRING_VIEW ServiceName, FilePath;
     ZP_FILE_INFO FileInfo;
     ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
+    ZP_FILE_CREATE_DISPOSITION FileDisposition;
     BYTE FileDigest[ZP_FILE_SHA256_SIZE];
     ZP_TERMINAL_CREATE_VIEW TerminalCreate;
     ULONGLONG FileSize, FileOffset, TerminalChannelId;
@@ -2130,7 +2339,9 @@ ZpServerQuic_RequestCallback(
                  (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
                   (Request->OperationId == ZP_SERVICE_OPERATION_START ||
                    Request->OperationId == ZP_SERVICE_OPERATION_STOP)) ||
-                 Request->ModuleId == ZP_TERMINAL_MODULE_ID ?
+                 Request->ModuleId == ZP_TERMINAL_MODULE_ID ||
+                 (Request->ModuleId == ZP_FILE_MODULE_ID &&
+                  Request->OperationId == ZP_FILE_OPERATION_OPEN_WRITE) ?
                      ZpRequestAccessControl :
                      ZpRequestAccessRead;
         Status = ZpServer_AuthorizeRequest(
@@ -2319,6 +2530,33 @@ ZpServerQuic_RequestCallback(
                 ResponsePayload = Payload;
             }
         }
+        else if (Request->ModuleId == ZP_FILE_MODULE_ID &&
+                 Request->OperationId == ZP_FILE_OPERATION_OPEN_WRITE)
+        {
+            Status = ZpFile_DecodeOpenWriteRequest(Request->Payload,
+                                                   Request->PayloadLength,
+                                                   &FilePath,
+                                                   &FileSize,
+                                                   &FileDisposition);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpServerQuic_CreateFileWriteChannel(
+                    QuicConnection,
+                    &FilePath,
+                    FileSize,
+                    FileDisposition,
+                    &Channel);
+            }
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpFile_EncodeOpenWriteResponse(Channel->ChannelId,
+                                                        FileSize,
+                                                        Payload,
+                                                        sizeof(Payload),
+                                                        &PayloadLength);
+                ResponsePayload = Payload;
+            }
+        }
         else if (Request->ModuleId == ZP_TERMINAL_MODULE_ID &&
                  Request->OperationId == ZP_TERMINAL_OPERATION_CREATE)
         {
@@ -2403,6 +2641,35 @@ ZpServerQuic_RequestCallback(
             {
                 ZpServerQuic_CloseRemoteChannel(QuicConnection,
                                                 Channel->ChannelId);
+                Channel = NULL;
+            }
+            else if (Channel->Type == ZpServerQuicChannelFileWrite)
+            {
+                NTSTATUS WindowStatus;
+
+                if (Channel->RemainingBytes == 0)
+                {
+                    RtlAcquireSRWLockExclusive(&QuicConnection->ChannelLock);
+                    WindowStatus = ZpServerQuic_CommitFileWriteChannel(Channel);
+                    InterlockedExchange(&Channel->Pending, FALSE);
+                    RemoveEntryList(&Channel->ListEntry);
+                    ZpServerQuic_SendChannelClose(Channel, WindowStatus);
+                    RtlReleaseSRWLockExclusive(&QuicConnection->ChannelLock);
+                    ZpServerQuic_DestroyChannel(Channel);
+                }
+                else
+                {
+                    WindowStatus = ZpServerQuic_SendChannelWindow(
+                        Channel,
+                        (ULONG)min(Channel->RemainingBytes,
+                                   ZP_SERVER_FILE_WRITE_WINDOW_SIZE));
+                    if (!NT_SUCCESS(WindowStatus))
+                    {
+                        ZpServerQuic_SendChannelClose(Channel, WindowStatus);
+                        ZpServerQuic_CloseRemoteChannel(QuicConnection,
+                                                        Channel->ChannelId);
+                    }
+                }
                 Channel = NULL;
             }
             else if (Channel->Type == ZpServerQuicChannelTerminal)
