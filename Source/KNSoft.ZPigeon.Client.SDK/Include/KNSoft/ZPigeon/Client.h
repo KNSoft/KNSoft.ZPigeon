@@ -153,6 +153,15 @@ VOID
 
 typedef
 VOID
+(NTAPI *ZP_FILE_OPEN_WRITE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONGLONG FileSize,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
 (NTAPI *ZP_TERMINAL_CREATE_CALLBACK)(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ NTSTATUS Status,
@@ -338,6 +347,21 @@ ZpClient_OpenFileRead(
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_FILE_OPEN_READ_CALLBACK OpenCallback,
     _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpClient_OpenFileWrite(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG FileSize,
+    _In_ ZP_FILE_CREATE_DISPOSITION Disposition,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_OPEN_WRITE_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback,
     _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);

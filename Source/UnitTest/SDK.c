@@ -40,6 +40,10 @@ typedef struct _SDK_TEST_CONTEXT
     ZP_CHANNEL_HANDLE FileChannel;
     ULONGLONG FileSize;
     ULONGLONG FileOffset;
+    ULONG FileOpenWriteCount;
+    NTSTATUS FileOpenWriteStatus;
+    ZP_CHANNEL_HANDLE FileWriteChannel;
+    ULONGLONG FileWriteSize;
     ULONG TerminalCreateCount;
     NTSTATUS TerminalCreateStatus;
     ZP_CHANNEL_HANDLE TerminalChannel;
@@ -215,6 +219,25 @@ SDKTest_FileHashCallback(
                       Hash->Digest.Buffer,
                       Hash->Digest.Length);
     }
+}
+
+static
+VOID
+NTAPI
+SDKTest_FileOpenWriteCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONGLONG FileSize,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->FileOpenWriteCount++;
+    TestContext->FileOpenWriteStatus = Status;
+    TestContext->FileWriteChannel = Channel;
+    TestContext->FileWriteSize = FileSize;
 }
 
 static
@@ -524,6 +547,10 @@ TEST_FUNC(SDKContract)
                           ZP_FILE_SHA256_SIZE];
     ULONG FileHashResponseLength;
     BYTE FileDigest[ZP_FILE_SHA256_SIZE];
+    BYTE FileOpenWriteResponse[2 * sizeof(ULONGLONG)];
+    ULONG FileOpenWriteResponseLength;
+    BYTE FileWriteData[16] = { 0 };
+    BYTE FileWriteTooLongData[17] = { 0 };
     BYTE TerminalCreateResponse[sizeof(ULONGLONG) + sizeof(ULONG)];
     ULONG TerminalCreateResponseLength;
     BYTE TerminalInput[] = { 'e', 'x', 'i', 't' };
@@ -965,6 +992,57 @@ TEST_FUNC(SDKContract)
             TestContext.ChannelCloseStatus == STATUS_SUCCESS);
     ZpChannel_Close(TestContext.TerminalChannel);
     TestContext.TerminalChannel = NULL;
+    TEST_OK(NT_SUCCESS(ZpClient_OpenFileWrite(Client,
+                                               L"C:\\Upload.bin",
+                                               13,
+                                               sizeof(FileWriteData),
+                                               ZpFileCreateAlways,
+                                               1000,
+                                               SDKTest_FileOpenWriteCallback,
+                                               SDKTest_ChannelWritableCallback,
+                                               SDKTest_ChannelCloseCallback,
+                                               &TestContext,
+                                               &Request)) &&
+            TestContext.SendMessageType == ZpMessageRequest &&
+            TestContext.SendModuleId == ZP_FILE_MODULE_ID &&
+            TestContext.SendOperationId == ZP_FILE_OPERATION_OPEN_WRITE);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenWriteResponse(
+                           8,
+                           sizeof(FileWriteData),
+                           FileOpenWriteResponse,
+                           sizeof(FileOpenWriteResponse),
+                           &FileOpenWriteResponseLength)));
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload.Buffer = FileOpenWriteResponse;
+    Response.Payload.Length = FileOpenWriteResponseLength;
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.FileOpenWriteCount == 1 &&
+            TestContext.FileOpenWriteStatus == STATUS_SUCCESS &&
+            TestContext.FileWriteChannel != NULL &&
+            TestContext.FileWriteSize == sizeof(FileWriteData));
+    ZpRequest_Close(Request);
+    ChannelClose.ChannelId = 8;
+    ChannelClose.Status = STATUS_SUCCESS;
+    TEST_OK(ZpClient_ReceiveChannelClose(Client, &ChannelClose) ==
+            STATUS_PROTOCOL_UNREACHABLE);
+    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelWindow(
+                           Client,
+                           8,
+                           sizeof(FileWriteData))) &&
+            ZpChannel_Send(TestContext.FileWriteChannel,
+                           FileWriteTooLongData,
+                           sizeof(FileWriteTooLongData)) == STATUS_RETRY &&
+            NT_SUCCESS(ZpChannel_Send(TestContext.FileWriteChannel,
+                                      FileWriteData,
+                                      sizeof(FileWriteData))) &&
+            TestContext.SendChannelId == 8 &&
+            TestContext.SendChannelDataLength == sizeof(FileWriteData));
+    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelClose(Client, &ChannelClose)) &&
+            TestContext.ChannelCloseCount == 4 &&
+            TestContext.ChannelCloseStatus == STATUS_SUCCESS);
+    ZpChannel_Close(TestContext.FileWriteChannel);
+    TestContext.FileWriteChannel = NULL;
     TEST_OK(NT_SUCCESS(ZpClient_SendRequest(Client,
                                              1,
                                             2,

@@ -931,7 +931,9 @@ ZpClient_CreateServerChannel(
     _In_ ULONGLONG ChannelId,
     _In_ LOGICAL BoundedReceive,
     _In_ ULONGLONG RemainingBytes,
-    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ LOGICAL BoundedSend,
+    _In_ ULONGLONG RemainingSendBytes,
+    _In_opt_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
     _In_opt_ ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback,
     _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
     _In_opt_ PVOID Context,
@@ -955,6 +957,8 @@ ZpClient_CreateServerChannel(
     ChannelObject->ChannelId = ChannelId;
     ChannelObject->BoundedReceive = BoundedReceive;
     ChannelObject->RemainingBytes = RemainingBytes;
+    ChannelObject->BoundedSend = BoundedSend;
+    ChannelObject->RemainingSendBytes = RemainingSendBytes;
     ChannelObject->DataCallback = DataCallback;
     ChannelObject->WritableCallback = WritableCallback;
     ChannelObject->CloseCallback = CloseCallback;
@@ -1900,6 +1904,8 @@ ZpClient_FileOpenReadComplete(
                                               ChannelId,
                                               TRUE,
                                               FileSize - Offset,
+                                              FALSE,
+                                              0,
                                               FileContext->DataCallback,
                                               NULL,
                                               FileContext->CloseCallback,
@@ -2008,6 +2014,144 @@ ZpClient_OpenFileRead(
     return Status;
 }
 
+typedef struct _ZP_CLIENT_FILE_OPEN_WRITE_CONTEXT
+{
+    ZP_FILE_OPEN_WRITE_CALLBACK OpenCallback;
+    ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback;
+    ZP_CHANNEL_CLOSE_CALLBACK CloseCallback;
+    PVOID Context;
+} ZP_CLIENT_FILE_OPEN_WRITE_CONTEXT, *PZP_CLIENT_FILE_OPEN_WRITE_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpClient_FileOpenWriteComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_FILE_OPEN_WRITE_CONTEXT FileContext = Context;
+    PZP_REQUEST_OBJECT RequestObject = (PZP_REQUEST_OBJECT)Request;
+    PZP_CHANNEL_OBJECT Channel = NULL;
+    ULONGLONG ChannelId = 0, FileSize = 0;
+
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_DecodeOpenWriteResponse(Payload->Buffer,
+                                                Payload->Length,
+                                                &ChannelId,
+                                                &FileSize);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpClient_CreateServerChannel(RequestObject->Owner,
+                                              ChannelId,
+                                              TRUE,
+                                              0,
+                                              TRUE,
+                                              FileSize,
+                                              NULL,
+                                              FileContext->WritableCallback,
+                                              FileContext->CloseCallback,
+                                              FileContext->Context,
+                                              &Channel);
+    }
+    FileContext->OpenCallback(Request,
+                              Status,
+                              NT_SUCCESS(Status) ?
+                                  (ZP_CHANNEL_HANDLE)Channel :
+                                  NULL,
+                              NT_SUCCESS(Status) ? FileSize : 0,
+                              FileContext->Context);
+    if (Channel != NULL)
+    {
+        ZpClient_ReleaseChannel(Channel);
+    }
+    Mem_Free(FileContext);
+}
+
+NTSTATUS
+NTAPI
+ZpClient_OpenFileWrite(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG FileSize,
+    _In_ ZP_FILE_CREATE_DISPOSITION Disposition,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_OPEN_WRITE_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_CLIENT_FILE_OPEN_WRITE_CONTEXT FileContext;
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (OpenCallback == NULL || WritableCallback == NULL ||
+        CloseCallback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpFile_EncodeOpenWriteRequest(Path,
+                                           PathLength,
+                                           FileSize,
+                                           Disposition,
+                                           NULL,
+                                           0,
+                                           &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodeOpenWriteRequest(Path,
+                                               PathLength,
+                                               FileSize,
+                                               Disposition,
+                                               Payload,
+                                               PayloadLength,
+                                               &PayloadLength);
+    }
+    FileContext = NT_SUCCESS(Status) ?
+                      Mem_Alloc(sizeof(*FileContext)) :
+                      NULL;
+    if (NT_SUCCESS(Status) && FileContext == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        FileContext->OpenCallback = OpenCallback;
+        FileContext->WritableCallback = WritableCallback;
+        FileContext->CloseCallback = CloseCallback;
+        FileContext->Context = Context;
+        Status = ZpClient_SendRequest(Client,
+                                      ZP_FILE_MODULE_ID,
+                                      ZP_FILE_OPERATION_OPEN_WRITE,
+                                      TimeoutMilliseconds,
+                                      Payload,
+                                      PayloadLength,
+                                      ZpClient_FileOpenWriteComplete,
+                                      FileContext,
+                                      Request);
+        if (!NT_SUCCESS(Status))
+        {
+            Mem_Free(FileContext);
+        }
+    }
+    if (Payload != NULL)
+    {
+        Mem_Free(Payload);
+    }
+    return Status;
+}
+
 typedef struct _ZP_CLIENT_TERMINAL_CREATE_CONTEXT
 {
     ZP_TERMINAL_CREATE_CALLBACK CreateCallback;
@@ -2043,6 +2187,8 @@ ZpClient_TerminalCreateComplete(
     {
         Status = ZpClient_CreateServerChannel(RequestObject->Owner,
                                               ChannelId,
+                                              FALSE,
+                                              0,
                                               FALSE,
                                               0,
                                               TerminalContext->DataCallback,
@@ -2343,7 +2489,9 @@ ZpChannel_Send(
     {
         Status = STATUS_INVALID_DEVICE_STATE;
     }
-    else if (DataLength > ChannelObject->SendCredit)
+    else if (DataLength > ChannelObject->SendCredit ||
+             (ChannelObject->BoundedSend &&
+              DataLength > ChannelObject->RemainingSendBytes))
     {
         Status = STATUS_RETRY;
     }
@@ -2361,6 +2509,10 @@ ZpChannel_Send(
         if (!NT_SUCCESS(Status))
         {
             ChannelObject->SendCredit += DataLength;
+        }
+        else if (ChannelObject->BoundedSend)
+        {
+            ChannelObject->RemainingSendBytes -= DataLength;
         }
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
@@ -2539,6 +2691,7 @@ ZpClient_ReceiveChannelData(
     RtlAcquireSRWLockExclusive(&Object->Lock);
     Channel = ZpClient_FindChannel(Object, Message->ChannelId);
     if (Channel == NULL ||
+        Channel->DataCallback == NULL ||
         Message->Data.Length > Channel->ReceiveCredit ||
         (Channel->BoundedReceive &&
          Message->Data.Length > Channel->RemainingBytes))
@@ -2598,8 +2751,8 @@ ZpClient_ReceiveChannelClose(
         return Status;
     }
     if ((NT_SUCCESS(Message->Status) &&
-         Channel->BoundedReceive &&
-         Channel->RemainingBytes != 0) ||
+         ((Channel->BoundedReceive && Channel->RemainingBytes != 0) ||
+          (Channel->BoundedSend && Channel->RemainingSendBytes != 0))) ||
         !InterlockedExchange(&Channel->Pending, FALSE))
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
@@ -2634,7 +2787,9 @@ ZpClient_ReceiveChannelWindow(
         return Status;
     }
     if (Channel->WritableCallback == NULL ||
-        MAXULONGLONG - Channel->SendCredit < CreditBytes)
+        MAXULONGLONG - Channel->SendCredit < CreditBytes ||
+        (Channel->BoundedSend &&
+         Channel->SendCredit + CreditBytes > Channel->RemainingSendBytes))
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_PROTOCOL_UNREACHABLE;

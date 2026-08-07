@@ -27,7 +27,9 @@ typedef struct _ZP_CHANNEL_OBJECT
     ULONGLONG ReceiveCredit;
     ULONGLONG SendCredit;
     ULONGLONG RemainingBytes;
+    ULONGLONG RemainingSendBytes;
     LOGICAL BoundedReceive;
+    LOGICAL BoundedSend;
     ZP_CHANNEL_DATA_CALLBACK DataCallback;
     ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback;
     ZP_CHANNEL_CLOSE_CALLBACK CloseCallback;
