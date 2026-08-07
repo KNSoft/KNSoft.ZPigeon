@@ -150,6 +150,8 @@ typedef struct _ZP_REQUEST_VIEW
     ZP_BUFFER_VIEW Payload;
 } ZP_REQUEST_VIEW, *PZP_REQUEST_VIEW;
 
+typedef const ZP_REQUEST_VIEW* PCZP_REQUEST_VIEW;
+
 typedef struct _ZP_RESPONSE
 {
     ULONGLONG RequestId;

@@ -37,6 +37,9 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     volatile LONG ProcessListStatus;
     ULONG ProcessCount;
     LOGICAL FoundCurrentProcess;
+    volatile LONG ProcessCompletionCount;
+    LONG ExpectedProcessCompletions;
+    LOGICAL CollectProcessDetails;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -119,7 +122,7 @@ SDKIntegration_ProcessListCallback(
     ULONG Index;
 
     UNREFERENCED_PARAMETER(Request);
-    if (NT_SUCCESS(Status))
+    if (NT_SUCCESS(Status) && TestContext->CollectProcessDetails)
     {
         TestContext->ProcessCount = Processes->Count;
         for (Index = 0; Index < Processes->Count; Index++)
@@ -136,7 +139,11 @@ SDKIntegration_ProcessListCallback(
         }
     }
     InterlockedExchange(&TestContext->ProcessListStatus, Status);
-    SetEvent(TestContext->ProcessListEvent);
+    if (InterlockedIncrement(&TestContext->ProcessCompletionCount) >=
+        TestContext->ExpectedProcessCompletions)
+    {
+        SetEvent(TestContext->ProcessListEvent);
+    }
 }
 
 static
@@ -451,6 +458,7 @@ TEST_FUNC(SDKQuicIntegration)
     PCCERT_CONTEXT Certificate = NULL;
     NTSTATUS Status;
     DWORD WaitStatus;
+    DWORD ServerStopWait = MAXDWORD, RetryWait = MAXDWORD, ProcessWait = MAXDWORD;
     ULONG Index;
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
@@ -597,6 +605,8 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
+    TestContext.ExpectedProcessCompletions = 1;
+    TestContext.CollectProcessDetails = TRUE;
     Status = ZpClient_EnumerateProcesses(Client,
                                          SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
                                          SDKIntegration_ProcessListCallback,
@@ -620,12 +630,37 @@ TEST_FUNC(SDKQuicIntegration)
     ResetEvent(TestContext.ServerRunningEvent);
     ResetEvent(TestContext.ClientReadyEvent);
     ResetEvent(TestContext.ServerReadyEvent);
+    ResetEvent(TestContext.ProcessListEvent);
+    InterlockedExchange(&TestContext.ProcessCompletionCount, 0);
+    TestContext.ExpectedProcessCompletions = 8;
+    TestContext.CollectProcessDetails = FALSE;
+    for (Index = 0; Index < 8; Index++)
+    {
+        Status = ZpClient_EnumerateProcesses(Client,
+                                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                             SDKIntegration_ProcessListCallback,
+                                             &TestContext,
+                                             &Request);
+        if (!NT_SUCCESS(Status))
+        {
+            goto Cleanup;
+        }
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
     Status = ZpServer_Stop(Server);
+    ServerStopWait = WaitForSingleObject(TestContext.ServerStoppedEvent,
+                                         SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
+    RetryWait = WaitForSingleObject(TestContext.ClientRetryWaitEvent,
+                                    SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
+    ProcessWait = WaitForSingleObject(TestContext.ProcessListEvent,
+                                      SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
     if (!NT_SUCCESS(Status) ||
-        WaitForSingleObject(TestContext.ServerStoppedEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        WaitForSingleObject(TestContext.ClientRetryWaitEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0)
+        ServerStopWait != WAIT_OBJECT_0 ||
+        RetryWait != WAIT_OBJECT_0 ||
+        ProcessWait != WAIT_OBJECT_0 ||
+        TestContext.ProcessCompletionCount !=
+            TestContext.ExpectedProcessCompletions)
     {
         goto Cleanup;
     }

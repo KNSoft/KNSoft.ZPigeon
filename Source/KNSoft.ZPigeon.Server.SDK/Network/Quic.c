@@ -8,6 +8,10 @@
 typedef struct _ZP_SERVER_QUIC_CONNECTION
 {
     PZP_SERVER_QUIC_TRANSPORT Transport;
+    RTL_SRWLOCK RequestLock;
+    LIST_ENTRY Requests;
+    volatile LONG ReferenceCount;
+    LOGICAL Closing;
     HQUIC Connection;
     HQUIC Stream;
     NTSTATUS ShutdownStatus;
@@ -19,6 +23,30 @@ typedef struct _ZP_SERVER_QUIC_CONNECTION
     ZP_CONNECTION ProtocolConnection;
     LOGICAL ProtocolConnectionInitialized;
 } ZP_SERVER_QUIC_CONNECTION, *PZP_SERVER_QUIC_CONNECTION;
+
+typedef struct _ZP_SERVER_QUIC_REQUEST
+{
+    LIST_ENTRY ListEntry;
+    PZP_SERVER_QUIC_CONNECTION Connection;
+    volatile LONG Pending;
+    ULONGLONG RequestId;
+    USHORT ModuleId;
+    USHORT OperationId;
+    ULONG TimeoutMilliseconds;
+    ULONGLONG ReceivedTickCount;
+    ULONG PayloadLength;
+    BYTE Payload[ANYSIZE_ARRAY];
+} ZP_SERVER_QUIC_REQUEST, *PZP_SERVER_QUIC_REQUEST;
+
+static
+VOID
+ZpServerQuic_TryCompleteStop(
+    _Inout_ PZP_SERVER_QUIC_TRANSPORT Transport);
+
+static
+VOID
+ZpServerQuic_ReleaseConnection(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection);
 
 static const QUIC_REGISTRATION_CONFIG ZpServerQuicRegistrationConfig = {
     "KNSoft.ZPigeon.Server",
@@ -262,6 +290,216 @@ ZpServerQuic_HasModule(
 }
 
 static
+VOID
+CALLBACK
+ZpServerQuic_RequestCallback(
+    _Inout_ PTP_CALLBACK_INSTANCE Instance,
+    _In_opt_ PVOID Context)
+{
+    PZP_SERVER_QUIC_REQUEST Request = Context;
+    PZP_SERVER_QUIC_CONNECTION QuicConnection = Request->Connection;
+    ZP_SYSTEM_INFO SystemInfo;
+    BYTE Payload[30 + (MAX_COMPUTERNAME_LENGTH + 1) * sizeof(WCHAR)];
+    WCHAR ComputerName[MAX_COMPUTERNAME_LENGTH + 1];
+    const VOID* ResponsePayload = NULL;
+    PBYTE AllocatedPayload = NULL;
+    ULONG PayloadLength = 0;
+    NTSTATUS Status = STATUS_SUCCESS;
+    LOGICAL SendResponse;
+
+    UNREFERENCED_PARAMETER(Instance);
+    RtlAcquireSRWLockShared(&QuicConnection->RequestLock);
+    SendResponse = Request->Pending && !QuicConnection->Closing;
+    RtlReleaseSRWLockShared(&QuicConnection->RequestLock);
+    if (!SendResponse)
+    {
+        goto Cleanup;
+    }
+
+    if (!ZpServerQuic_HasModule(QuicConnection, Request->ModuleId))
+    {
+        Status = STATUS_NOT_SUPPORTED;
+    }
+    else if (Request->PayloadLength != 0)
+    {
+        Status = STATUS_INVALID_PARAMETER;
+    }
+    else if (Request->ModuleId == ZP_SYSTEM_MODULE_ID &&
+             Request->OperationId == ZP_SYSTEM_OPERATION_INFO)
+    {
+        Status = ZpServerQuic_GetSystemInfo(&SystemInfo,
+                                            ComputerName,
+                                            ARRAYSIZE(ComputerName));
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpSystem_EncodeInfo(&SystemInfo,
+                                         Payload,
+                                         sizeof(Payload),
+                                         &PayloadLength);
+            ResponsePayload = Payload;
+        }
+    }
+    else if (Request->ModuleId == ZP_PROCESS_MODULE_ID &&
+             Request->OperationId == ZP_PROCESS_OPERATION_ENUMERATE)
+    {
+        Status = ZpServerQuic_EnumerateProcesses(&AllocatedPayload,
+                                                 &PayloadLength);
+        ResponsePayload = AllocatedPayload;
+    }
+    else
+    {
+        Status = STATUS_NOT_SUPPORTED;
+    }
+    if (NT_SUCCESS(Status) &&
+        Request->TimeoutMilliseconds != 0 &&
+        GetTickCount64() - Request->ReceivedTickCount >=
+            Request->TimeoutMilliseconds)
+    {
+        Status = STATUS_IO_TIMEOUT;
+    }
+
+    RtlAcquireSRWLockExclusive(&QuicConnection->RequestLock);
+    SendResponse = InterlockedExchange(&Request->Pending, FALSE) &&
+                   !QuicConnection->Closing;
+    if (SendResponse)
+    {
+        RemoveEntryList(&Request->ListEntry);
+        ZpServerQuic_SendResponse(QuicConnection,
+                                  &QuicConnection->ProtocolConnection,
+                                  Request->RequestId,
+                                  Status,
+                                  NT_SUCCESS(Status) ? ResponsePayload : NULL,
+                                  NT_SUCCESS(Status) ? PayloadLength : 0);
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
+
+Cleanup:
+    if (AllocatedPayload != NULL)
+    {
+        Mem_Free(AllocatedPayload);
+    }
+    Mem_Free(Request);
+    ZpServerQuic_ReleaseConnection(QuicConnection);
+}
+
+static
+NTSTATUS
+ZpServerQuic_QueueRequest(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
+    _In_ PCZP_REQUEST_VIEW Message)
+{
+    PZP_SERVER_QUIC_REQUEST Request, ExistingRequest;
+    PLIST_ENTRY Entry;
+    SIZE_T AllocationSize;
+
+    AllocationSize = FIELD_OFFSET(ZP_SERVER_QUIC_REQUEST, Payload) +
+                     Message->Payload.Length;
+    Request = Mem_Alloc(AllocationSize);
+    if (Request == NULL)
+    {
+        return ZpServerQuic_SendResponse(QuicConnection,
+                                         &QuicConnection->ProtocolConnection,
+                                         Message->RequestId,
+                                         STATUS_NO_MEMORY,
+                                         NULL,
+                                         0);
+    }
+    RtlZeroMemory(Request, FIELD_OFFSET(ZP_SERVER_QUIC_REQUEST, Payload));
+    Request->Connection = QuicConnection;
+    Request->Pending = TRUE;
+    Request->RequestId = Message->RequestId;
+    Request->ModuleId = Message->ModuleId;
+    Request->OperationId = Message->OperationId;
+    Request->TimeoutMilliseconds = Message->TimeoutMilliseconds;
+    Request->ReceivedTickCount = GetTickCount64();
+    Request->PayloadLength = Message->Payload.Length;
+    if (Message->Payload.Length != 0)
+    {
+        RtlCopyMemory(Request->Payload,
+                      Message->Payload.Buffer,
+                      Message->Payload.Length);
+    }
+
+    RtlAcquireSRWLockExclusive(&QuicConnection->RequestLock);
+    if (QuicConnection->Closing)
+    {
+        RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
+        Mem_Free(Request);
+        return STATUS_CONNECTION_DISCONNECTED;
+    }
+    for (Entry = QuicConnection->Requests.Flink;
+         Entry != &QuicConnection->Requests;
+         Entry = Entry->Flink)
+    {
+        ExistingRequest = CONTAINING_RECORD(Entry,
+                                            ZP_SERVER_QUIC_REQUEST,
+                                            ListEntry);
+        if (ExistingRequest->RequestId == Request->RequestId)
+        {
+            RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
+            Mem_Free(Request);
+            return STATUS_PROTOCOL_UNREACHABLE;
+        }
+    }
+    InsertTailList(&QuicConnection->Requests, &Request->ListEntry);
+    InterlockedIncrement(&QuicConnection->ReferenceCount);
+    RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
+
+    if (!TrySubmitThreadpoolCallback(ZpServerQuic_RequestCallback,
+                                     Request,
+                                     NULL))
+    {
+        NTSTATUS Status;
+
+        RtlAcquireSRWLockExclusive(&QuicConnection->RequestLock);
+        if (InterlockedExchange(&Request->Pending, FALSE))
+        {
+            RemoveEntryList(&Request->ListEntry);
+        }
+        RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
+        Mem_Free(Request);
+        Status = ZpServerQuic_SendResponse(QuicConnection,
+                                           &QuicConnection->ProtocolConnection,
+                                           Message->RequestId,
+                                           STATUS_NO_MEMORY,
+                                           NULL,
+                                           0);
+        ZpServerQuic_ReleaseConnection(QuicConnection);
+        return Status;
+    }
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpServerQuic_CancelRequest(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
+    _In_ ULONGLONG RequestId)
+{
+    PZP_SERVER_QUIC_REQUEST Request;
+    PLIST_ENTRY Entry;
+
+    RtlAcquireSRWLockExclusive(&QuicConnection->RequestLock);
+    for (Entry = QuicConnection->Requests.Flink;
+         Entry != &QuicConnection->Requests;
+         Entry = Entry->Flink)
+    {
+        Request = CONTAINING_RECORD(Entry,
+                                    ZP_SERVER_QUIC_REQUEST,
+                                    ListEntry);
+        if (Request->RequestId == RequestId)
+        {
+            InterlockedExchange(&Request->Pending, FALSE);
+            RemoveEntryList(&Request->ListEntry);
+            RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
+            return STATUS_SUCCESS;
+        }
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
+    return STATUS_PROTOCOL_UNREACHABLE;
+}
+
+static
 NTSTATUS
 ZpServerQuic_SelectModules(
     _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection,
@@ -321,18 +559,11 @@ ZpServerQuic_MessageCallback(
     ZP_BUFFER_VIEW Signature;
     ZP_DISCONNECT_VIEW Disconnect;
     ZP_REQUEST_VIEW Request;
-    ZP_SYSTEM_INFO SystemInfo;
     ZP_READY Ready;
     BYTE Body[sizeof(USHORT) + ZP_MODULE_MAX_COUNT * 8];
-    BYTE Payload[30 + (MAX_COMPUTERNAME_LENGTH + 1) * sizeof(WCHAR)];
-    WCHAR ComputerName[MAX_COMPUTERNAME_LENGTH + 1];
-    const VOID* ResponsePayload;
-    PBYTE AllocatedPayload;
     ULONG BodyLength;
-    ULONG PayloadLength;
     ULONGLONG Token;
     ULONGLONG RequestId;
-    ULONGLONG StartTick;
     NTSTATUS Status;
 
     switch (Frame->MessageType)
@@ -460,70 +691,15 @@ ZpServerQuic_MessageCallback(
             {
                 return Status;
             }
-            StartTick = GetTickCount64();
-            AllocatedPayload = NULL;
-            ResponsePayload = NULL;
-            PayloadLength = 0;
-            if (!ZpServerQuic_HasModule(QuicConnection, Request.ModuleId))
-            {
-                Status = STATUS_NOT_SUPPORTED;
-            }
-            if (NT_SUCCESS(Status) && Request.Payload.Length != 0)
-            {
-                Status = STATUS_INVALID_PARAMETER;
-            }
-            if (NT_SUCCESS(Status))
-            {
-                if (Request.ModuleId == ZP_SYSTEM_MODULE_ID &&
-                    Request.OperationId == ZP_SYSTEM_OPERATION_INFO)
-                {
-                    Status = ZpServerQuic_GetSystemInfo(&SystemInfo,
-                                                        ComputerName,
-                                                        ARRAYSIZE(ComputerName));
-                    if (NT_SUCCESS(Status))
-                    {
-                        Status = ZpSystem_EncodeInfo(&SystemInfo,
-                                                     Payload,
-                                                     sizeof(Payload),
-                                                     &PayloadLength);
-                        ResponsePayload = Payload;
-                    }
-                }
-                else if (Request.ModuleId == ZP_PROCESS_MODULE_ID &&
-                         Request.OperationId == ZP_PROCESS_OPERATION_ENUMERATE)
-                {
-                    Status = ZpServerQuic_EnumerateProcesses(&AllocatedPayload,
-                                                             &PayloadLength);
-                    ResponsePayload = AllocatedPayload;
-                }
-                else
-                {
-                    Status = STATUS_NOT_SUPPORTED;
-                }
-            }
-            if (NT_SUCCESS(Status) &&
-                Request.TimeoutMilliseconds != 0 &&
-                GetTickCount64() - StartTick >= Request.TimeoutMilliseconds)
-            {
-                Status = STATUS_IO_TIMEOUT;
-            }
-            BodyLength = NT_SUCCESS(Status) ? PayloadLength : 0;
-            Status = ZpServerQuic_SendResponse(QuicConnection,
-                                               Connection,
-                                               Request.RequestId,
-                                               Status,
-                                               NT_SUCCESS(Status) ? ResponsePayload : NULL,
-                                               BodyLength);
-            if (AllocatedPayload != NULL)
-            {
-                Mem_Free(AllocatedPayload);
-            }
-            return Status;
+            return ZpServerQuic_QueueRequest(QuicConnection, &Request);
 
         case ZpMessageCancel:
-            return ZpMessage_DecodeCancel(Frame->Body,
-                                          Frame->BodyLength,
-                                          &RequestId);
+            Status = ZpMessage_DecodeCancel(Frame->Body,
+                                            Frame->BodyLength,
+                                            &RequestId);
+            return NT_SUCCESS(Status) ?
+                       ZpServerQuic_CancelRequest(QuicConnection, RequestId) :
+                       Status;
     }
     return STATUS_PROTOCOL_UNREACHABLE;
 }
@@ -616,6 +792,58 @@ ZpServerQuic_StreamCallback(
 }
 
 static
+VOID
+ZpServerQuic_ReleaseConnection(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection)
+{
+    PZP_SERVER_QUIC_TRANSPORT Transport;
+    PZP_SERVER_OBJECT Object;
+
+    if (InterlockedDecrement(&QuicConnection->ReferenceCount) != 0)
+    {
+        return;
+    }
+    Transport = QuicConnection->Transport;
+    Object = Transport->Owner;
+    if (QuicConnection->ProtocolConnectionInitialized)
+    {
+        ZpConnection_Uninitialize(&QuicConnection->ProtocolConnection);
+        QuicConnection->ProtocolConnectionInitialized = FALSE;
+    }
+    RtlSecureZeroMemory(QuicConnection->PublicKey,
+                        sizeof(QuicConnection->PublicKey));
+    RtlSecureZeroMemory(QuicConnection->ClientId,
+                        sizeof(QuicConnection->ClientId));
+    RtlSecureZeroMemory(QuicConnection->Challenge,
+                        sizeof(QuicConnection->Challenge));
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Transport->ActiveConnectionCount--;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    Mem_Free(QuicConnection);
+    ZpServerQuic_TryCompleteStop(Transport);
+}
+
+static
+VOID
+ZpServerQuic_CancelRequests(
+    _Inout_ PZP_SERVER_QUIC_CONNECTION QuicConnection)
+{
+    PZP_SERVER_QUIC_REQUEST Request;
+
+    RtlAcquireSRWLockExclusive(&QuicConnection->RequestLock);
+    QuicConnection->Closing = TRUE;
+    while (!IsListEmpty(&QuicConnection->Requests))
+    {
+        Request = CONTAINING_RECORD(QuicConnection->Requests.Flink,
+                                    ZP_SERVER_QUIC_REQUEST,
+                                    ListEntry);
+        InterlockedExchange(&Request->Pending, FALSE);
+        RemoveEntryList(&Request->ListEntry);
+    }
+    RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
+}
+
+static
 QUIC_STATUS
 QUIC_API
 ZpServerQuic_ConnectionCallback(
@@ -678,28 +906,14 @@ ZpServerQuic_ConnectionCallback(
 
         case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
             Status = QuicConnection->ShutdownStatus;
+            ZpServerQuic_CancelRequests(QuicConnection);
             MsQuicConnectionClose(Connection);
             QuicConnection->Connection = NULL;
             ZpServer_NotifyConnection((ZP_SERVER_HANDLE)Object,
                                       (ZP_CONNECTION_HANDLE)QuicConnection,
                                       ZpConnectionPhaseClosed,
                                       Status);
-            RtlAcquireSRWLockExclusive(&Object->Lock);
-            Transport->ActiveConnectionCount--;
-            RtlReleaseSRWLockExclusive(&Object->Lock);
-            ZpServerQuic_TryCompleteStop(Transport);
-            if (QuicConnection->ProtocolConnectionInitialized)
-            {
-                ZpConnection_Uninitialize(&QuicConnection->ProtocolConnection);
-                QuicConnection->ProtocolConnectionInitialized = FALSE;
-            }
-            RtlSecureZeroMemory(QuicConnection->PublicKey,
-                                sizeof(QuicConnection->PublicKey));
-            RtlSecureZeroMemory(QuicConnection->ClientId,
-                                sizeof(QuicConnection->ClientId));
-            RtlSecureZeroMemory(QuicConnection->Challenge,
-                                sizeof(QuicConnection->Challenge));
-            Mem_Free(QuicConnection);
+            ZpServerQuic_ReleaseConnection(QuicConnection);
             break;
     }
     return QUIC_STATUS_SUCCESS;
@@ -763,6 +977,9 @@ ZpServerQuic_ListenerCallback(
             }
             RtlZeroMemory(QuicConnection, sizeof(*QuicConnection));
             QuicConnection->Transport = Transport;
+            RtlInitializeSRWLock(&QuicConnection->RequestLock);
+            InitializeListHead(&QuicConnection->Requests);
+            QuicConnection->ReferenceCount = 1;
             QuicConnection->Connection = Event->NEW_CONNECTION.Connection;
             QuicConnection->ShutdownStatus = STATUS_SUCCESS;
             MsQuicSetCallbackHandler(QuicConnection->Connection,
