@@ -99,10 +99,15 @@ ZpClient_Create(
     PZP_MODULE_RECORD Modules;
     ULONG Index;
 
+    *Client = NULL;
     Status = ZpClient_ValidateConfig(Config, &AllocationSize);
     if (!NT_SUCCESS(Status))
     {
         return Status;
+    }
+    if (AllocationSize < sizeof(*Object))
+    {
+        return STATUS_INTEGER_OVERFLOW;
     }
     Object = Mem_Alloc(AllocationSize);
     if (Object == NULL)
@@ -167,6 +172,7 @@ ZpClient_FindNextEndpoint(
 {
     ULONG Index;
 
+    *EndpointIndex = MAXULONG;
     for (Index = StartIndex; Index < Object->Config.EndpointCount; Index++)
     {
         if (Object->TransportOperations[Object->Config.Endpoints[Index].Transport] != NULL)

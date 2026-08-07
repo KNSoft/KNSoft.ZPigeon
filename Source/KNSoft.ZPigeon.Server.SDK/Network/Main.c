@@ -129,6 +129,7 @@ ZpServer_Create(
     PZP_MODULE_RECORD Modules;
     ULONG Index;
 
+    *Server = NULL;
     Status = ZpServer_ValidateConfig(Config, &AllocationSize);
     if (!NT_SUCCESS(Status))
     {

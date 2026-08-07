@@ -16,7 +16,7 @@ ZpAuthentication_Hash(
     BCRYPT_ALG_HANDLE Algorithm;
     NTSTATUS Status;
     BYTE Input[(sizeof(ZpAuthenticationLabel) - 1) + 1 +
-               ZP_SERVER_CHALLENGE_SIZE + ZP_CLIENT_PUBLIC_KEY_SIZE];
+               ZP_SERVER_CHALLENGE_SIZE + ZP_CLIENT_PUBLIC_KEY_SIZE] = { 0 };
     BYTE* Cursor = Input;
 
     RtlCopyMemory(Cursor,

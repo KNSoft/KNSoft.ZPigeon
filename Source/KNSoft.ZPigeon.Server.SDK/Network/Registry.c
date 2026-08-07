@@ -82,20 +82,22 @@ ZpServerRegistry_CopyString(
     SIZE_T Size;
     PWCHAR Buffer;
 
-    *Copy = NULL;
-    if (String->Length == 0)
-    {
-        return STATUS_SUCCESS;
-    }
     Size = ((SIZE_T)String->Length + 1) * sizeof(WCHAR);
+    if (Size < sizeof(WCHAR))
+    {
+        return STATUS_INTEGER_OVERFLOW;
+    }
     Buffer = Mem_Alloc(Size);
     if (Buffer == NULL)
     {
         return STATUS_NO_MEMORY;
     }
-    RtlCopyMemory(Buffer,
-                  String->Buffer,
-                  (SIZE_T)String->Length * sizeof(WCHAR));
+    if (String->Length != 0)
+    {
+        RtlCopyMemory(Buffer,
+                      String->Buffer,
+                      (SIZE_T)String->Length * sizeof(WCHAR));
+    }
     Buffer[String->Length] = UNICODE_NULL;
     *Copy = Buffer;
     return STATUS_SUCCESS;
@@ -202,6 +204,10 @@ ZpServerRegistry_FreeKeyEntries(
 {
     ULONG Index;
 
+    if (Entries == NULL)
+    {
+        return;
+    }
     for (Index = 0; Index < Count; Index++)
     {
         Mem_Free(Entries[Index].Name);
@@ -217,6 +223,10 @@ ZpServerRegistry_FreeValueEntries(
 {
     ULONG Index;
 
+    if (Entries == NULL)
+    {
+        return;
+    }
     for (Index = 0; Index < Count; Index++)
     {
         Mem_Free(Entries[Index].Name);
@@ -322,7 +332,8 @@ ZpServerRegistry_EnumerateKeys(
     RegCloseKey(Key);
     if (!NT_SUCCESS(Status))
     {
-        ZpServerRegistry_FreeKeyEntries(Result, Count);
+        ZpServerRegistry_FreeKeyEntries(Result,
+                                        Index < Count ? Index + 1 : Count);
         return Status;
     }
     Count = Index;
@@ -435,7 +446,8 @@ ZpServerRegistry_EnumerateValues(
     RegCloseKey(Key);
     if (!NT_SUCCESS(Status))
     {
-        ZpServerRegistry_FreeValueEntries(Result, Count);
+        ZpServerRegistry_FreeValueEntries(Result,
+                                          Index < Count ? Index + 1 : Count);
         return Status;
     }
     Count = Index;
@@ -514,6 +526,8 @@ ZpServerRegistry_EncodeKeyPage(
     ULONG Available = EntryCount - Start;
     ULONG Count = min(Available, MaxEntries);
     ULONG Index;
+    PCWCH NextCursor = NULL;
+    ULONG NextCursorLength = 0;
     BOOLEAN HasMore;
     NTSTATUS Status;
 
@@ -535,12 +549,19 @@ ZpServerRegistry_EncodeKeyPage(
     do
     {
         HasMore = Count < Available;
+        if (HasMore && (Records == NULL || Count == 0))
+        {
+            Status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+        NextCursor = HasMore ? Records[Count - 1].Name : NULL;
+        NextCursorLength = HasMore ? Records[Count - 1].NameLength : 0;
         Status = ZpRegistry_EncodeKeyPage(
                      HasMore,
                      Records,
                      Count,
-                     HasMore ? Records[Count - 1].Name : NULL,
-                     HasMore ? Records[Count - 1].NameLength : 0,
+                     NextCursor,
+                     NextCursorLength,
                      NULL,
                      0,
                      ResponseLength);
@@ -564,8 +585,8 @@ ZpServerRegistry_EncodeKeyPage(
                      HasMore,
                      Records,
                      Count,
-                     HasMore ? Records[Count - 1].Name : NULL,
-                     HasMore ? Records[Count - 1].NameLength : 0,
+                     NextCursor,
+                     NextCursorLength,
                      *Response,
                      *ResponseLength,
                      ResponseLength);
@@ -588,6 +609,8 @@ ZpServerRegistry_EncodeValuePage(
     ULONG Available = EntryCount - Start;
     ULONG Count = min(Available, MaxEntries);
     ULONG Index;
+    PCWCH NextCursor = NULL;
+    ULONG NextCursorLength = 0;
     BOOLEAN HasMore;
     NTSTATUS Status;
 
@@ -609,12 +632,19 @@ ZpServerRegistry_EncodeValuePage(
     do
     {
         HasMore = Count < Available;
+        if (HasMore && (Records == NULL || Count == 0))
+        {
+            Status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+        NextCursor = HasMore ? Records[Count - 1].Name : NULL;
+        NextCursorLength = HasMore ? Records[Count - 1].NameLength : 0;
         Status = ZpRegistry_EncodeValuePage(
                      HasMore,
                      Records,
                      Count,
-                     HasMore ? Records[Count - 1].Name : NULL,
-                     HasMore ? Records[Count - 1].NameLength : 0,
+                     NextCursor,
+                     NextCursorLength,
                      NULL,
                      0,
                      ResponseLength);
@@ -638,8 +668,8 @@ ZpServerRegistry_EncodeValuePage(
                      HasMore,
                      Records,
                      Count,
-                     HasMore ? Records[Count - 1].Name : NULL,
-                     HasMore ? Records[Count - 1].NameLength : 0,
+                     NextCursor,
+                     NextCursorLength,
                      *Response,
                      *ResponseLength,
                      ResponseLength);

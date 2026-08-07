@@ -238,13 +238,17 @@ ZpRegistry_ValidateNextCursor(
     if ((HasMore != FALSE && HasMore != TRUE) ||
         !ZpRegistry_IsStringValid(NextCursor, NextCursorLength) ||
         (HasMore &&
-         (RecordCount == 0 || LastNameLength != NextCursorLength ||
-          (NextCursorLength != 0 &&
-           RtlCompareMemory(LastName,
-                            NextCursor,
-                            (SIZE_T)NextCursorLength * sizeof(WCHAR)) !=
-               (SIZE_T)NextCursorLength * sizeof(WCHAR)))) ||
+         (RecordCount == 0 || LastNameLength != NextCursorLength)) ||
         (!HasMore && NextCursorLength != 0))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (HasMore && NextCursorLength != 0 &&
+        (LastName == NULL || NextCursor == NULL ||
+         RtlCompareMemory(LastName,
+                          NextCursor,
+                          (SIZE_T)NextCursorLength * sizeof(WCHAR)) !=
+             (SIZE_T)NextCursorLength * sizeof(WCHAR)))
     {
         return STATUS_INVALID_PARAMETER;
     }

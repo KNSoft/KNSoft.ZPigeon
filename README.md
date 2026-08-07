@@ -22,7 +22,7 @@ msbuild Source\KNSoft.ZPigeon.slnx /t:Rebuild /p:Configuration=Debug /p:Platform
 Source\OutDir\x64\Debug\UnitTest.exe -Run
 ```
 
-当前 x86/x64、Debug/Release 全矩阵均为 0 编译/链接警告，335/335 项断言通过。
+当前 x86/x64、Debug/Release 全矩阵均为 0 编译/链接警告，336/336 项断言通过。
 
 ## 最小 Server 生命周期
 

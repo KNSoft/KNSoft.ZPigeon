@@ -215,13 +215,14 @@ ZpServerQuic_QuerySystemInformation(
     ULONG Length = 0;
     NTSTATUS Status;
 
+    *Information = NULL;
     Status = NtQuerySystemInformation(InformationClass,
                                       NULL,
                                       0,
                                       &Length);
     if (Status != STATUS_INFO_LENGTH_MISMATCH)
     {
-        return Status;
+        return NT_SUCCESS(Status) ? STATUS_INTERNAL_ERROR : Status;
     }
     for (;;)
     {
@@ -809,7 +810,7 @@ ZpServerQuic_QueryEventLogPage(
 {
     EVT_HANDLE QueryHandle = NULL, BookmarkHandle = NULL;
     EVT_HANDLE Events[ZP_EVENT_LOG_PAGE_MAX_COUNT + 1] = { 0 };
-    ZP_EVENT_LOG_RECORD Records[ZP_EVENT_LOG_PAGE_MAX_COUNT] = { 0 };
+    ZP_EVENT_LOG_RECORD Records[ZP_EVENT_LOG_PAGE_MAX_COUNT];
     PWCHAR ChannelPath = NULL, QueryString = NULL, BookmarkString = NULL;
     PCWCH NextBookmark;
     ULONG NextBookmarkLength;
@@ -821,6 +822,7 @@ ZpServerQuic_QueryEventLogPage(
 
     *Payload = NULL;
     *PayloadLength = 0;
+    RtlZeroMemory(Records, sizeof(Records));
     Status = ZpServerQuic_CopyStringView(&Query->ChannelPath, &ChannelPath);
     if (!NT_SUCCESS(Status))
     {
@@ -1664,6 +1666,7 @@ ZpServerQuic_QueryFile(
     PWCHAR Path;
     NTSTATUS Status = STATUS_SUCCESS;
 
+    RtlZeroMemory(Info, sizeof(*Info));
     Path = Mem_Alloc(((SIZE_T)PathView->Length + 1) * sizeof(WCHAR));
     if (Path == NULL)
     {
@@ -2185,7 +2188,10 @@ ZpServerQuic_DestroyChannel(
     }
     if (Channel->TemporaryPath != NULL)
     {
-        DeleteFileW(Channel->TemporaryPath);
+        if (!DeleteFileW(Channel->TemporaryPath))
+        {
+            // Best-effort cleanup; the original channel status takes precedence.
+        }
         Mem_Free(Channel->TemporaryPath);
     }
     if (Channel->FinalPath != NULL)
@@ -2282,6 +2288,8 @@ ZpServerQuic_CreateFileChannel(
     PWCHAR Path;
     NTSTATUS Status = STATUS_SUCCESS;
 
+    *Channel = NULL;
+    *FileSize = 0;
     Path = Mem_Alloc(((SIZE_T)PathView->Length + 1) * sizeof(WCHAR));
     ChannelObject = Mem_Alloc(sizeof(*ChannelObject));
     if (ChannelObject != NULL)
@@ -2371,6 +2379,7 @@ ZpServerQuic_CreateFileWriteChannel(
     ULONG Attempt;
     NTSTATUS Status = STATUS_SUCCESS;
 
+    *Channel = NULL;
     ChannelObject = Mem_Alloc(sizeof(*ChannelObject));
     if (ChannelObject == NULL)
     {
@@ -2382,9 +2391,13 @@ ZpServerQuic_CreateFileWriteChannel(
     PathCapacity = (SIZE_T)PathView->Length + 32;
     ChannelObject->FinalPath = Mem_Alloc(
         ((SIZE_T)PathView->Length + 1) * sizeof(WCHAR));
+    if (ChannelObject->FinalPath == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
+    }
     ChannelObject->TemporaryPath = Mem_Alloc(PathCapacity * sizeof(WCHAR));
-    if (ChannelObject->FinalPath == NULL ||
-        ChannelObject->TemporaryPath == NULL)
+    if (ChannelObject->TemporaryPath == NULL)
     {
         Status = STATUS_NO_MEMORY;
         goto Cleanup;
@@ -2403,12 +2416,16 @@ ZpServerQuic_CreateFileWriteChannel(
         {
             goto Cleanup;
         }
-        _snwprintf_s(ChannelObject->TemporaryPath,
-                     PathCapacity,
-                     _TRUNCATE,
-                     L"%s.%016llX.zpigeon.tmp",
-                     ChannelObject->FinalPath,
-                     RandomValue);
+        if (_snwprintf_s(ChannelObject->TemporaryPath,
+                         PathCapacity,
+                         _TRUNCATE,
+                         L"%s.%016llX.zpigeon.tmp",
+                         ChannelObject->FinalPath,
+                         RandomValue) < 0)
+        {
+            Status = STATUS_NAME_TOO_LONG;
+            goto Cleanup;
+        }
         ChannelObject->File = CreateFileW(ChannelObject->TemporaryPath,
                                            GENERIC_WRITE,
                                            FILE_SHARE_READ,
@@ -4007,7 +4024,6 @@ ZpServerQuic_QueueRequest(
 {
     PZP_SERVER_QUIC_REQUEST Request, ExistingRequest;
     PLIST_ENTRY Entry;
-    SIZE_T AllocationSize;
 
     if (Message->Payload.Length >
         QuicConnection->Transport->Owner->Config
@@ -4020,9 +4036,7 @@ ZpServerQuic_QueueRequest(
                                          NULL,
                                          0);
     }
-    AllocationSize = FIELD_OFFSET(ZP_SERVER_QUIC_REQUEST, Payload) +
-                     Message->Payload.Length;
-    Request = Mem_Alloc(AllocationSize);
+    Request = Mem_Alloc(sizeof(*Request) + Message->Payload.Length);
     if (Request == NULL)
     {
         return ZpServerQuic_SendResponse(QuicConnection,
@@ -4032,7 +4046,7 @@ ZpServerQuic_QueueRequest(
                                          NULL,
                                          0);
     }
-    RtlZeroMemory(Request, FIELD_OFFSET(ZP_SERVER_QUIC_REQUEST, Payload));
+    RtlZeroMemory(Request, sizeof(*Request));
     Request->Connection = QuicConnection;
     Request->Pending = TRUE;
     Request->RequestId = Message->RequestId;
@@ -4413,6 +4427,7 @@ ZpServerQuic_TryCompleteStop(
 }
 
 static
+_Function_class_(QUIC_STREAM_CALLBACK)
 QUIC_STATUS
 QUIC_API
 ZpServerQuic_StreamCallback(
@@ -4424,6 +4439,10 @@ ZpServerQuic_StreamCallback(
     NTSTATUS Status;
     ULONG Index;
 
+    if (QuicConnection == NULL)
+    {
+        return QUIC_STATUS_INVALID_PARAMETER;
+    }
     switch (Event->Type)
     {
         case QUIC_STREAM_EVENT_SEND_COMPLETE:
@@ -4579,6 +4598,7 @@ ZpServerQuic_CancelSubscriptions(
 }
 
 static
+_Function_class_(QUIC_CONNECTION_CALLBACK)
 QUIC_STATUS
 QUIC_API
 ZpServerQuic_ConnectionCallback(
@@ -4587,10 +4607,16 @@ ZpServerQuic_ConnectionCallback(
     _Inout_ QUIC_CONNECTION_EVENT* Event)
 {
     PZP_SERVER_QUIC_CONNECTION QuicConnection = Context;
-    PZP_SERVER_QUIC_TRANSPORT Transport = QuicConnection->Transport;
-    PZP_SERVER_OBJECT Object = Transport->Owner;
+    PZP_SERVER_QUIC_TRANSPORT Transport;
+    PZP_SERVER_OBJECT Object;
     NTSTATUS Status;
 
+    if (QuicConnection == NULL)
+    {
+        return QUIC_STATUS_INVALID_PARAMETER;
+    }
+    Transport = QuicConnection->Transport;
+    Object = Transport->Owner;
     switch (Event->Type)
     {
         case QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED:
@@ -4684,6 +4710,7 @@ ZpServerQuic_FindDeployment(
 }
 
 static
+_Function_class_(QUIC_LISTENER_CALLBACK)
 QUIC_STATUS
 QUIC_API
 ZpServerQuic_ListenerCallback(
@@ -4692,12 +4719,18 @@ ZpServerQuic_ListenerCallback(
     _Inout_ QUIC_LISTENER_EVENT* Event)
 {
     PZP_SERVER_QUIC_LISTENER QuicListener = Context;
-    PZP_SERVER_QUIC_TRANSPORT Transport = QuicListener->Transport;
-    PZP_SERVER_OBJECT Object = Transport->Owner;
+    PZP_SERVER_QUIC_TRANSPORT Transport;
+    PZP_SERVER_OBJECT Object;
     PZP_SERVER_QUIC_CONNECTION QuicConnection;
     QUIC_STATUS QuicStatus;
     LONG DeploymentIndex;
 
+    if (QuicListener == NULL)
+    {
+        return QUIC_STATUS_INVALID_PARAMETER;
+    }
+    Transport = QuicListener->Transport;
+    Object = Transport->Owner;
     switch (Event->Type)
     {
         case QUIC_LISTENER_EVENT_NEW_CONNECTION:

@@ -802,16 +802,21 @@ ZpFile_EncodePage(
     ULONGLONG RequiredSize;
     NTSTATUS Status;
 
-    if (NextCursorLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
-        (NextCursorLength != 0 &&
-         (NextCursor == NULL || FileCount == 0 ||
-          Files[FileCount - 1].NameLength != NextCursorLength ||
-          RtlCompareMemory(Files[FileCount - 1].Name,
-                           NextCursor,
-                           (SIZE_T)NextCursorLength * sizeof(WCHAR)) !=
-              (SIZE_T)NextCursorLength * sizeof(WCHAR))))
+    if (NextCursorLength > ZP_CODEC_MAX_ELEMENT_COUNT)
     {
         return STATUS_INVALID_PARAMETER;
+    }
+    if (NextCursorLength != 0)
+    {
+        if (NextCursor == NULL || Files == NULL || FileCount == 0 ||
+            Files[FileCount - 1].NameLength != NextCursorLength ||
+            RtlCompareMemory(Files[FileCount - 1].Name,
+                             NextCursor,
+                             (SIZE_T)NextCursorLength * sizeof(WCHAR)) !=
+                (SIZE_T)NextCursorLength * sizeof(WCHAR))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
     }
     Status = ZpFile_EncodeList(Files, FileCount, NULL, 0, &ListLength);
     if (!NT_SUCCESS(Status))

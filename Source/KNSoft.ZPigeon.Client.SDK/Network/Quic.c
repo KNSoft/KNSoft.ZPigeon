@@ -411,6 +411,7 @@ ZpClientQuic_ValidateCertificate(
 }
 
 static
+_Function_class_(QUIC_STREAM_CALLBACK)
 QUIC_STATUS
 QUIC_API
 ZpClientQuic_StreamCallback(
@@ -419,10 +420,15 @@ ZpClientQuic_StreamCallback(
     _Inout_ QUIC_STREAM_EVENT* Event)
 {
     PZP_CLIENT_QUIC_TRANSPORT Transport = Context;
-    PZP_CLIENT_OBJECT Object = Transport->Owner;
+    PZP_CLIENT_OBJECT Object;
     NTSTATUS Status;
     ULONG Index;
 
+    if (Transport == NULL)
+    {
+        return QUIC_STATUS_INVALID_PARAMETER;
+    }
+    Object = Transport->Owner;
     switch (Event->Type)
     {
         case QUIC_STREAM_EVENT_START_COMPLETE:
@@ -505,6 +511,7 @@ ZpClientQuic_StreamCallback(
 }
 
 static
+_Function_class_(QUIC_CONNECTION_CALLBACK)
 QUIC_STATUS
 QUIC_API
 ZpClientQuic_ConnectionCallback(
@@ -514,11 +521,16 @@ ZpClientQuic_ConnectionCallback(
 {
     QUIC_STATUS QuicStatus;
     PZP_CLIENT_QUIC_TRANSPORT Transport = Context;
-    PZP_CLIENT_OBJECT Object = Transport->Owner;
+    PZP_CLIENT_OBJECT Object;
     HQUIC Stream;
     NTSTATUS Status;
     BOOLEAN Valid;
 
+    if (Transport == NULL)
+    {
+        return QUIC_STATUS_INVALID_PARAMETER;
+    }
+    Object = Transport->Owner;
     switch (Event->Type)
     {
         case QUIC_CONNECTION_EVENT_PEER_CERTIFICATE_RECEIVED:

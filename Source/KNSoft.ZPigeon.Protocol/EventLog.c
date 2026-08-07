@@ -292,7 +292,12 @@ ZpEventLog_EncodePage(
         }
     }
     if (RecordCount != 0 &&
-        (Records[RecordCount - 1].BookmarkLength != NextBookmarkLength ||
+        Records[RecordCount - 1].BookmarkLength != NextBookmarkLength)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (RecordCount != 0 && NextBookmarkLength != 0 &&
+        (NextBookmark == NULL ||
          RtlCompareMemory(Records[RecordCount - 1].Bookmark,
                           NextBookmark,
                           (SIZE_T)NextBookmarkLength * sizeof(WCHAR)) !=
