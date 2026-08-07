@@ -103,6 +103,8 @@ ZpClient_Create(
     }
     RtlZeroMemory(Object, sizeof(*Object));
     RtlInitializeSRWLock(&Object->Lock);
+    InitializeListHead(&Object->Requests);
+    Object->NextRequestId = 1;
     Object->State = ZpClientStateStopped;
     Object->Config = *Config;
     Object->Config.ConnectTimeoutMilliseconds = Config->ConnectTimeoutMilliseconds != 0 ?
@@ -484,6 +486,190 @@ ZpClient_Ping(
     return Status;
 }
 
+static
+VOID
+ZpClient_ReleaseRequest(
+    _Inout_ PZP_REQUEST_OBJECT Request)
+{
+    if (InterlockedDecrement(&Request->ReferenceCount) == 0)
+    {
+        Mem_Free(Request);
+    }
+}
+
+static
+VOID
+ZpClient_InvokeRequestCallback(
+    _Inout_ PZP_REQUEST_OBJECT Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_BUFFER_VIEW Payload)
+{
+    static const ZP_BUFFER_VIEW EmptyPayload = { NULL, 0 };
+    PZP_CLIENT_OBJECT Object = Request->Owner;
+
+    Request->Callback((ZP_REQUEST_HANDLE)Request,
+                      Status,
+                      Payload != NULL ? Payload : &EmptyPayload,
+                      Request->Context);
+    Request->Owner = NULL;
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount--;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    ZpClient_ReleaseRequest(Request);
+}
+
+NTSTATUS
+NTAPI
+ZpClient_SendRequest(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ USHORT ModuleId,
+    _In_ USHORT OperationId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _In_ ZP_REQUEST_COMPLETE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
+    PZP_REQUEST_OBJECT RequestObject;
+    PCZP_TRANSPORT_OPERATIONS Operations;
+    ZP_REQUEST Message;
+    PVOID TransportContext;
+    PBYTE Body;
+    ULONG BodyLength;
+    NTSTATUS Status;
+
+    if (ModuleId == 0 || OperationId == 0 || Callback == NULL || Request == NULL ||
+        PayloadLength > ZP_FRAME_MAX_BODY_SIZE - 16 ||
+        (PayloadLength != 0 && Payload == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequestObject = Mem_Alloc(sizeof(*RequestObject));
+    if (RequestObject == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(RequestObject, sizeof(*RequestObject));
+    RequestObject->Owner = Object;
+    RequestObject->ReferenceCount = 2;
+    RequestObject->Pending = TRUE;
+    RequestObject->Callback = Callback;
+    RequestObject->Context = Context;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (Object->State != ZpClientStateReady)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        Mem_Free(RequestObject);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    RequestObject->RequestId = Object->NextRequestId++;
+    if (Object->NextRequestId == 0)
+    {
+        Object->NextRequestId = 1;
+    }
+    InsertTailList(&Object->Requests, &RequestObject->ListEntry);
+    Operations = Object->TransportOperations[Object->ActiveTransport];
+    TransportContext = Object->TransportContexts[Object->ActiveTransport];
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+
+    Message.RequestId = RequestObject->RequestId;
+    Message.ModuleId = ModuleId;
+    Message.OperationId = OperationId;
+    Message.TimeoutMilliseconds = TimeoutMilliseconds;
+    Message.Payload = Payload;
+    Message.PayloadLength = PayloadLength;
+    Status = ZpMessage_EncodeRequest(&Message, NULL, 0, &BodyLength);
+    Body = NT_SUCCESS(Status) ? Mem_Alloc(BodyLength) : NULL;
+    if (NT_SUCCESS(Status) && Body == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpMessage_EncodeRequest(&Message,
+                                         Body,
+                                         BodyLength,
+                                         &BodyLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = Operations->Send != NULL ?
+                     Operations->Send(TransportContext,
+                                      ZpMessageRequest,
+                                      Body,
+                                      BodyLength) :
+                     STATUS_NOT_SUPPORTED;
+    }
+    Mem_Free(Body);
+    if (!NT_SUCCESS(Status))
+    {
+        RtlAcquireSRWLockExclusive(&Object->Lock);
+        if (InterlockedExchange(&RequestObject->Pending, FALSE))
+        {
+            RemoveEntryList(&RequestObject->ListEntry);
+        }
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        Mem_Free(RequestObject);
+        return Status;
+    }
+    *Request = (ZP_REQUEST_HANDLE)RequestObject;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+NTAPI
+ZpRequest_Cancel(
+    _In_ ZP_REQUEST_HANDLE Request)
+{
+    PZP_REQUEST_OBJECT RequestObject = (PZP_REQUEST_OBJECT)Request;
+    PZP_CLIENT_OBJECT Object = RequestObject->Owner;
+    PCZP_TRANSPORT_OPERATIONS Operations;
+    PVOID TransportContext;
+    BYTE Body[sizeof(ULONGLONG)];
+    ULONG BodyLength;
+
+    if (Object == NULL)
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (!InterlockedExchange(&RequestObject->Pending, FALSE))
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    RemoveEntryList(&RequestObject->ListEntry);
+    Object->CallbackCount++;
+    Operations = Object->TransportOperations[Object->ActiveTransport];
+    TransportContext = Object->TransportContexts[Object->ActiveTransport];
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+
+    if (NT_SUCCESS(ZpMessage_EncodeCancel(RequestObject->RequestId,
+                                          Body,
+                                          sizeof(Body),
+                                          &BodyLength)) &&
+        Operations->Send != NULL)
+    {
+        Operations->Send(TransportContext,
+                         ZpMessageCancel,
+                         Body,
+                         BodyLength);
+    }
+    ZpClient_InvokeRequestCallback(RequestObject, STATUS_CANCELLED, NULL);
+    return STATUS_SUCCESS;
+}
+
+VOID
+NTAPI
+ZpRequest_Close(
+    _In_ ZP_REQUEST_HANDLE Request)
+{
+    ZpClient_ReleaseRequest((PZP_REQUEST_OBJECT)Request);
+}
+
 NTSTATUS
 ZpClient_SetTransport(
     _In_ ZP_CLIENT_HANDLE Client,
@@ -597,6 +783,68 @@ ZpClient_NotifyPong(
     return STATUS_SUCCESS;
 }
 
+NTSTATUS
+ZpClient_CompleteResponse(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ PCZP_RESPONSE_VIEW Response)
+{
+    PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
+    PZP_REQUEST_OBJECT Request = NULL;
+    PLIST_ENTRY Entry;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    for (Entry = Object->Requests.Flink;
+         Entry != &Object->Requests;
+         Entry = Entry->Flink)
+    {
+        Request = CONTAINING_RECORD(Entry, ZP_REQUEST_OBJECT, ListEntry);
+        if (Request->RequestId == Response->RequestId)
+        {
+            break;
+        }
+        Request = NULL;
+    }
+    if (Request == NULL || !InterlockedExchange(&Request->Pending, FALSE))
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    RemoveEntryList(&Request->ListEntry);
+    Object->CallbackCount++;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    ZpClient_InvokeRequestCallback(Request,
+                                   Response->Status,
+                                   &Response->Payload);
+    return STATUS_SUCCESS;
+}
+
+static
+VOID
+ZpClient_CompleteRequests(
+    _Inout_ PZP_CLIENT_OBJECT Object,
+    _In_ NTSTATUS Status)
+{
+    PZP_REQUEST_OBJECT Request;
+
+    for (;;)
+    {
+        RtlAcquireSRWLockExclusive(&Object->Lock);
+        if (IsListEmpty(&Object->Requests))
+        {
+            RtlReleaseSRWLockExclusive(&Object->Lock);
+            return;
+        }
+        Request = CONTAINING_RECORD(Object->Requests.Flink,
+                                    ZP_REQUEST_OBJECT,
+                                    ListEntry);
+        InterlockedExchange(&Request->Pending, FALSE);
+        RemoveEntryList(&Request->ListEntry);
+        Object->CallbackCount++;
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        ZpClient_InvokeRequestCallback(Request, Status, NULL);
+    }
+}
+
 VOID
 ZpClient_TransportShutdown(
     _In_ ZP_CLIENT_HANDLE Client,
@@ -620,7 +868,9 @@ ZpClient_TransportShutdown(
 
     if (State == ZpClientStateStopping)
     {
+        ZpClient_CompleteRequests(Object, Status);
         ZpClient_NotifyState(Client, ZpClientStateStopped, Status);
+        return;
     }
     else if (State == ZpClientStateConnecting ||
              State == ZpClientStateAuthenticating ||
@@ -630,6 +880,7 @@ ZpClient_TransportShutdown(
                                Status,
                                State == ZpClientStateReady);
     }
+    ZpClient_CompleteRequests(Object, Status);
 }
 
 NTSTATUS
@@ -640,7 +891,9 @@ ZpClient_Close(
     PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
-    if (Object->State != ZpClientStateStopped || Object->CallbackCount != 0)
+    if (Object->State != ZpClientStateStopped ||
+        Object->CallbackCount != 0 ||
+        !IsListEmpty(&Object->Requests))
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_DEVICE_BUSY;

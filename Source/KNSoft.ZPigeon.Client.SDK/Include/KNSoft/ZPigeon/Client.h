@@ -35,6 +35,14 @@ VOID
     _In_ ULONGLONG Token,
     _In_opt_ PVOID Context);
 
+typedef
+VOID
+(NTAPI *ZP_REQUEST_COMPLETE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context);
+
 typedef struct _ZP_CLIENT_CONFIG
 {
     ULONG Size;
@@ -74,6 +82,29 @@ NTAPI
 ZpClient_Ping(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ ULONGLONG Token);
+
+NTSTATUS
+NTAPI
+ZpClient_SendRequest(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ USHORT ModuleId,
+    _In_ USHORT OperationId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _In_ ZP_REQUEST_COMPLETE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpRequest_Cancel(
+    _In_ ZP_REQUEST_HANDLE Request);
+
+VOID
+NTAPI
+ZpRequest_Close(
+    _In_ ZP_REQUEST_HANDLE Request);
 
 NTSTATUS
 NTAPI

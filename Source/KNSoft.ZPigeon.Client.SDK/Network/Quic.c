@@ -204,6 +204,7 @@ ZpClientQuic_MessageCallback(
     ZP_BUFFER_VIEW Data;
     ZP_READY_VIEW Ready;
     ZP_DISCONNECT_VIEW Disconnect;
+    ZP_RESPONSE_VIEW Response;
     BYTE Signature[ZP_CLIENT_SIGNATURE_SIZE];
     BYTE Body[ZP_CLIENT_SIGNATURE_SIZE];
     ULONGLONG Token;
@@ -279,6 +280,17 @@ ZpClientQuic_MessageCallback(
             {
                 Status = ZpClient_NotifyPong((ZP_CLIENT_HANDLE)Transport->Owner,
                                             Token);
+            }
+            return Status;
+
+        case ZpMessageResponse:
+            Status = ZpMessage_DecodeResponse(Frame->Body,
+                                              Frame->BodyLength,
+                                              &Response);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpClient_CompleteResponse((ZP_CLIENT_HANDLE)Transport->Owner,
+                                                   &Response);
             }
             return Status;
     }

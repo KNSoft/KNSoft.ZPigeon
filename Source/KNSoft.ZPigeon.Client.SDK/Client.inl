@@ -5,11 +5,24 @@
 #include "../Network/Transport.h"
 #include "Network/Quic.h"
 
+typedef struct _ZP_REQUEST_OBJECT
+{
+    LIST_ENTRY ListEntry;
+    struct _ZP_CLIENT_OBJECT* Owner;
+    volatile LONG ReferenceCount;
+    volatile LONG Pending;
+    ULONGLONG RequestId;
+    ZP_REQUEST_COMPLETE_CALLBACK Callback;
+    PVOID Context;
+} ZP_REQUEST_OBJECT, *PZP_REQUEST_OBJECT;
+
 typedef struct _ZP_CLIENT_OBJECT
 {
     RTL_SRWLOCK Lock;
     ZP_CLIENT_STATE State;
     ULONG CallbackCount;
+    LIST_ENTRY Requests;
+    ULONGLONG NextRequestId;
     ZP_CLIENT_CONFIG Config;
     PCZP_TRANSPORT_OPERATIONS TransportOperations[ZpTransportWss + 1];
     PVOID TransportContexts[ZpTransportWss + 1];
@@ -47,3 +60,8 @@ NTSTATUS
 ZpClient_NotifyPong(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ ULONGLONG Token);
+
+NTSTATUS
+ZpClient_CompleteResponse(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ PCZP_RESPONSE_VIEW Response);

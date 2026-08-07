@@ -18,6 +18,10 @@ typedef struct _SDK_TEST_CONTEXT
     ULONG SendCount;
     ZP_MESSAGE_TYPE SendMessageType;
     ULONGLONG SendToken;
+    ULONGLONG SendRequestId;
+    ULONG RequestCompleteCount;
+    NTSTATUS RequestStatus;
+    ULONG RequestPayloadLength;
     ULONG ClientStateCount;
     ZP_CLIENT_STATE ClientStates[8];
     NTSTATUS ClientStatuses[8];
@@ -64,14 +68,41 @@ SDKTest_TransportSend(
     _In_ ULONG BodyLength)
 {
     PSDK_TEST_CONTEXT TestContext = Context;
+    ZP_REQUEST_VIEW Request;
 
     TestContext->SendCount++;
     TestContext->SendMessageType = MessageType;
-    if (BodyLength == sizeof(ULONGLONG))
+    if (MessageType == ZpMessagePing)
     {
         ZpMessage_DecodePing(MessageType, Body, BodyLength, &TestContext->SendToken);
     }
+    else if (MessageType == ZpMessageRequest &&
+             NT_SUCCESS(ZpMessage_DecodeRequest(Body, BodyLength, &Request)))
+    {
+        TestContext->SendRequestId = Request.RequestId;
+    }
+    else if (MessageType == ZpMessageCancel)
+    {
+        ZpMessage_DecodeCancel(Body, BodyLength, &TestContext->SendRequestId);
+    }
     return STATUS_SUCCESS;
+}
+
+static
+VOID
+NTAPI
+SDKTest_RequestCompleteCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PSDK_TEST_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->RequestCompleteCount++;
+    TestContext->RequestStatus = Status;
+    TestContext->RequestPayloadLength = Payload->Length;
 }
 
 static const ZP_TRANSPORT_OPERATIONS SDKTest_TransportOperations = {
@@ -265,6 +296,8 @@ TEST_FUNC(SDKContract)
     ZP_SERVER_HANDLE Server;
     PZP_CLIENT_OBJECT ClientObject;
     PZP_SERVER_OBJECT ServerObject;
+    ZP_REQUEST_HANDLE Request;
+    ZP_RESPONSE_VIEW Response;
     SDK_TEST_CONTEXT TestContext = { STATUS_SUCCESS };
     SDK_TEST_CONTEXT TlsContext = { STATUS_ACCESS_DENIED };
     SDK_TEST_CONTEXT QuicContext = { STATUS_SUCCESS };
@@ -434,6 +467,41 @@ TEST_FUNC(SDKContract)
             TestContext.SendCount == 1 &&
             TestContext.SendMessageType == ZpMessagePing &&
             TestContext.SendToken == 0x0102030405060708);
+    TEST_OK(NT_SUCCESS(ZpClient_SendRequest(Client,
+                                            1,
+                                            2,
+                                            1000,
+                                            NULL,
+                                            0,
+                                            SDKTest_RequestCompleteCallback,
+                                            &TestContext,
+                                            &Request)) &&
+            TestContext.SendMessageType == ZpMessageRequest &&
+            TestContext.SendRequestId != 0);
+    Response.RequestId = TestContext.SendRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload.Buffer = RootCertificate;
+    Response.Payload.Length = sizeof(RootCertificate);
+    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+            TestContext.RequestCompleteCount == 1 &&
+            TestContext.RequestStatus == STATUS_SUCCESS &&
+            TestContext.RequestPayloadLength == sizeof(RootCertificate));
+    ZpRequest_Close(Request);
+    TEST_OK(NT_SUCCESS(ZpClient_SendRequest(Client,
+                                            1,
+                                            2,
+                                            0,
+                                            NULL,
+                                            0,
+                                            SDKTest_RequestCompleteCallback,
+                                            &TestContext,
+                                            &Request)) &&
+            NT_SUCCESS(ZpRequest_Cancel(Request)) &&
+            TestContext.SendMessageType == ZpMessageCancel &&
+            TestContext.RequestCompleteCount == 2 &&
+            TestContext.RequestStatus == STATUS_CANCELLED &&
+            TestContext.RequestPayloadLength == 0);
+    ZpRequest_Close(Request);
     TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) &&
             ClientObject->State == ZpClientStateStopping &&
             TestContext.StopCount == 1 &&

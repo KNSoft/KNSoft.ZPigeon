@@ -167,6 +167,8 @@ typedef struct _ZP_RESPONSE_VIEW
     ZP_BUFFER_VIEW Payload;
 } ZP_RESPONSE_VIEW, *PZP_RESPONSE_VIEW;
 
+typedef const ZP_RESPONSE_VIEW* PCZP_RESPONSE_VIEW;
+
 VOID
 ZpCodec_InitializeWriter(
     _Out_ PZP_CODEC_WRITER Writer,
