@@ -660,7 +660,7 @@ TEST_FUNC(SDKContract)
                                              &Request)) &&
             TestContext.SendMessageType == ZpMessageRequest);
     TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenReadResponse(2,
-                                                     64,
+                                                     16 + sizeof(RootCertificate),
                                                      16,
                                                      FileOpenReadResponse,
                                                      sizeof(FileOpenReadResponse),
@@ -673,7 +673,7 @@ TEST_FUNC(SDKContract)
             TestContext.FileOpenReadCount == 1 &&
             TestContext.FileOpenReadStatus == STATUS_SUCCESS &&
             TestContext.FileChannel != NULL &&
-            TestContext.FileSize == 64 &&
+            TestContext.FileSize == 16 + sizeof(RootCertificate) &&
             TestContext.FileOffset == 16 &&
             TestContext.SendMessageType == ZpMessageChannelWindow &&
             TestContext.SendChannelId == 2 &&
@@ -687,7 +687,8 @@ TEST_FUNC(SDKContract)
             TestContext.ChannelDataLength == sizeof(RootCertificate) &&
             TestContext.SendMessageType == ZpMessageChannelWindow &&
             TestContext.SendChannelId == 2 &&
-            TestContext.SendChannelCredit == sizeof(RootCertificate));
+            TestContext.SendChannelCredit ==
+                ZP_CLIENT_DEFAULT_CHANNEL_WINDOW_SIZE);
     ChannelClose.ChannelId = 2;
     ChannelClose.Status = STATUS_SUCCESS;
     TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelClose(Client, &ChannelClose)) &&
@@ -728,6 +729,10 @@ TEST_FUNC(SDKContract)
             TestContext.ChannelCloseCount == 2 &&
             TestContext.ChannelCloseStatus == STATUS_CANCELLED);
     TEST_OK(ZpChannel_Cancel(TestContext.FileChannel) == STATUS_INVALID_DEVICE_STATE);
+    ChannelClose.ChannelId = 4;
+    ChannelClose.Status = STATUS_SUCCESS;
+    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelClose(Client, &ChannelClose)) &&
+            TestContext.ChannelCloseCount == 2);
     ZpChannel_Close(TestContext.FileChannel);
     TestContext.FileChannel = NULL;
     TEST_OK(NT_SUCCESS(ZpClient_SendRequest(Client,

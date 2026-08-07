@@ -59,15 +59,17 @@
 - 定稿通用 Channel 背压语义：新增 `ChannelWindow` 消息、零初始额度、接收方消费后补窗、单次 Close 终止及 Client 奇数/Server 偶数 ChannelId 规则，并实现 ChannelData/ChannelClose/ChannelWindow 类型化 Codec 与 Ready 状态门禁；
 - 固定 File.OpenRead 为 OperationId 3：请求编码断点 Offset 与 Path，成功响应编码 Server 偶数 ChannelId、FileSize 和确认 Offset，并实现严格的请求/响应 Codec；
 - 实现 Client 通用接收 Channel：OpenRead 成功响应建立引用计数 Channel Handle，Open 回调后自动授予 1 MiB 首窗，Data 回调返回后等量补窗，远端 Close、本地 Cancel 和连接终止均保证 Close 回调单次完成；
+- 实现 Server File.OpenRead 发送 Channel：按窗口在线程池分块读盘和发送，额度耗尽时退出工作并由后续补窗重新调度，关闭/取消/连接终止与活动工作通过连接引用安全竞争；
+- 扩展 localhost QUIC 集成测试，从 Offset 17 下载 UnitTest 自身文件，以流式字节数和 FNV 哈希验证多帧数据完整性、断点位置及成功 Close；同时处理本地 Close 与反向迟到 Window/Close 的合法交叉在途消息；
 - 扩展 localhost QUIC 集成测试，以调用方 Token 验证真实 Ping/Pong 往返；
 - 扩展 localhost QUIC 集成测试，覆盖 Server 停止、Client 进入 RetryWait、Server 重启以及 Client 自动重连并再次完成认证；
 - 创建 Protocol、Server SDK 和 UnitTest 工程，并建立 Client/Server 到 Protocol 的工程依赖；
-- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 238 项断言全部通过，其中包含 Client Channel 生命周期、通用 Channel Codec、File.OpenRead Payload、File.Enumerate/File.Query 和既有管理操作端到端验证。
+- x86/x64 的 Debug/Release 全矩阵 Rebuild 通过且无编译或链接警告；每个配置下 239 项断言全部通过，其中包含真实 File.OpenRead 下载、Client/Server Channel 生命周期、通用 Channel Codec、File.Enumerate/File.Query 和既有管理操作端到端验证。
 
 ## 下一步
 
-1. 实现 Server 文件发送 Channel，并完成 File.OpenRead 真实端到端下载；
-2. 在 File 通道验证后复用通用通道状态机实现 Terminal。
+1. 复用已经过 File 验证的通用 Channel 状态机实现 Terminal；
+2. 按实际需求补充 File 哈希协商、上传及目录分页。
 
 ## 待确认与阻塞
 

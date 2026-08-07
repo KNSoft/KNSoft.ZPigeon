@@ -317,7 +317,7 @@ UINT32 Capabilities
 
 `TimeoutMilliseconds` 是接收方从完整收到 Request 起计算的处理预算；0 表示协议层不额外施加超时。发送方 SDK 仍维护本地 Deadline：Deadline 到期后在本地以 `STATUS_IO_TIMEOUT` 完成操作，尽力发送 `Cancel`，并忽略迟到的 Response。显式取消在本地以 `STATUS_CANCELLED` 完成，`Cancel` 不要求单独响应。
 
-Channel 使用接收方授信的字节窗口提供背压：新 Channel 建立后发送额度为 0，接收方发送 `ChannelWindow` 后发送方才能发送不超过累计剩余额度的 `ChannelData`；每次授信非零且不超过 16 MiB，剩余额度不得溢出 64 位计数。SDK 把 Data 回调返回视为对应 Buffer 已消费，并自动补回等量窗口。任一方发送一次 `ChannelClose` 即终止 Channel，Status 为终止结果且不回送第二个 Close；未知、已关闭或额度违规的 ChannelId 视为协议违规。Client 创建的 ChannelId 使用奇数，Server 创建的 ChannelId 使用偶数，连接内单调分配且关闭前不复用。
+Channel 使用接收方授信的字节窗口提供背压：新 Channel 建立后发送额度为 0，接收方发送 `ChannelWindow` 后发送方才能发送不超过累计剩余额度的 `ChannelData`；每次授信非零且不超过 16 MiB，剩余额度不得溢出 64 位计数。SDK 把 Data 回调返回视为对应 Buffer 已消费，并自动补回等量窗口。任一方发送一次 `ChannelClose` 即终止 Channel，Status 为终止结果且不回送第二个 Close。Client 创建的 ChannelId 使用奇数，Server 创建的 ChannelId 使用偶数，连接内单调分配且永不复用；因此本地关闭后收到已分配旧 ID 的迟到 Window 或 Close 时幂等忽略，以容纳双向消息交叉在途，未来 ID、错误奇偶 ID、未知 Data 或额度违规仍视为协议违规。
 
 ### 7.2 固定 Codec
 

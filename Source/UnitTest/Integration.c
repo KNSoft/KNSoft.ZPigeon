@@ -31,6 +31,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE ServiceControlEvent;
     HANDLE FileInfoEvent;
     HANDLE FileListEvent;
+    HANDLE FileReadEvent;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
@@ -77,6 +78,13 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     WCHAR ExpectedFileName[MAX_PATH];
     ULONG ExpectedFileNameLength;
     LOGICAL FoundExpectedFile;
+    volatile LONG FileOpenReadStatus;
+    volatile LONG FileReadCloseStatus;
+    ZP_CHANNEL_HANDLE FileReadChannel;
+    ULONGLONG FileReadSize;
+    ULONGLONG FileReadOffset;
+    ULONGLONG FileReadBytes;
+    ULONGLONG FileReadHash;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -366,6 +374,118 @@ SDKIntegration_FileListCallback(
     }
     InterlockedExchange(&TestContext->FileListStatus, Status);
     SetEvent(TestContext->FileListEvent);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_FileOpenReadCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONGLONG FileSize,
+    _In_ ULONGLONG Offset,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->FileReadChannel = Channel;
+    TestContext->FileReadSize = FileSize;
+    TestContext->FileReadOffset = Offset;
+    InterlockedExchange(&TestContext->FileOpenReadStatus, Status);
+    if (!NT_SUCCESS(Status))
+    {
+        SetEvent(TestContext->FileReadEvent);
+    }
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_ChannelDataCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ PCZP_BUFFER_VIEW Data,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+    ULONG Index;
+
+    UNREFERENCED_PARAMETER(Channel);
+    for (Index = 0; Index < Data->Length; Index++)
+    {
+        TestContext->FileReadHash ^= Data->Buffer[Index];
+        TestContext->FileReadHash *= 1099511628211ULL;
+    }
+    TestContext->FileReadBytes += Data->Length;
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_ChannelCloseCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ NTSTATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Channel);
+    InterlockedExchange(&TestContext->FileReadCloseStatus, Status);
+    SetEvent(TestContext->FileReadEvent);
+}
+
+static
+LOGICAL
+SDKIntegration_HashFile(
+    _In_ PCWSTR Path,
+    _In_ ULONGLONG Offset,
+    _Out_ PULONGLONG Bytes,
+    _Out_ PULONGLONG Hash)
+{
+    BYTE Buffer[0x10000];
+    LARGE_INTEGER Position;
+    HANDLE File;
+    DWORD BytesRead;
+    ULONG Index;
+    LOGICAL Result = FALSE;
+
+    File = CreateFileW(Path,
+                       GENERIC_READ,
+                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                       NULL,
+                       OPEN_EXISTING,
+                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+                       NULL);
+    if (File == INVALID_HANDLE_VALUE)
+    {
+        return FALSE;
+    }
+    Position.QuadPart = Offset;
+    if (!SetFilePointerEx(File, Position, NULL, FILE_BEGIN))
+    {
+        goto Cleanup;
+    }
+    *Bytes = 0;
+    *Hash = 1469598103934665603ULL;
+    do
+    {
+        if (!ReadFile(File, Buffer, sizeof(Buffer), &BytesRead, NULL))
+        {
+            goto Cleanup;
+        }
+        for (Index = 0; Index < BytesRead; Index++)
+        {
+            *Hash ^= Buffer[Index];
+            *Hash *= 1099511628211ULL;
+        }
+        *Bytes += BytesRead;
+    } while (BytesRead != 0);
+    Result = TRUE;
+
+Cleanup:
+    CloseHandle(File);
+    return Result;
 }
 
 static
@@ -731,8 +851,10 @@ TEST_FUNC(SDKQuicIntegration)
     DWORD WaitStatus;
     DWORD ServerStopWait = MAXDWORD, RetryWait = MAXDWORD, ProcessWait = MAXDWORD;
     ULONG Index;
+    ULONGLONG ExpectedFileReadBytes, ExpectedFileReadHash;
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -774,6 +896,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.ServiceControlEvent = Events[13];
     TestContext.FileInfoEvent = Events[14];
     TestContext.FileListEvent = Events[15];
+    TestContext.FileReadEvent = Events[16];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -1110,6 +1233,44 @@ TEST_FUNC(SDKQuicIntegration)
     {
         goto Cleanup;
     }
+    TestContext.FileReadHash = 1469598103934665603ULL;
+    if (!SDKIntegration_HashFile(ModulePath,
+                                 17,
+                                 &ExpectedFileReadBytes,
+                                 &ExpectedFileReadHash))
+    {
+        goto Cleanup;
+    }
+    Status = ZpClient_OpenFileRead(Client,
+                                  ModulePath,
+                                  Index,
+                                  17,
+                                  SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                  SDKIntegration_FileOpenReadCallback,
+                                  SDKIntegration_ChannelDataCallback,
+                                  SDKIntegration_ChannelCloseCallback,
+                                  &TestContext,
+                                  &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.FileReadEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !NT_SUCCESS(TestContext.FileOpenReadStatus) ||
+        !NT_SUCCESS(TestContext.FileReadCloseStatus) ||
+        TestContext.FileReadChannel == NULL ||
+        TestContext.FileReadSize != TestContext.FileSize ||
+        TestContext.FileReadOffset != 17 ||
+        TestContext.FileReadBytes != ExpectedFileReadBytes ||
+        TestContext.FileReadHash != ExpectedFileReadHash)
+    {
+        goto Cleanup;
+    }
+    ZpChannel_Close(TestContext.FileReadChannel);
+    TestContext.FileReadChannel = NULL;
     for (; Index != 0; Index--)
     {
         if (ModulePath[Index - 1] == L'\\' || ModulePath[Index - 1] == L'/')
@@ -1209,6 +1370,12 @@ Cleanup:
     if (Request != NULL)
     {
         ZpRequest_Close(Request);
+    }
+    if (TestContext.FileReadChannel != NULL)
+    {
+        ZpChannel_Cancel(TestContext.FileReadChannel);
+        ZpChannel_Close(TestContext.FileReadChannel);
+        TestContext.FileReadChannel = NULL;
     }
     if (Client != NULL)
     {

@@ -25,6 +25,7 @@ typedef struct _ZP_CHANNEL_OBJECT
     volatile LONG Pending;
     ULONGLONG ChannelId;
     ULONGLONG ReceiveCredit;
+    ULONGLONG RemainingBytes;
     ZP_CHANNEL_DATA_CALLBACK DataCallback;
     ZP_CHANNEL_CLOSE_CALLBACK CloseCallback;
     PVOID Context;
@@ -37,6 +38,7 @@ typedef struct _ZP_CLIENT_OBJECT
     ULONG CallbackCount;
     LIST_ENTRY Requests;
     LIST_ENTRY Channels;
+    ULONGLONG HighestServerChannelId;
     ULONGLONG NextRequestId;
     PTP_TIMER RequestTimer;
     ZP_CLIENT_CONFIG Config;

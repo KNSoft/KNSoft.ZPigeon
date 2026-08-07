@@ -929,6 +929,7 @@ NTSTATUS
 ZpClient_CreateServerChannel(
     _Inout_ PZP_CLIENT_OBJECT Object,
     _In_ ULONGLONG ChannelId,
+    _In_ ULONGLONG RemainingBytes,
     _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
     _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
     _In_opt_ PVOID Context,
@@ -950,6 +951,7 @@ ZpClient_CreateServerChannel(
     ChannelObject->ReferenceCount = 3;
     ChannelObject->Pending = TRUE;
     ChannelObject->ChannelId = ChannelId;
+    ChannelObject->RemainingBytes = RemainingBytes;
     ChannelObject->DataCallback = DataCallback;
     ChannelObject->CloseCallback = CloseCallback;
     ChannelObject->Context = Context;
@@ -963,6 +965,8 @@ ZpClient_CreateServerChannel(
         return STATUS_PROTOCOL_UNREACHABLE;
     }
     InsertTailList(&Object->Channels, &ChannelObject->ListEntry);
+    Object->HighestServerChannelId = max(Object->HighestServerChannelId,
+                                         ChannelId);
     RtlReleaseSRWLockExclusive(&Object->Lock);
     *Channel = ChannelObject;
     return STATUS_SUCCESS;
@@ -1786,6 +1790,7 @@ ZpClient_FileOpenReadComplete(
     {
         Status = ZpClient_CreateServerChannel(RequestObject->Owner,
                                               ChannelId,
+                                              FileSize - Offset,
                                               FileContext->DataCallback,
                                               FileContext->CloseCallback,
                                               FileContext->Context,
@@ -2039,6 +2044,7 @@ ZpClient_NotifyState(
     if (State == ZpClientStateReady)
     {
         Object->ReadyTickCount = GetTickCount64();
+        Object->HighestServerChannelId = 0;
     }
     Object->CallbackCount++;
     RtlReleaseSRWLockExclusive(&Object->Lock);
@@ -2125,12 +2131,14 @@ ZpClient_ReceiveChannelData(
     RtlAcquireSRWLockExclusive(&Object->Lock);
     Channel = ZpClient_FindChannel(Object, Message->ChannelId);
     if (Channel == NULL ||
-        Message->Data.Length > Channel->ReceiveCredit)
+        Message->Data.Length > Channel->ReceiveCredit ||
+        Message->Data.Length > Channel->RemainingBytes)
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_PROTOCOL_UNREACHABLE;
     }
     Channel->ReceiveCredit -= Message->Data.Length;
+    Channel->RemainingBytes -= Message->Data.Length;
     InterlockedIncrement(&Channel->ReferenceCount);
     Object->CallbackCount++;
     RtlReleaseSRWLockExclusive(&Object->Lock);
@@ -2141,7 +2149,7 @@ ZpClient_ReceiveChannelData(
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
     Object->CallbackCount--;
-    Replenish = Channel->Pending;
+    Replenish = Channel->Pending && Channel->RemainingBytes != 0;
     RtlReleaseSRWLockExclusive(&Object->Lock);
     if (Replenish)
     {
@@ -2166,7 +2174,17 @@ ZpClient_ReceiveChannelClose(
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
     Channel = ZpClient_FindChannel(Object, Message->ChannelId);
-    if (Channel == NULL ||
+    if (Channel == NULL)
+    {
+        NTSTATUS Status = (Message->ChannelId & 1) == 0 &&
+                          Message->ChannelId <= Object->HighestServerChannelId ?
+                              STATUS_SUCCESS :
+                              STATUS_PROTOCOL_UNREACHABLE;
+
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return Status;
+    }
+    if ((NT_SUCCESS(Message->Status) && Channel->RemainingBytes != 0) ||
         !InterlockedExchange(&Channel->Pending, FALSE))
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
