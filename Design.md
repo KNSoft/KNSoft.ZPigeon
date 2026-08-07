@@ -437,7 +437,7 @@ Client 的非零 `TimeoutMilliseconds` 同时建立基于 `GetTickCount64` 的�
 
 Server 完整收到 Request 后复制 Payload 并投递线程池，MsQuic 接收回调不执行系统查询等业务工作；每条连接维护活动 Request 表和引用计数。Cancel、连接关闭与工作完成通过请求表锁竞争一次终止，连接对象延迟到所有工作退出后释放，Server Stop 也等待这些连接引用归零。
 
-Server 配置的 `MaxRequestsPerConnection` 限制每连接已投递且尚未完成的 Request；0 使用默认值 64，第一版配置硬上限为 4096。`MaxChannelsPerConnection` 和 `MaxSubscriptionsPerConnection` 分别限制已激活 Channel 与 Subscription；两者的 0 均使用默认值 16，配置硬上限均为 1024。达到任一上限的新对象返回 `STATUS_QUOTA_EXCEEDED`，不终止连接；对象在 Response 发送失败、主动取消、远端关闭或工作完成后立即释放名额。
+Server 配置的 `MaxRequestsPerConnection` 限制每连接已投递且尚未完成的 Request；0 使用默认值 64，第一版配置硬上限为 4096。`MaxRequestPayloadBytesPerConnection` 限制这些 Request 被 Server 深拷贝并持有的 Payload 字节总量；0 使用默认值 64 MiB，配置硬上限为 1 GiB，单个请求超过该值时在复制前拒绝。`MaxChannelsPerConnection` 和 `MaxSubscriptionsPerConnection` 分别限制已激活 Channel 与 Subscription；两者的 0 均使用默认值 16，配置硬上限均为 1024。达到任一上限的新对象返回 `STATUS_QUOTA_EXCEEDED`，不终止连接；对象在 Response 发送失败、主动取消、远端关闭或工作完成后立即释放名额及 Payload 预算。
 
 Server 在线程池执行具体业务操作前统一经过授权门禁。授权回调接收已认证连接的 32 字节 ClientId、`Read` 或 `Control` 访问级别、ModuleId、OperationId 以及只在回调期间有效的原始 Payload View，并以 `NTSTATUS` 决定是否继续；失败状态原样作为 Response 返回。未配置回调时只读操作默认放行，控制类操作默认返回 `STATUS_ACCESS_DENIED`。授权回调在对象锁外执行并计入活动回调，不能在回调栈内关闭 Server。
 
@@ -475,6 +475,8 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 Enumerate 与 Query 请求 Payload 均为非空 UTF-16LE Path 字符串。Query 成功响应依次编码 `UINT32 Attributes` 以及四个 `UINT64`：Size、CreationTime、LastAccessTime、LastWriteTime。Enumerate 成功响应为数组，单项编码同一组元数据后追加 UTF-16LE Name 字符串，并排除 `.` 与 `..`；结果超过单 Frame 上限时返回 `STATUS_BUFFER_OVERFLOW`。
 
 EnumeratePage 请求依次编码 `UINT32 MaxEntries`、非空 Path 字符串和可空 Cursor 字符串，MaxEntries 范围为 1～4096。Server 以不区分大小写的 ordinal 文件名顺序返回严格大于 Cursor 的下一页；响应编码可空 NextCursor 字符串及同 Enumerate 格式的记录数组，有后续记录时 NextCursor 必须等于本页最后一个名称，否则为空。该游标无服务端状态；目录并发变化时分页是 best-effort 快照，调用方可按需要重新从空 Cursor 开始。
+
+为完成 ordinal 排序，Server 的单次 File 枚举会建立有界目录快照：最多 65536 条记录，记录对象和排序指针的保守总量最多 16 MiB；超出时返回 `STATUS_QUOTA_EXCEEDED`，不得把截断结果伪装为完整末页。分页记录上限同时保证编码响应不超过 Core Frame 上限。
 
 OpenRead 请求依次编码 `UINT64 Offset` 和非空 UTF-16LE Path；成功响应依次编码 Server 创建的偶数 `UINT64 ChannelId`、`UINT64 FileSize` 和服务端确认的 `UINT64 Offset`，Offset 大于 FileSize 时请求失败，等于 FileSize 时建立后正常空流结束。Client 在成功响应回调返回后授予首个接收窗口，Server 才能发送文件数据。
 

@@ -706,6 +706,7 @@ TEST_FUNC(SDKContract)
         0,
         0,
         0,
+        0,
         SDKTest_ServerStateCallback,
         SDKTest_ServerConnectionCallback,
         NULL
@@ -890,6 +891,10 @@ TEST_FUNC(SDKContract)
         ZP_SERVER_MAX_REQUESTS_PER_CONNECTION + 1;
     TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
     ServerConfig.MaxRequestsPerConnection = 0;
+    ServerConfig.MaxRequestPayloadBytesPerConnection =
+        ZP_SERVER_MAX_REQUEST_PAYLOAD_BYTES_PER_CONNECTION + 1;
+    TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
+    ServerConfig.MaxRequestPayloadBytesPerConnection = 0;
     ServerConfig.MaxChannelsPerConnection =
         ZP_SERVER_MAX_CHANNELS_PER_CONNECTION + 1;
     TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
@@ -905,6 +910,8 @@ TEST_FUNC(SDKContract)
     TEST_OK(ServerObject->State == ZpServerStateStopped);
     TEST_OK(ServerObject->Config.MaxRequestsPerConnection ==
                 ZP_SERVER_DEFAULT_MAX_REQUESTS_PER_CONNECTION &&
+            ServerObject->Config.MaxRequestPayloadBytesPerConnection ==
+                ZP_SERVER_DEFAULT_MAX_REQUEST_PAYLOAD_BYTES_PER_CONNECTION &&
             ServerObject->Config.MaxChannelsPerConnection ==
                 ZP_SERVER_DEFAULT_MAX_CHANNELS_PER_CONNECTION &&
             ServerObject->Config.MaxSubscriptionsPerConnection ==

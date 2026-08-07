@@ -21,6 +21,8 @@
 
 #define ZP_SERVER_FILE_CHANNEL_CHUNK_SIZE 0x00010000UL
 #define ZP_SERVER_FILE_WRITE_WINDOW_SIZE 0x00100000UL
+#define ZP_SERVER_FILE_SNAPSHOT_MAX_BYTES 0x01000000UL
+#define ZP_SERVER_FILE_SNAPSHOT_MAX_COUNT 65536
 #define ZP_SERVER_TERMINAL_CHANNEL_CHUNK_SIZE 0x00010000UL
 #define ZP_SERVER_TERMINAL_INPUT_WINDOW_SIZE 0x00001000UL
 #define ZP_SERVER_EVENT_LOG_BATCH_COUNT 64
@@ -46,6 +48,7 @@ typedef struct _ZP_SERVER_QUIC_CONNECTION
     volatile LONG ReferenceCount;
     LOGICAL Closing;
     ULONG ActiveRequestCount;
+    ULONGLONG ActiveRequestPayloadBytes;
     HQUIC Connection;
     HQUIC Stream;
     NTSTATUS ShutdownStatus;
@@ -1888,9 +1891,12 @@ ZpServerQuic_EnumerateFiles(
         {
             continue;
         }
-        if (Count == MAXULONG)
+        if (Count >= ZP_SERVER_FILE_SNAPSHOT_MAX_COUNT ||
+            ((SIZE_T)Count + 1) *
+                    (sizeof(*Entry) + sizeof(*SortedEntries)) >
+                ZP_SERVER_FILE_SNAPSHOT_MAX_BYTES)
         {
-            Status = STATUS_BUFFER_OVERFLOW;
+            Status = STATUS_QUOTA_EXCEEDED;
             goto Cleanup;
         }
         Entry = Mem_Alloc(sizeof(*Entry));
@@ -3749,6 +3755,7 @@ ZpServerQuic_RequestCallback(
 
         RemoveEntryList(&Request->ListEntry);
         QuicConnection->ActiveRequestCount--;
+        QuicConnection->ActiveRequestPayloadBytes -= Request->PayloadLength;
         if (NT_SUCCESS(Status) && Channel != NULL)
         {
             Status = ZpServerQuic_ActivateChannel(Channel);
@@ -3866,6 +3873,17 @@ ZpServerQuic_QueueRequest(
     PLIST_ENTRY Entry;
     SIZE_T AllocationSize;
 
+    if (Message->Payload.Length >
+        QuicConnection->Transport->Owner->Config
+            .MaxRequestPayloadBytesPerConnection)
+    {
+        return ZpServerQuic_SendResponse(QuicConnection,
+                                         &QuicConnection->ProtocolConnection,
+                                         Message->RequestId,
+                                         STATUS_QUOTA_EXCEEDED,
+                                         NULL,
+                                         0);
+    }
     AllocationSize = FIELD_OFFSET(ZP_SERVER_QUIC_REQUEST, Payload) +
                      Message->Payload.Length;
     Request = Mem_Alloc(AllocationSize);
@@ -3902,7 +3920,11 @@ ZpServerQuic_QueueRequest(
         return STATUS_CONNECTION_DISCONNECTED;
     }
     if (QuicConnection->ActiveRequestCount >=
-        QuicConnection->Transport->Owner->Config.MaxRequestsPerConnection)
+            QuicConnection->Transport->Owner->Config.MaxRequestsPerConnection ||
+        Message->Payload.Length >
+            QuicConnection->Transport->Owner->Config
+                    .MaxRequestPayloadBytesPerConnection -
+                QuicConnection->ActiveRequestPayloadBytes)
     {
         RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
         Mem_Free(Request);
@@ -3929,6 +3951,7 @@ ZpServerQuic_QueueRequest(
     }
     InsertTailList(&QuicConnection->Requests, &Request->ListEntry);
     QuicConnection->ActiveRequestCount++;
+    QuicConnection->ActiveRequestPayloadBytes += Message->Payload.Length;
     InterlockedIncrement(&QuicConnection->ReferenceCount);
     RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
 
@@ -3943,6 +3966,7 @@ ZpServerQuic_QueueRequest(
         {
             RemoveEntryList(&Request->ListEntry);
             QuicConnection->ActiveRequestCount--;
+            QuicConnection->ActiveRequestPayloadBytes -= Request->PayloadLength;
         }
         RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
         Mem_Free(Request);
@@ -3980,6 +4004,7 @@ ZpServerQuic_CancelRequest(
             InterlockedExchange(&Request->Pending, FALSE);
             RemoveEntryList(&Request->ListEntry);
             QuicConnection->ActiveRequestCount--;
+            QuicConnection->ActiveRequestPayloadBytes -= Request->PayloadLength;
             RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
             return STATUS_SUCCESS;
         }
@@ -4362,6 +4387,7 @@ ZpServerQuic_CancelRequests(
         InterlockedExchange(&Request->Pending, FALSE);
         RemoveEntryList(&Request->ListEntry);
         QuicConnection->ActiveRequestCount--;
+        QuicConnection->ActiveRequestPayloadBytes -= Request->PayloadLength;
     }
     RtlReleaseSRWLockExclusive(&QuicConnection->RequestLock);
 }

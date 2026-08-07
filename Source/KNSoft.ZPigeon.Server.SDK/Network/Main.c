@@ -18,6 +18,8 @@ ZpServer_ValidateConfig(
         Config->DeploymentCount > ZP_DEPLOYMENT_MAX_COUNT ||
         Config->MaxRequestsPerConnection >
             ZP_SERVER_MAX_REQUESTS_PER_CONNECTION ||
+        Config->MaxRequestPayloadBytesPerConnection >
+            ZP_SERVER_MAX_REQUEST_PAYLOAD_BYTES_PER_CONNECTION ||
         Config->MaxChannelsPerConnection >
             ZP_SERVER_MAX_CHANNELS_PER_CONNECTION ||
         Config->MaxSubscriptionsPerConnection >
@@ -145,6 +147,10 @@ ZpServer_Create(
         Config->MaxRequestsPerConnection != 0 ?
             Config->MaxRequestsPerConnection :
             ZP_SERVER_DEFAULT_MAX_REQUESTS_PER_CONNECTION;
+    Object->Config.MaxRequestPayloadBytesPerConnection =
+        Config->MaxRequestPayloadBytesPerConnection != 0 ?
+            Config->MaxRequestPayloadBytesPerConnection :
+            ZP_SERVER_DEFAULT_MAX_REQUEST_PAYLOAD_BYTES_PER_CONNECTION;
     Object->Config.MaxChannelsPerConnection =
         Config->MaxChannelsPerConnection != 0 ?
             Config->MaxChannelsPerConnection :

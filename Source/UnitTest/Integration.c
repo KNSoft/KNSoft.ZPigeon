@@ -1486,6 +1486,7 @@ TEST_FUNC(SDKQuicIntegration)
     static const WCHAR RegistryValueName[] = L"Named";
     static const ULONG RegistryDefaultData = 17;
     static const ULONG RegistryNamedData = 42;
+    BYTE RegistryOversizedData[8192] = { 0 };
     WCHAR FirstPageName[MAX_PATH];
     ULONG FirstPageNameLength;
     WCHAR FirstEventBookmark[4096];
@@ -1616,6 +1617,7 @@ TEST_FUNC(SDKQuicIntegration)
     ServerConfig.Modules = ServerModules;
     ServerConfig.ModuleCount = ARRAYSIZE(ServerModules);
     ServerConfig.MaxRequestsPerConnection = 4;
+    ServerConfig.MaxRequestPayloadBytesPerConnection = 4096;
     ServerConfig.MaxChannelsPerConnection = 1;
     ServerConfig.MaxSubscriptionsPerConnection = 1;
     ServerConfig.StateCallback = SDKIntegration_ServerStateCallback;
@@ -2587,6 +2589,35 @@ TEST_FUNC(SDKQuicIntegration)
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
         !NT_SUCCESS(TestContext.RegistryStatus))
+    {
+        goto Cleanup;
+    }
+    ResetEvent(TestContext.RegistryStatusEvent);
+    Status = ZpClient_SetRegistryValue(
+                 Client,
+                 ZpRegistryCurrentUser,
+                 ZpRegistryViewDefault,
+                 RegistryPath,
+                 (ULONG)wcslen(RegistryPath),
+                 L"Oversized",
+                 ARRAYSIZE(L"Oversized") - 1,
+                 REG_BINARY,
+                 RegistryOversizedData,
+                 sizeof(RegistryOversizedData),
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryStatusCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryStatusEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        TestContext.RegistryStatus != STATUS_QUOTA_EXCEEDED)
     {
         goto Cleanup;
     }
