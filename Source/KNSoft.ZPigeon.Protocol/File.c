@@ -191,6 +191,150 @@ ZpFile_DecodeOpenReadResponse(
     return Status;
 }
 
+NTSTATUS
+ZpFile_EncodeOpenWriteRequest(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG FileSize,
+    _In_ ZP_FILE_CREATE_DISPOSITION Disposition,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize;
+    NTSTATUS Status;
+
+    if ((Disposition != ZpFileCreateNew &&
+         Disposition != ZpFileCreateAlways) ||
+        PathLength == 0 ||
+        PathLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Path == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = sizeof(USHORT) + sizeof(ULONGLONG) + sizeof(ULONG) +
+                   (ULONGLONG)PathLength * sizeof(WCHAR);
+    if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
+    {
+        return STATUS_BUFFER_OVERFLOW;
+    }
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < RequiredSize)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Disposition);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt64(&Writer, FileSize);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer, Path, PathLength);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpFile_DecodeOpenWriteRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW Path,
+    _Out_ PULONGLONG FileSize,
+    _Out_ PZP_FILE_CREATE_DISPOSITION Disposition)
+{
+    ZP_CODEC_READER Reader;
+    USHORT DispositionValue;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt16(&Reader, &DispositionValue);
+    if (NT_SUCCESS(Status))
+    {
+        *Disposition = (ZP_FILE_CREATE_DISPOSITION)DispositionValue;
+        Status = ZpCodec_ReadUInt64(&Reader, FileSize);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(&Reader, Path);
+    }
+    if (!NT_SUCCESS(Status) ||
+        (DispositionValue != ZpFileCreateNew &&
+         DispositionValue != ZpFileCreateAlways) ||
+        Path->Length == 0 ||
+        Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpFile_EncodeOpenWriteResponse(
+    _In_ ULONGLONG ChannelId,
+    _In_ ULONGLONG FileSize,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+
+    if (ChannelId == 0 || (ChannelId & 1) != 0)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *BytesWritten = 2 * sizeof(ULONGLONG);
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < *BytesWritten)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt64(&Writer, ChannelId);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt64(&Writer, FileSize);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpFile_DecodeOpenWriteResponse(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONGLONG FileSize)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    if (PayloadLength != 2 * sizeof(ULONGLONG))
+    {
+        return STATUS_DATA_ERROR;
+    }
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt64(&Reader, ChannelId);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt64(&Reader, FileSize);
+    }
+    if (NT_SUCCESS(Status) && (*ChannelId == 0 || (*ChannelId & 1) != 0))
+    {
+        Status = STATUS_DATA_ERROR;
+    }
+    return Status;
+}
+
 static
 ULONG
 ZpFile_GetDigestLength(

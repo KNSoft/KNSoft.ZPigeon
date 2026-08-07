@@ -10,7 +10,14 @@ EXTERN_C_START
 #define ZP_FILE_OPERATION_QUERY 2
 #define ZP_FILE_OPERATION_OPEN_READ 3
 #define ZP_FILE_OPERATION_HASH 4
+#define ZP_FILE_OPERATION_OPEN_WRITE 5
 #define ZP_FILE_SHA256_SIZE 32
+
+typedef enum _ZP_FILE_CREATE_DISPOSITION
+{
+    ZpFileCreateNew = 1,
+    ZpFileCreateAlways = 2
+} ZP_FILE_CREATE_DISPOSITION, *PZP_FILE_CREATE_DISPOSITION;
 
 typedef enum _ZP_FILE_HASH_ALGORITHM
 {
@@ -107,6 +114,39 @@ ZpFile_DecodeOpenReadResponse(
     _Out_ PULONGLONG ChannelId,
     _Out_ PULONGLONG FileSize,
     _Out_ PULONGLONG Offset);
+
+NTSTATUS
+ZpFile_EncodeOpenWriteRequest(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG FileSize,
+    _In_ ZP_FILE_CREATE_DISPOSITION Disposition,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeOpenWriteRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW Path,
+    _Out_ PULONGLONG FileSize,
+    _Out_ PZP_FILE_CREATE_DISPOSITION Disposition);
+
+NTSTATUS
+ZpFile_EncodeOpenWriteResponse(
+    _In_ ULONGLONG ChannelId,
+    _In_ ULONGLONG FileSize,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeOpenWriteResponse(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONGLONG FileSize);
 
 NTSTATUS
 ZpFile_EncodeHashRequest(

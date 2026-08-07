@@ -92,6 +92,7 @@ TEST_FUNC(ProtocolMessage)
     ZP_FILE_INFO FileInfoView;
     ZP_STRING_VIEW FilePathView;
     ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
+    ZP_FILE_CREATE_DISPOSITION FileDisposition;
     ZP_FILE_HASH_VIEW FileHashView;
     BYTE FileDigest[ZP_FILE_SHA256_SIZE];
     ZP_FILE_RECORD FileRecords[] = {
@@ -429,6 +430,44 @@ TEST_FUNC(ProtocolMessage)
                                           Buffer,
                                           sizeof(Buffer),
                                           &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenWriteRequest(L"C:\\Test.bin",
+                                                     11,
+                                                     12345,
+                                                     ZpFileCreateAlways,
+                                                     Buffer,
+                                                     sizeof(Buffer),
+                                                     &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeOpenWriteRequest(Buffer,
+                                                     Length,
+                                                     &FilePathView,
+                                                     &FileSize,
+                                                     &FileDisposition)) &&
+            FilePathView.Length == 11 &&
+            FileSize == 12345 &&
+            FileDisposition == ZpFileCreateAlways);
+    TEST_OK(ZpFile_EncodeOpenWriteRequest(L"C:\\Test.bin",
+                                          11,
+                                          12345,
+                                          (ZP_FILE_CREATE_DISPOSITION)0,
+                                          Buffer,
+                                          sizeof(Buffer),
+                                          &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenWriteResponse(4,
+                                                      12345,
+                                                      Buffer,
+                                                      sizeof(Buffer),
+                                                      &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeOpenWriteResponse(Buffer,
+                                                      Length,
+                                                      &Value,
+                                                      &FileSize)) &&
+            Value == 4 &&
+            FileSize == 12345);
+    TEST_OK(ZpFile_EncodeOpenWriteResponse(3,
+                                           12345,
+                                           Buffer,
+                                           sizeof(Buffer),
+                                           &Length) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpFile_EncodeHashRequest(ZpFileHashSha256,
                                                 L"C:\\Test.bin",
                                                 11,
