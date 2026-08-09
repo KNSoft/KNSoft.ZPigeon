@@ -1,51 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Network">
-      <UniqueIdentifier>{c1cea273-5759-4737-8531-a664dd6c0b7b}</UniqueIdentifier>
-    </Filter>
+    <Filter Include="Core"><UniqueIdentifier>{d04a7902-29d3-4775-835f-c8ed79505fa0}</UniqueIdentifier></Filter>
+    <Filter Include="Include"><UniqueIdentifier>{bd826feb-700d-4ef9-88a2-bd48199a3a79}</UniqueIdentifier></Filter>
+    <Filter Include="Network"><UniqueIdentifier>{c1cea273-5759-4737-8531-a664dd6c0b7b}</UniqueIdentifier></Filter>
+    <Filter Include="Transport"><UniqueIdentifier>{fe052e09-8b92-4ae5-a0d1-27ca7a98043f}</UniqueIdentifier></Filter>
+    <Filter Include="Modules"><UniqueIdentifier>{9839cb5f-b2b4-4528-a237-948543bc124a}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\EventLog"><UniqueIdentifier>{7656ca23-7a73-4df8-bcbe-e8497e34e953}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\File"><UniqueIdentifier>{84b00e40-ae0e-447e-9811-f19bb2929dfe}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Process"><UniqueIdentifier>{e10eefb5-132e-4aac-9f46-2f19e88bbd85}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Registry"><UniqueIdentifier>{5715349f-e762-49a0-b11a-9ae027702182}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Service"><UniqueIdentifier>{b32c7d66-fda3-473b-880a-b4e564578aa9}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\System"><UniqueIdentifier>{88bbcefa-a517-49f0-a3c0-84d6c4ab526d}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Terminal"><UniqueIdentifier>{1047ad07-4b5f-484c-8f96-f74bd0b17434}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\Network\Connection.c">
-      <Filter>Network</Filter>
-    </ClCompile>
-    <ClCompile Include="Network\Main.c">
-      <Filter>Network</Filter>
-    </ClCompile>
-    <ClCompile Include="Network\Quic.c">
-      <Filter>Network</Filter>
-    </ClCompile>
-    <ClCompile Include="Network\Registry.c">
-      <Filter>Network</Filter>
-    </ClCompile>
+    <ClCompile Include="Core\Channel.c"><Filter>Core</Filter></ClCompile>
+    <ClCompile Include="Core\Request.c"><Filter>Core</Filter></ClCompile>
+    <ClCompile Include="..\Network\Connection.c"><Filter>Network</Filter></ClCompile>
+    <ClCompile Include="Transport\Main.c"><Filter>Transport</Filter></ClCompile>
+    <ClCompile Include="Transport\Quic.c"><Filter>Transport</Filter></ClCompile>
+    <ClCompile Include="..\Modules\EventLog\Client.c"><Filter>Modules\EventLog</Filter></ClCompile>
+    <ClCompile Include="..\Modules\File\Client.c"><Filter>Modules\File</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Process\Client.c"><Filter>Modules\Process</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Registry\Client.c"><Filter>Modules\Registry</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Service\Client.c"><Filter>Modules\Service</Filter></ClCompile>
+    <ClCompile Include="..\Modules\System\Client.c"><Filter>Modules\System</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Terminal\Client.c"><Filter>Modules\Terminal</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\Network\Authentication.inl">
-      <Filter>Network</Filter>
-    </ClInclude>
-    <ClInclude Include="..\Network\Config.inl">
-      <Filter>Network</Filter>
-    </ClInclude>
-    <ClInclude Include="..\Network\Connection.h">
-      <Filter>Network</Filter>
-    </ClInclude>
-    <ClInclude Include="..\Network\Quic.inl">
-      <Filter>Network</Filter>
-    </ClInclude>
-    <ClInclude Include="..\Network\Transport.h">
-      <Filter>Network</Filter>
-    </ClInclude>
-    <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
+    <ClInclude Include="Core\Channel.h"><Filter>Core</Filter></ClInclude>
+    <ClInclude Include="..\Network\Authentication.inl"><Filter>Network</Filter></ClInclude>
+    <ClInclude Include="..\Network\Config.inl"><Filter>Network</Filter></ClInclude>
+    <ClInclude Include="..\Network\Connection.h"><Filter>Network</Filter></ClInclude>
+    <ClInclude Include="..\Network\Quic.inl"><Filter>Network</Filter></ClInclude>
+    <ClInclude Include="..\Network\Transport.h"><Filter>Network</Filter></ClInclude>
+    <ClInclude Include="Transport\Quic.h"><Filter>Transport</Filter></ClInclude>
+    <ClInclude Include="Transport\Retry.inl"><Filter>Transport</Filter></ClInclude>
+    <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Client.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="..\Modules\EventLog\Client.h"><Filter>Modules\EventLog</Filter></ClInclude>
+    <ClInclude Include="..\Modules\File\Client.h"><Filter>Modules\File</Filter></ClInclude>
+    <ClInclude Include="..\Modules\Process\Client.h"><Filter>Modules\Process</Filter></ClInclude>
+    <ClInclude Include="..\Modules\Registry\Client.h"><Filter>Modules\Registry</Filter></ClInclude>
+    <ClInclude Include="..\Modules\Service\Client.h"><Filter>Modules\Service</Filter></ClInclude>
+    <ClInclude Include="..\Modules\System\Client.h"><Filter>Modules\System</Filter></ClInclude>
+    <ClInclude Include="..\Modules\Terminal\Client.h"><Filter>Modules\Terminal</Filter></ClInclude>
     <ClInclude Include="Client.inl" />
-    <ClInclude Include="Include\KNSoft\ZPigeon\Client.h" />
-    <ClInclude Include="Network\Quic.h">
-      <Filter>Network</Filter>
-    </ClInclude>
-    <ClInclude Include="Network\Retry.inl">
-      <Filter>Network</Filter>
-    </ClInclude>
   </ItemGroup>
-  <ItemGroup>
-    <None Include="packages.config" />
-  </ItemGroup>
+  <ItemGroup><None Include="packages.config" /></ItemGroup>
 </Project>

@@ -58,6 +58,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>Include;..\Include;..\KNSoft.ZPigeon.Protocol\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>MLE_API=;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -137,14 +138,30 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Core\Channel.c" />
+    <ClCompile Include="Core\Request.c" />
     <ClCompile Include="..\Network\Connection.c">
       <ObjectFileName>$(IntDir)Network\</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="Network\Main.c" />
-    <ClCompile Include="Network\Quic.c" />
-    <ClCompile Include="Network\Registry.c" />
+    <ClCompile Include="..\Modules\EventLog\Client.c"><ObjectFileName>$(IntDir)Modules\EventLog\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\File\Client.c"><ObjectFileName>$(IntDir)Modules\File\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Process\Client.c"><ObjectFileName>$(IntDir)Modules\Process\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Registry\Client.c"><ObjectFileName>$(IntDir)Modules\Registry\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Service\Client.c"><ObjectFileName>$(IntDir)Modules\Service\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\System\Client.c"><ObjectFileName>$(IntDir)Modules\System\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Terminal\Client.c"><ObjectFileName>$(IntDir)Modules\Terminal\</ObjectFileName></ClCompile>
+    <ClCompile Include="Transport\Main.c" />
+    <ClCompile Include="Transport\Quic.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Core\Channel.h" />
+    <ClInclude Include="..\Modules\EventLog\Client.h" />
+    <ClInclude Include="..\Modules\File\Client.h" />
+    <ClInclude Include="..\Modules\Process\Client.h" />
+    <ClInclude Include="..\Modules\Registry\Client.h" />
+    <ClInclude Include="..\Modules\Service\Client.h" />
+    <ClInclude Include="..\Modules\System\Client.h" />
+    <ClInclude Include="..\Modules\Terminal\Client.h" />
     <ClInclude Include="..\Network\Config.inl" />
     <ClInclude Include="..\Network\Authentication.inl" />
     <ClInclude Include="..\Network\Connection.h" />
@@ -153,8 +170,8 @@
     <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
     <ClInclude Include="Client.inl" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Client.h" />
-    <ClInclude Include="Network\Quic.h" />
-    <ClInclude Include="Network\Retry.inl" />
+    <ClInclude Include="Transport\Quic.h" />
+    <ClInclude Include="Transport\Retry.inl" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

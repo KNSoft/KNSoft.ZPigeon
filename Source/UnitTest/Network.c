@@ -23,7 +23,7 @@ ConnectionTest_MessageCallback(
 
     Index = TestContext->Count++;
     TestContext->MessageTypes[Index] = Frame->MessageType;
-    TestContext->States[Index] = ZpConnection_GetState(Connection);
+    TestContext->States[Index] = Connection->State;
     return TestContext->CallbackStatus;
 }
 
@@ -31,20 +31,18 @@ TEST_FUNC(NetworkConnection)
 {
     ZP_CLIENT_HELLO ClientHello = { ZP_CORE_VERSION };
     ZP_READY Ready = { 0 };
-    ZP_DISCONNECT Disconnect = { STATUS_ACCESS_DENIED };
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE] = { 0x04 };
     BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE] = { 0 };
     BYTE Signature[ZP_CLIENT_SIGNATURE_SIZE] = { 0 };
     BYTE PingBody[sizeof(ULONGLONG)] = { 1 }, ChannelWindowBody[16];
-    BYTE HelloBody[128], ReadyBody[16], DisconnectBody[32], HelloFrame[160];
+    BYTE HelloBody[128], ReadyBody[16], HelloFrame[160];
     BYTE ChallengeFrame[64], AuthenticateFrame[96], ReadyFrame[32], PingFrame[32], ChannelWindowFrame[32];
-    BYTE DisconnectFrame[64];
     BYTE CoalescedFrames[64], InvalidPrefix[sizeof(ULONG)] = { 0 };
     BYTE MaximumPrefix[sizeof(ULONG)] = { 0, 0, 0, 1 };
     CONNECTION_TEST_CONTEXT Context = { 0 };
     ZP_CONNECTION Connection;
     ULONG BodyLength, FrameLength, HelloFrameLength, ChallengeFrameLength, AuthenticateFrameLength;
-    ULONG ReadyFrameLength, PingFrameLength, ChannelWindowFrameLength, DisconnectFrameLength;
+    ULONG ReadyFrameLength, PingFrameLength, ChannelWindowFrameLength;
 
     ClientHello.ClientPublicKey = PublicKey;
     TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(&ClientHello,
@@ -93,26 +91,16 @@ TEST_FUNC(NetworkConnection)
                                      ChannelWindowFrame,
                                      sizeof(ChannelWindowFrame),
                                      &ChannelWindowFrameLength)));
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeDisconnect(&Disconnect,
-                                                  DisconnectBody,
-                                                  sizeof(DisconnectBody),
-                                                  &BodyLength)));
-    TEST_OK(NT_SUCCESS(ZpFrame_Encode(ZpMessageDisconnect,
-                                     DisconnectBody,
-                                     BodyLength,
-                                     DisconnectFrame,
-                                     sizeof(DisconnectFrame),
-                                     &DisconnectFrameLength)));
 
     TEST_OK(NT_SUCCESS(ZpConnection_Initialize(&Connection,
                                               ZpConnectionRoleClient,
                                               ConnectionTest_MessageCallback,
                                               &Context)) &&
-            ZpConnection_GetState(&Connection) == ZpConnectionStateClientSendHello);
+            Connection.State == ZpConnectionStateClientSendHello);
     TEST_OK(ZpConnection_Receive(&Connection,
                                  ChallengeFrame,
                                  ChallengeFrameLength) == STATUS_PROTOCOL_UNREACHABLE &&
-            ZpConnection_GetState(&Connection) == ZpConnectionStateClosed &&
+            Connection.State == ZpConnectionStateClosed &&
             Context.Count == 0);
     ZpConnection_Uninitialize(&Connection);
 
@@ -122,9 +110,9 @@ TEST_FUNC(NetworkConnection)
                                               ConnectionTest_MessageCallback,
                                               &Context)));
     TEST_OK(ZpConnection_Receive(&Connection, NULL, 1) == STATUS_INVALID_PARAMETER &&
-            ZpConnection_GetState(&Connection) == ZpConnectionStateClientSendHello);
+            Connection.State == ZpConnectionStateClientSendHello);
     TEST_OK(ZpConnection_NotifyMessageSent(&Connection, ZpMessageClientHello) == STATUS_SUCCESS &&
-            ZpConnection_GetState(&Connection) == ZpConnectionStateClientWaitChallenge);
+            Connection.State == ZpConnectionStateClientWaitChallenge);
     TEST_OK(ZpConnection_NotifyMessageSent(&Connection,
                                            ZpMessageClientAuthenticate) == STATUS_INVALID_DEVICE_STATE);
     TEST_OK(NT_SUCCESS(ZpConnection_Receive(&Connection, ChallengeFrame, 2)) && Context.Count == 0);
@@ -136,7 +124,7 @@ TEST_FUNC(NetworkConnection)
             Context.MessageTypes[0] == ZpMessageServerChallenge &&
             Context.States[0] == ZpConnectionStateClientSendAuthenticate);
     TEST_OK(NT_SUCCESS(ZpConnection_NotifyMessageSent(&Connection, ZpMessageClientAuthenticate)) &&
-            ZpConnection_GetState(&Connection) == ZpConnectionStateClientWaitReady);
+            Connection.State == ZpConnectionStateClientWaitReady);
 
     RtlCopyMemory(CoalescedFrames, ReadyFrame, ReadyFrameLength);
     RtlCopyMemory(CoalescedFrames + ReadyFrameLength, PingFrame, PingFrameLength);
@@ -147,7 +135,7 @@ TEST_FUNC(NetworkConnection)
             Context.States[1] == ZpConnectionStateReady &&
             Context.MessageTypes[2] == ZpMessagePing &&
             Context.States[2] == ZpConnectionStateReady &&
-            ZpConnection_GetState(&Connection) == ZpConnectionStateReady);
+            Connection.State == ZpConnectionStateReady);
     TEST_OK(NT_SUCCESS(ZpConnection_NotifyMessageSent(&Connection, ZpMessagePong)));
     TEST_OK(NT_SUCCESS(ZpConnection_Receive(&Connection,
                                            ChannelWindowFrame,
@@ -164,7 +152,7 @@ TEST_FUNC(NetworkConnection)
                                               ZpConnectionRoleServer,
                                               ConnectionTest_MessageCallback,
                                               &Context)) &&
-            ZpConnection_GetState(&Connection) == ZpConnectionStateServerWaitHello);
+            Connection.State == ZpConnectionStateServerWaitHello);
     TEST_OK(NT_SUCCESS(ZpConnection_Receive(&Connection, HelloFrame, 3)) && Context.Count == 0);
     TEST_OK(NT_SUCCESS(ZpConnection_Receive(&Connection,
                                            HelloFrame + 3,
@@ -173,7 +161,7 @@ TEST_FUNC(NetworkConnection)
             Context.MessageTypes[0] == ZpMessageClientHello &&
             Context.States[0] == ZpConnectionStateServerSendChallenge);
     TEST_OK(NT_SUCCESS(ZpConnection_NotifyMessageSent(&Connection, ZpMessageServerChallenge)) &&
-            ZpConnection_GetState(&Connection) == ZpConnectionStateServerWaitAuthenticate);
+            Connection.State == ZpConnectionStateServerWaitAuthenticate);
     TEST_OK(NT_SUCCESS(ZpConnection_Receive(&Connection,
                                            AuthenticateFrame,
                                            AuthenticateFrameLength)) &&
@@ -181,17 +169,9 @@ TEST_FUNC(NetworkConnection)
             Context.MessageTypes[1] == ZpMessageClientAuthenticate &&
             Context.States[1] == ZpConnectionStateServerSendReady);
     TEST_OK(NT_SUCCESS(ZpConnection_NotifyMessageSent(&Connection, ZpMessageReady)) &&
-            ZpConnection_GetState(&Connection) == ZpConnectionStateReady);
-    RtlCopyMemory(CoalescedFrames, DisconnectFrame, DisconnectFrameLength);
-    RtlCopyMemory(CoalescedFrames + DisconnectFrameLength, PingFrame, PingFrameLength);
-    TEST_OK(NT_SUCCESS(ZpConnection_Receive(&Connection,
-                                           CoalescedFrames,
-                                           DisconnectFrameLength + PingFrameLength)) &&
-            Context.Count == 3 &&
-            Context.MessageTypes[2] == ZpMessageDisconnect &&
-            Context.States[2] == ZpConnectionStateClosed);
-    TEST_OK(ZpConnection_Receive(&Connection, PingFrame, PingFrameLength) == STATUS_INVALID_DEVICE_STATE);
+            Connection.State == ZpConnectionStateReady);
     ZpConnection_Uninitialize(&Connection);
+    TEST_OK(ZpConnection_Receive(&Connection, PingFrame, PingFrameLength) == STATUS_INVALID_DEVICE_STATE);
 
     RtlZeroMemory(&Context, sizeof(Context));
     TEST_OK(NT_SUCCESS(ZpConnection_Initialize(&Connection,
@@ -211,7 +191,7 @@ TEST_FUNC(NetworkConnection)
     TEST_OK(ZpConnection_Receive(&Connection,
                                  InvalidPrefix,
                                  sizeof(InvalidPrefix)) == STATUS_DATA_ERROR &&
-            ZpConnection_GetState(&Connection) == ZpConnectionStateClosed);
+            Connection.State == ZpConnectionStateClosed);
     ZpConnection_Uninitialize(&Connection);
 
     RtlZeroMemory(&Context, sizeof(Context));
@@ -221,7 +201,7 @@ TEST_FUNC(NetworkConnection)
                                               ConnectionTest_MessageCallback,
                                               &Context)));
     TEST_OK(ZpConnection_Receive(&Connection, HelloFrame, HelloFrameLength) == STATUS_ACCESS_DENIED &&
-            ZpConnection_GetState(&Connection) == ZpConnectionStateClosed &&
+            Connection.State == ZpConnectionStateClosed &&
             Context.Count == 1);
     ZpConnection_Uninitialize(&Connection);
 }

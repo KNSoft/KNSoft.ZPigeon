@@ -2,6 +2,7 @@
 
 #include <KNSoft/ZPigeon/Client.h>
 #include <KNSoft/ZPigeon/Server.h>
+#include <KNSoft/ZPigeon/Terminal.h>
 
 #include "../KNSoft.ZPigeon.Client.SDK/Client.inl"
 
@@ -36,9 +37,6 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE FileListEvent;
     HANDLE FilePageEvent;
     HANDLE EventLogPageEvent;
-    HANDLE EventLogSubscribeEvent;
-    HANDLE EventLogRecordEvent;
-    HANDLE EventLogTerminalEvent;
     HANDLE FileHashEvent;
     HANDLE FileReadEvent;
     HANDLE FileWriteEvent;
@@ -48,6 +46,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE RegistryPageEvent;
     HANDLE RegistryValueEvent;
     HANDLE RegistryStatusEvent;
+    ZP_CONNECTION_HANDLE Connection;
     volatile LONG ClientReadyStatus;
     volatile LONG ClientStoppedStatus;
     volatile LONG ServerReadyStatus;
@@ -80,9 +79,6 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONG ServiceInfoNameLength;
     ULONG ServiceInfoDisplayNameLength;
     ULONG ServiceInfoBinaryPathLength;
-    volatile LONG AuthorizationCount;
-    volatile LONG SawAuthenticatedClientId;
-    volatile LONG AllowControl;
     volatile LONG ProcessTerminateStatus;
     volatile LONG ServiceControlStatus;
     volatile LONG FileInfoStatus;
@@ -106,15 +102,6 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     WCHAR EventLogBookmark[4096];
     ULONG EventLogBookmarkLength;
     ULONG EventLogXmlLength;
-    WCHAR EventLogRecordBookmark[4096];
-    ULONG EventLogRecordBookmarkLength;
-    volatile LONG EventLogSubscribeStatus;
-    volatile LONG EventLogTerminalStatus;
-    ZP_SUBSCRIPTION_HANDLE EventLogSubscription;
-    ULONGLONG EventLogSequence;
-    LOGICAL FoundEventLogMarker;
-    WCHAR EventLogMarker[128];
-    ULONG EventLogMarkerLength;
     volatile LONG FileHashStatus;
     ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
     ULONGLONG FileHashSize;
@@ -503,8 +490,7 @@ SDKIntegration_EventLogPageCallback(
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
     ZP_EVENT_LOG_RECORD_VIEW Record;
-    PCWCH Xml;
-    ULONG Index, Offset;
+    ULONG Index;
 
     UNREFERENCED_PARAMETER(Request);
     if (NT_SUCCESS(Status))
@@ -537,119 +523,10 @@ SDKIntegration_EventLogPageCallback(
         if (NT_SUCCESS(Status))
         {
             TestContext->EventLogXmlLength = Record.Xml.Length;
-            Xml = (PCWCH)Record.Xml.Buffer;
-            if (TestContext->EventLogMarkerLength != 0)
-            {
-                for (Offset = 0;
-                     Offset + TestContext->EventLogMarkerLength <=
-                         Record.Xml.Length;
-                     Offset++)
-                {
-                    if (RtlCompareMemory(
-                            &Xml[Offset],
-                            TestContext->EventLogMarker,
-                            (SIZE_T)TestContext->EventLogMarkerLength *
-                                sizeof(WCHAR)) ==
-                        (SIZE_T)TestContext->EventLogMarkerLength *
-                            sizeof(WCHAR))
-                    {
-                        TestContext->FoundEventLogMarker = TRUE;
-                        break;
-                    }
-                }
-            }
         }
     }
     InterlockedExchange(&TestContext->EventLogPageStatus, Status);
     SetEvent(TestContext->EventLogPageEvent);
-}
-
-static
-VOID
-NTAPI
-SDKIntegration_EventLogSubscribeCallback(
-    _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
-    _In_opt_ ZP_SUBSCRIPTION_HANDLE Subscription,
-    _In_opt_ PVOID Context)
-{
-    PSDK_INTEGRATION_CONTEXT TestContext = Context;
-
-    UNREFERENCED_PARAMETER(Request);
-    if (NT_SUCCESS(Status))
-    {
-        TestContext->EventLogSubscription = Subscription;
-    }
-    InterlockedExchange(&TestContext->EventLogSubscribeStatus, Status);
-    SetEvent(TestContext->EventLogSubscribeEvent);
-}
-
-static
-VOID
-NTAPI
-SDKIntegration_EventLogRecordCallback(
-    _In_ ZP_SUBSCRIPTION_HANDLE Subscription,
-    _In_ ULONGLONG Sequence,
-    _In_ const ZP_EVENT_LOG_RECORD_VIEW* Record,
-    _In_opt_ PVOID Context)
-{
-    PSDK_INTEGRATION_CONTEXT TestContext = Context;
-    PCWCH Xml = (PCWCH)Record->Xml.Buffer;
-    ULONG Index;
-
-    if (Subscription == TestContext->EventLogSubscription &&
-        Record->Bookmark.Length != 0)
-    {
-        TestContext->EventLogSequence = Sequence;
-        if (Record->Bookmark.Length <
-            ARRAYSIZE(TestContext->EventLogRecordBookmark))
-        {
-            TestContext->EventLogRecordBookmarkLength =
-                Record->Bookmark.Length;
-            RtlCopyMemory(TestContext->EventLogRecordBookmark,
-                          Record->Bookmark.Buffer,
-                          (SIZE_T)Record->Bookmark.Length * sizeof(WCHAR));
-        }
-        for (Index = 0;
-             Index + TestContext->EventLogMarkerLength <= Record->Xml.Length;
-             Index++)
-        {
-            if (RtlCompareMemory(&Xml[Index],
-                                 TestContext->EventLogMarker,
-                                 (SIZE_T)TestContext->EventLogMarkerLength *
-                                     sizeof(WCHAR)) ==
-                (SIZE_T)TestContext->EventLogMarkerLength * sizeof(WCHAR))
-            {
-                TestContext->FoundEventLogMarker = TRUE;
-                break;
-            }
-        }
-    }
-    if (TestContext->FoundEventLogMarker)
-    {
-        SetEvent(TestContext->EventLogRecordEvent);
-    }
-}
-
-static
-VOID
-NTAPI
-SDKIntegration_EventLogTerminalCallback(
-    _In_ ZP_SUBSCRIPTION_HANDLE Subscription,
-    _In_ ULONGLONG NextSequence,
-    _In_ NTSTATUS Status,
-    _In_opt_ PCZP_STRING_VIEW LastBookmark,
-    _In_opt_ PVOID Context)
-{
-    PSDK_INTEGRATION_CONTEXT TestContext = Context;
-
-    UNREFERENCED_PARAMETER(LastBookmark);
-    if (Subscription == TestContext->EventLogSubscription &&
-        NextSequence == TestContext->EventLogSequence + 1)
-    {
-        InterlockedExchange(&TestContext->EventLogTerminalStatus, Status);
-    }
-    SetEvent(TestContext->EventLogTerminalEvent);
 }
 
 static
@@ -1142,49 +1019,30 @@ SDKIntegration_ServerConnectionCallback(
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Server);
-    UNREFERENCED_PARAMETER(Connection);
     if (Phase == ZpConnectionPhaseReady)
     {
+        ZP_CONNECTION_HANDLE Previous;
+
+        ZpConnection_AddRef(Connection);
+        Previous = InterlockedExchangePointer((PVOID volatile*)&TestContext->Connection,
+                                              Connection);
+        if (Previous != NULL)
+        {
+            ZpConnection_Release(Previous);
+        }
         InterlockedExchange(&TestContext->ServerReadyStatus, Status);
         SetEvent(TestContext->ServerReadyEvent);
     }
-}
-
-static
-NTSTATUS
-NTAPI
-SDKIntegration_ServerAuthorizeCallback(
-    _In_ ZP_SERVER_HANDLE Server,
-    _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_reads_(ZP_CLIENT_ID_SIZE) const BYTE ClientId[ZP_CLIENT_ID_SIZE],
-    _In_ ZP_REQUEST_ACCESS Access,
-    _In_ USHORT ModuleId,
-    _In_ USHORT OperationId,
-    _In_ PCZP_BUFFER_VIEW Payload,
-    _In_opt_ PVOID Context)
-{
-    PSDK_INTEGRATION_CONTEXT TestContext = Context;
-    ULONG Index;
-
-    UNREFERENCED_PARAMETER(Server);
-    UNREFERENCED_PARAMETER(Connection);
-    UNREFERENCED_PARAMETER(ModuleId);
-    UNREFERENCED_PARAMETER(OperationId);
-    UNREFERENCED_PARAMETER(Payload);
-    if (Access == ZpRequestAccessControl && !TestContext->AllowControl)
+    else if (Phase == ZpConnectionPhaseClosed)
     {
-        return STATUS_ACCESS_DENIED;
-    }
-    for (Index = 0; Index < ZP_CLIENT_ID_SIZE; Index++)
-    {
-        if (ClientId[Index] != 0)
+        Connection = InterlockedExchangePointer(
+            (PVOID volatile*)&TestContext->Connection,
+            NULL);
+        if (Connection != NULL)
         {
-            InterlockedExchange(&TestContext->SawAuthenticatedClientId, TRUE);
-            break;
+            ZpConnection_Release(Connection);
         }
     }
-    InterlockedIncrement(&TestContext->AuthorizationCount);
-    return STATUS_SUCCESS;
 }
 
 static
@@ -1436,31 +1294,28 @@ TEST_FUNC(SDKQuicIntegration)
     static const WCHAR TerminalCommandLine[] = L"cmd.exe /D /Q";
     static const WCHAR TerminalCancelCommandLine[] =
         L"powershell.exe -NoLogo -NoProfile -Command \"Start-Sleep -Seconds 30\"";
-    static const WCHAR EventLogSource[] = L"KNSoft.ZPigeon.UnitTest";
-    static const WCHAR EventLogQuery[] =
-        L"*[System[Provider[@Name='KNSoft.ZPigeon.UnitTest']]]";
     static const BYTE TerminalInput[] =
         "(for /L %i in (1,1,2048) do @echo "
         "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX) "
         "& exit /b 7\r\n";
     SDK_INTEGRATION_CONTEXT TestContext = { 0 };
     ZP_MODULE_RECORD ClientModules[] = {
-        { 1, 3, 0x0F },
-        { 2, 1, 0x03 },
-        { 3, 1, 0x01 },
-        { 4, 1, 0x03 },
-        { 5, 1, 0x00 },
-        { 6, 1, 0x00 },
-        { 7, 1, 0x00 }
+        { ZP_SYSTEM_MODULE_ID, ZP_SYSTEM_MODULE_VERSION },
+        { ZP_PROCESS_MODULE_ID, ZP_PROCESS_MODULE_VERSION },
+        { ZP_SERVICE_MODULE_ID, ZP_SERVICE_MODULE_VERSION },
+        { ZP_FILE_MODULE_ID, ZP_FILE_MODULE_VERSION },
+        { ZP_TERMINAL_MODULE_ID, ZP_TERMINAL_MODULE_VERSION },
+        { ZP_EVENT_LOG_MODULE_ID, ZP_EVENT_LOG_MODULE_VERSION },
+        { ZP_REGISTRY_MODULE_ID, ZP_REGISTRY_MODULE_VERSION }
     };
     ZP_MODULE_RECORD ServerModules[] = {
-        { 1, 2, 0x05 },
-        { 2, 1, 0x03 },
-        { 3, 1, 0x01 },
-        { 4, 1, 0x03 },
-        { 5, 1, 0x00 },
-        { 6, 1, 0x00 },
-        { 7, 1, 0x00 }
+        { ZP_SYSTEM_MODULE_ID, ZP_SYSTEM_MODULE_VERSION },
+        { ZP_PROCESS_MODULE_ID, ZP_PROCESS_MODULE_VERSION },
+        { ZP_SERVICE_MODULE_ID, ZP_SERVICE_MODULE_VERSION },
+        { ZP_FILE_MODULE_ID, ZP_FILE_MODULE_VERSION },
+        { ZP_TERMINAL_MODULE_ID, ZP_TERMINAL_MODULE_VERSION },
+        { ZP_EVENT_LOG_MODULE_ID, ZP_EVENT_LOG_MODULE_VERSION },
+        { ZP_REGISTRY_MODULE_ID, ZP_REGISTRY_MODULE_VERSION }
     };
     ZP_ENDPOINT Endpoint = { ZpTransportQuic, L"127.0.0.1", 0, ServerName, NULL };
     ZP_LISTENER_ENDPOINT Listener = { ZpTransportQuic, L"127.0.0.1", 0, NULL };
@@ -1500,14 +1355,9 @@ TEST_FUNC(SDKQuicIntegration)
     ULONGLONG UploadedBytes, UploadedHash, ExpectedUploadHash;
     WIN32_FIND_DATAW UploadFindData;
     HANDLE UploadFindHandle;
-    HANDLE EventSource = NULL;
-    LPCWSTR EventStrings[1];
     BYTE ExpectedFileDigest[ZP_FILE_SHA256_SIZE];
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
-        CreateEventW(NULL, TRUE, FALSE, NULL),
-        CreateEventW(NULL, TRUE, FALSE, NULL),
-        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -1562,18 +1412,15 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.FileListEvent = Events[15];
     TestContext.FilePageEvent = Events[16];
     TestContext.EventLogPageEvent = Events[17];
-    TestContext.EventLogSubscribeEvent = Events[18];
-    TestContext.EventLogRecordEvent = Events[19];
-    TestContext.EventLogTerminalEvent = Events[20];
-    TestContext.FileHashEvent = Events[21];
-    TestContext.FileReadEvent = Events[22];
-    TestContext.FileWriteEvent = Events[23];
-    TestContext.TerminalWritableEvent = Events[24];
-    TestContext.TerminalResizeEvent = Events[25];
-    TestContext.TerminalCloseEvent = Events[26];
-    TestContext.RegistryPageEvent = Events[27];
-    TestContext.RegistryValueEvent = Events[28];
-    TestContext.RegistryStatusEvent = Events[29];
+    TestContext.FileHashEvent = Events[18];
+    TestContext.FileReadEvent = Events[19];
+    TestContext.FileWriteEvent = Events[20];
+    TestContext.TerminalWritableEvent = Events[21];
+    TestContext.TerminalResizeEvent = Events[22];
+    TestContext.TerminalCloseEvent = Events[23];
+    TestContext.RegistryPageEvent = Events[24];
+    TestContext.RegistryValueEvent = Events[25];
+    TestContext.RegistryStatusEvent = Events[26];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -1585,7 +1432,7 @@ TEST_FUNC(SDKQuicIntegration)
                                  0) != ERROR_SUCCESS ||
         NCryptFinalizeKey(IdentityKey, NCRYPT_SILENT_FLAG) != ERROR_SUCCESS)
     {
-        goto Cleanup;
+            goto Cleanup;
     }
 
     Certificate = SDKIntegration_CreateCertificate(&CertificateStore);
@@ -1608,6 +1455,7 @@ TEST_FUNC(SDKQuicIntegration)
     ClientConfig.StateCallback = SDKIntegration_ClientStateCallback;
     ClientConfig.PongCallback = SDKIntegration_ClientPongCallback;
     ClientConfig.CallbackContext = &TestContext;
+    ClientConfig.MaxRequestPayloadBytesPerConnection = 4096;
 
     ServerConfig.Size = sizeof(ServerConfig);
     ServerConfig.Listeners = &Listener;
@@ -1617,13 +1465,10 @@ TEST_FUNC(SDKQuicIntegration)
     ServerConfig.Modules = ServerModules;
     ServerConfig.ModuleCount = ARRAYSIZE(ServerModules);
     ServerConfig.MaxRequestsPerConnection = 4;
-    ServerConfig.MaxRequestPayloadBytesPerConnection = 4096;
     ServerConfig.MaxChannelsPerConnection = 1;
-    ServerConfig.MaxSubscriptionsPerConnection = 1;
     ServerConfig.StateCallback = SDKIntegration_ServerStateCallback;
     ServerConfig.ConnectionCallback = SDKIntegration_ServerConnectionCallback;
     ServerConfig.CallbackContext = &TestContext;
-    ServerConfig.AuthorizeCallback = SDKIntegration_ServerAuthorizeCallback;
 
     Status = ZpServer_Create(&ServerConfig, &Server);
     if (!NT_SUCCESS(Status))
@@ -1672,8 +1517,8 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
-    Status = ZpClient_QueryEventLogPage(
-        Client,
+    Status = ZpServer_QueryEventLogPage(
+        TestContext.Connection,
         ZpEventLogStartOldest,
         1,
         L"System",
@@ -1710,8 +1555,8 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.EventLogPageCount = 0;
     TestContext.EventLogBookmarkLength = 0;
     TestContext.EventLogXmlLength = 0;
-    Status = ZpClient_QueryEventLogPage(
-        Client,
+    Status = ZpServer_QueryEventLogPage(
+        TestContext.Connection,
         ZpEventLogStartAfterBookmark,
         1,
         L"System",
@@ -1740,228 +1585,7 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
-    TestContext.EventLogMarkerLength = (ULONG)_snwprintf_s(
-        TestContext.EventLogMarker,
-        ARRAYSIZE(TestContext.EventLogMarker),
-        _TRUNCATE,
-        L"ZPigeon-%lu-%llu",
-        GetCurrentProcessId(),
-        GetTickCount64());
-    if (TestContext.EventLogMarkerLength == (ULONG)-1)
-    {
-        goto Cleanup;
-    }
-    Status = ZpClient_SubscribeEventLog(
-        Client,
-        ZpEventLogStartFuture,
-        L"Application",
-        ARRAYSIZE(L"Application") - 1,
-        EventLogQuery,
-        ARRAYSIZE(EventLogQuery) - 1,
-        NULL,
-        0,
-        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
-        SDKIntegration_EventLogSubscribeCallback,
-        SDKIntegration_EventLogRecordCallback,
-        SDKIntegration_EventLogTerminalCallback,
-        &TestContext,
-        &Request);
-    if (NT_SUCCESS(Status))
-    {
-        ZpRequest_Close(Request);
-        Request = NULL;
-    }
-    if (!NT_SUCCESS(Status) ||
-        WaitForSingleObject(TestContext.EventLogSubscribeEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.EventLogSubscribeStatus) ||
-        TestContext.EventLogSubscription == NULL)
-    {
-        goto Cleanup;
-    }
-    EventSource = RegisterEventSourceW(NULL, EventLogSource);
-    EventStrings[0] = TestContext.EventLogMarker;
-    if (EventSource == NULL ||
-        !ReportEventW(EventSource,
-                      EVENTLOG_INFORMATION_TYPE,
-                      0,
-                      0x40001001,
-                      NULL,
-                      ARRAYSIZE(EventStrings),
-                      0,
-                      EventStrings,
-                      NULL))
-    {
-        goto Cleanup;
-    }
-    DeregisterEventSource(EventSource);
-    EventSource = NULL;
-    if (WaitForSingleObject(TestContext.EventLogRecordEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        TestContext.EventLogSequence != 1 ||
-        TestContext.EventLogRecordBookmarkLength == 0 ||
-        !TestContext.FoundEventLogMarker ||
-        !NT_SUCCESS(ZpSubscription_Cancel(
-            TestContext.EventLogSubscription)) ||
-        WaitForSingleObject(TestContext.EventLogTerminalEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        TestContext.EventLogTerminalStatus != STATUS_CANCELLED)
-    {
-        goto Cleanup;
-    }
-    ZpSubscription_Close(TestContext.EventLogSubscription);
-    TestContext.EventLogSubscription = NULL;
-
-    FirstEventBookmarkLength = TestContext.EventLogRecordBookmarkLength;
-    RtlCopyMemory(FirstEventBookmark,
-                  TestContext.EventLogRecordBookmark,
-                  (SIZE_T)FirstEventBookmarkLength * sizeof(WCHAR));
-    TestContext.EventLogMarkerLength = (ULONG)_snwprintf_s(
-        TestContext.EventLogMarker,
-        ARRAYSIZE(TestContext.EventLogMarker),
-        _TRUNCATE,
-        L"ZPigeon-gap-%lu-%llu",
-        GetCurrentProcessId(),
-        GetTickCount64());
-    EventSource = RegisterEventSourceW(NULL, EventLogSource);
-    EventStrings[0] = TestContext.EventLogMarker;
-    if (TestContext.EventLogMarkerLength == (ULONG)-1 ||
-        EventSource == NULL ||
-        !ReportEventW(EventSource,
-                      EVENTLOG_INFORMATION_TYPE,
-                      0,
-                      0x40001002,
-                      NULL,
-                      ARRAYSIZE(EventStrings),
-                      0,
-                      EventStrings,
-                      NULL))
-    {
-        goto Cleanup;
-    }
-    DeregisterEventSource(EventSource);
-    EventSource = NULL;
-    ResetEvent(TestContext.EventLogPageEvent);
-    InterlockedExchange(&TestContext.EventLogPageStatus, STATUS_PENDING);
-    TestContext.EventLogPageCount = 0;
-    TestContext.EventLogBookmarkLength = 0;
-    TestContext.EventLogXmlLength = 0;
-    TestContext.FoundEventLogMarker = FALSE;
-    Status = ZpClient_QueryEventLogPage(
-        Client,
-        ZpEventLogStartAfterBookmark,
-        1,
-        L"Application",
-        ARRAYSIZE(L"Application") - 1,
-        EventLogQuery,
-        ARRAYSIZE(EventLogQuery) - 1,
-        FirstEventBookmark,
-        FirstEventBookmarkLength,
-        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
-        SDKIntegration_EventLogPageCallback,
-        &TestContext,
-        &Request);
-    if (NT_SUCCESS(Status))
-    {
-        ZpRequest_Close(Request);
-        Request = NULL;
-    }
-    if (!NT_SUCCESS(Status) ||
-        WaitForSingleObject(TestContext.EventLogPageEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.EventLogPageStatus) ||
-        TestContext.EventLogPageCount != 1 ||
-        TestContext.EventLogBookmarkLength == 0 ||
-        !TestContext.FoundEventLogMarker)
-    {
-        goto Cleanup;
-    }
-
-    FirstEventBookmarkLength = TestContext.EventLogBookmarkLength;
-    RtlCopyMemory(FirstEventBookmark,
-                  TestContext.EventLogBookmark,
-                  (SIZE_T)FirstEventBookmarkLength * sizeof(WCHAR));
-    ResetEvent(TestContext.EventLogSubscribeEvent);
-    ResetEvent(TestContext.EventLogRecordEvent);
-    ResetEvent(TestContext.EventLogTerminalEvent);
-    InterlockedExchange(&TestContext.EventLogSubscribeStatus, STATUS_PENDING);
-    InterlockedExchange(&TestContext.EventLogTerminalStatus, STATUS_PENDING);
-    TestContext.EventLogSequence = 0;
-    TestContext.EventLogRecordBookmarkLength = 0;
-    TestContext.FoundEventLogMarker = FALSE;
-    TestContext.EventLogMarkerLength = (ULONG)_snwprintf_s(
-        TestContext.EventLogMarker,
-        ARRAYSIZE(TestContext.EventLogMarker),
-        _TRUNCATE,
-        L"ZPigeon-resume-%lu-%llu",
-        GetCurrentProcessId(),
-        GetTickCount64());
-    if (TestContext.EventLogMarkerLength == (ULONG)-1)
-    {
-        goto Cleanup;
-    }
-    Status = ZpClient_SubscribeEventLog(
-        Client,
-        ZpEventLogStartAfterBookmark,
-        L"Application",
-        ARRAYSIZE(L"Application") - 1,
-        EventLogQuery,
-        ARRAYSIZE(EventLogQuery) - 1,
-        FirstEventBookmark,
-        FirstEventBookmarkLength,
-        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
-        SDKIntegration_EventLogSubscribeCallback,
-        SDKIntegration_EventLogRecordCallback,
-        SDKIntegration_EventLogTerminalCallback,
-        &TestContext,
-        &Request);
-    if (NT_SUCCESS(Status))
-    {
-        ZpRequest_Close(Request);
-        Request = NULL;
-    }
-    if (!NT_SUCCESS(Status) ||
-        WaitForSingleObject(TestContext.EventLogSubscribeEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.EventLogSubscribeStatus) ||
-        TestContext.EventLogSubscription == NULL)
-    {
-        goto Cleanup;
-    }
-    EventSource = RegisterEventSourceW(NULL, EventLogSource);
-    EventStrings[0] = TestContext.EventLogMarker;
-    if (EventSource == NULL ||
-        !ReportEventW(EventSource,
-                      EVENTLOG_INFORMATION_TYPE,
-                      0,
-                      0x40001003,
-                      NULL,
-                      ARRAYSIZE(EventStrings),
-                      0,
-                      EventStrings,
-                      NULL))
-    {
-        goto Cleanup;
-    }
-    DeregisterEventSource(EventSource);
-    EventSource = NULL;
-    if (WaitForSingleObject(TestContext.EventLogRecordEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        TestContext.EventLogSequence != 1 ||
-        TestContext.EventLogRecordBookmarkLength == 0 ||
-        !TestContext.FoundEventLogMarker ||
-        !NT_SUCCESS(ZpSubscription_Cancel(
-            TestContext.EventLogSubscription)) ||
-        WaitForSingleObject(TestContext.EventLogTerminalEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        TestContext.EventLogTerminalStatus != STATUS_CANCELLED)
-    {
-        goto Cleanup;
-    }
-    ZpSubscription_Close(TestContext.EventLogSubscription);
-    TestContext.EventLogSubscription = NULL;
-
-    Status = ZpClient_GetSystemInfo(Client,
+    Status = ZpServer_GetSystemInfo(TestContext.Connection,
                                     SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
                                     SDKIntegration_SystemInfoCallback,
                                     &TestContext,
@@ -1986,7 +1610,7 @@ TEST_FUNC(SDKQuicIntegration)
 
     TestContext.ExpectedProcessCompletions = 1;
     TestContext.CollectProcessDetails = TRUE;
-    Status = ZpClient_EnumerateProcesses(Client,
+    Status = ZpServer_EnumerateProcesses(TestContext.Connection,
                                          SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
                                          SDKIntegration_ProcessListCallback,
                                          &TestContext,
@@ -2006,7 +1630,7 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
-    Status = ZpClient_QueryProcess(Client,
+    Status = ZpServer_QueryProcess(TestContext.Connection,
                                    GetCurrentProcessId(),
                                    SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
                                    SDKIntegration_ProcessInfoCallback,
@@ -2029,7 +1653,7 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
-    Status = ZpClient_EnumerateServices(Client,
+    Status = ZpServer_EnumerateServices(TestContext.Connection,
                                         SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
                                         SDKIntegration_ServiceListCallback,
                                         &TestContext,
@@ -2049,7 +1673,7 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
-    Status = ZpClient_QueryService(Client,
+    Status = ZpServer_QueryService(TestContext.Connection,
                                    TestContext.ServiceName,
                                    TestContext.ServiceNameLength,
                                    SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
@@ -2068,9 +1692,7 @@ TEST_FUNC(SDKQuicIntegration)
         TestContext.ServiceInfoType == 0 ||
         TestContext.ServiceInfoNameLength != TestContext.ServiceNameLength ||
         TestContext.ServiceInfoDisplayNameLength == 0 ||
-        TestContext.ServiceInfoBinaryPathLength == 0 ||
-        TestContext.AuthorizationCount < 5 ||
-        !TestContext.SawAuthenticatedClientId)
+        TestContext.ServiceInfoBinaryPathLength == 0)
     {
         goto Cleanup;
     }
@@ -2088,29 +1710,7 @@ TEST_FUNC(SDKQuicIntegration)
     {
         goto Cleanup;
     }
-    Status = ZpClient_TerminateProcess(Client,
-                                       TemporaryProcess.dwProcessId,
-                                       0x10203040,
-                                       SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
-                                       SDKIntegration_ProcessTerminateCallback,
-                                       &TestContext,
-                                       &Request);
-    if (NT_SUCCESS(Status))
-    {
-        ZpRequest_Close(Request);
-        Request = NULL;
-    }
-    if (!NT_SUCCESS(Status) ||
-        WaitForSingleObject(TestContext.ProcessTerminateEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        TestContext.ProcessTerminateStatus != STATUS_ACCESS_DENIED ||
-        WaitForSingleObject(TemporaryProcess.hProcess, 0) != WAIT_TIMEOUT)
-    {
-        goto Cleanup;
-    }
-    ResetEvent(TestContext.ProcessTerminateEvent);
-    InterlockedExchange(&TestContext.AllowControl, TRUE);
-    Status = ZpClient_TerminateProcess(Client,
+    Status = ZpServer_TerminateProcess(TestContext.Connection,
                                        TemporaryProcess.dwProcessId,
                                        0x10203040,
                                        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
@@ -2132,29 +1732,7 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
-    InterlockedExchange(&TestContext.AllowControl, FALSE);
-    Status = ZpClient_StopService(Client,
-                                  TestContext.ServiceName,
-                                  TestContext.ServiceNameLength,
-                                  SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
-                                  SDKIntegration_ServiceControlCallback,
-                                  &TestContext,
-                                  &Request);
-    if (NT_SUCCESS(Status))
-    {
-        ZpRequest_Close(Request);
-        Request = NULL;
-    }
-    if (!NT_SUCCESS(Status) ||
-        WaitForSingleObject(TestContext.ServiceControlEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        TestContext.ServiceControlStatus != STATUS_ACCESS_DENIED)
-    {
-        goto Cleanup;
-    }
-    ResetEvent(TestContext.ServiceControlEvent);
-    InterlockedExchange(&TestContext.AllowControl, TRUE);
-    Status = ZpClient_StartService(Client,
+    Status = ZpServer_StartService(TestContext.Connection,
                                    MissingServiceName,
                                    ARRAYSIZE(MissingServiceName) - 1,
                                    SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
@@ -2180,7 +1758,7 @@ TEST_FUNC(SDKQuicIntegration)
     {
         goto Cleanup;
     }
-    Status = ZpClient_QueryFile(Client,
+    Status = ZpServer_QueryFile(TestContext.Connection,
                                 ModulePath,
                                 Index,
                                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
@@ -2206,7 +1784,7 @@ TEST_FUNC(SDKQuicIntegration)
     {
         goto Cleanup;
     }
-    Status = ZpClient_HashFile(Client,
+    Status = ZpServer_HashFile(TestContext.Connection,
                                ModulePath,
                                Index,
                                ZpFileHashSha256,
@@ -2239,7 +1817,7 @@ TEST_FUNC(SDKQuicIntegration)
     {
         goto Cleanup;
     }
-    Status = ZpClient_OpenFileRead(Client,
+    Status = ZpServer_OpenFileRead(TestContext.Connection,
                                   ModulePath,
                                   Index,
                                   17,
@@ -2289,7 +1867,7 @@ TEST_FUNC(SDKQuicIntegration)
                   ((SIZE_T)TestContext.ExpectedFileNameLength + 1) *
                       sizeof(WCHAR));
     ModulePath[Index - 1] = UNICODE_NULL;
-    Status = ZpClient_EnumerateFiles(Client,
+    Status = ZpServer_EnumerateFiles(TestContext.Connection,
                                      ModulePath,
                                      Index - 1,
                                      SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
@@ -2311,8 +1889,8 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
-    Status = ZpClient_EnumerateFilesPage(
-        Client,
+    Status = ZpServer_EnumerateFilesPage(
+        TestContext.Connection,
         ModulePath,
         (ULONG)wcslen(ModulePath),
         NULL,
@@ -2345,8 +1923,8 @@ TEST_FUNC(SDKQuicIntegration)
     InterlockedExchange(&TestContext.FilePageStatus, STATUS_PENDING);
     TestContext.FilePageCount = 0;
     TestContext.FilePageNameLength = 0;
-    Status = ZpClient_EnumerateFilesPage(
-        Client,
+    Status = ZpServer_EnumerateFilesPage(
+        TestContext.Connection,
         ModulePath,
         (ULONG)wcslen(ModulePath),
         TestContext.FilePageCursor,
@@ -2393,7 +1971,7 @@ TEST_FUNC(SDKQuicIntegration)
     }
     TestContext.FileWriteData = FileWriteData;
     TestContext.FileWriteLength = sizeof(FileWriteData);
-    Status = ZpClient_OpenFileWrite(Client,
+    Status = ZpServer_OpenFileWrite(TestContext.Connection,
                                     UploadPath,
                                     (ULONG)wcslen(UploadPath),
                                     sizeof(FileWriteData),
@@ -2432,7 +2010,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.FileWriteOffset = 0;
     InterlockedExchange(&TestContext.FileOpenWriteStatus, STATUS_PENDING);
     InterlockedExchange(&TestContext.FileWriteStatus, STATUS_PENDING);
-    Status = ZpClient_OpenFileWrite(Client,
+    Status = ZpServer_OpenFileWrite(TestContext.Connection,
                                     UploadPath,
                                     (ULONG)wcslen(UploadPath),
                                     0,
@@ -2474,7 +2052,7 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.CancelFileWrite = TRUE;
     InterlockedExchange(&TestContext.FileOpenWriteStatus, STATUS_PENDING);
     InterlockedExchange(&TestContext.FileWriteStatus, STATUS_PENDING);
-    Status = ZpClient_OpenFileWrite(Client,
+    Status = ZpServer_OpenFileWrite(TestContext.Connection,
                                     UploadPath,
                                     (ULONG)wcslen(UploadPath),
                                     sizeof(FileWriteData),
@@ -2543,34 +2121,8 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
     ResetEvent(TestContext.RegistryStatusEvent);
-    InterlockedExchange(&TestContext.AllowControl, FALSE);
-    Status = ZpClient_CreateRegistryKey(
-                 Client,
-                 ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
-                 RegistryPath,
-                 (ULONG)wcslen(RegistryPath),
-                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
-                 SDKIntegration_RegistryStatusCallback,
-                 &TestContext,
-                 &Request);
-    if (NT_SUCCESS(Status))
-    {
-        ZpRequest_Close(Request);
-        Request = NULL;
-    }
-    if (!NT_SUCCESS(Status) ||
-        WaitForSingleObject(TestContext.RegistryStatusEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
-            WAIT_OBJECT_0 ||
-        TestContext.RegistryStatus != STATUS_ACCESS_DENIED)
-    {
-        goto Cleanup;
-    }
-    ResetEvent(TestContext.RegistryStatusEvent);
-    InterlockedExchange(&TestContext.AllowControl, TRUE);
-    Status = ZpClient_CreateRegistryKey(
-                 Client,
+    Status = ZpServer_CreateRegistryKey(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryPath,
@@ -2593,8 +2145,8 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
     ResetEvent(TestContext.RegistryStatusEvent);
-    Status = ZpClient_SetRegistryValue(
-                 Client,
+    Status = ZpServer_SetRegistryValue(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryPath,
@@ -2622,8 +2174,8 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
     ResetEvent(TestContext.RegistryStatusEvent);
-    Status = ZpClient_CreateRegistryKey(
-                 Client,
+    Status = ZpServer_CreateRegistryKey(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryChildPath,
@@ -2646,8 +2198,8 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
     ResetEvent(TestContext.RegistryStatusEvent);
-    Status = ZpClient_SetRegistryValue(
-                 Client,
+    Status = ZpServer_SetRegistryValue(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryPath,
@@ -2675,8 +2227,8 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
     ResetEvent(TestContext.RegistryStatusEvent);
-    Status = ZpClient_SetRegistryValue(
-                 Client,
+    Status = ZpServer_SetRegistryValue(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryPath,
@@ -2706,8 +2258,8 @@ TEST_FUNC(SDKQuicIntegration)
 
     ResetEvent(TestContext.RegistryPageEvent);
     TestContext.RegistryPageValues = FALSE;
-    Status = ZpClient_EnumerateRegistryKeysPage(
-                 Client,
+    Status = ZpServer_EnumerateRegistryKeysPage(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryPath,
@@ -2736,8 +2288,8 @@ TEST_FUNC(SDKQuicIntegration)
 
     ResetEvent(TestContext.RegistryPageEvent);
     TestContext.RegistryPageValues = TRUE;
-    Status = ZpClient_EnumerateRegistryValuesPage(
-                 Client,
+    Status = ZpServer_EnumerateRegistryValuesPage(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryPath,
@@ -2767,8 +2319,8 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
     ResetEvent(TestContext.RegistryPageEvent);
-    Status = ZpClient_EnumerateRegistryValuesPage(
-                 Client,
+    Status = ZpServer_EnumerateRegistryValuesPage(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryPath,
@@ -2803,8 +2355,8 @@ TEST_FUNC(SDKQuicIntegration)
     }
 
     ResetEvent(TestContext.RegistryValueEvent);
-    Status = ZpClient_QueryRegistryValue(
-                 Client,
+    Status = ZpServer_QueryRegistryValue(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryPath,
@@ -2836,8 +2388,8 @@ TEST_FUNC(SDKQuicIntegration)
     }
 
     ResetEvent(TestContext.RegistryStatusEvent);
-    Status = ZpClient_DeleteRegistryValue(
-                 Client,
+    Status = ZpServer_DeleteRegistryValue(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryPath,
@@ -2862,8 +2414,8 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
     ResetEvent(TestContext.RegistryStatusEvent);
-    Status = ZpClient_DeleteRegistryValue(
-                 Client,
+    Status = ZpServer_DeleteRegistryValue(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryPath,
@@ -2888,8 +2440,8 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
     ResetEvent(TestContext.RegistryStatusEvent);
-    Status = ZpClient_DeleteRegistryKey(
-                 Client,
+    Status = ZpServer_DeleteRegistryKey(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryChildPath,
@@ -2912,8 +2464,8 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
     ResetEvent(TestContext.RegistryStatusEvent);
-    Status = ZpClient_DeleteRegistryKey(
-                 Client,
+    Status = ZpServer_DeleteRegistryKey(
+                 TestContext.Connection,
                  ZpRegistryCurrentUser,
                  ZpRegistryViewDefault,
                  RegistryPath,
@@ -2937,7 +2489,7 @@ TEST_FUNC(SDKQuicIntegration)
     }
     RegistryPath[0] = UNICODE_NULL;
 
-    Status = ZpClient_CreateTerminal(Client,
+    Status = ZpServer_CreateTerminal(TestContext.Connection,
                                       80,
                                       25,
                                       TerminalCommandLine,
@@ -2966,7 +2518,8 @@ TEST_FUNC(SDKQuicIntegration)
     {
         goto Cleanup;
     }
-    Status = ZpClient_ResizeTerminal(TestContext.TerminalChannel,
+    Status = ZpServer_ResizeTerminal(TestContext.Connection,
+                                     TestContext.TerminalChannel,
                                      100,
                                      30,
                                      SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
@@ -3013,8 +2566,8 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.TerminalProcessId = 0;
     InterlockedExchange(&TestContext.TerminalCreateStatus, STATUS_PENDING);
     InterlockedExchange(&TestContext.TerminalCloseStatus, STATUS_PENDING);
-    Status = ZpClient_CreateTerminal(
-        Client,
+    Status = ZpServer_CreateTerminal(
+        TestContext.Connection,
         80,
         25,
         TerminalCancelCommandLine,
@@ -3043,10 +2596,11 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
     ActiveTerminalChannel = TestContext.TerminalChannel;
+    TestContext.TerminalChannel = NULL;
     ResetEvent(TestContext.TerminalCloseEvent);
     InterlockedExchange(&TestContext.TerminalCreateStatus, STATUS_PENDING);
-    Status = ZpClient_CreateTerminal(
-        Client,
+    Status = ZpServer_CreateTerminal(
+        TestContext.Connection,
         80,
         25,
         TerminalCancelCommandLine,
@@ -3065,11 +2619,9 @@ TEST_FUNC(SDKQuicIntegration)
         ZpRequest_Close(Request);
         Request = NULL;
     }
-    if (!NT_SUCCESS(Status) ||
-        WaitForSingleObject(TestContext.TerminalCloseEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
-            WAIT_OBJECT_0 ||
-        TestContext.TerminalCreateStatus != STATUS_QUOTA_EXCEEDED ||
+    if (Status != STATUS_QUOTA_EXCEEDED ||
+        WaitForSingleObject(TestContext.TerminalCloseEvent, 0) != WAIT_TIMEOUT ||
+        TestContext.TerminalCreateStatus != STATUS_PENDING ||
         TestContext.TerminalChannel != NULL)
     {
         ZpChannel_Cancel(ActiveTerminalChannel);
@@ -3088,82 +2640,16 @@ TEST_FUNC(SDKQuicIntegration)
     ZpChannel_Close(TestContext.TerminalChannel);
     TestContext.TerminalChannel = NULL;
 
-    ResetEvent(TestContext.EventLogSubscribeEvent);
-    ResetEvent(TestContext.EventLogTerminalEvent);
-    InterlockedExchange(&TestContext.EventLogSubscribeStatus, STATUS_PENDING);
-    InterlockedExchange(&TestContext.EventLogTerminalStatus, STATUS_PENDING);
-    TestContext.EventLogSequence = 0;
-    Status = ZpClient_SubscribeEventLog(
-        Client,
-        ZpEventLogStartFuture,
-        L"Application",
-        ARRAYSIZE(L"Application") - 1,
-        EventLogQuery,
-        ARRAYSIZE(EventLogQuery) - 1,
-        NULL,
-        0,
-        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
-        SDKIntegration_EventLogSubscribeCallback,
-        SDKIntegration_EventLogRecordCallback,
-        SDKIntegration_EventLogTerminalCallback,
-        &TestContext,
-        &Request);
-    if (NT_SUCCESS(Status))
-    {
-        ZpRequest_Close(Request);
-        Request = NULL;
-    }
-    if (!NT_SUCCESS(Status) ||
-        WaitForSingleObject(TestContext.EventLogSubscribeEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.EventLogSubscribeStatus) ||
-        TestContext.EventLogSubscription == NULL)
-    {
-        goto Cleanup;
-    }
-
-    ResetEvent(TestContext.EventLogSubscribeEvent);
-    InterlockedExchange(&TestContext.EventLogSubscribeStatus, STATUS_PENDING);
-    Status = ZpClient_SubscribeEventLog(
-        Client,
-        ZpEventLogStartFuture,
-        L"Application",
-        ARRAYSIZE(L"Application") - 1,
-        EventLogQuery,
-        ARRAYSIZE(EventLogQuery) - 1,
-        NULL,
-        0,
-        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
-        SDKIntegration_EventLogSubscribeCallback,
-        SDKIntegration_EventLogRecordCallback,
-        SDKIntegration_EventLogTerminalCallback,
-        &TestContext,
-        &Request);
-    if (NT_SUCCESS(Status))
-    {
-        ZpRequest_Close(Request);
-        Request = NULL;
-    }
-    if (!NT_SUCCESS(Status) ||
-        WaitForSingleObject(TestContext.EventLogSubscribeEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
-            WAIT_OBJECT_0 ||
-        TestContext.EventLogSubscribeStatus != STATUS_QUOTA_EXCEEDED ||
-        TestContext.EventLogSubscription == NULL)
-    {
-        goto Cleanup;
-    }
-
     ResetEvent(TestContext.ServerRunningEvent);
     ResetEvent(TestContext.ClientReadyEvent);
     ResetEvent(TestContext.ServerReadyEvent);
     ResetEvent(TestContext.ProcessListEvent);
     InterlockedExchange(&TestContext.ProcessCompletionCount, 0);
-    TestContext.ExpectedProcessCompletions = 8;
+    TestContext.ExpectedProcessCompletions = 4;
     TestContext.CollectProcessDetails = FALSE;
-    for (Index = 0; Index < 8; Index++)
+    for (Index = 0; Index < 4; Index++)
     {
-        Status = ZpClient_EnumerateProcesses(Client,
+        Status = ZpServer_EnumerateProcesses(TestContext.Connection,
                                              SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
                                              SDKIntegration_ProcessListCallback,
                                              &TestContext,
@@ -3182,21 +2668,15 @@ TEST_FUNC(SDKQuicIntegration)
                                     SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
     ProcessWait = WaitForSingleObject(TestContext.ProcessListEvent,
                                       SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
-    WaitStatus = WaitForSingleObject(TestContext.EventLogTerminalEvent,
-                                     SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
     if (!NT_SUCCESS(Status) ||
         ServerStopWait != WAIT_OBJECT_0 ||
         RetryWait != WAIT_OBJECT_0 ||
         ProcessWait != WAIT_OBJECT_0 ||
-        WaitStatus != WAIT_OBJECT_0 ||
-        NT_SUCCESS(TestContext.EventLogTerminalStatus) ||
         TestContext.ProcessCompletionCount !=
             TestContext.ExpectedProcessCompletions)
     {
         goto Cleanup;
     }
-    ZpSubscription_Close(TestContext.EventLogSubscription);
-    TestContext.EventLogSubscription = NULL;
     ResetEvent(TestContext.ServerStoppedEvent);
     Status = ZpServer_Start(Server);
     if (!NT_SUCCESS(Status) ||
@@ -3236,12 +2716,6 @@ Cleanup:
         ZpChannel_Close(TestContext.TerminalChannel);
         TestContext.TerminalChannel = NULL;
     }
-    if (TestContext.EventLogSubscription != NULL)
-    {
-        ZpSubscription_Cancel(TestContext.EventLogSubscription);
-        ZpSubscription_Close(TestContext.EventLogSubscription);
-        TestContext.EventLogSubscription = NULL;
-    }
     if (Client != NULL)
     {
         ZpClient_Stop(Client);
@@ -3267,10 +2741,6 @@ Cleanup:
     if (RegistryPath[0] != UNICODE_NULL)
     {
         RegDeleteTreeW(HKEY_CURRENT_USER, RegistryPath);
-    }
-    if (EventSource != NULL)
-    {
-        DeregisterEventSource(EventSource);
     }
     if (IdentityKey != 0)
     {

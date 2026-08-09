@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>KNSoft ZPigeon</title>
+  <style>
+    body{font:15px system-ui;margin:40px auto;max-width:820px;padding:0 20px;color:#172033;background:#f5f7fb}
+    h1{font-size:24px}.card{background:#fff;border:1px solid #dde3ee;border-radius:10px;padding:20px;margin:16px 0}
+    label{display:block;margin:10px 0 5px}input{padding:8px;width:280px}button{padding:8px 14px;margin:8px 6px 0 0}
+    pre{white-space:pre-wrap;background:#111827;color:#e5e7eb;padding:14px;border-radius:7px;min-height:44px}
+    .ok{color:#16794a}.off{color:#a33}
+  </style>
+</head>
+<body>
+  <h1>KNSoft ZPigeon 本地控制台</h1>
+  <div class="card">Server：<span id="server">读取中</span>　Client：<span id="client">读取中</span></div>
+  <div class="card">
+    <h2>系统信息</h2><button onclick="systemInfo()">读取</button>
+  </div>
+  <div class="card">
+    <h2>进程控制</h2><label>进程 ID</label><input id="pid" type="number" min="1"><br>
+    <button onclick="terminateProcess()">终止进程</button>
+  </div>
+  <div class="card">
+    <h2>事件日志频道</h2><label>频道路径</label><input id="channel" value="System"><br>
+    <label>XPath 查询（可空）</label><input id="query"><label>每页条数</label><input id="maxEvents" type="number" min="1" max="256" value="10"><br>
+    <button onclick="queryEvents(false)">查询</button><button onclick="queryEvents(true)">下一页</button><br>
+    <button onclick="setChannel(true)">开启</button><button onclick="setChannel(false)">关闭</button>
+    <button onclick="clearChannel()">清除</button>
+  </div>
+  <pre id="result">等待操作</pre>
+  <script>
+    const result=document.querySelector('#result');
+    let eventBookmark='';
+    async function call(url,body){
+      const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:body?JSON.stringify(body):null});
+      const text=await response.text(); if(!response.ok)throw new Error(text); return text?JSON.parse(text):'操作成功';
+    }
+    async function refresh(){try{const s=await fetch('/api/status').then(r=>r.json());server.textContent=s.state===2?'运行中':'状态 '+s.state;client.textContent=s.clientConnected?'已连接':'未连接';server.className=s.state===2?'ok':'off';client.className=s.clientConnected?'ok':'off'}catch(e){result.textContent=e}}
+    async function run(action){try{result.textContent=JSON.stringify(await action(),null,2)}catch(e){result.textContent=e}}
+    function systemInfo(){run(()=>call('/api/system'))}
+    function terminateProcess(){run(()=>call('/api/process/terminate',{processId:Number(pid.value)}))}
+    function queryEvents(next){if(!next)eventBookmark='';run(async()=>{const page=await call('/api/eventlog/query',{channelPath:channel.value,query:query.value||null,bookmark:eventBookmark||null,maxEvents:Number(maxEvents.value)});eventBookmark=page.nextBookmark;return page})}
+    function setChannel(enabled){run(()=>call('/api/eventlog/channel',{channelPath:channel.value,enabled}))}
+    function clearChannel(){if(confirm('确定清除此频道的全部事件？'))run(()=>call('/api/eventlog/clear',{channelPath:channel.value}))}
+    refresh();setInterval(refresh,1000);
+  </script>
+</body>
+</html>

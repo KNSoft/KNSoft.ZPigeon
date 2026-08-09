@@ -7,19 +7,16 @@ EXTERN_C_START
 #define ZP_EVENT_LOG_MODULE_ID 6
 #define ZP_EVENT_LOG_MODULE_VERSION 1
 #define ZP_EVENT_LOG_OPERATION_QUERY_PAGE 1
-#define ZP_EVENT_LOG_OPERATION_SUBSCRIBE 2
-#define ZP_EVENT_LOG_OPERATION_UNSUBSCRIBE 3
-#define ZP_EVENT_LOG_EVENT_RECORD 1
-#define ZP_EVENT_LOG_EVENT_TERMINAL 2
+#define ZP_EVENT_LOG_OPERATION_SET_CHANNEL_ENABLED 2
+#define ZP_EVENT_LOG_OPERATION_CLEAR 3
 #define ZP_EVENT_LOG_PAGE_MAX_COUNT 256
 #define ZP_EVENT_LOG_BOOKMARK_MAX_LENGTH 0x00010000UL
 #define ZP_EVENT_LOG_XML_MAX_LENGTH 0x00100000UL
 
 typedef enum _ZP_EVENT_LOG_START_MODE
 {
-    ZpEventLogStartFuture = 1,
-    ZpEventLogStartOldest = 2,
-    ZpEventLogStartAfterBookmark = 3
+    ZpEventLogStartOldest = 1,
+    ZpEventLogStartAfterBookmark = 2
 } ZP_EVENT_LOG_START_MODE, *PZP_EVENT_LOG_START_MODE;
 
 typedef struct _ZP_EVENT_LOG_QUERY_VIEW
@@ -30,14 +27,6 @@ typedef struct _ZP_EVENT_LOG_QUERY_VIEW
     ZP_STRING_VIEW Query;
     ZP_STRING_VIEW Bookmark;
 } ZP_EVENT_LOG_QUERY_VIEW, *PZP_EVENT_LOG_QUERY_VIEW;
-
-typedef struct _ZP_EVENT_LOG_SUBSCRIBE_VIEW
-{
-    ZP_EVENT_LOG_START_MODE StartMode;
-    ZP_STRING_VIEW ChannelPath;
-    ZP_STRING_VIEW Query;
-    ZP_STRING_VIEW Bookmark;
-} ZP_EVENT_LOG_SUBSCRIBE_VIEW, *PZP_EVENT_LOG_SUBSCRIBE_VIEW;
 
 typedef struct _ZP_EVENT_LOG_RECORD
 {
@@ -70,19 +59,6 @@ typedef struct _ZP_EVENT_LOG_PAGE_VIEW
     ZP_STRING_VIEW NextBookmark;
     ZP_EVENT_LOG_LIST_VIEW Records;
 } ZP_EVENT_LOG_PAGE_VIEW, *PZP_EVENT_LOG_PAGE_VIEW;
-
-typedef struct _ZP_EVENT_LOG_EVENT_RECORD_VIEW
-{
-    ULONGLONG Sequence;
-    ZP_EVENT_LOG_RECORD_VIEW Record;
-} ZP_EVENT_LOG_EVENT_RECORD_VIEW, *PZP_EVENT_LOG_EVENT_RECORD_VIEW;
-
-typedef struct _ZP_EVENT_LOG_EVENT_TERMINAL_VIEW
-{
-    ULONGLONG NextSequence;
-    NTSTATUS Status;
-    ZP_STRING_VIEW LastBookmark;
-} ZP_EVENT_LOG_EVENT_TERMINAL_VIEW, *PZP_EVENT_LOG_EVENT_TERMINAL_VIEW;
 
 NTSTATUS
 ZpEventLog_EncodeQueryPageRequest(
@@ -128,81 +104,33 @@ ZpEventLog_GetRecord(
     _Out_ PZP_EVENT_LOG_RECORD_VIEW Record);
 
 NTSTATUS
-ZpEventLog_EncodeSubscribeRequest(
-    _In_ ZP_EVENT_LOG_START_MODE StartMode,
+ZpEventLog_EncodeSetChannelEnabledRequest(
     _In_reads_(ChannelPathLength) PCWCH ChannelPath,
     _In_ ULONG ChannelPathLength,
-    _In_reads_opt_(QueryLength) PCWCH Query,
-    _In_ ULONG QueryLength,
-    _In_reads_opt_(BookmarkLength) PCWCH Bookmark,
-    _In_ ULONG BookmarkLength,
+    _In_ BOOLEAN Enabled,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);
 
 NTSTATUS
-ZpEventLog_DecodeSubscribeRequest(
+ZpEventLog_DecodeSetChannelEnabledRequest(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PZP_EVENT_LOG_SUBSCRIBE_VIEW View);
+    _Out_ PZP_STRING_VIEW ChannelPath,
+    _Out_ PBOOLEAN Enabled);
 
 NTSTATUS
-ZpEventLog_EncodeSubscribeResponse(
-    _In_ ULONGLONG SubscriptionId,
+ZpEventLog_EncodeClearRequest(
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);
 
 NTSTATUS
-ZpEventLog_DecodeSubscribeResponse(
+ZpEventLog_DecodeClearRequest(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG SubscriptionId);
-
-NTSTATUS
-ZpEventLog_EncodeUnsubscribeRequest(
-    _In_ ULONGLONG SubscriptionId,
-    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
-    _In_ ULONG BufferSize,
-    _Out_ PULONG BytesWritten);
-
-NTSTATUS
-ZpEventLog_DecodeUnsubscribeRequest(
-    _In_reads_bytes_(PayloadLength) const VOID* Payload,
-    _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG SubscriptionId);
-
-NTSTATUS
-ZpEventLog_EncodeRecordEvent(
-    _In_ ULONGLONG Sequence,
-    _In_reads_(BookmarkLength) PCWCH Bookmark,
-    _In_ ULONG BookmarkLength,
-    _In_reads_(XmlLength) PCWCH Xml,
-    _In_ ULONG XmlLength,
-    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
-    _In_ ULONG BufferSize,
-    _Out_ PULONG BytesWritten);
-
-NTSTATUS
-ZpEventLog_DecodeRecordEvent(
-    _In_reads_bytes_(PayloadLength) const VOID* Payload,
-    _In_ ULONG PayloadLength,
-    _Out_ PZP_EVENT_LOG_EVENT_RECORD_VIEW View);
-
-NTSTATUS
-ZpEventLog_EncodeTerminalEvent(
-    _In_ ULONGLONG NextSequence,
-    _In_ NTSTATUS Status,
-    _In_reads_opt_(LastBookmarkLength) PCWCH LastBookmark,
-    _In_ ULONG LastBookmarkLength,
-    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
-    _In_ ULONG BufferSize,
-    _Out_ PULONG BytesWritten);
-
-NTSTATUS
-ZpEventLog_DecodeTerminalEvent(
-    _In_reads_bytes_(PayloadLength) const VOID* Payload,
-    _In_ ULONG PayloadLength,
-    _Out_ PZP_EVENT_LOG_EVENT_TERMINAL_VIEW View);
+    _Out_ PZP_STRING_VIEW ChannelPath);
 
 EXTERN_C_END

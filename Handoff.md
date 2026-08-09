@@ -1,0 +1,69 @@
+# KNSoft.ZPigeon 项目交接
+
+更新时间：2026-08-10
+
+## 当前结论
+
+项目角色已经纠正为：Client 运行在被控 Windows 主机并主动连接，Server 持有已认证 Connection 并发起全部管理操作。Client 不发起管理业务 Request；收到反向 Response/Event 之外的错误方向业务消息时按协议错误关闭连接。
+
+System、Process、Service、Registry、File、Terminal 和 EventLog 均已迁移为 Server 控制、Client 本机执行。旧的 Client 管理 API、Server 本机业务执行器、Read/Control 授权分类、派生 ClientId、Channel 奇偶 ID 规则及重复 Network 目录均已删除。EventLog 实时订阅和整个 Subscription 对象体系也已删除，只保留查询、频道启停和清除。
+
+## 长期原则
+
+- 代码保持极简：删除无调用路径、无当前产品价值或只服务旧设计的抽象、状态和兜底。
+- 优先效率与安全；同步拒绝不创建异步对象，不把未完成操作伪报成功。
+- 最低 Windows 10，直接使用 Win10 及以上能力，不承担旧系统兼容、协议降级或未发布版本兼容。
+- 优先 KNSoft.NDK 的 NT 定义和 NT 系统调用；优先复用 KNSoft.MakeLifeEasier，不在本库复制通用函数。
+- 可抽到 MLE 的能力必须先询问 Owner。已获确认的 `Mem_ReAlloc` 只在父级 MLE 本地实现并同步当前引用副本，不提交；`IO_CreatePipe`、`PS_CreateProcessEx` 设计见 `MLE_Todo.md`，暂不实现。
+- 遵循 `.editorconfig`、SAL、原编码和 CRLF；工程文件只做必要的路径与编译项修改。
+
+## 当前源码边界
+
+```text
+Source/
+|-- KNSoft.ZPigeon.Protocol/Core/   Core Frame/Codec/Message
+|-- Network/                        C/S 共用认证、Connection、QUIC 基础
+|-- Modules/<Module>/
+|   |-- Protocol.c                  模块 Codec
+|   |-- Client.c                    Client 本机执行器
+|   `-- Server.c                    Server 控制 API/响应解码
+|-- KNSoft.ZPigeon.Client.SDK/
+|   |-- Core/                       入站 Request、本机 Channel
+|   `-- Transport/                  Client 生命周期、重连、QUIC
+|-- KNSoft.ZPigeon.Server.SDK/
+|   |-- Core/                       出站 Request、Channel
+|   `-- Transport/                  Server 生命周期、监听、QUIC
+|-- KNSoft.ZPigeon.Client/          Client SDK 启动 EXE 与分模块日志
+|-- KNSoft.ZPigeon.Server.Native/   C# 可调用的 Server C DLL
+|-- KNSoft.ZPigeon.Web/             本地回环 C# Web 管理端
+`-- SDK/                            共用 Handle 基础实现
+```
+
+Transport 不解析模块 Payload，不调用 Registry、SCM、进程、文件、ConPTY 或 Event Log API。模块不包含 `HQUIC`，也不直接驱动 Transport。
+
+## 协议与对象规则
+
+- Request 只由 Server 创建；Client 只执行并返回 Response。
+- Channel 只由 Client 创建；Server 持有公共 Handle 并控制窗口、发送、取消和关闭。
+- RequestId、ChannelId 在各自连接命名空间中从 1 单调递增，非零、永不复用，不做奇偶或方向预留。
+- Client 以最高已见 RequestId 拒绝重复或倒序 Request；Server 以下一分配值识别已发送 Request。已结束 Request 的迟到 Response/Cancel 幂等忽略，未来 ID 仍是协议错误，不建立 tombstone 表。
+- 已结束或被 Server 配额拒绝的 Channel 只以最高已见 ID 表示，不建立额外 tombstone 表；迟到 Window/Close 可忽略，未来 ID 和未知 Data 仍是协议错误。
+- Server 在发送会创建 Channel 的 Request 前锁内预留本地名额，避免 Client 先创建文件句柄或 ConPTY 后再被 Server 配额拒绝。
+- Server 正常停止时 Connection 生命周期可报告成功，但所有尚未完成的 Request/Channel 以 `STATUS_CONNECTION_DISCONNECTED` 完成，禁止伪成功。
+- 模块版本必须完全相同才参与协商；不保留旧 Decoder、自动降级或兼容分支。
+- 模块记录仅包含 ID 和 Version；未被业务读取的 Capabilities 已删除。产品从不发送的 Disconnect 消息也已删除，连接关闭直接使用 QUIC 生命周期。
+
+## 已验证内容
+
+- Visual Studio 2026 下 x86/x64、Debug/Release 全 Solution Rebuild 均为零警告、零错误，直接产出三个静态库、Client EXE、Server Native DLL 与 C# Web；
+- 四配置 UnitTest 均为 324/324 通过，包含真实 localhost QUIC 集成；ConsumerTest 均通过；
+- Web/Native/QUIC/Client 本地回环已实际跑通，System.Info、EventLog 查询及 Bookmark 下一页和分模块日志已验证；
+- Registry 默认值空名称分页已修正；Terminal 已验证大于 100 KiB 输出、退出码 7、Resize、Cancel 和 ConPTY 最终输出排空。
+
+## 后续开发入口
+
+1. 由 Owner 先试用 Web/Client 本地闭环，优先修正实际体验问题。
+2. 继续审计模块内部重复分配、重复 Encode 两遍模式和可复用 MLE 候选；发现通用抽象先向 Owner 提案，不直接修改 MLE。
+3. 不扩展当前功能；QUIC/TLS-TCP/WSS 边界继续保留，EventLog 不恢复实时订阅。
+
+当前没有外部阻塞；工作树包含本轮架构纠偏的完整在途改动，不得丢弃或回退。

@@ -29,9 +29,9 @@
 
     <!-- [Overwrite defaults] -->
 
-    <!-- Use the latest installed Windows SDK -->
+    <!-- Preserve an explicitly selected Windows SDK -->
     <PropertyGroup Label="Globals">
-        <WindowsTargetPlatformVersion>$(_LatestWindowsTargetPlatformVersion)</WindowsTargetPlatformVersion>
+        <WindowsTargetPlatformVersion Condition="'$(WindowsTargetPlatformVersion)' == ''">$(_LatestWindowsTargetPlatformVersion)</WindowsTargetPlatformVersion>
     </PropertyGroup>
 
     <!-- Add $(OutDir) to library path -->

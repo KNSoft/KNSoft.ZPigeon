@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <KNSoft/ZPigeon/SDK.h>
+#include <KNSoft/ZPigeon/Operations.h>
 
 #include <Wincrypt.h>
 
@@ -10,12 +11,9 @@ EXTERN_C_START
 
 #define ZP_SERVER_DEFAULT_MAX_REQUESTS_PER_CONNECTION 64
 #define ZP_SERVER_MAX_REQUESTS_PER_CONNECTION 4096
-#define ZP_SERVER_DEFAULT_MAX_REQUEST_PAYLOAD_BYTES_PER_CONNECTION 0x04000000UL
-#define ZP_SERVER_MAX_REQUEST_PAYLOAD_BYTES_PER_CONNECTION 0x40000000UL
 #define ZP_SERVER_DEFAULT_MAX_CHANNELS_PER_CONNECTION 16
 #define ZP_SERVER_MAX_CHANNELS_PER_CONNECTION 1024
-#define ZP_SERVER_DEFAULT_MAX_SUBSCRIPTIONS_PER_CONNECTION 16
-#define ZP_SERVER_MAX_SUBSCRIPTIONS_PER_CONNECTION 1024
+#define ZP_SERVER_DEFAULT_CHANNEL_WINDOW_SIZE ZP_CHANNEL_DATA_MAX_SIZE
 
 typedef enum _ZP_SERVER_STATE
 {
@@ -24,12 +22,6 @@ typedef enum _ZP_SERVER_STATE
     ZpServerStateRunning,
     ZpServerStateStopping
 } ZP_SERVER_STATE, *PZP_SERVER_STATE;
-
-typedef enum _ZP_REQUEST_ACCESS
-{
-    ZpRequestAccessRead = 1,
-    ZpRequestAccessControl = 2
-} ZP_REQUEST_ACCESS, *PZP_REQUEST_ACCESS;
 
 typedef
 VOID
@@ -46,18 +38,6 @@ VOID
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_CONNECTION_PHASE Phase,
     _In_ NTSTATUS Status,
-    _In_opt_ PVOID Context);
-
-typedef
-NTSTATUS
-(NTAPI *ZP_SERVER_AUTHORIZE_CALLBACK)(
-    _In_ ZP_SERVER_HANDLE Server,
-    _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_reads_(ZP_CLIENT_ID_SIZE) const BYTE ClientId[ZP_CLIENT_ID_SIZE],
-    _In_ ZP_REQUEST_ACCESS Access,
-    _In_ USHORT ModuleId,
-    _In_ USHORT OperationId,
-    _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context);
 
 typedef struct _ZP_SERVER_DEPLOYMENT
@@ -78,13 +58,10 @@ typedef struct _ZP_SERVER_CONFIG
     PCZP_MODULE_RECORD Modules;
     USHORT ModuleCount;
     ULONG MaxRequestsPerConnection;
-    ULONG MaxRequestPayloadBytesPerConnection;
     ULONG MaxChannelsPerConnection;
-    ULONG MaxSubscriptionsPerConnection;
     ZP_SERVER_STATE_CALLBACK StateCallback;
     ZP_SERVER_CONNECTION_CALLBACK ConnectionCallback;
     PVOID CallbackContext;
-    ZP_SERVER_AUTHORIZE_CALLBACK AuthorizeCallback;
 } ZP_SERVER_CONFIG, *PZP_SERVER_CONFIG;
 
 typedef const ZP_SERVER_CONFIG* PCZP_SERVER_CONFIG;
@@ -109,5 +86,362 @@ NTSTATUS
 NTAPI
 ZpServer_Close(
     _In_ ZP_SERVER_HANDLE Server);
+
+NTSTATUS
+NTAPI
+ZpServer_SendRequest(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT ModuleId,
+    _In_ USHORT OperationId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _In_ ZP_REQUEST_COMPLETE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryFile(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_QUERY_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateFiles(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateFilesPage(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(CursorLength) PCWCH Cursor,
+    _In_ ULONG CursorLength,
+    _In_ ULONG MaxEntries,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_ENUMERATE_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_HashFile(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_FILE_HASH_ALGORITHM Algorithm,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_HASH_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_OpenFileRead(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG Offset,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_OPEN_READ_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_OpenFileWrite(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG FileSize,
+    _In_ ZP_FILE_CREATE_DISPOSITION Disposition,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_OPEN_WRITE_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryEventLogPage(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_EVENT_LOG_START_MODE StartMode,
+    _In_ ULONG MaxEvents,
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_reads_opt_(QueryLength) PCWCH Query,
+    _In_ ULONG QueryLength,
+    _In_reads_opt_(BookmarkLength) PCWCH Bookmark,
+    _In_ ULONG BookmarkLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_EVENT_LOG_QUERY_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_SetEventLogChannelEnabled(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_ BOOLEAN Enabled,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ClearEventLog(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_CreateTerminal(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT Columns,
+    _In_ USHORT Rows,
+    _In_reads_(CommandLineLength) PCWCH CommandLine,
+    _In_ ULONG CommandLineLength,
+    _In_reads_opt_(WorkingDirectoryLength) PCWCH WorkingDirectory,
+    _In_ ULONG WorkingDirectoryLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_TERMINAL_CREATE_CALLBACK CreateCallback,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ResizeTerminal(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ USHORT Columns,
+    _In_ USHORT Rows,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_GetSystemInfo(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_SYSTEM_INFO_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateProcesses(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PROCESS_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryProcess(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG ProcessId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PROCESS_QUERY_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_TerminateProcess(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ExitCode,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateServices(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_SERVICE_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryService(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_SERVICE_QUERY_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_StartService(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_StopService(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateRegistryKeysPage(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(CursorLength) PCWCH Cursor,
+    _In_ ULONG CursorLength,
+    _In_ ULONG MaxEntries,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REGISTRY_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateRegistryValuesPage(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(CursorLength) PCWCH Cursor,
+    _In_ ULONG CursorLength,
+    _In_ ULONG MaxEntries,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REGISTRY_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryRegistryValue(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(ValueNameLength) PCWCH ValueName,
+    _In_ ULONG ValueNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REGISTRY_VALUE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_SetRegistryValue(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(ValueNameLength) PCWCH ValueName,
+    _In_ ULONG ValueNameLength,
+    _In_ ULONG Type,
+    _In_reads_bytes_opt_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_DeleteRegistryValue(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(ValueNameLength) PCWCH ValueName,
+    _In_ ULONG ValueNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_CreateRegistryKey(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_DeleteRegistryKey(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_ ZP_REGISTRY_VIEW View,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+VOID
+NTAPI
+ZpConnection_AddRef(
+    _Inout_ ZP_CONNECTION_HANDLE Connection);
+
+VOID
+NTAPI
+ZpConnection_Release(
+    _Inout_ ZP_CONNECTION_HANDLE Connection);
 
 EXTERN_C_END

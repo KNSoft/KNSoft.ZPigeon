@@ -1,68 +1,23 @@
 ﻿#pragma once
 
 #include <KNSoft/ZPigeon/Client.h>
+#include <KNSoft/MakeLifeEasier/Memory/Core.h>
 
 #include "../Network/Transport.h"
-#include "Network/Quic.h"
-
-typedef struct _ZP_REQUEST_OBJECT
-{
-    LIST_ENTRY ListEntry;
-    struct _ZP_CLIENT_OBJECT* Owner;
-    volatile LONG ReferenceCount;
-    volatile LONG Pending;
-    ULONGLONG RequestId;
-    ULONGLONG DeadlineTickCount;
-    ZP_REQUEST_COMPLETE_CALLBACK Callback;
-    PVOID Context;
-} ZP_REQUEST_OBJECT, *PZP_REQUEST_OBJECT;
-
-typedef struct _ZP_CHANNEL_OBJECT
-{
-    LIST_ENTRY ListEntry;
-    struct _ZP_CLIENT_OBJECT* Owner;
-    volatile LONG ReferenceCount;
-    volatile LONG Pending;
-    ULONGLONG ChannelId;
-    ULONGLONG ReceiveCredit;
-    ULONGLONG SendCredit;
-    ULONGLONG RemainingBytes;
-    ULONGLONG RemainingSendBytes;
-    LOGICAL BoundedReceive;
-    LOGICAL BoundedSend;
-    ZP_CHANNEL_DATA_CALLBACK DataCallback;
-    ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback;
-    ZP_CHANNEL_CLOSE_CALLBACK CloseCallback;
-    PVOID Context;
-} ZP_CHANNEL_OBJECT, *PZP_CHANNEL_OBJECT;
-
-typedef struct _ZP_SUBSCRIPTION_OBJECT
-{
-    LIST_ENTRY ListEntry;
-    struct _ZP_CLIENT_OBJECT* Owner;
-    volatile LONG ReferenceCount;
-    volatile LONG Pending;
-    volatile LONG CancelPending;
-    ULONGLONG SubscriptionId;
-    ULONGLONG NextSequence;
-    USHORT ModuleId;
-    ZP_EVENT_LOG_RECORD_CALLBACK RecordCallback;
-    ZP_EVENT_LOG_TERMINAL_CALLBACK TerminalCallback;
-    PVOID Context;
-} ZP_SUBSCRIPTION_OBJECT, *PZP_SUBSCRIPTION_OBJECT;
+#include "Transport/Quic.h"
 
 typedef struct _ZP_CLIENT_OBJECT
 {
     RTL_SRWLOCK Lock;
     ZP_CLIENT_STATE State;
     ULONG CallbackCount;
-    LIST_ENTRY Requests;
-    LIST_ENTRY Channels;
-    LIST_ENTRY Subscriptions;
-    ULONGLONG HighestServerChannelId;
-    ULONGLONG HighestServerSubscriptionId;
-    ULONGLONG NextRequestId;
-    PTP_TIMER RequestTimer;
+    LIST_ENTRY InboundRequests;
+    LIST_ENTRY LocalChannels;
+    ULONGLONG HighestInboundRequestId;
+    ULONGLONG NextLocalChannelId;
+    ULONG InboundRequestCount;
+    ULONGLONG InboundRequestPayloadBytes;
+    ULONG LocalChannelCount;
     ZP_CLIENT_CONFIG Config;
     PCZP_TRANSPORT_OPERATIONS TransportOperations[ZpTransportWss + 1];
     PVOID TransportContexts[ZpTransportWss + 1];
@@ -102,27 +57,15 @@ ZpClient_NotifyPong(
     _In_ ULONGLONG Token);
 
 NTSTATUS
-ZpClient_CompleteResponse(
+ZpClient_QueueRequest(
     _In_ ZP_CLIENT_HANDLE Client,
-    _In_ PCZP_RESPONSE_VIEW Response);
+    _In_ PCZP_REQUEST_VIEW Request);
 
 NTSTATUS
-ZpClient_ReceiveEvent(
+ZpClient_CancelInboundRequest(
     _In_ ZP_CLIENT_HANDLE Client,
-    _In_ PCZP_EVENT_VIEW Message);
+    _In_ ULONGLONG RequestId);
 
-NTSTATUS
-ZpClient_ReceiveChannelData(
-    _In_ ZP_CLIENT_HANDLE Client,
-    _In_ const ZP_CHANNEL_DATA_VIEW* Message);
-
-NTSTATUS
-ZpClient_ReceiveChannelClose(
-    _In_ ZP_CLIENT_HANDLE Client,
-    _In_ const ZP_CHANNEL_CLOSE* Message);
-
-NTSTATUS
-ZpClient_ReceiveChannelWindow(
-    _In_ ZP_CLIENT_HANDLE Client,
-    _In_ ULONGLONG ChannelId,
-    _In_ ULONG CreditBytes);
+VOID
+ZpClient_CloseInboundRequests(
+    _In_ ZP_CLIENT_HANDLE Client);

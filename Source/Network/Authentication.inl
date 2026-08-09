@@ -105,31 +105,3 @@ ZpAuthentication_Verify(
     RtlSecureZeroMemory(Hash, sizeof(Hash));
     return Status;
 }
-
-static
-NTSTATUS
-ZpAuthentication_GetClientId(
-    _In_reads_bytes_(ZP_CLIENT_PUBLIC_KEY_SIZE) const BYTE* PublicKey,
-    _Out_writes_bytes_(32) BYTE* ClientId)
-{
-    BCRYPT_ALG_HANDLE Algorithm;
-    NTSTATUS Status;
-
-    Status = BCryptOpenAlgorithmProvider(&Algorithm,
-                                         BCRYPT_SHA256_ALGORITHM,
-                                         NULL,
-                                         0);
-    if (!NT_SUCCESS(Status))
-    {
-        return Status;
-    }
-    Status = BCryptHash(Algorithm,
-                        NULL,
-                        0,
-                        (PBYTE)PublicKey,
-                        ZP_CLIENT_PUBLIC_KEY_SIZE,
-                        ClientId,
-                        32);
-    BCryptCloseAlgorithmProvider(Algorithm, 0);
-    return Status;
-}

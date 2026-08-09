@@ -1,5 +1,7 @@
 ﻿#include "Connection.h"
 
+#include <KNSoft/MakeLifeEasier/Memory/Core.h>
+
 static
 ULONG
 ZpConnection_ReadUInt32(
@@ -65,9 +67,7 @@ ZpConnection_ReserveReceiveBuffer(
     {
         BufferSize = min(BufferSize * 2, Connection->ReceiveFrameSize);
     }
-    Buffer = Connection->ReceiveBuffer == NULL ?
-                 RtlAllocateHeap(RtlProcessHeap(), 0, BufferSize) :
-                 RtlReAllocateHeap(RtlProcessHeap(), 0, Connection->ReceiveBuffer, BufferSize);
+    Buffer = Mem_ReAlloc(Connection->ReceiveBuffer, BufferSize);
     if (Buffer == NULL)
     {
         return STATUS_NO_MEMORY;
@@ -104,14 +104,8 @@ NTSTATUS
 ZpConnection_GetReceiveState(
     _In_ const ZP_CONNECTION* Connection,
     _In_ ZP_MESSAGE_TYPE MessageType,
-    _Out_ PZP_CONNECTION_STATE State)
+    _Out_ ZP_CONNECTION_STATE* State)
 {
-    if (MessageType == ZpMessageDisconnect)
-    {
-        *State = ZpConnectionStateClosed;
-        return STATUS_SUCCESS;
-    }
-
     switch (Connection->State)
     {
         case ZpConnectionStateClientWaitChallenge:
@@ -214,7 +208,6 @@ ZpConnection_Initialize(
         return STATUS_INVALID_PARAMETER;
     }
     RtlZeroMemory(Connection, sizeof(*Connection));
-    Connection->Role = Role;
     Connection->State = Role == ZpConnectionRoleClient ?
                             ZpConnectionStateClientSendHello :
                             ZpConnectionStateServerWaitHello;
@@ -230,13 +223,6 @@ ZpConnection_Uninitialize(
     ZpConnection_Close(Connection);
 }
 
-ZP_CONNECTION_STATE
-ZpConnection_GetState(
-    _In_ const ZP_CONNECTION* Connection)
-{
-    return Connection->State;
-}
-
 NTSTATUS
 ZpConnection_NotifyMessageSent(
     _Inout_ PZP_CONNECTION Connection,
@@ -246,12 +232,6 @@ ZpConnection_NotifyMessageSent(
     {
         return STATUS_INVALID_DEVICE_STATE;
     }
-    if (MessageType == ZpMessageDisconnect)
-    {
-        ZpConnection_Close(Connection);
-        return STATUS_SUCCESS;
-    }
-
     switch (Connection->State)
     {
         case ZpConnectionStateClientSendHello:

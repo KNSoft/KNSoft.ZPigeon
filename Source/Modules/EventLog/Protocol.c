@@ -1,0 +1,533 @@
+﻿#include "Include/KNSoft/ZPigeon/EventLog.h"
+
+static
+LOGICAL
+ZpEventLog_IsStartModeValid(
+    _In_ ZP_EVENT_LOG_START_MODE StartMode,
+    _In_ ULONG BookmarkLength)
+{
+    if (StartMode == ZpEventLogStartAfterBookmark)
+    {
+        return BookmarkLength != 0;
+    }
+    if (BookmarkLength != 0)
+    {
+        return FALSE;
+    }
+    return StartMode == ZpEventLogStartOldest;
+}
+
+static
+LOGICAL
+ZpEventLog_IsStringValid(
+    _In_reads_opt_(Length) PCWCH String,
+    _In_ ULONG Length,
+    _In_ ULONG MaximumLength,
+    _In_ LOGICAL Required)
+{
+    return Length <= MaximumLength &&
+           (!Required || Length != 0) &&
+           (Length == 0 || String != NULL);
+}
+
+static
+NTSTATUS
+ZpEventLog_WriteQuery(
+    _In_ ZP_EVENT_LOG_START_MODE StartMode,
+    _In_ ULONG MaxEvents,
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_reads_opt_(QueryLength) PCWCH Query,
+    _In_ ULONG QueryLength,
+    _In_reads_opt_(BookmarkLength) PCWCH Bookmark,
+    _In_ ULONG BookmarkLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize;
+    NTSTATUS Status;
+
+    if (!ZpEventLog_IsStartModeValid(StartMode, BookmarkLength) ||
+        MaxEvents == 0 || MaxEvents > ZP_EVENT_LOG_PAGE_MAX_COUNT ||
+        !ZpEventLog_IsStringValid(ChannelPath,
+                                  ChannelPathLength,
+                                  ZP_CODEC_MAX_ELEMENT_COUNT,
+                                  TRUE) ||
+        !ZpEventLog_IsStringValid(Query,
+                                  QueryLength,
+                                  ZP_CODEC_MAX_ELEMENT_COUNT,
+                                  FALSE) ||
+        !ZpEventLog_IsStringValid(Bookmark,
+                                  BookmarkLength,
+                                  ZP_EVENT_LOG_BOOKMARK_MAX_LENGTH,
+                                  FALSE))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = sizeof(USHORT) +
+                   sizeof(ULONG) +
+                   3 * sizeof(ULONG) +
+                   ((ULONGLONG)ChannelPathLength +
+                    QueryLength +
+                    BookmarkLength) * sizeof(WCHAR);
+    if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 16)
+    {
+        return STATUS_BUFFER_OVERFLOW;
+    }
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < RequiredSize)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt16(&Writer, (USHORT)StartMode);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt32(&Writer, MaxEvents);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer, ChannelPath, ChannelPathLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer, Query, QueryLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer, Bookmark, BookmarkLength);
+    }
+    return Status;
+}
+
+static
+NTSTATUS
+ZpEventLog_ReadQuery(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_EVENT_LOG_START_MODE StartMode,
+    _Out_ PULONG MaxEvents,
+    _Out_ PZP_STRING_VIEW ChannelPath,
+    _Out_ PZP_STRING_VIEW Query,
+    _Out_ PZP_STRING_VIEW Bookmark)
+{
+    ZP_CODEC_READER Reader;
+    USHORT StartModeValue = 0;
+    ULONG LocalMaxEvents = 0;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt16(&Reader, &StartModeValue);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt32(&Reader, &LocalMaxEvents);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(&Reader, ChannelPath);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(&Reader, Query);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(&Reader, Bookmark);
+    }
+    *StartMode = (ZP_EVENT_LOG_START_MODE)StartModeValue;
+    if (!NT_SUCCESS(Status) ||
+        !ZpEventLog_IsStartModeValid(*StartMode, Bookmark->Length) ||
+        LocalMaxEvents == 0 ||
+        LocalMaxEvents > ZP_EVENT_LOG_PAGE_MAX_COUNT ||
+        ChannelPath->Length == 0 ||
+        Bookmark->Length > ZP_EVENT_LOG_BOOKMARK_MAX_LENGTH ||
+        Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    *MaxEvents = LocalMaxEvents;
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpEventLog_ReadRecord(
+    _Inout_ PZP_CODEC_READER Reader,
+    _Out_opt_ PZP_EVENT_LOG_RECORD_VIEW Record)
+{
+    ZP_EVENT_LOG_RECORD_VIEW LocalRecord;
+    NTSTATUS Status;
+
+    Status = ZpCodec_ReadString(Reader, &LocalRecord.Bookmark);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(Reader, &LocalRecord.Xml);
+    }
+    if (NT_SUCCESS(Status) &&
+        (LocalRecord.Bookmark.Length == 0 ||
+         LocalRecord.Bookmark.Length > ZP_EVENT_LOG_BOOKMARK_MAX_LENGTH ||
+         LocalRecord.Xml.Length == 0 ||
+         LocalRecord.Xml.Length > ZP_EVENT_LOG_XML_MAX_LENGTH))
+    {
+        Status = STATUS_DATA_ERROR;
+    }
+    if (NT_SUCCESS(Status) && Record != NULL)
+    {
+        *Record = LocalRecord;
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpEventLog_EncodeQueryPageRequest(
+    _In_ ZP_EVENT_LOG_START_MODE StartMode,
+    _In_ ULONG MaxEvents,
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_reads_opt_(QueryLength) PCWCH Query,
+    _In_ ULONG QueryLength,
+    _In_reads_opt_(BookmarkLength) PCWCH Bookmark,
+    _In_ ULONG BookmarkLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    return ZpEventLog_WriteQuery(StartMode,
+                                 MaxEvents,
+                                 ChannelPath,
+                                 ChannelPathLength,
+                                 Query,
+                                 QueryLength,
+                                 Bookmark,
+                                 BookmarkLength,
+                                 Buffer,
+                                 BufferSize,
+                                 BytesWritten);
+}
+
+NTSTATUS
+ZpEventLog_DecodeQueryPageRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_EVENT_LOG_QUERY_VIEW View)
+{
+    return ZpEventLog_ReadQuery(Payload,
+                                PayloadLength,
+                                &View->StartMode,
+                                &View->MaxEvents,
+                                &View->ChannelPath,
+                                &View->Query,
+                                &View->Bookmark);
+}
+
+NTSTATUS
+ZpEventLog_EncodePage(
+    _In_ BOOLEAN HasMore,
+    _In_reads_opt_(RecordCount) PCZP_EVENT_LOG_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_reads_opt_(NextBookmarkLength) PCWCH NextBookmark,
+    _In_ ULONG NextBookmarkLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize;
+    NTSTATUS Status;
+    ULONG Index;
+
+    if ((HasMore != FALSE && HasMore != TRUE) ||
+        RecordCount > ZP_EVENT_LOG_PAGE_MAX_COUNT ||
+        (RecordCount != 0 && Records == NULL) ||
+        (HasMore && RecordCount == 0) ||
+        !ZpEventLog_IsStringValid(NextBookmark,
+                                  NextBookmarkLength,
+                                  ZP_EVENT_LOG_BOOKMARK_MAX_LENGTH,
+                                  FALSE))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = sizeof(BYTE) + 2 * sizeof(ULONG) +
+                   (ULONGLONG)NextBookmarkLength * sizeof(WCHAR);
+    for (Index = 0; Index < RecordCount; Index++)
+    {
+        if (!ZpEventLog_IsStringValid(Records[Index].Bookmark,
+                                      Records[Index].BookmarkLength,
+                                      ZP_EVENT_LOG_BOOKMARK_MAX_LENGTH,
+                                      TRUE) ||
+            !ZpEventLog_IsStringValid(Records[Index].Xml,
+                                      Records[Index].XmlLength,
+                                      ZP_EVENT_LOG_XML_MAX_LENGTH,
+                                      TRUE))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+        RequiredSize += 2 * sizeof(ULONG) +
+                        ((ULONGLONG)Records[Index].BookmarkLength +
+                         Records[Index].XmlLength) * sizeof(WCHAR);
+        if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
+        {
+            return STATUS_BUFFER_OVERFLOW;
+        }
+    }
+    if (RecordCount != 0 &&
+        Records[RecordCount - 1].BookmarkLength != NextBookmarkLength)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (RecordCount != 0 && NextBookmarkLength != 0 &&
+        (NextBookmark == NULL ||
+         RtlCompareMemory(Records[RecordCount - 1].Bookmark,
+                          NextBookmark,
+                          (SIZE_T)NextBookmarkLength * sizeof(WCHAR)) !=
+             (SIZE_T)NextBookmarkLength * sizeof(WCHAR)))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < RequiredSize)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteBoolean(&Writer, HasMore);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer,
+                                     NextBookmark,
+                                     NextBookmarkLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteArrayCount(&Writer, RecordCount);
+    }
+    for (Index = 0; NT_SUCCESS(Status) && Index < RecordCount; Index++)
+    {
+        Status = ZpCodec_WriteString(&Writer,
+                                     Records[Index].Bookmark,
+                                     Records[Index].BookmarkLength);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteString(&Writer,
+                                         Records[Index].Xml,
+                                         Records[Index].XmlLength);
+        }
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpEventLog_DecodePage(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_EVENT_LOG_PAGE_VIEW View)
+{
+    ZP_CODEC_READER Reader;
+    ZP_EVENT_LOG_RECORD_VIEW Record;
+    ULONG Count, Index, ListOffset;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadBoolean(&Reader, &View->HasMore);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(&Reader, &View->NextBookmark);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+        if (NT_SUCCESS(Status) && Count > ZP_EVENT_LOG_PAGE_MAX_COUNT)
+        {
+            Status = STATUS_DATA_ERROR;
+        }
+    }
+    else
+    {
+        Count = 0;
+    }
+    ListOffset = Reader.Offset;
+    for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
+    {
+        Status = ZpEventLog_ReadRecord(&Reader, &Record);
+    }
+    if (!NT_SUCCESS(Status) ||
+        (View->HasMore && Count == 0) ||
+        View->NextBookmark.Length > ZP_EVENT_LOG_BOOKMARK_MAX_LENGTH ||
+        (Count != 0 &&
+         (Record.Bookmark.Length != View->NextBookmark.Length ||
+          RtlCompareMemory(Record.Bookmark.Buffer,
+                           View->NextBookmark.Buffer,
+                           (SIZE_T)Record.Bookmark.Length * sizeof(WCHAR)) !=
+              (SIZE_T)Record.Bookmark.Length * sizeof(WCHAR))) ||
+        Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    View->Records.Buffer = Add2Ptr(Payload, ListOffset);
+    View->Records.Length = PayloadLength - ListOffset;
+    View->Records.Count = Count;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpEventLog_GetRecord(
+    _In_ PCZP_EVENT_LOG_LIST_VIEW List,
+    _In_ ULONG Index,
+    _Out_ PZP_EVENT_LOG_RECORD_VIEW Record)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status = STATUS_SUCCESS;
+    ULONG Current;
+
+    if (Index >= List->Count)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    ZpCodec_InitializeReader(&Reader, List->Buffer, List->Length);
+    for (Current = 0; NT_SUCCESS(Status) && Current <= Index; Current++)
+    {
+        Status = ZpEventLog_ReadRecord(&Reader,
+                                      Current == Index ? Record : NULL);
+    }
+    return Status;
+}
+
+static
+NTSTATUS
+ZpEventLog_EncodeChannelRequest(
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_opt_ PBOOLEAN Enabled,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize;
+    NTSTATUS Status;
+
+    if (!ZpEventLog_IsStringValid(ChannelPath,
+                                  ChannelPathLength,
+                                  ZP_CODEC_MAX_ELEMENT_COUNT,
+                                  TRUE))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = sizeof(ULONG) +
+                   (ULONGLONG)ChannelPathLength * sizeof(WCHAR) +
+                   (Enabled != NULL ? sizeof(BYTE) : 0);
+    if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 16)
+    {
+        return STATUS_BUFFER_OVERFLOW;
+    }
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < RequiredSize)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteString(&Writer, ChannelPath, ChannelPathLength);
+    if (NT_SUCCESS(Status) && Enabled != NULL)
+    {
+        Status = ZpCodec_WriteBoolean(&Writer, *Enabled);
+    }
+    return Status;
+}
+
+static
+NTSTATUS
+ZpEventLog_DecodeChannelRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW ChannelPath,
+    _Out_opt_ PBOOLEAN Enabled)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadString(&Reader, ChannelPath);
+    if (NT_SUCCESS(Status) && Enabled != NULL)
+    {
+        Status = ZpCodec_ReadBoolean(&Reader, Enabled);
+    }
+    if (!NT_SUCCESS(Status) ||
+        ChannelPath->Length == 0 ||
+        Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpEventLog_EncodeSetChannelEnabledRequest(
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_ BOOLEAN Enabled,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    return ZpEventLog_EncodeChannelRequest(ChannelPath,
+                                           ChannelPathLength,
+                                           &Enabled,
+                                           Buffer,
+                                           BufferSize,
+                                           BytesWritten);
+}
+
+NTSTATUS
+ZpEventLog_DecodeSetChannelEnabledRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW ChannelPath,
+    _Out_ PBOOLEAN Enabled)
+{
+    return ZpEventLog_DecodeChannelRequest(Payload,
+                                            PayloadLength,
+                                            ChannelPath,
+                                            Enabled);
+}
+
+NTSTATUS
+ZpEventLog_EncodeClearRequest(
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    return ZpEventLog_EncodeChannelRequest(ChannelPath,
+                                           ChannelPathLength,
+                                           NULL,
+                                           Buffer,
+                                           BufferSize,
+                                           BytesWritten);
+}
+
+NTSTATUS
+ZpEventLog_DecodeClearRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW ChannelPath)
+{
+    return ZpEventLog_DecodeChannelRequest(Payload,
+                                            PayloadLength,
+                                            ChannelPath,
+                                            NULL);
+}

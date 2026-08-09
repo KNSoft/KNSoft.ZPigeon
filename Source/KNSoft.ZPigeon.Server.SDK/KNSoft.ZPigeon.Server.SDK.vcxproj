@@ -50,28 +50,43 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>Include;..\Include;..\KNSoft.ZPigeon.Protocol\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>MLE_API=;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Core\Channel.c" />
+    <ClCompile Include="Core\Connection.c" />
+    <ClCompile Include="Core\Request.c" />
     <ClCompile Include="..\Network\Connection.c">
       <ObjectFileName>$(IntDir)Network\</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="Network\Main.c" />
-    <ClCompile Include="Network\Quic.c" />
-    <ClCompile Include="Network\Registry.c" />
+    <ClCompile Include="..\SDK\Channel.c"><ObjectFileName>$(IntDir)SDK\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\SDK\Request.c"><ObjectFileName>$(IntDir)SDK\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\EventLog\Server.c"><ObjectFileName>$(IntDir)Modules\EventLog\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\File\Server.c"><ObjectFileName>$(IntDir)Modules\File\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Process\Server.c"><ObjectFileName>$(IntDir)Modules\Process\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Registry\Server.c"><ObjectFileName>$(IntDir)Modules\Registry\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Service\Server.c"><ObjectFileName>$(IntDir)Modules\Service\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\System\Server.c"><ObjectFileName>$(IntDir)Modules\System\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Terminal\Server.c"><ObjectFileName>$(IntDir)Modules\Terminal\</ObjectFileName></ClCompile>
+    <ClCompile Include="Transport\Main.c" />
+    <ClCompile Include="Transport\Quic.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Core\Channel.h" />
+    <ClInclude Include="Core\Connection.h" />
     <ClInclude Include="..\Network\Config.inl" />
     <ClInclude Include="..\Network\Authentication.inl" />
     <ClInclude Include="..\Network\Connection.h" />
     <ClInclude Include="..\Network\Quic.inl" />
     <ClInclude Include="..\Network\Transport.h" />
+    <ClInclude Include="..\SDK\Channel.h" />
+    <ClInclude Include="..\SDK\Request.h" />
     <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Server.h" />
-    <ClInclude Include="Network\Quic.h" />
-    <ClInclude Include="Network\Registry.h" />
+    <ClInclude Include="Transport\Quic.h" />
     <ClInclude Include="Server.inl" />
   </ItemGroup>
   <ItemGroup>

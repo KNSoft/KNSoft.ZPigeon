@@ -10,6 +10,24 @@
   <Project Path="KNSoft.ZPigeon.Server.SDK/KNSoft.ZPigeon.Server.SDK.vcxproj" Id="722ac452-a08b-4dbb-8d77-9c29e5394550">
     <BuildDependency Project="KNSoft.ZPigeon.Protocol/KNSoft.ZPigeon.Protocol.vcxproj" />
   </Project>
+  <Project Path="KNSoft.ZPigeon.Client/KNSoft.ZPigeon.Client.vcxproj" Id="5af34716-a7c8-46cd-b167-d7973df10171">
+    <BuildDependency Project="KNSoft.ZPigeon.Client.SDK/KNSoft.ZPigeon.Client.SDK.vcxproj" />
+    <BuildDependency Project="KNSoft.ZPigeon.Protocol/KNSoft.ZPigeon.Protocol.vcxproj" />
+  </Project>
+  <Project Path="KNSoft.ZPigeon.Server.Native/KNSoft.ZPigeon.Server.Native.vcxproj" Id="6d4f5fb4-d570-4e18-b575-3935c656e91b">
+    <BuildDependency Project="KNSoft.ZPigeon.Protocol/KNSoft.ZPigeon.Protocol.vcxproj" />
+    <BuildDependency Project="KNSoft.ZPigeon.Server.SDK/KNSoft.ZPigeon.Server.SDK.vcxproj" />
+  </Project>
+  <Project Path="KNSoft.ZPigeon.Web/KNSoft.ZPigeon.Web.csproj" Id="fe932cfa-668a-48b7-991f-07b108dfe38a">
+    <BuildDependency Project="KNSoft.ZPigeon.Server.Native/KNSoft.ZPigeon.Server.Native.vcxproj" />
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="*|x86" Project="x86" />
+  </Project>
+  <Project Path="ConsumerTest/ConsumerTest.vcxproj" Id="d0d2cc27-d915-46ba-94f2-bd11110295cf">
+    <BuildDependency Project="KNSoft.ZPigeon.Client.SDK/KNSoft.ZPigeon.Client.SDK.vcxproj" />
+    <BuildDependency Project="KNSoft.ZPigeon.Protocol/KNSoft.ZPigeon.Protocol.vcxproj" />
+    <BuildDependency Project="KNSoft.ZPigeon.Server.SDK/KNSoft.ZPigeon.Server.SDK.vcxproj" />
+  </Project>
   <Project Path="UnitTest/UnitTest.vcxproj" Id="56257c0d-30e6-47d2-82b7-9ce3e3776c88">
     <BuildDependency Project="KNSoft.ZPigeon.Client.SDK/KNSoft.ZPigeon.Client.SDK.vcxproj" />
     <BuildDependency Project="KNSoft.ZPigeon.Protocol/KNSoft.ZPigeon.Protocol.vcxproj" />

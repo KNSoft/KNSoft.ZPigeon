@@ -10,7 +10,7 @@ typedef enum _ZP_CONNECTION_ROLE
 {
     ZpConnectionRoleClient,
     ZpConnectionRoleServer
-} ZP_CONNECTION_ROLE, *PZP_CONNECTION_ROLE;
+} ZP_CONNECTION_ROLE;
 
 typedef enum _ZP_CONNECTION_STATE
 {
@@ -24,7 +24,7 @@ typedef enum _ZP_CONNECTION_STATE
     ZpConnectionStateServerSendReady,
     ZpConnectionStateReady,
     ZpConnectionStateClosed
-} ZP_CONNECTION_STATE, *PZP_CONNECTION_STATE;
+} ZP_CONNECTION_STATE;
 
 typedef struct _ZP_CONNECTION ZP_CONNECTION, *PZP_CONNECTION;
 
@@ -37,7 +37,6 @@ NTSTATUS
 
 struct _ZP_CONNECTION
 {
-    ZP_CONNECTION_ROLE Role;
     ZP_CONNECTION_STATE State;
     ZP_CONNECTION_MESSAGE_CALLBACK MessageCallback;
     PVOID CallbackContext;
@@ -59,10 +58,6 @@ ZpConnection_Initialize(
 VOID
 ZpConnection_Uninitialize(
     _Inout_ PZP_CONNECTION Connection);
-
-ZP_CONNECTION_STATE
-ZpConnection_GetState(
-    _In_ const ZP_CONNECTION* Connection);
 
 NTSTATUS
 ZpConnection_NotifyMessageSent(

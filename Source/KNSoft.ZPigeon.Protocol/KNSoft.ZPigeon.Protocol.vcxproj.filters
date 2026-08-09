@@ -1,50 +1,39 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Include">
-      <UniqueIdentifier>{A9CD7C55-5C82-4D1C-B9A5-0599342102C3}</UniqueIdentifier>
-    </Filter>
+    <Filter Include="Core"><UniqueIdentifier>{51f96f46-68fc-4534-9c19-5767046699c6}</UniqueIdentifier></Filter>
+    <Filter Include="Include"><UniqueIdentifier>{a9cd7c55-5c82-4d1c-b9a5-0599342102c3}</UniqueIdentifier></Filter>
+    <Filter Include="Modules"><UniqueIdentifier>{4521f4cc-d091-4692-812a-ca01269a2364}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\EventLog"><UniqueIdentifier>{61d81070-e511-48b0-8d67-e6757942af7a}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\File"><UniqueIdentifier>{a9d8f5eb-dc51-4c41-8f6d-48955099eda4}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Process"><UniqueIdentifier>{78abef0f-31c4-4880-a284-9855fd4dc9a0}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Registry"><UniqueIdentifier>{c6da7759-0063-4490-ad26-c0d109725584}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Service"><UniqueIdentifier>{9c82bcb9-5346-4f6c-85a5-81498ce7ba06}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\System"><UniqueIdentifier>{35df8140-a4aa-4aa1-a496-e358347953f5}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Terminal"><UniqueIdentifier>{8b305900-503c-4e8f-896b-b6cc7afb0bce}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Include\KNSoft\ZPigeon\EventLog.h">
-      <Filter>Include</Filter>
-    </ClInclude>
-    <ClInclude Include="Include\KNSoft\ZPigeon\Protocol.h">
-      <Filter>Include</Filter>
-    </ClInclude>
-    <ClInclude Include="Include\KNSoft\ZPigeon\Registry.h">
-      <Filter>Include</Filter>
-    </ClInclude>
-    <ClInclude Include="Include\KNSoft\ZPigeon\File.h">
-      <Filter>Include</Filter>
-    </ClInclude>
-    <ClInclude Include="Include\KNSoft\ZPigeon\Process.h">
-      <Filter>Include</Filter>
-    </ClInclude>
-    <ClInclude Include="Include\KNSoft\ZPigeon\Service.h">
-      <Filter>Include</Filter>
-    </ClInclude>
-    <ClInclude Include="Include\KNSoft\ZPigeon\System.h">
-      <Filter>Include</Filter>
-    </ClInclude>
-    <ClInclude Include="Include\KNSoft\ZPigeon\Terminal.h">
-      <Filter>Include</Filter>
-    </ClInclude>
-    <ClInclude Include="Protocol.inl" />
+    <ClCompile Include="Core\Codec.c"><Filter>Core</Filter></ClCompile>
+    <ClCompile Include="Core\Frame.c"><Filter>Core</Filter></ClCompile>
+    <ClCompile Include="Core\Message.c"><Filter>Core</Filter></ClCompile>
+    <ClCompile Include="..\Modules\EventLog\Protocol.c"><Filter>Modules\EventLog</Filter></ClCompile>
+    <ClCompile Include="..\Modules\File\Protocol.c"><Filter>Modules\File</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Process\Protocol.c"><Filter>Modules\Process</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Registry\Protocol.c"><Filter>Modules\Registry</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Service\Protocol.c"><Filter>Modules\Service</Filter></ClCompile>
+    <ClCompile Include="..\Modules\System\Protocol.c"><Filter>Modules\System</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Terminal\Protocol.c"><Filter>Modules\Terminal</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Codec.c" />
-    <ClCompile Include="EventLog.c" />
-    <ClCompile Include="File.c" />
-    <ClCompile Include="Frame.c" />
-    <ClCompile Include="Message.c" />
-    <ClCompile Include="Process.c" />
-    <ClCompile Include="Registry.c" />
-    <ClCompile Include="Service.c" />
-    <ClCompile Include="System.c" />
-    <ClCompile Include="Terminal.c" />
+    <ClInclude Include="Core\Protocol.inl"><Filter>Core</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\EventLog.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\File.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Process.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Protocol.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Registry.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Service.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\System.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Terminal.h"><Filter>Include</Filter></ClInclude>
   </ItemGroup>
-  <ItemGroup>
-    <None Include="packages.config" />
-  </ItemGroup>
+  <ItemGroup><None Include="packages.config" /></ItemGroup>
 </Project>

@@ -11,7 +11,6 @@ EXTERN_C_START
 #define ZP_CODEC_MAX_ELEMENT_COUNT 0x00100000UL
 #define ZP_MODULE_MAX_COUNT 64
 #define ZP_CLIENT_PUBLIC_KEY_SIZE 65
-#define ZP_CLIENT_ID_SIZE 32
 #define ZP_SERVER_CHALLENGE_SIZE 32
 #define ZP_CLIENT_SIGNATURE_SIZE 64
 
@@ -21,16 +20,14 @@ typedef enum _ZP_MESSAGE_TYPE
     ZpMessageServerChallenge = 0x02,
     ZpMessageClientAuthenticate = 0x03,
     ZpMessageReady = 0x04,
-    ZpMessageDisconnect = 0x05,
     ZpMessageRequest = 0x10,
     ZpMessageResponse = 0x11,
     ZpMessageCancel = 0x12,
-    ZpMessageEvent = 0x13,
-    ZpMessageChannelData = 0x14,
-    ZpMessageChannelClose = 0x15,
-    ZpMessagePing = 0x16,
-    ZpMessagePong = 0x17,
-    ZpMessageChannelWindow = 0x18
+    ZpMessageChannelData = 0x13,
+    ZpMessageChannelClose = 0x14,
+    ZpMessagePing = 0x15,
+    ZpMessagePong = 0x16,
+    ZpMessageChannelWindow = 0x17
 } ZP_MESSAGE_TYPE;
 
 typedef struct _ZP_BUFFER_VIEW
@@ -74,7 +71,6 @@ typedef struct _ZP_MODULE_RECORD
 {
     USHORT ModuleId;
     USHORT ModuleVersion;
-    ULONG Capabilities;
 } ZP_MODULE_RECORD, *PZP_MODULE_RECORD;
 
 typedef const ZP_MODULE_RECORD* PCZP_MODULE_RECORD;
@@ -117,21 +113,6 @@ typedef struct _ZP_READY_VIEW
     ZP_MODULE_LIST_VIEW Modules;
 } ZP_READY_VIEW, *PZP_READY_VIEW;
 
-typedef struct _ZP_DISCONNECT
-{
-    NTSTATUS Status;
-    PCWCH Reason;
-    ULONG ReasonLength;
-} ZP_DISCONNECT, *PZP_DISCONNECT;
-
-typedef const ZP_DISCONNECT* PCZP_DISCONNECT;
-
-typedef struct _ZP_DISCONNECT_VIEW
-{
-    NTSTATUS Status;
-    ZP_STRING_VIEW Reason;
-} ZP_DISCONNECT_VIEW, *PZP_DISCONNECT_VIEW;
-
 typedef struct _ZP_REQUEST
 {
     ULONGLONG RequestId;
@@ -173,27 +154,6 @@ typedef struct _ZP_RESPONSE_VIEW
 } ZP_RESPONSE_VIEW, *PZP_RESPONSE_VIEW;
 
 typedef const ZP_RESPONSE_VIEW* PCZP_RESPONSE_VIEW;
-
-typedef struct _ZP_EVENT
-{
-    ULONGLONG SubscriptionId;
-    USHORT ModuleId;
-    USHORT EventId;
-    const VOID* Payload;
-    ULONG PayloadLength;
-} ZP_EVENT, *PZP_EVENT;
-
-typedef const ZP_EVENT* PCZP_EVENT;
-
-typedef struct _ZP_EVENT_VIEW
-{
-    ULONGLONG SubscriptionId;
-    USHORT ModuleId;
-    USHORT EventId;
-    ZP_BUFFER_VIEW Payload;
-} ZP_EVENT_VIEW, *PZP_EVENT_VIEW;
-
-typedef const ZP_EVENT_VIEW* PCZP_EVENT_VIEW;
 
 typedef struct _ZP_CHANNEL_DATA_VIEW
 {
@@ -372,19 +332,6 @@ ZpMessage_DecodeReady(
     _Out_ PZP_READY_VIEW View);
 
 NTSTATUS
-ZpMessage_EncodeDisconnect(
-    _In_ PCZP_DISCONNECT Message,
-    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
-    _In_ ULONG BufferSize,
-    _Out_ PULONG BytesWritten);
-
-NTSTATUS
-ZpMessage_DecodeDisconnect(
-    _In_reads_bytes_(BodyLength) const VOID* Body,
-    _In_ ULONG BodyLength,
-    _Out_ PZP_DISCONNECT_VIEW View);
-
-NTSTATUS
 ZpMessage_EncodeRequest(
     _In_ PCZP_REQUEST Message,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
@@ -422,19 +369,6 @@ ZpMessage_DecodeCancel(
     _In_reads_bytes_(BodyLength) const VOID* Body,
     _In_ ULONG BodyLength,
     _Out_ PULONGLONG RequestId);
-
-NTSTATUS
-ZpMessage_EncodeEvent(
-    _In_ PCZP_EVENT Message,
-    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
-    _In_ ULONG BufferSize,
-    _Out_ PULONG BytesWritten);
-
-NTSTATUS
-ZpMessage_DecodeEvent(
-    _In_reads_bytes_(BodyLength) const VOID* Body,
-    _In_ ULONG BodyLength,
-    _Out_ PZP_EVENT_VIEW View);
 
 NTSTATUS
 ZpMessage_EncodeChannelData(

@@ -1,18 +1,25 @@
 # KNSoft.ZPigeon
 
-KNSoft.ZPigeon 是面向 Windows 10 及以上系统的纯 C 远程管理 SDK。第一版使用 QUIC 与 TLS 1.3，提供持久化客户端身份、模块协商、异步 Request、流式 Channel、实时 Subscription，以及 System、Process、Service、File、Terminal、EventLog 和 Registry 模块。
+KNSoft.ZPigeon 是面向 Windows 10 及以上系统的远程管理项目。原生 SDK 使用纯 C；第一版使用 QUIC 与 TLS 1.3，提供持久化客户端身份、模块协商、异步 Request、流式 Channel，以及 System、Process、Service、File、Terminal、EventLog 和 Registry 模块。
 
-项目目前输出三个静态库：
+同一个 Solution 直接输出：
 
 - `KNSoft.ZPigeon.Protocol`：Transport 无关的帧、消息和模块 Codec；
-- `KNSoft.ZPigeon.Client.SDK`：客户端连接、重试、请求和 Channel/Subscription 生命周期；
-- `KNSoft.ZPigeon.Server.SDK`：QUIC 监听、认证、授权及 Windows 原生管理操作。
+- `KNSoft.ZPigeon.Client.SDK`：被控端连接、重试、请求执行和本机管理操作；
+- `KNSoft.ZPigeon.Server.SDK`：管理端监听、认证、连接持有和异步操作发起。
+- `KNSoft.ZPigeon.Client.exe`：启动 Client SDK，连接本地 Server，并把网络及各模块日志分别写入同目录 `logs`；
+- `KNSoft.ZPigeon.Server.Native.dll`：供托管程序直接调用 Server SDK 的 C ABI 桥；
+- `KNSoft.ZPigeon.Web`：通过 Native DLL 控制本地 Client 的 C# Web 管理端。
+
+ZPigeon 本身不生成 NuGet 包；三个原生依赖仍由现有 `packages.config` 提供。
 
 完整协议与安全模型见 [Design.md](Design.md)，当前实现状态见 [Progress.md](Progress.md)，第一版交付门槛见 [Release.md](Release.md)。
 
+> 产品角色固定为 Client 运行在被控主机、Server 作为管理端。所有现有管理模块均由 Server 发起、Client 本机执行；Client 不发起管理业务 Request。当前状态和后续入口见 [Handoff.md](Handoff.md)。
+
 ## 构建与测试
 
-需要 Visual Studio C++ 工具链、Windows SDK，以及项目 `packages.config` 中声明的 KNSoft.MakeLifeEasier、KNSoft.NDK 和 KNSoft.Quic 原生 NuGet 包。
+需要 Visual Studio 2026 C++ 工具链、Windows SDK 10.0.26100.0、.NET 10 SDK，以及项目 `packages.config` 中声明的 KNSoft.MakeLifeEasier、KNSoft.NDK 和 KNSoft.Quic 原生依赖。
 
 在 Visual Studio Developer PowerShell 中执行：
 
@@ -22,7 +29,17 @@ msbuild Source\KNSoft.ZPigeon.slnx /t:Rebuild /p:Configuration=Debug /p:Platform
 Source\OutDir\x64\Debug\UnitTest.exe -Run
 ```
 
-当前 x86/x64、Debug/Release 全矩阵均为 0 编译/链接警告，336/336 项断言通过。
+当前改动已通过 x86/x64、Debug/Release 全 Solution Rebuild；四个配置各自 324/324 测试和 ConsumerTest 通过，并完成 x64 Debug 的 Web、Native Server、QUIC、Client 实际 localhost 冒烟。
+
+## 本地试用
+
+1. 运行 `Source\OutDir\x64\Debug\KNSoft.ZPigeon.Web.exe`；首次运行会在同目录生成仅供本地试用的根证书与 Server 证书。
+2. 运行同目录的 `KNSoft.ZPigeon.Client.exe`。
+3. 打开 `http://127.0.0.1:5080`。Web 和 Server 仅监听本地回环；Client 连接 `127.0.0.1:4433`。
+
+当前页面可读取系统信息、终止指定进程，并按 Bookmark 分页查询 EventLog、启停频道或清除频道；不包含实时订阅。
+
+Client 的 `network.log` 与各业务模块日志位于同目录 `logs`。试用 EXE 使用当前用户范围的持久 CNG 身份密钥；SDK 默认仍使用机器范围，服务化部署不改变原安全边界。
 
 ## 最小 Server 生命周期
 
@@ -71,8 +88,8 @@ StartServer(
     ZP_SERVER_HANDLE* Server)
 {
     static const ZP_MODULE_RECORD Modules[] = {
-        { ZP_SYSTEM_MODULE_ID, ZP_SYSTEM_MODULE_VERSION, 0 },
-        { ZP_FILE_MODULE_ID, ZP_FILE_MODULE_VERSION, 0 }
+        { ZP_SYSTEM_MODULE_ID, ZP_SYSTEM_MODULE_VERSION },
+        { ZP_FILE_MODULE_ID, ZP_FILE_MODULE_VERSION }
     };
     static const ZP_LISTENER_ENDPOINT Listener = {
         ZpTransportQuic, L"0.0.0.0", 4433, NULL
@@ -102,7 +119,7 @@ StartServer(
 }
 ```
 
-未配置 `AuthorizeCallback` 时，Read 操作默认允许，Control 操作默认拒绝。生产程序应显式配置授权回调，依据认证后的 `ClientId`、访问级别、模块、操作及原始 Payload 收窄权限。
+连接进入 `ZpConnectionPhaseReady` 后，Server 应调用 `ZpConnection_AddRef` 持有连接，并通过 `ZpServer_*` API 对该 Client 发起操作；收到 Closed 后释放持有的连接。通过部署根认证的 Server 对 Client 拥有完整管理能力，不再建立操作级 Read/Control 授权层。
 
 停止顺序为 `ZpServer_Stop`，等待 `ZpServerStateStopped`，最后调用 `ZpServer_Close`。
 
@@ -135,8 +152,8 @@ StartClient(
     ZP_CLIENT_HANDLE* Client)
 {
     static const ZP_MODULE_RECORD Modules[] = {
-        { ZP_SYSTEM_MODULE_ID, ZP_SYSTEM_MODULE_VERSION, 0 },
-        { ZP_FILE_MODULE_ID, ZP_FILE_MODULE_VERSION, 0 }
+        { ZP_SYSTEM_MODULE_ID, ZP_SYSTEM_MODULE_VERSION },
+        { ZP_FILE_MODULE_ID, ZP_FILE_MODULE_VERSION }
     };
     static const ZP_ENDPOINT Endpoint = {
         ZpTransportQuic,
@@ -166,26 +183,26 @@ StartClient(
 }
 ```
 
-等待 `ZpClientStateReady` 后再发业务请求。停止顺序为 `ZpClient_Stop`，等待 `ZpClientStateStopped`，最后调用 `ZpClient_Close`。
+`ZpClientStateReady` 表示被控端已可接收并执行 Server 请求；Client 不发起管理业务请求。停止顺序为 `ZpClient_Stop`，等待 `ZpClientStateStopped`，最后调用 `ZpClient_Close`。
 
 ## 异步 Handle 与 Buffer 规则
 
 - 异步 API 的输出 Handle 只在函数返回成功时有效；同步拒绝不会触发完成回调。调用方不得读取失败调用留下的输出值。
-- `ZpClient_*` 请求 API 成功返回时会交付 `ZP_REQUEST_HANDLE`；调用方不再需要取消或查询它时调用 `ZpRequest_Close` 释放自己的引用。
+- `ZpServer_*` 请求 API 成功返回时会交付 `ZP_REQUEST_HANDLE`；调用方不再需要取消或查询它时调用 `ZpRequest_Close` 释放自己的引用。
 - 完成回调可能在发起 API 返回前同步发生；回调可直接 `ZpRequest_Close`，应用不得依赖“函数先返回、回调后发生”的时序。
-- Request 回调恰好完成一次。超时在 Client 本地完成为 `STATUS_IO_TIMEOUT`，并尽力向 Server 发送 Cancel。
+- Request 回调恰好完成一次。超时在 Server 本地完成为 `STATUS_IO_TIMEOUT`，并尽力向 Client 发送 Cancel。
 - 回调参数中的 View/Buffer 只在当前回调返回前有效；需要长期持有时由应用自行复制。
 - 回调可能来自任意 SDK 工作线程或 Transport 回调线程；不同连接和对象可并发回调。SDK 不在对象锁内调用应用回调，应用仍应避免长期阻塞并自行同步共享状态。
-- Client/Server 的 `Close` 不能在其回调栈内执行，此时会返回 `STATUS_DEVICE_BUSY`；Request、Channel、Subscription 的调用方引用可以在对应回调中通过各自 `Close` 释放，释放后不得再次使用该 Handle。
-- Channel 和 Subscription 也使用引用计数 Handle；本地取消与远端结束均只产生一次终止回调，最迟在终止回调返回后分别调用 `ZpChannel_Close` 或 `ZpSubscription_Close` 释放调用方引用。
+- Client/Server 的 `Close` 不能在其回调栈内执行，此时会返回 `STATUS_DEVICE_BUSY`；Request、Channel 的调用方引用可以在对应回调中通过各自 `Close` 释放，释放后不得再次使用该 Handle。
+- Channel 使用引用计数 Handle；本地取消与远端结束只产生一次终止回调，最迟在终止回调返回后调用 `ZpChannel_Close` 释放调用方引用。
 - `ZpChannel_Send` 不做隐藏排队；额度不足时返回 `STATUS_RETRY`，应等待 Writable 回调后重试。
 
 ## 第一版资源边界
 
 - Frame Body 最大 16 MiB，ChannelData 单帧最大 1 MiB；
-- 每连接默认最多 64 个 Request、64 MiB Request Payload、16 个 Channel 和 16 个 Subscription；
+- 每连接默认最多 64 个 Request、64 MiB Request Payload 和 16 个 Channel；
 - File 与 Registry 排序快照有明确条目数和内存上限；
-- 达到 Server 配额通常返回 `STATUS_QUOTA_EXCEEDED`，不因单个合法但超限的请求终止连接。
+- 达到对应连接侧配额通常返回 `STATUS_QUOTA_EXCEEDED`，不因单个合法但超限的请求终止连接。
 
 ## License
 

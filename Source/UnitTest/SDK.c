@@ -2,10 +2,18 @@
 
 #include <KNSoft/ZPigeon/Client.h>
 #include <KNSoft/ZPigeon/Server.h>
+#include <KNSoft/ZPigeon/Terminal.h>
 
 #include "../KNSoft.ZPigeon.Client.SDK/Client.inl"
-#include "../KNSoft.ZPigeon.Client.SDK/Network/Retry.inl"
+#include "../KNSoft.ZPigeon.Client.SDK/Transport/Retry.inl"
 #include "../KNSoft.ZPigeon.Server.SDK/Server.inl"
+#include "../KNSoft.ZPigeon.Server.SDK/Core/Connection.h"
+#include "../Modules/EventLog/Client.h"
+#include "../Modules/File/Client.h"
+#include "../Modules/Process/Client.h"
+#include "../Modules/Registry/Client.h"
+#include "../Modules/Service/Client.h"
+#include "../Modules/System/Client.h"
 #include "../Network/Authentication.inl"
 #include "../Network/Quic.inl"
 
@@ -26,10 +34,7 @@ typedef struct _SDK_TEST_CONTEXT
     ULONG SendChannelCredit;
     ULONG SendChannelDataLength;
     NTSTATUS SendChannelStatus;
-    ULONG RequestCompleteCount;
     NTSTATUS RequestStatus;
-    ULONG RequestPayloadLength;
-    HANDLE RequestCompleteEvent;
     ULONG FileOpenReadCount;
     NTSTATUS FileOpenReadStatus;
     ULONG FileHashCount;
@@ -53,19 +58,6 @@ typedef struct _SDK_TEST_CONTEXT
     NTSTATUS EventPageStatus;
     ULONG EventPageRecordCount;
     BOOLEAN EventPageHasMore;
-    ULONG EventSubscribeCount;
-    NTSTATUS EventSubscribeStatus;
-    ZP_SUBSCRIPTION_HANDLE EventSubscription;
-    ULONG EventRecordCount;
-    ULONGLONG EventSequence;
-    ULONG EventBookmarkLength;
-    ULONG EventXmlLength;
-    ULONG EventTerminalCount;
-    ULONGLONG EventNextSequence;
-    NTSTATUS EventTerminalStatus;
-    ULONG EventLastBookmarkLength;
-    LOGICAL CancelSubscriptionInRecord;
-    NTSTATUS SubscriptionCancelStatus;
     ZP_CHANNEL_HANDLE FileChannel;
     ULONGLONG FileSize;
     ULONGLONG FileOffset;
@@ -94,16 +86,392 @@ typedef struct _SDK_TEST_CONTEXT
     NTSTATUS ServerStatuses[8];
     LOGICAL CloseServerOnStopped;
     NTSTATUS ServerCloseStatus;
-    NTSTATUS AuthorizeStatus;
-    ULONG AuthorizeCount;
-    ZP_REQUEST_ACCESS AuthorizedAccess;
-    USHORT AuthorizedModuleId;
-    USHORT AuthorizedOperationId;
-    ULONG AuthorizedPayloadLength;
-    ZP_CLIENT_HANDLE SynchronousClient;
-    LOGICAL CompleteRequestInSend;
-    LOGICAL CloseRequestInCallback;
 } SDK_TEST_CONTEXT, *PSDK_TEST_CONTEXT;
+
+typedef struct _SDK_SYSTEM_LOOPBACK
+{
+    ZP_CONNECTION_OBJECT Connection;
+    ULONG SendCount;
+    ULONG CallbackCount;
+    ULONG DestroyCount;
+    NTSTATUS Status;
+    ZP_SYSTEM_ARCHITECTURE Architecture;
+    ULONG ProcessorCount;
+    ULONG ProcessCount;
+    LOGICAL FoundCurrentProcess;
+    ULONG ServiceCount;
+    ULONG RegistryCallbackCount;
+    NTSTATUS RegistryStatus;
+    ULONG RegistryPageCount;
+    ULONG FileCallbackCount;
+    NTSTATUS FileStatus;
+    ULONGLONG FileSize;
+    ULONG FilePageCount;
+    ULONG FileHashCallbackCount;
+    NTSTATUS FileHashStatus;
+    ULONGLONG FileHashSize;
+} SDK_SYSTEM_LOOPBACK, *PSDK_SYSTEM_LOOPBACK;
+
+typedef struct _SDK_REQUEST_CONNECTION
+{
+    ZP_CONNECTION_OBJECT Connection;
+    PSDK_TEST_CONTEXT Context;
+    ULONG DestroyCount;
+} SDK_REQUEST_CONNECTION, *PSDK_REQUEST_CONNECTION;
+
+static
+VOID
+NTAPI
+SDKTest_RequestConnectionDestroy(
+    _Inout_ PZP_CONNECTION_OBJECT Connection)
+{
+    PSDK_REQUEST_CONNECTION RequestConnection = CONTAINING_RECORD(
+        Connection,
+        SDK_REQUEST_CONNECTION,
+        Connection);
+
+    RequestConnection->DestroyCount++;
+}
+
+static
+NTSTATUS
+NTAPI
+SDKTest_RequestConnectionSend(
+    _Inout_ PZP_CONNECTION_OBJECT Connection,
+    _In_ ZP_MESSAGE_TYPE MessageType,
+    _In_reads_bytes_opt_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength)
+{
+    PSDK_REQUEST_CONNECTION RequestConnection = CONTAINING_RECORD(
+        Connection,
+        SDK_REQUEST_CONNECTION,
+        Connection);
+    PSDK_TEST_CONTEXT TestContext = RequestConnection->Context;
+    ZP_REQUEST_VIEW Request;
+    ZP_CHANNEL_DATA_VIEW ChannelData;
+    ZP_CHANNEL_CLOSE ChannelClose;
+    NTSTATUS Status;
+
+    TestContext->SendMessageType = MessageType;
+    if (MessageType == ZpMessageChannelData)
+    {
+        Status = ZpMessage_DecodeChannelData(Body,
+                                             BodyLength,
+                                             &ChannelData);
+        if (NT_SUCCESS(Status))
+        {
+            TestContext->SendChannelId = ChannelData.ChannelId;
+            TestContext->SendChannelDataLength = ChannelData.Data.Length;
+        }
+        return Status;
+    }
+    if (MessageType == ZpMessageChannelClose)
+    {
+        Status = ZpMessage_DecodeChannelClose(Body,
+                                              BodyLength,
+                                              &ChannelClose);
+        if (NT_SUCCESS(Status))
+        {
+            TestContext->SendChannelId = ChannelClose.ChannelId;
+            TestContext->SendChannelStatus = ChannelClose.Status;
+        }
+        return Status;
+    }
+    if (MessageType == ZpMessageChannelWindow)
+    {
+        return ZpMessage_DecodeChannelWindow(Body,
+                                             BodyLength,
+                                             &TestContext->SendChannelId,
+                                             &TestContext->SendChannelCredit);
+    }
+    if (MessageType == ZpMessageCancel)
+    {
+        return ZpMessage_DecodeCancel(Body,
+                                      BodyLength,
+                                      &TestContext->SendRequestId);
+    }
+    if (MessageType != ZpMessageRequest)
+    {
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    Status = ZpMessage_DecodeRequest(Body, BodyLength, &Request);
+    if (NT_SUCCESS(Status))
+    {
+        TestContext->SendCount++;
+        TestContext->SendRequestId = Request.RequestId;
+        TestContext->SendModuleId = Request.ModuleId;
+        TestContext->SendOperationId = Request.OperationId;
+        TestContext->SendPayloadLength = Request.Payload.Length;
+    }
+    return Status;
+}
+
+static
+VOID
+NTAPI
+SDKTest_SystemConnectionDestroy(
+    _Inout_ PZP_CONNECTION_OBJECT Connection)
+{
+    PSDK_SYSTEM_LOOPBACK Loopback = CONTAINING_RECORD(Connection,
+                                                      SDK_SYSTEM_LOOPBACK,
+                                                      Connection);
+
+    Loopback->DestroyCount++;
+}
+
+static
+NTSTATUS
+NTAPI
+SDKTest_SystemConnectionSend(
+    _Inout_ PZP_CONNECTION_OBJECT Connection,
+    _In_ ZP_MESSAGE_TYPE MessageType,
+    _In_reads_bytes_opt_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength)
+{
+    PSDK_SYSTEM_LOOPBACK Loopback = CONTAINING_RECORD(Connection,
+                                                      SDK_SYSTEM_LOOPBACK,
+                                                      Connection);
+    BYTE Payload[30 + (MAX_COMPUTERNAME_LENGTH + 1) * sizeof(WCHAR)];
+    PBYTE AllocatedPayload = NULL;
+    PZP_CLIENT_FILE_CHANNEL FileChannel;
+    ZP_REQUEST_VIEW Request;
+    ZP_RESPONSE_VIEW Response;
+    ULONG PayloadLength;
+    LONG Pending = TRUE;
+    NTSTATUS Status;
+
+    if (MessageType != ZpMessageRequest)
+    {
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    Status = ZpMessage_DecodeRequest(Body, BodyLength, &Request);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    Loopback->SendCount++;
+    if (Request.ModuleId == ZP_SYSTEM_MODULE_ID &&
+        Request.OperationId == ZP_SYSTEM_OPERATION_INFO &&
+        Request.Payload.Length == 0)
+    {
+        Status = ZpSystem_ExecuteInfo(Payload,
+                                      sizeof(Payload),
+                                      &PayloadLength);
+    }
+    else if (Request.ModuleId == ZP_FILE_MODULE_ID)
+    {
+        Status = ZpFile_Execute(NULL,
+                                Request.OperationId,
+                                Request.Payload.Buffer,
+                                Request.Payload.Length,
+                                &Pending,
+                                &AllocatedPayload,
+                                &PayloadLength,
+                                &FileChannel);
+    }
+    else if (Request.ModuleId == ZP_PROCESS_MODULE_ID)
+    {
+        Status = ZpProcess_Execute(Request.OperationId,
+                                   Request.Payload.Buffer,
+                                   Request.Payload.Length,
+                                   &AllocatedPayload,
+                                   &PayloadLength);
+    }
+    else if (Request.ModuleId == ZP_SERVICE_MODULE_ID)
+    {
+        Status = ZpService_Execute(Request.OperationId,
+                                   Request.Payload.Buffer,
+                                   Request.Payload.Length,
+                                   &AllocatedPayload,
+                                   &PayloadLength);
+    }
+    else if (Request.ModuleId == ZP_REGISTRY_MODULE_ID)
+    {
+        Status = ZpRegistry_Execute(Request.OperationId,
+                                    Request.Payload.Buffer,
+                                    Request.Payload.Length,
+                                    &AllocatedPayload,
+                                    &PayloadLength);
+    }
+    else if (Request.ModuleId == ZP_EVENT_LOG_MODULE_ID)
+    {
+        Status = ZpEventLog_Execute(Request.OperationId,
+                                    Request.Payload.Buffer,
+                                    Request.Payload.Length,
+                                    &Pending,
+                                    &AllocatedPayload,
+                                    &PayloadLength);
+    }
+    else
+    {
+        Status = STATUS_PROTOCOL_UNREACHABLE;
+    }
+    Response.RequestId = Request.RequestId;
+    Response.Status = Status;
+    Response.Payload.Buffer = NT_SUCCESS(Status) ?
+                                  (AllocatedPayload != NULL ?
+                                       AllocatedPayload :
+                                       Payload) :
+                                  NULL;
+    Response.Payload.Length = NT_SUCCESS(Status) ? PayloadLength : 0;
+    Status = ZpServerConnection_ReceiveResponse(Connection, &Response);
+    if (AllocatedPayload != NULL)
+    {
+        Mem_Free(AllocatedPayload);
+    }
+    return Status;
+}
+
+static
+VOID
+NTAPI
+SDKTest_SystemInfoCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ const ZP_SYSTEM_INFO_VIEW* Info,
+    _In_opt_ PVOID Context)
+{
+    PSDK_SYSTEM_LOOPBACK Loopback = Context;
+
+    Loopback->CallbackCount++;
+    Loopback->Status = Status;
+    if (Info != NULL)
+    {
+        Loopback->Architecture = Info->Architecture;
+        Loopback->ProcessorCount = Info->ProcessorCount;
+    }
+    ZpRequest_Close(Request);
+}
+
+static
+VOID
+NTAPI
+SDKTest_ProcessListCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_PROCESS_LIST_VIEW Processes,
+    _In_opt_ PVOID Context)
+{
+    PSDK_SYSTEM_LOOPBACK Loopback = Context;
+    ZP_PROCESS_RECORD_VIEW Process;
+    ULONG Index;
+
+    Loopback->CallbackCount++;
+    Loopback->Status = Status;
+    if (Processes != NULL)
+    {
+        Loopback->ProcessCount = Processes->Count;
+        for (Index = 0; Index < Processes->Count; Index++)
+        {
+            if (NT_SUCCESS(ZpProcess_GetRecord(Processes, Index, &Process)) &&
+                Process.ProcessId == GetCurrentProcessId())
+            {
+                Loopback->FoundCurrentProcess = TRUE;
+                break;
+            }
+        }
+    }
+    ZpRequest_Close(Request);
+}
+
+static
+VOID
+NTAPI
+SDKTest_ServiceListCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_SERVICE_LIST_VIEW Services,
+    _In_opt_ PVOID Context)
+{
+    PSDK_SYSTEM_LOOPBACK Loopback = Context;
+
+    Loopback->CallbackCount++;
+    Loopback->Status = Status;
+    if (Services != NULL)
+    {
+        Loopback->ServiceCount = Services->Count;
+    }
+    ZpRequest_Close(Request);
+}
+
+static
+VOID
+NTAPI
+SDKTest_RegistryPageLoopbackCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_REGISTRY_PAGE_VIEW Page,
+    _In_opt_ PVOID Context)
+{
+    PSDK_SYSTEM_LOOPBACK Loopback = Context;
+
+    Loopback->RegistryCallbackCount++;
+    Loopback->RegistryStatus = Status;
+    if (Page != NULL)
+    {
+        Loopback->RegistryPageCount = Page->Records.Count;
+    }
+    ZpRequest_Close(Request);
+}
+
+static
+VOID
+NTAPI
+SDKTest_FileQueryLoopbackCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_FILE_INFO Info,
+    _In_opt_ PVOID Context)
+{
+    PSDK_SYSTEM_LOOPBACK Loopback = Context;
+
+    Loopback->FileCallbackCount++;
+    Loopback->FileStatus = Status;
+    if (Info != NULL)
+    {
+        Loopback->FileSize = Info->Size;
+    }
+    ZpRequest_Close(Request);
+}
+
+static
+VOID
+NTAPI
+SDKTest_FilePageLoopbackCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_FILE_PAGE_VIEW Page,
+    _In_opt_ PVOID Context)
+{
+    PSDK_SYSTEM_LOOPBACK Loopback = Context;
+
+    Loopback->FileStatus = Status;
+    if (Page != NULL)
+    {
+        Loopback->FilePageCount = Page->Files.Count;
+    }
+    ZpRequest_Close(Request);
+}
+
+static
+VOID
+NTAPI
+SDKTest_FileHashLoopbackCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ NTSTATUS Status,
+    _In_opt_ PCZP_FILE_HASH_VIEW Hash,
+    _In_opt_ PVOID Context)
+{
+    PSDK_SYSTEM_LOOPBACK Loopback = Context;
+
+    Loopback->FileHashCallbackCount++;
+    Loopback->FileHashStatus = Status;
+    if (Hash != NULL)
+    {
+        Loopback->FileHashSize = Hash->FileSize;
+    }
+    ZpRequest_Close(Request);
+}
 
 static
 NTSTATUS
@@ -139,37 +507,15 @@ SDKTest_TransportSend(
     _In_ ULONG BodyLength)
 {
     PSDK_TEST_CONTEXT TestContext = Context;
-    ZP_REQUEST_VIEW Request;
-    ZP_RESPONSE_VIEW Response;
     ZP_CHANNEL_DATA_VIEW ChannelData;
     ZP_CHANNEL_CLOSE ChannelClose;
+    ZP_RESPONSE_VIEW Response;
 
     TestContext->SendCount++;
     TestContext->SendMessageType = MessageType;
     if (MessageType == ZpMessagePing)
     {
         ZpMessage_DecodePing(MessageType, Body, BodyLength, &TestContext->SendToken);
-    }
-    else if (MessageType == ZpMessageRequest &&
-             NT_SUCCESS(ZpMessage_DecodeRequest(Body, BodyLength, &Request)))
-    {
-        TestContext->SendRequestId = Request.RequestId;
-        TestContext->SendModuleId = Request.ModuleId;
-        TestContext->SendOperationId = Request.OperationId;
-        TestContext->SendPayloadLength = Request.Payload.Length;
-        if (TestContext->CompleteRequestInSend)
-        {
-            Response.RequestId = Request.RequestId;
-            Response.Status = STATUS_SUCCESS;
-            Response.Payload.Buffer = NULL;
-            Response.Payload.Length = 0;
-            return ZpClient_CompleteResponse(TestContext->SynchronousClient,
-                                             &Response);
-        }
-    }
-    else if (MessageType == ZpMessageCancel)
-    {
-        ZpMessage_DecodeCancel(Body, BodyLength, &TestContext->SendRequestId);
     }
     else if (MessageType == ZpMessageChannelWindow)
     {
@@ -194,31 +540,15 @@ SDKTest_TransportSend(
         TestContext->SendChannelId = ChannelClose.ChannelId;
         TestContext->SendChannelStatus = ChannelClose.Status;
     }
+    else if (MessageType == ZpMessageResponse &&
+             NT_SUCCESS(ZpMessage_DecodeResponse(Body,
+                                                  BodyLength,
+                                                  &Response)))
+    {
+        TestContext->SendRequestId = Response.RequestId;
+        TestContext->RequestStatus = Response.Status;
+    }
     return STATUS_SUCCESS;
-}
-
-static
-VOID
-NTAPI
-SDKTest_RequestCompleteCallback(
-    _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
-    _In_ PCZP_BUFFER_VIEW Payload,
-    _In_opt_ PVOID Context)
-{
-    PSDK_TEST_CONTEXT TestContext = Context;
-
-    TestContext->RequestCompleteCount++;
-    TestContext->RequestStatus = Status;
-    TestContext->RequestPayloadLength = Payload->Length;
-    if (TestContext->RequestCompleteEvent != NULL)
-    {
-        SetEvent(TestContext->RequestCompleteEvent);
-    }
-    if (TestContext->CloseRequestInCallback)
-    {
-        ZpRequest_Close(Request);
-    }
 }
 
 static
@@ -358,67 +688,6 @@ SDKTest_EventLogPageCallback(
 static
 VOID
 NTAPI
-SDKTest_EventLogSubscribeCallback(
-    _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
-    _In_opt_ ZP_SUBSCRIPTION_HANDLE Subscription,
-    _In_opt_ PVOID Context)
-{
-    PSDK_TEST_CONTEXT TestContext = Context;
-
-    UNREFERENCED_PARAMETER(Request);
-    TestContext->EventSubscribeCount++;
-    TestContext->EventSubscribeStatus = Status;
-    TestContext->EventSubscription = Subscription;
-}
-
-static
-VOID
-NTAPI
-SDKTest_EventLogRecordCallback(
-    _In_ ZP_SUBSCRIPTION_HANDLE Subscription,
-    _In_ ULONGLONG Sequence,
-    _In_ const ZP_EVENT_LOG_RECORD_VIEW* Record,
-    _In_opt_ PVOID Context)
-{
-    PSDK_TEST_CONTEXT TestContext = Context;
-
-    UNREFERENCED_PARAMETER(Subscription);
-    TestContext->EventRecordCount++;
-    TestContext->EventSequence = Sequence;
-    TestContext->EventBookmarkLength = Record->Bookmark.Length;
-    TestContext->EventXmlLength = Record->Xml.Length;
-    if (TestContext->CancelSubscriptionInRecord)
-    {
-        TestContext->SubscriptionCancelStatus =
-            ZpSubscription_Cancel(Subscription);
-    }
-}
-
-static
-VOID
-NTAPI
-SDKTest_EventLogTerminalCallback(
-    _In_ ZP_SUBSCRIPTION_HANDLE Subscription,
-    _In_ ULONGLONG NextSequence,
-    _In_ NTSTATUS Status,
-    _In_opt_ PCZP_STRING_VIEW LastBookmark,
-    _In_opt_ PVOID Context)
-{
-    PSDK_TEST_CONTEXT TestContext = Context;
-
-    UNREFERENCED_PARAMETER(Subscription);
-    TestContext->EventTerminalCount++;
-    TestContext->EventNextSequence = NextSequence;
-    TestContext->EventTerminalStatus = Status;
-    TestContext->EventLastBookmarkLength = LastBookmark != NULL ?
-                                                   LastBookmark->Length :
-                                                   0;
-}
-
-static
-VOID
-NTAPI
 SDKTest_FileOpenWriteCallback(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ NTSTATUS Status,
@@ -530,7 +799,7 @@ SDKTest_AuthenticationRoundTrip(VOID)
     BYTE BlobBuffer[sizeof(BCRYPT_ECCKEY_BLOB) + 64];
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE];
     BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE] = { 1 };
-    BYTE Hash[32], ClientId[32];
+    BYTE Hash[32];
     BYTE Signature[ZP_CLIENT_SIGNATURE_SIZE];
     ULONG BlobSize, SignatureSize;
     NTSTATUS Status;
@@ -573,8 +842,7 @@ SDKTest_AuthenticationRoundTrip(VOID)
                                             &SignatureSize,
                                             0)) ||
         SignatureSize != sizeof(Signature) ||
-        !NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, Signature)) ||
-        !NT_SUCCESS(ZpAuthentication_GetClientId(PublicKey, ClientId)))
+        !NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, Signature)))
     {
         goto Cleanup;
     }
@@ -662,32 +930,6 @@ SDKTest_ServerConnectionCallback(
     UNREFERENCED_PARAMETER(Context);
 }
 
-static
-NTSTATUS
-NTAPI
-SDKTest_ServerAuthorizeCallback(
-    _In_ ZP_SERVER_HANDLE Server,
-    _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_reads_(ZP_CLIENT_ID_SIZE) const BYTE ClientId[ZP_CLIENT_ID_SIZE],
-    _In_ ZP_REQUEST_ACCESS Access,
-    _In_ USHORT ModuleId,
-    _In_ USHORT OperationId,
-    _In_ PCZP_BUFFER_VIEW Payload,
-    _In_opt_ PVOID Context)
-{
-    PSDK_TEST_CONTEXT TestContext = Context;
-
-    UNREFERENCED_PARAMETER(Server);
-    UNREFERENCED_PARAMETER(Connection);
-    UNREFERENCED_PARAMETER(ClientId);
-    TestContext->AuthorizeCount++;
-    TestContext->AuthorizedAccess = Access;
-    TestContext->AuthorizedModuleId = ModuleId;
-    TestContext->AuthorizedOperationId = OperationId;
-    TestContext->AuthorizedPayloadLength = Payload->Length;
-    return TestContext->AuthorizeStatus;
-}
-
 TEST_FUNC(SDKContract)
 {
     WCHAR Host[] = L"127.0.0.1", ServerName[] = L"server.example", ClientKeyName[] = L"ClientKey";
@@ -695,8 +937,9 @@ TEST_FUNC(SDKContract)
     WCHAR EventChannel[] = L"System";
     WCHAR EventBookmark[] = L"<Bookmark>1</Bookmark>";
     WCHAR EventXml[] = L"<Event/>";
+    WCHAR FileLoopbackPath[MAX_PATH];
     BYTE RootCertificate[] = { 0x30, 0x01, 0x00 };
-    ZP_MODULE_RECORD Modules[] = { { 1, 1, 0 }, { 2, 1, 1 } };
+    ZP_MODULE_RECORD Modules[] = { { 1, 1 }, { 2, 1 } };
     ZP_ENDPOINT Endpoint = { ZpTransportQuic, Host, 443, ServerName, NULL };
     ZP_ENDPOINT MixedEndpoints[] = {
         { ZpTransportTlsTcp, Host, 443, ServerName, NULL },
@@ -728,8 +971,6 @@ TEST_FUNC(SDKContract)
         ARRAYSIZE(Modules),
         0,
         0,
-        0,
-        0,
         SDKTest_ServerStateCallback,
         SDKTest_ServerConnectionCallback,
         NULL
@@ -739,6 +980,7 @@ TEST_FUNC(SDKContract)
     PZP_CLIENT_OBJECT ClientObject;
     PZP_SERVER_OBJECT ServerObject;
     ZP_REQUEST_HANDLE Request;
+    ZP_REQUEST_VIEW InboundRequest = { 7, 1, 1, 0, { NULL, 0 } };
     ZP_RESPONSE_VIEW Response;
     ZP_CHANNEL_DATA_VIEW ChannelData;
     ZP_CHANNEL_CLOSE ChannelClose;
@@ -780,20 +1022,33 @@ TEST_FUNC(SDKContract)
     };
     BYTE EventPageResponse[256];
     ULONG EventPageResponseLength;
-    BYTE EventSubscribeResponse[sizeof(ULONGLONG)];
-    ULONG EventSubscribeResponseLength;
-    BYTE EventPayload[256];
-    ULONG EventPayloadLength;
-    ZP_EVENT_VIEW Event;
+    DWORD FileLoopbackPathLength;
+    ULONG FileLoopbackDirectoryLength;
     BYTE TerminalCreateResponse[sizeof(ULONGLONG) + sizeof(ULONG)];
     ULONG TerminalCreateResponseLength;
     BYTE TerminalInput[] = { 'e', 'x', 'i', 't' };
     BYTE TerminalTooLongInput[] = { 'e', 'x', 'i', 't', '\r' };
     ZP_BUFFER_VIEW EmptyPayload = { NULL, 0 };
-    BYTE ClientId[ZP_CLIENT_ID_SIZE] = { 0 };
     SDK_TEST_CONTEXT TestContext = { STATUS_SUCCESS };
     SDK_TEST_CONTEXT TlsContext = { STATUS_ACCESS_DENIED };
     SDK_TEST_CONTEXT QuicContext = { STATUS_SUCCESS };
+    SDK_SYSTEM_LOOPBACK SystemLoopback = { 0 };
+    SDK_REQUEST_CONNECTION RegistryConnection = { 0 };
+    ULONGLONG CanceledRequestId;
+    ZP_MODULE_RECORD LoopbackModules[] = {
+        { ZP_SYSTEM_MODULE_ID, ZP_SYSTEM_MODULE_VERSION },
+        { ZP_PROCESS_MODULE_ID, ZP_PROCESS_MODULE_VERSION },
+        { ZP_SERVICE_MODULE_ID, ZP_SERVICE_MODULE_VERSION },
+        { ZP_FILE_MODULE_ID, ZP_FILE_MODULE_VERSION },
+        { ZP_REGISTRY_MODULE_ID, ZP_REGISTRY_MODULE_VERSION }
+    };
+    ZP_MODULE_RECORD ServerModules[] = {
+        { ZP_SERVICE_MODULE_ID, ZP_SERVICE_MODULE_VERSION },
+        { ZP_FILE_MODULE_ID, ZP_FILE_MODULE_VERSION },
+        { ZP_TERMINAL_MODULE_ID, ZP_TERMINAL_MODULE_VERSION },
+        { ZP_EVENT_LOG_MODULE_ID, ZP_EVENT_LOG_MODULE_VERSION },
+        { ZP_REGISTRY_MODULE_ID, ZP_REGISTRY_MODULE_VERSION }
+    };
     QUIC_ADDR QuicAddress;
     QUIC_STATUS QuicStatus;
 
@@ -811,7 +1066,6 @@ TEST_FUNC(SDKContract)
     TEST_OK(sizeof(ZP_CLIENT_HANDLE) == sizeof(PVOID));
     TEST_OK(sizeof(ZP_SERVER_HANDLE) == sizeof(PVOID));
     TEST_OK(sizeof(ZP_CONNECTION_HANDLE) == sizeof(PVOID));
-    TEST_OK(sizeof(ZP_SUBSCRIPTION_HANDLE) == sizeof(PVOID));
     TEST_OK(ZP_CLIENT_DEFAULT_CONNECT_TIMEOUT_MILLISECONDS == 10000);
     TEST_OK(ZP_CLIENT_DEFAULT_RETRY_MAX_MILLISECONDS == 60000);
     TEST_OK(ZP_CLIENT_DEFAULT_STABLE_RESET_MILLISECONDS == 60000);
@@ -829,6 +1083,112 @@ TEST_FUNC(SDKContract)
     TEST_OK(ZpQuic_StatusToNtStatus(QUIC_STATUS_CONNECTION_TIMEOUT) == STATUS_IO_TIMEOUT &&
             ZpQuic_StatusToNtStatus(QUIC_STATUS_INVALID_PARAMETER) == STATUS_INVALID_PARAMETER);
     TEST_OK(SDKTest_AuthenticationRoundTrip());
+    ZpServerConnection_Initialize(&SystemLoopback.Connection,
+                                  1,
+                                  1,
+                                  SDKTest_SystemConnectionSend,
+                                  SDKTest_SystemConnectionDestroy);
+    ZpServerConnection_SetModules(&SystemLoopback.Connection,
+                                  LoopbackModules,
+                                  ARRAYSIZE(LoopbackModules));
+    ZpServerConnection_SetPhase(&SystemLoopback.Connection,
+                                ZpConnectionPhaseReady);
+    TEST_OK(NT_SUCCESS(ZpServer_GetSystemInfo(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                0,
+                SDKTest_SystemInfoCallback,
+                &SystemLoopback,
+                &Request)) &&
+            SystemLoopback.SendCount == 1 &&
+            SystemLoopback.CallbackCount == 1 &&
+            NT_SUCCESS(SystemLoopback.Status) &&
+            SystemLoopback.Architecture >= ZpSystemArchitectureX86 &&
+            SystemLoopback.Architecture <= ZpSystemArchitectureArm64 &&
+            SystemLoopback.ProcessorCount != 0);
+    TEST_OK(NT_SUCCESS(ZpServer_EnumerateProcesses(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                0,
+                SDKTest_ProcessListCallback,
+                &SystemLoopback,
+                &Request)) &&
+            SystemLoopback.SendCount == 2 &&
+            SystemLoopback.CallbackCount == 2 &&
+            NT_SUCCESS(SystemLoopback.Status) &&
+            SystemLoopback.ProcessCount != 0 &&
+            SystemLoopback.FoundCurrentProcess);
+    TEST_OK(NT_SUCCESS(ZpServer_EnumerateServices(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                0,
+                SDKTest_ServiceListCallback,
+                &SystemLoopback,
+                &Request)) &&
+            SystemLoopback.SendCount == 3 &&
+            SystemLoopback.CallbackCount == 3 &&
+            NT_SUCCESS(SystemLoopback.Status) &&
+            SystemLoopback.ServiceCount != 0);
+    TEST_OK(NT_SUCCESS(ZpServer_EnumerateRegistryKeysPage(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                ZpRegistryLocalMachine,
+                ZpRegistryViewDefault,
+                L"Software",
+                ARRAYSIZE(L"Software") - 1,
+                NULL,
+                0,
+                16,
+                0,
+                SDKTest_RegistryPageLoopbackCallback,
+                &SystemLoopback,
+                &Request)) &&
+            SystemLoopback.RegistryCallbackCount == 1 &&
+            NT_SUCCESS(SystemLoopback.RegistryStatus) &&
+            SystemLoopback.RegistryPageCount != 0);
+    FileLoopbackPathLength = GetModuleFileNameW(NULL,
+                                                FileLoopbackPath,
+                                                ARRAYSIZE(FileLoopbackPath));
+    TEST_OK(FileLoopbackPathLength != 0 &&
+            FileLoopbackPathLength < ARRAYSIZE(FileLoopbackPath));
+    TEST_OK(NT_SUCCESS(ZpServer_QueryFile(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                FileLoopbackPath,
+                FileLoopbackPathLength,
+                0,
+                SDKTest_FileQueryLoopbackCallback,
+                &SystemLoopback,
+                &Request)) &&
+            SystemLoopback.FileCallbackCount == 1 &&
+            NT_SUCCESS(SystemLoopback.FileStatus) &&
+            SystemLoopback.FileSize != 0);
+    TEST_OK(NT_SUCCESS(ZpServer_HashFile(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                FileLoopbackPath,
+                FileLoopbackPathLength,
+                ZpFileHashSha256,
+                0,
+                SDKTest_FileHashLoopbackCallback,
+                &SystemLoopback,
+                &Request)) &&
+            SystemLoopback.FileHashCallbackCount == 1 &&
+            NT_SUCCESS(SystemLoopback.FileHashStatus) &&
+            SystemLoopback.FileHashSize == SystemLoopback.FileSize);
+    FileLoopbackDirectoryLength = (ULONG)(wcsrchr(FileLoopbackPath, L'\\') -
+                                           FileLoopbackPath);
+    TEST_OK(NT_SUCCESS(ZpServer_EnumerateFilesPage(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                FileLoopbackPath,
+                FileLoopbackDirectoryLength,
+                NULL,
+                0,
+                16,
+                0,
+                SDKTest_FilePageLoopbackCallback,
+                &SystemLoopback,
+                &Request)) &&
+            NT_SUCCESS(SystemLoopback.FileStatus) &&
+            SystemLoopback.FilePageCount != 0);
+    ZpServerConnection_Close(&SystemLoopback.Connection,
+                             STATUS_CONNECTION_DISCONNECTED);
+    ZpConnection_Release((ZP_CONNECTION_HANDLE)&SystemLoopback.Connection);
+    TEST_OK(SystemLoopback.DestroyCount == 1);
     QuicStatus = KNSoftQuicInitialize();
     TEST_OK(QUIC_SUCCEEDED(QuicStatus));
     if (QUIC_SUCCEEDED(QuicStatus))
@@ -909,23 +1269,14 @@ TEST_FUNC(SDKContract)
     Modules[1].ModuleId = Modules[0].ModuleId;
     TEST_OK(ZpClient_Create(&ClientConfig, &Client) == STATUS_INVALID_PARAMETER);
     Modules[1].ModuleId = 2;
-
     ServerConfig.MaxRequestsPerConnection =
         ZP_SERVER_MAX_REQUESTS_PER_CONNECTION + 1;
     TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
     ServerConfig.MaxRequestsPerConnection = 0;
-    ServerConfig.MaxRequestPayloadBytesPerConnection =
-        ZP_SERVER_MAX_REQUEST_PAYLOAD_BYTES_PER_CONNECTION + 1;
-    TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
-    ServerConfig.MaxRequestPayloadBytesPerConnection = 0;
     ServerConfig.MaxChannelsPerConnection =
         ZP_SERVER_MAX_CHANNELS_PER_CONNECTION + 1;
     TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
     ServerConfig.MaxChannelsPerConnection = 0;
-    ServerConfig.MaxSubscriptionsPerConnection =
-        ZP_SERVER_MAX_SUBSCRIPTIONS_PER_CONNECTION + 1;
-    TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
-    ServerConfig.MaxSubscriptionsPerConnection = 0;
     TEST_OK(NT_SUCCESS(ZpServer_Create(&ServerConfig, &Server)));
     ServerObject = (PZP_SERVER_OBJECT)Server;
     ListenerHost[0] = L'X';
@@ -933,46 +1284,10 @@ TEST_FUNC(SDKContract)
     TEST_OK(ServerObject->State == ZpServerStateStopped);
     TEST_OK(ServerObject->Config.MaxRequestsPerConnection ==
                 ZP_SERVER_DEFAULT_MAX_REQUESTS_PER_CONNECTION &&
-            ServerObject->Config.MaxRequestPayloadBytesPerConnection ==
-                ZP_SERVER_DEFAULT_MAX_REQUEST_PAYLOAD_BYTES_PER_CONNECTION &&
             ServerObject->Config.MaxChannelsPerConnection ==
-                ZP_SERVER_DEFAULT_MAX_CHANNELS_PER_CONNECTION &&
-            ServerObject->Config.MaxSubscriptionsPerConnection ==
-                ZP_SERVER_DEFAULT_MAX_SUBSCRIPTIONS_PER_CONNECTION);
+                ZP_SERVER_DEFAULT_MAX_CHANNELS_PER_CONNECTION);
     TEST_OK(wcscmp(ServerObject->Config.Listeners[0].Host, L"::") == 0);
     TEST_OK(ServerObject->Config.Modules[0].ModuleVersion == 1);
-    TEST_OK(NT_SUCCESS(ZpServer_AuthorizeRequest(
-                Server,
-                (ZP_CONNECTION_HANDLE)(ULONG_PTR)1,
-                ClientId,
-                ZpRequestAccessRead,
-                1,
-                1,
-                &EmptyPayload)) &&
-            ZpServer_AuthorizeRequest(
-                Server,
-                (ZP_CONNECTION_HANDLE)(ULONG_PTR)1,
-                ClientId,
-                ZpRequestAccessControl,
-                2,
-                3,
-                &EmptyPayload) == STATUS_ACCESS_DENIED);
-    TestContext.AuthorizeStatus = STATUS_PRIVILEGE_NOT_HELD;
-    ServerObject->Config.AuthorizeCallback = SDKTest_ServerAuthorizeCallback;
-    ServerObject->Config.CallbackContext = &TestContext;
-    TEST_OK(ZpServer_AuthorizeRequest(
-                Server,
-                (ZP_CONNECTION_HANDLE)(ULONG_PTR)1,
-                ClientId,
-                ZpRequestAccessControl,
-                2,
-                3,
-                &EmptyPayload) == STATUS_PRIVILEGE_NOT_HELD &&
-            TestContext.AuthorizeCount == 1 &&
-            TestContext.AuthorizedAccess == ZpRequestAccessControl &&
-            TestContext.AuthorizedModuleId == 2 &&
-            TestContext.AuthorizedOperationId == 3 &&
-            TestContext.AuthorizedPayloadLength == 0);
     ServerObject->State = ZpServerStateRunning;
     TEST_OK(ZpServer_Close(Server) == STATUS_DEVICE_BUSY);
     ServerObject->State = ZpServerStateStopped;
@@ -1005,10 +1320,12 @@ TEST_FUNC(SDKContract)
             TestContext.ClientStateCount == 1 &&
             TestContext.ClientStates[0] == ZpClientStateConnecting);
     TEST_OK(ZpClient_Start(Client) == STATUS_INVALID_DEVICE_STATE);
+    ClientObject->HighestInboundRequestId = 6;
     TEST_OK(NT_SUCCESS(ZpClient_NotifyState(Client,
                                            ZpClientStateAuthenticating,
                                            STATUS_SUCCESS)) &&
             NT_SUCCESS(ZpClient_NotifyState(Client, ZpClientStateReady, STATUS_SUCCESS)) &&
+            ClientObject->HighestInboundRequestId == 0 &&
             TestContext.ClientStateCount == 3 &&
             TestContext.ClientStates[1] == ZpClientStateAuthenticating &&
             TestContext.ClientStates[2] == ZpClientStateReady);
@@ -1019,44 +1336,91 @@ TEST_FUNC(SDKContract)
             TestContext.SendCount == 1 &&
             TestContext.SendMessageType == ZpMessagePing &&
             TestContext.SendToken == 0x0102030405060708);
-    TEST_OK(NT_SUCCESS(ZpClient_SendRequest(Client,
-                                            1,
-                                            2,
-                                            1000,
-                                            NULL,
-                                            0,
-                                            SDKTest_RequestCompleteCallback,
-                                            &TestContext,
-                                            &Request)) &&
-            TestContext.SendMessageType == ZpMessageRequest &&
-            TestContext.SendRequestId != 0);
+    ClientObject->QuicTransport.Modules[0] = ClientObject->Config.Modules[0];
+    ClientObject->QuicTransport.ModuleCount = 1;
+    ClientObject->InboundRequestCount = ClientObject->Config.MaxRequestsPerConnection;
+    TEST_OK(NT_SUCCESS(ZpClient_QueueRequest(Client, &InboundRequest)) &&
+            ClientObject->HighestInboundRequestId == InboundRequest.RequestId &&
+            TestContext.SendMessageType == ZpMessageResponse &&
+            TestContext.SendRequestId == InboundRequest.RequestId &&
+            TestContext.RequestStatus == STATUS_QUOTA_EXCEEDED);
+    ClientObject->InboundRequestCount = 0;
+    TEST_OK(ZpClient_QueueRequest(Client, &InboundRequest) ==
+                STATUS_PROTOCOL_UNREACHABLE &&
+            NT_SUCCESS(ZpClient_CancelInboundRequest(Client,
+                                                     InboundRequest.RequestId)) &&
+            ZpClient_CancelInboundRequest(Client,
+                                          InboundRequest.RequestId + 1) ==
+                STATUS_PROTOCOL_UNREACHABLE);
+    RegistryConnection.Context = &TestContext;
+    ZpServerConnection_Initialize(&RegistryConnection.Connection,
+                                  1,
+                                  1,
+                                  SDKTest_RequestConnectionSend,
+                                  SDKTest_RequestConnectionDestroy);
+    ZpServerConnection_SetModules(&RegistryConnection.Connection,
+                                  ServerModules,
+                                  ARRAYSIZE(ServerModules));
+    ZpServerConnection_SetPhase(&RegistryConnection.Connection,
+                                ZpConnectionPhaseReady);
+    TEST_OK(NT_SUCCESS(ZpServer_SetRegistryValue(
+                           (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
+                           ZpRegistryCurrentUser,
+                           ZpRegistryViewDefault,
+                           L"Software\\KNSoft",
+                           15,
+                           L"Value",
+                           5,
+                           4,
+                           &RegistryValueData,
+                           sizeof(RegistryValueData),
+                           1000,
+                           SDKTest_RequestStatusCallback,
+                           &TestContext,
+                           &Request)) &&
+            TestContext.SendOperationId == ZP_REGISTRY_OPERATION_SET_VALUE);
+    CanceledRequestId = TestContext.SendRequestId;
+    TEST_OK(NT_SUCCESS(ZpRequest_Cancel(Request)) &&
+            TestContext.SendMessageType == ZpMessageCancel &&
+            TestContext.SendRequestId == CanceledRequestId &&
+            TestContext.RequestStatusCount == 1 &&
+            TestContext.RequestStatus == STATUS_CANCELLED &&
+            RegistryConnection.Connection.RequestCount == 0);
+    Response.RequestId = CanceledRequestId;
+    Response.Status = STATUS_SUCCESS;
+    Response.Payload = EmptyPayload;
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
+            TestContext.RequestStatusCount == 1 &&
+            ZpRequest_Cancel(Request) == STATUS_INVALID_DEVICE_STATE);
+    Response.RequestId = RegistryConnection.Connection.NextRequestId;
+    TEST_OK(ZpServerConnection_ReceiveResponse(&RegistryConnection.Connection,
+                                               &Response) ==
+            STATUS_PROTOCOL_UNREACHABLE);
+    ZpRequest_Close(Request);
+    TestContext.RequestStatusCount = 0;
+    TEST_OK(NT_SUCCESS(ZpServer_StopService(
+                           (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
+                           L"Test",
+                           4,
+                           1000,
+                           SDKTest_RequestStatusCallback,
+                           &TestContext,
+                           &Request)) &&
+            TestContext.SendModuleId == ZP_SERVICE_MODULE_ID &&
+            TestContext.SendOperationId == ZP_SERVICE_OPERATION_STOP);
     Response.RequestId = TestContext.SendRequestId;
     Response.Status = STATUS_SUCCESS;
-    Response.Payload.Buffer = RootCertificate;
-    Response.Payload.Length = sizeof(RootCertificate);
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
-            TestContext.RequestCompleteCount == 1 &&
-            TestContext.RequestStatus == STATUS_SUCCESS &&
-            TestContext.RequestPayloadLength == sizeof(RootCertificate));
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
+            TestContext.RequestStatusCount == 1 &&
+            TestContext.RequestStatus == STATUS_SUCCESS);
     ZpRequest_Close(Request);
-    TestContext.SynchronousClient = Client;
-    TestContext.CompleteRequestInSend = TRUE;
-    TestContext.CloseRequestInCallback = TRUE;
-    TEST_OK(NT_SUCCESS(ZpClient_SendRequest(Client,
-                                            1,
-                                            2,
-                                            1000,
-                                            NULL,
-                                            0,
-                                            SDKTest_RequestCompleteCallback,
-                                            &TestContext,
-                                            &Request)) &&
-            TestContext.RequestCompleteCount == 2 &&
-            TestContext.RequestStatus == STATUS_SUCCESS &&
-            TestContext.RequestPayloadLength == 0);
-    TestContext.CompleteRequestInSend = FALSE;
-    TestContext.CloseRequestInCallback = FALSE;
-    TEST_OK(NT_SUCCESS(ZpClient_EnumerateFilesPage(Client,
+    TestContext.RequestStatusCount = 0;
+    TEST_OK(NT_SUCCESS(ZpServer_EnumerateFilesPage(
+                                                   (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                                                    L"C:\\Test",
                                                    7,
                                                    NULL,
@@ -1080,7 +1444,9 @@ TEST_FUNC(SDKContract)
     Response.Status = STATUS_SUCCESS;
     Response.Payload.Buffer = FilePageResponse;
     Response.Payload.Length = FilePageResponseLength;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.FilePageCount == 1 &&
             TestContext.FilePageStatus == STATUS_SUCCESS &&
             TestContext.FilePageFileCount == 1 &&
@@ -1091,7 +1457,8 @@ TEST_FUNC(SDKContract)
                              FilePageRecords[0].NameLength * sizeof(WCHAR)) ==
                 FilePageRecords[0].NameLength * sizeof(WCHAR));
     ZpRequest_Close(Request);
-    TEST_OK(NT_SUCCESS(ZpClient_HashFile(Client,
+    TEST_OK(NT_SUCCESS(ZpServer_HashFile(
+                                         (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                                          L"C:\\Test.bin",
                                          11,
                                          ZpFileHashSha256,
@@ -1113,7 +1480,9 @@ TEST_FUNC(SDKContract)
     Response.Status = STATUS_SUCCESS;
     Response.Payload.Buffer = FileHashResponse;
     Response.Payload.Length = FileHashResponseLength;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.FileHashCount == 1 &&
             TestContext.FileHashStatus == STATUS_SUCCESS &&
             TestContext.FileHashAlgorithm == ZpFileHashSha256 &&
@@ -1122,8 +1491,8 @@ TEST_FUNC(SDKContract)
                              FileDigest,
                              sizeof(FileDigest)) == sizeof(FileDigest));
     ZpRequest_Close(Request);
-    TEST_OK(NT_SUCCESS(ZpClient_EnumerateRegistryKeysPage(
-                           Client,
+    TEST_OK(NT_SUCCESS(ZpServer_EnumerateRegistryKeysPage(
+                           (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
                            ZpRegistryViewDefault,
                            L"Software\\KNSoft",
@@ -1151,13 +1520,15 @@ TEST_FUNC(SDKContract)
     Response.Status = STATUS_SUCCESS;
     Response.Payload.Buffer = RegistryResponse;
     Response.Payload.Length = RegistryResponseLength;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.RegistryPageCount == 1 &&
             TestContext.RegistryPageStatus == STATUS_SUCCESS &&
             TestContext.RegistryRecordCount == 1);
     ZpRequest_Close(Request);
-    TEST_OK(NT_SUCCESS(ZpClient_EnumerateRegistryValuesPage(
-                           Client,
+    TEST_OK(NT_SUCCESS(ZpServer_EnumerateRegistryValuesPage(
+                           (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
                            ZpRegistryView32,
                            L"Software\\KNSoft",
@@ -1182,12 +1553,14 @@ TEST_FUNC(SDKContract)
                            &RegistryResponseLength)));
     Response.RequestId = TestContext.SendRequestId;
     Response.Payload.Length = RegistryResponseLength;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.RegistryPageCount == 2 &&
             TestContext.RegistryRecordCount == 1);
     ZpRequest_Close(Request);
-    TEST_OK(NT_SUCCESS(ZpClient_QueryRegistryValue(
-                           Client,
+    TEST_OK(NT_SUCCESS(ZpServer_QueryRegistryValue(
+                           (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
                            ZpRegistryViewDefault,
                            L"Software\\KNSoft",
@@ -1207,14 +1580,16 @@ TEST_FUNC(SDKContract)
                                               &RegistryResponseLength)));
     Response.RequestId = TestContext.SendRequestId;
     Response.Payload.Length = RegistryResponseLength;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.RegistryValueCount == 1 &&
             TestContext.RegistryValueStatus == STATUS_SUCCESS &&
             TestContext.RegistryValueType == 4 &&
             TestContext.RegistryValueDataLength == sizeof(ULONG));
     ZpRequest_Close(Request);
-    TEST_OK(NT_SUCCESS(ZpClient_SetRegistryValue(
-                           Client,
+    TEST_OK(NT_SUCCESS(ZpServer_SetRegistryValue(
+                           (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
                            ZpRegistryViewDefault,
                            L"Software\\KNSoft",
@@ -1232,11 +1607,13 @@ TEST_FUNC(SDKContract)
     Response.RequestId = TestContext.SendRequestId;
     Response.Payload.Buffer = NULL;
     Response.Payload.Length = 0;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.RequestStatusCount == 1);
     ZpRequest_Close(Request);
-    TEST_OK(NT_SUCCESS(ZpClient_DeleteRegistryValue(
-                           Client,
+    TEST_OK(NT_SUCCESS(ZpServer_DeleteRegistryValue(
+                           (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
                            ZpRegistryViewDefault,
                            L"Software\\KNSoft",
@@ -1249,11 +1626,13 @@ TEST_FUNC(SDKContract)
                            &Request)) &&
             TestContext.SendOperationId == ZP_REGISTRY_OPERATION_DELETE_VALUE);
     Response.RequestId = TestContext.SendRequestId;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.RequestStatusCount == 2);
     ZpRequest_Close(Request);
-    TEST_OK(NT_SUCCESS(ZpClient_CreateRegistryKey(
-                           Client,
+    TEST_OK(NT_SUCCESS(ZpServer_CreateRegistryKey(
+                           (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
                            ZpRegistryViewDefault,
                            L"Software\\KNSoft\\Child",
@@ -1264,11 +1643,13 @@ TEST_FUNC(SDKContract)
                            &Request)) &&
             TestContext.SendOperationId == ZP_REGISTRY_OPERATION_CREATE_KEY);
     Response.RequestId = TestContext.SendRequestId;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.RequestStatusCount == 3);
     ZpRequest_Close(Request);
-    TEST_OK(NT_SUCCESS(ZpClient_DeleteRegistryKey(
-                           Client,
+    TEST_OK(NT_SUCCESS(ZpServer_DeleteRegistryKey(
+                           (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
                            ZpRegistryViewDefault,
                            L"Software\\KNSoft\\Child",
@@ -1279,12 +1660,14 @@ TEST_FUNC(SDKContract)
                            &Request)) &&
             TestContext.SendOperationId == ZP_REGISTRY_OPERATION_DELETE_KEY);
     Response.RequestId = TestContext.SendRequestId;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.RequestStatusCount == 4);
     ZpRequest_Close(Request);
     TestContext.RequestStatusCount = 0;
-    TEST_OK(NT_SUCCESS(ZpClient_QueryEventLogPage(
-                           Client,
+    TEST_OK(NT_SUCCESS(ZpServer_QueryEventLogPage(
+                           (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpEventLogStartOldest,
                            16,
                            EventChannel,
@@ -1313,141 +1696,55 @@ TEST_FUNC(SDKContract)
     Response.Status = STATUS_SUCCESS;
     Response.Payload.Buffer = EventPageResponse;
     Response.Payload.Length = EventPageResponseLength;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.EventPageCount == 1 &&
             TestContext.EventPageStatus == STATUS_SUCCESS &&
             TestContext.EventPageRecordCount == 1 &&
             !TestContext.EventPageHasMore);
     ZpRequest_Close(Request);
-    TEST_OK(NT_SUCCESS(ZpClient_SubscribeEventLog(
-                           Client,
-                           ZpEventLogStartFuture,
+    TestContext.RequestStatusCount = 0;
+    TEST_OK(NT_SUCCESS(ZpServer_SetEventLogChannelEnabled(
+                           (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            EventChannel,
                            ARRAYSIZE(EventChannel) - 1,
-                           NULL,
-                           0,
-                           NULL,
-                           0,
+                           TRUE,
                            1000,
-                           SDKTest_EventLogSubscribeCallback,
-                           SDKTest_EventLogRecordCallback,
-                           SDKTest_EventLogTerminalCallback,
+                           SDKTest_RequestStatusCallback,
                            &TestContext,
                            &Request)) &&
             TestContext.SendModuleId == ZP_EVENT_LOG_MODULE_ID &&
-            TestContext.SendOperationId == ZP_EVENT_LOG_OPERATION_SUBSCRIBE);
-    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeSubscribeResponse(
-                           2,
-                           EventSubscribeResponse,
-                           sizeof(EventSubscribeResponse),
-                           &EventSubscribeResponseLength)));
+            TestContext.SendOperationId ==
+                ZP_EVENT_LOG_OPERATION_SET_CHANNEL_ENABLED);
     Response.RequestId = TestContext.SendRequestId;
     Response.Status = STATUS_SUCCESS;
-    Response.Payload.Buffer = EventSubscribeResponse;
-    Response.Payload.Length = EventSubscribeResponseLength;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
-            TestContext.EventSubscribeCount == 1 &&
-            TestContext.EventSubscribeStatus == STATUS_SUCCESS &&
-            TestContext.EventSubscription != NULL);
+    Response.Payload.Buffer = NULL;
+    Response.Payload.Length = 0;
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+        &RegistryConnection.Connection,
+        &Response)));
+    TEST_OK(TestContext.RequestStatusCount == 1 &&
+            TestContext.RequestStatus == STATUS_SUCCESS);
     ZpRequest_Close(Request);
-    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeRecordEvent(
-                           1,
-                           EventBookmark,
-                           ARRAYSIZE(EventBookmark) - 1,
-                           EventXml,
-                           ARRAYSIZE(EventXml) - 1,
-                           EventPayload,
-                           sizeof(EventPayload),
-                           &EventPayloadLength)));
-    Event.SubscriptionId = 2;
-    Event.ModuleId = ZP_EVENT_LOG_MODULE_ID;
-    Event.EventId = ZP_EVENT_LOG_EVENT_RECORD;
-    Event.Payload.Buffer = EventPayload;
-    Event.Payload.Length = EventPayloadLength;
-    TEST_OK(NT_SUCCESS(ZpClient_ReceiveEvent(Client, &Event)) &&
-            TestContext.EventRecordCount == 1 &&
-            TestContext.EventSequence == 1 &&
-            TestContext.EventBookmarkLength ==
-                ARRAYSIZE(EventBookmark) - 1 &&
-            TestContext.EventXmlLength == ARRAYSIZE(EventXml) - 1);
-    TEST_OK(ZpClient_ReceiveEvent(Client, &Event) ==
-            STATUS_PROTOCOL_UNREACHABLE);
-    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeTerminalEvent(
-                           2,
-                           STATUS_BUFFER_OVERFLOW,
-                           EventBookmark,
-                           ARRAYSIZE(EventBookmark) - 1,
-                           EventPayload,
-                           sizeof(EventPayload),
-                           &EventPayloadLength)));
-    Event.EventId = ZP_EVENT_LOG_EVENT_TERMINAL;
-    Event.Payload.Length = EventPayloadLength;
-    TEST_OK(NT_SUCCESS(ZpClient_ReceiveEvent(Client, &Event)) &&
-            TestContext.EventTerminalCount == 1 &&
-            TestContext.EventNextSequence == 2 &&
-            TestContext.EventTerminalStatus == STATUS_BUFFER_OVERFLOW &&
-            TestContext.EventLastBookmarkLength ==
-                ARRAYSIZE(EventBookmark) - 1);
-    ZpSubscription_Close(TestContext.EventSubscription);
-    TestContext.EventSubscription = NULL;
-    TEST_OK(NT_SUCCESS(ZpClient_SubscribeEventLog(
-                           Client,
-                           ZpEventLogStartFuture,
+    TEST_OK(NT_SUCCESS(ZpServer_ClearEventLog(
+                           (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            EventChannel,
                            ARRAYSIZE(EventChannel) - 1,
-                           NULL,
-                           0,
-                           NULL,
-                           0,
                            1000,
-                           SDKTest_EventLogSubscribeCallback,
-                           SDKTest_EventLogRecordCallback,
-                           SDKTest_EventLogTerminalCallback,
+                           SDKTest_RequestStatusCallback,
                            &TestContext,
-                           &Request)));
-    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeSubscribeResponse(
-                           4,
-                           EventSubscribeResponse,
-                           sizeof(EventSubscribeResponse),
-                           &EventSubscribeResponseLength)));
+                           &Request)) &&
+            TestContext.SendOperationId == ZP_EVENT_LOG_OPERATION_CLEAR);
     Response.RequestId = TestContext.SendRequestId;
-    Response.Status = STATUS_SUCCESS;
-    Response.Payload.Buffer = EventSubscribeResponse;
-    Response.Payload.Length = EventSubscribeResponseLength;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
-            TestContext.EventSubscribeCount == 2 &&
-            TestContext.EventSubscription != NULL);
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
+            TestContext.RequestStatusCount == 2);
     ZpRequest_Close(Request);
-    TestContext.CompleteRequestInSend = TRUE;
-    TestContext.CancelSubscriptionInRecord = TRUE;
-    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeRecordEvent(
-                           1,
-                           EventBookmark,
-                           ARRAYSIZE(EventBookmark) - 1,
-                           EventXml,
-                           ARRAYSIZE(EventXml) - 1,
-                           EventPayload,
-                           sizeof(EventPayload),
-                           &EventPayloadLength)));
-    Event.SubscriptionId = 4;
-    Event.EventId = ZP_EVENT_LOG_EVENT_RECORD;
-    Event.Payload.Length = EventPayloadLength;
-    TEST_OK(NT_SUCCESS(ZpClient_ReceiveEvent(Client, &Event)) &&
-            NT_SUCCESS(TestContext.SubscriptionCancelStatus) &&
-            TestContext.SendModuleId == ZP_EVENT_LOG_MODULE_ID &&
-            TestContext.SendOperationId ==
-                ZP_EVENT_LOG_OPERATION_UNSUBSCRIBE &&
-            TestContext.EventRecordCount == 2 &&
-            TestContext.EventTerminalCount == 2 &&
-            TestContext.EventNextSequence == 2 &&
-            TestContext.EventTerminalStatus == STATUS_CANCELLED &&
-            ZpSubscription_Cancel(TestContext.EventSubscription) ==
-                STATUS_INVALID_DEVICE_STATE);
-    TestContext.CancelSubscriptionInRecord = FALSE;
-    TestContext.CompleteRequestInSend = FALSE;
-    ZpSubscription_Close(TestContext.EventSubscription);
-    TestContext.EventSubscription = NULL;
-    TEST_OK(NT_SUCCESS(ZpClient_OpenFileRead(Client,
+    TestContext.RequestStatusCount = 0;
+    TEST_OK(NT_SUCCESS(ZpServer_OpenFileRead(
+                                             (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                                              L"C:\\Test.bin",
                                              11,
                                              16,
@@ -1458,7 +1755,7 @@ TEST_FUNC(SDKContract)
                                              &TestContext,
                                              &Request)) &&
             TestContext.SendMessageType == ZpMessageRequest);
-    TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenReadResponse(2,
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenReadResponse(1,
                                                      16 + sizeof(RootCertificate),
                                                      16,
                                                      FileOpenReadResponse,
@@ -1468,34 +1765,37 @@ TEST_FUNC(SDKContract)
     Response.Status = STATUS_SUCCESS;
     Response.Payload.Buffer = FileOpenReadResponse;
     Response.Payload.Length = FileOpenReadResponseLength;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.FileOpenReadCount == 1 &&
             TestContext.FileOpenReadStatus == STATUS_SUCCESS &&
             TestContext.FileChannel != NULL &&
             TestContext.FileSize == 16 + sizeof(RootCertificate) &&
             TestContext.FileOffset == 16 &&
             TestContext.SendMessageType == ZpMessageChannelWindow &&
-            TestContext.SendChannelId == 2 &&
-            TestContext.SendChannelCredit == ZP_CLIENT_DEFAULT_CHANNEL_WINDOW_SIZE);
+            TestContext.SendChannelId == 1 &&
+            TestContext.SendChannelCredit == sizeof(RootCertificate));
     ZpRequest_Close(Request);
-    ChannelData.ChannelId = 2;
+    ChannelData.ChannelId = 1;
     ChannelData.Data.Buffer = RootCertificate;
     ChannelData.Data.Length = sizeof(RootCertificate);
-    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelData(Client, &ChannelData)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveChannelData(
+                           &RegistryConnection.Connection,
+                           &ChannelData)) &&
             TestContext.ChannelDataCount == 1 &&
-            TestContext.ChannelDataLength == sizeof(RootCertificate) &&
-            TestContext.SendMessageType == ZpMessageChannelWindow &&
-            TestContext.SendChannelId == 2 &&
-            TestContext.SendChannelCredit ==
-                ZP_CLIENT_DEFAULT_CHANNEL_WINDOW_SIZE);
-    ChannelClose.ChannelId = 2;
+            TestContext.ChannelDataLength == sizeof(RootCertificate));
+    ChannelClose.ChannelId = 1;
     ChannelClose.Status = STATUS_SUCCESS;
-    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelClose(Client, &ChannelClose)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveChannelClose(
+                           &RegistryConnection.Connection,
+                           &ChannelClose)) &&
             TestContext.ChannelCloseCount == 1 &&
             TestContext.ChannelCloseStatus == STATUS_SUCCESS);
     ZpChannel_Close(TestContext.FileChannel);
     TestContext.FileChannel = NULL;
-    TEST_OK(NT_SUCCESS(ZpClient_OpenFileRead(Client,
+    TEST_OK(NT_SUCCESS(ZpServer_OpenFileRead(
+                                             (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                                              L"C:\\Test.bin",
                                              11,
                                              0,
@@ -1505,7 +1805,7 @@ TEST_FUNC(SDKContract)
                                              SDKTest_ChannelCloseCallback,
                                              &TestContext,
                                              &Request)));
-    TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenReadResponse(4,
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenReadResponse(2,
                                                      64,
                                                      0,
                                                      FileOpenReadResponse,
@@ -1515,26 +1815,31 @@ TEST_FUNC(SDKContract)
     Response.Status = STATUS_SUCCESS;
     Response.Payload.Buffer = FileOpenReadResponse;
     Response.Payload.Length = FileOpenReadResponseLength;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.FileOpenReadCount == 2 &&
             TestContext.FileChannel != NULL &&
             TestContext.SendMessageType == ZpMessageChannelWindow &&
-            TestContext.SendChannelId == 4);
+            TestContext.SendChannelId == 2);
     ZpRequest_Close(Request);
     TEST_OK(NT_SUCCESS(ZpChannel_Cancel(TestContext.FileChannel)) &&
             TestContext.SendMessageType == ZpMessageChannelClose &&
-            TestContext.SendChannelId == 4 &&
+            TestContext.SendChannelId == 2 &&
             TestContext.SendChannelStatus == STATUS_CANCELLED &&
             TestContext.ChannelCloseCount == 2 &&
             TestContext.ChannelCloseStatus == STATUS_CANCELLED);
     TEST_OK(ZpChannel_Cancel(TestContext.FileChannel) == STATUS_INVALID_DEVICE_STATE);
-    ChannelClose.ChannelId = 4;
+    ChannelClose.ChannelId = 2;
     ChannelClose.Status = STATUS_SUCCESS;
-    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelClose(Client, &ChannelClose)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveChannelClose(
+                           &RegistryConnection.Connection,
+                           &ChannelClose)) &&
             TestContext.ChannelCloseCount == 2);
     ZpChannel_Close(TestContext.FileChannel);
     TestContext.FileChannel = NULL;
-    TEST_OK(NT_SUCCESS(ZpClient_CreateTerminal(Client,
+    TEST_OK(NT_SUCCESS(ZpServer_CreateTerminal(
+                                                (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                                                 120,
                                                 30,
                                                 L"cmd.exe",
@@ -1553,7 +1858,7 @@ TEST_FUNC(SDKContract)
             TestContext.SendOperationId == ZP_TERMINAL_OPERATION_CREATE &&
             TestContext.SendPayloadLength != 0);
     TEST_OK(NT_SUCCESS(ZpTerminal_EncodeCreateResponse(
-                           6,
+                           3,
                            1234,
                            TerminalCreateResponse,
                            sizeof(TerminalCreateResponse),
@@ -1562,22 +1867,25 @@ TEST_FUNC(SDKContract)
     Response.Status = STATUS_SUCCESS;
     Response.Payload.Buffer = TerminalCreateResponse;
     Response.Payload.Length = TerminalCreateResponseLength;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.TerminalCreateCount == 1 &&
             TestContext.TerminalCreateStatus == STATUS_SUCCESS &&
             TestContext.TerminalChannel != NULL &&
             TestContext.TerminalProcessId == 1234 &&
             TestContext.SendMessageType == ZpMessageChannelWindow &&
-            TestContext.SendChannelId == 6 &&
+            TestContext.SendChannelId == 3 &&
             TestContext.SendChannelCredit ==
                 ZP_CLIENT_DEFAULT_CHANNEL_WINDOW_SIZE);
     ZpRequest_Close(Request);
     TEST_OK(ZpChannel_Send(TestContext.TerminalChannel,
                            TerminalInput,
                            sizeof(TerminalInput)) == STATUS_RETRY);
-    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelWindow(Client,
-                                                     6,
-                                                     sizeof(TerminalInput))) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveChannelWindow(
+                           &RegistryConnection.Connection,
+                           3,
+                           sizeof(TerminalInput))) &&
             TestContext.ChannelWritableCount == 1 &&
             TestContext.ChannelWritableCredit == sizeof(TerminalInput));
     TEST_OK(ZpChannel_Send(TestContext.TerminalChannel,
@@ -1587,18 +1895,22 @@ TEST_FUNC(SDKContract)
                                      TerminalInput,
                                      sizeof(TerminalInput))) &&
             TestContext.SendMessageType == ZpMessageChannelData &&
-            TestContext.SendChannelId == 6 &&
+            TestContext.SendChannelId == 3 &&
             TestContext.SendChannelDataLength == sizeof(TerminalInput));
-    ChannelData.ChannelId = 6;
+    ChannelData.ChannelId = 3;
     ChannelData.Data.Buffer = TerminalInput;
     ChannelData.Data.Length = sizeof(TerminalInput);
-    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelData(Client, &ChannelData)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveChannelData(
+                           &RegistryConnection.Connection,
+                           &ChannelData)) &&
             TestContext.ChannelDataCount == 2 &&
             TestContext.ChannelDataLength == sizeof(TerminalInput) &&
             TestContext.SendMessageType == ZpMessageChannelWindow &&
-            TestContext.SendChannelId == 6 &&
+            TestContext.SendChannelId == 3 &&
             TestContext.SendChannelCredit == sizeof(TerminalInput));
-    TEST_OK(NT_SUCCESS(ZpClient_ResizeTerminal(TestContext.TerminalChannel,
+    TEST_OK(NT_SUCCESS(ZpServer_ResizeTerminal(
+                                               (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
+                                               TestContext.TerminalChannel,
                                                132,
                                                40,
                                                1000,
@@ -1611,18 +1923,23 @@ TEST_FUNC(SDKContract)
     Response.RequestId = TestContext.SendRequestId;
     Response.Status = STATUS_SUCCESS;
     Response.Payload = EmptyPayload;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.RequestStatusCount == 1 &&
             TestContext.RequestStatus == STATUS_SUCCESS);
     ZpRequest_Close(Request);
-    ChannelClose.ChannelId = 6;
+    ChannelClose.ChannelId = 3;
     ChannelClose.Status = STATUS_SUCCESS;
-    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelClose(Client, &ChannelClose)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveChannelClose(
+                           &RegistryConnection.Connection,
+                           &ChannelClose)) &&
             TestContext.ChannelCloseCount == 3 &&
             TestContext.ChannelCloseStatus == STATUS_SUCCESS);
     ZpChannel_Close(TestContext.TerminalChannel);
     TestContext.TerminalChannel = NULL;
-    TEST_OK(NT_SUCCESS(ZpClient_OpenFileWrite(Client,
+    TEST_OK(NT_SUCCESS(ZpServer_OpenFileWrite(
+                                               (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                                                L"C:\\Upload.bin",
                                                13,
                                                sizeof(FileWriteData),
@@ -1637,7 +1954,7 @@ TEST_FUNC(SDKContract)
             TestContext.SendModuleId == ZP_FILE_MODULE_ID &&
             TestContext.SendOperationId == ZP_FILE_OPERATION_OPEN_WRITE);
     TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenWriteResponse(
-                           8,
+                           4,
                            sizeof(FileWriteData),
                            FileOpenWriteResponse,
                            sizeof(FileOpenWriteResponse),
@@ -1646,19 +1963,23 @@ TEST_FUNC(SDKContract)
     Response.Status = STATUS_SUCCESS;
     Response.Payload.Buffer = FileOpenWriteResponse;
     Response.Payload.Length = FileOpenWriteResponseLength;
-    TEST_OK(NT_SUCCESS(ZpClient_CompleteResponse(Client, &Response)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(
+                           &RegistryConnection.Connection,
+                           &Response)) &&
             TestContext.FileOpenWriteCount == 1 &&
             TestContext.FileOpenWriteStatus == STATUS_SUCCESS &&
             TestContext.FileWriteChannel != NULL &&
             TestContext.FileWriteSize == sizeof(FileWriteData));
     ZpRequest_Close(Request);
-    ChannelClose.ChannelId = 8;
+    ChannelClose.ChannelId = 4;
     ChannelClose.Status = STATUS_SUCCESS;
-    TEST_OK(ZpClient_ReceiveChannelClose(Client, &ChannelClose) ==
+    TEST_OK(ZpServerConnection_ReceiveChannelClose(
+                &RegistryConnection.Connection,
+                &ChannelClose) ==
             STATUS_PROTOCOL_UNREACHABLE);
-    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelWindow(
-                           Client,
-                           8,
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveChannelWindow(
+                           &RegistryConnection.Connection,
+                           4,
                            sizeof(FileWriteData))) &&
             ZpChannel_Send(TestContext.FileWriteChannel,
                            FileWriteTooLongData,
@@ -1666,47 +1987,20 @@ TEST_FUNC(SDKContract)
             NT_SUCCESS(ZpChannel_Send(TestContext.FileWriteChannel,
                                       FileWriteData,
                                       sizeof(FileWriteData))) &&
-            TestContext.SendChannelId == 8 &&
+            TestContext.SendChannelId == 4 &&
             TestContext.SendChannelDataLength == sizeof(FileWriteData));
-    TEST_OK(NT_SUCCESS(ZpClient_ReceiveChannelClose(Client, &ChannelClose)) &&
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveChannelClose(
+                           &RegistryConnection.Connection,
+                           &ChannelClose)) &&
             TestContext.ChannelCloseCount == 4 &&
             TestContext.ChannelCloseStatus == STATUS_SUCCESS);
     ZpChannel_Close(TestContext.FileWriteChannel);
     TestContext.FileWriteChannel = NULL;
-    TEST_OK(NT_SUCCESS(ZpClient_SendRequest(Client,
-                                             1,
-                                            2,
-                                            0,
-                                            NULL,
-                                            0,
-                                            SDKTest_RequestCompleteCallback,
-                                            &TestContext,
-                                            &Request)) &&
-            NT_SUCCESS(ZpRequest_Cancel(Request)) &&
-            TestContext.SendMessageType == ZpMessageCancel &&
-            TestContext.RequestCompleteCount == 3 &&
-            TestContext.RequestStatus == STATUS_CANCELLED &&
-            TestContext.RequestPayloadLength == 0);
-    ZpRequest_Close(Request);
-    TestContext.RequestCompleteEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
-    TEST_OK(TestContext.RequestCompleteEvent != NULL &&
-            NT_SUCCESS(ZpClient_SendRequest(Client,
-                                            1,
-                                            2,
-                                            10,
-                                            NULL,
-                                            0,
-                                            SDKTest_RequestCompleteCallback,
-                                            &TestContext,
-                                            &Request)) &&
-            WaitForSingleObject(TestContext.RequestCompleteEvent, 1000) == WAIT_OBJECT_0 &&
-            TestContext.SendMessageType == ZpMessageCancel &&
-            TestContext.RequestCompleteCount == 4 &&
-            TestContext.RequestStatus == STATUS_IO_TIMEOUT &&
-            TestContext.RequestPayloadLength == 0);
-    ZpRequest_Close(Request);
-    CloseHandle(TestContext.RequestCompleteEvent);
-    TestContext.RequestCompleteEvent = NULL;
+    ZpServerConnection_Close(&RegistryConnection.Connection,
+                             STATUS_CONNECTION_DISCONNECTED);
+    ZpConnection_Release(
+        (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection);
+    TEST_OK(RegistryConnection.DestroyCount == 1);
     TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) &&
             ClientObject->State == ZpClientStateStopping &&
             TestContext.StopCount == 1 &&
@@ -1717,7 +2011,6 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpClient_NotifyState(Client, ZpClientStateStopped, STATUS_SUCCESS)) &&
             TestContext.ClientStates[4] == ZpClientStateStopped &&
             TestContext.ClientCloseStatus == STATUS_DEVICE_BUSY);
-    WaitForThreadpoolTimerCallbacks(ClientObject->RequestTimer, FALSE);
     TEST_OK(NT_SUCCESS(ZpClient_Close(Client)));
 
     RtlZeroMemory(&TestContext, sizeof(TestContext));
