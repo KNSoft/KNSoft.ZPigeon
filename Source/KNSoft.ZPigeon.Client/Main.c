@@ -17,6 +17,42 @@ static HANDLE ZpClientStopEvent;
 static HANDLE ZpClientStoppedEvent;
 
 static
+PCSTR
+ZpClient_GetStateName(
+    _In_ ZP_CLIENT_STATE State)
+{
+    switch (State)
+    {
+        case ZpClientStateStopped: return "Stopped";
+        case ZpClientStateConnecting: return "Connecting";
+        case ZpClientStateAuthenticating: return "Authenticating";
+        case ZpClientStateReady: return "Ready";
+        case ZpClientStateRetryWait: return "RetryWait";
+        case ZpClientStateStopping: return "Stopping";
+        default: return "Unknown";
+    }
+}
+
+static
+PCSTR
+ZpClient_GetStatusTypeName(
+    _In_ ZP_STATUS_TYPE Type)
+{
+    switch (Type)
+    {
+        case ZpStatusNone: return "Success";
+        case ZpStatusNtStatus: return "NTSTATUS";
+        case ZpStatusWin32: return "Win32";
+        case ZpStatusWinsock: return "Winsock";
+        case ZpStatusHResult: return "HRESULT";
+        case ZpStatusSecurity: return "Security";
+        case ZpStatusQuic: return "QUIC";
+        case ZpStatusProcessExit: return "ProcessExit";
+        default: return "Unknown";
+    }
+}
+
+static
 PCWSTR
 ZpClient_GetModuleLogName(
     _In_ USHORT ModuleId)
@@ -38,12 +74,13 @@ static
 VOID
 ZpClient_WriteLog(
     _In_ PCWSTR FileName,
-    _In_ ULONG Value1,
-    _In_ ULONG Value2,
-    _In_ NTSTATUS Status)
+    _In_ PCSTR Event,
+    _In_ ZP_STATUS Status)
 {
     WCHAR Path[MAX_PATH];
-    CHAR Line[128];
+    CHAR Line[256];
+    TIME_FIELDS TimeFields;
+    LARGE_INTEGER SystemTime;
     LARGE_INTEGER Offset;
     HANDLE FileHandle;
     int Length;
@@ -57,13 +94,36 @@ ZpClient_WriteLog(
     {
         return;
     }
-    Length = sprintf_s(Line,
-                       sizeof(Line),
-                       "%llu %lu %lu 0x%08lX\r\n",
-                       GetTickCount64(),
-                       Value1,
-                       Value2,
-                       Status);
+    if (!NT_SUCCESS(NtQuerySystemTime(&SystemTime)))
+    {
+        return;
+    }
+    RtlTimeToTimeFields(&SystemTime, &TimeFields);
+    Length = Status.Type == ZpStatusNone && Status.Code == 0 ?
+                 sprintf_s(Line,
+                           sizeof(Line),
+                           "%04hd-%02hd-%02hdT%02hd:%02hd:%02hd.%03hdZ %s status=Success\r\n",
+                           TimeFields.Year,
+                           TimeFields.Month,
+                           TimeFields.Day,
+                           TimeFields.Hour,
+                           TimeFields.Minute,
+                           TimeFields.Second,
+                           TimeFields.Milliseconds,
+                           Event) :
+                 sprintf_s(Line,
+                           sizeof(Line),
+                           "%04hd-%02hd-%02hdT%02hd:%02hd:%02hd.%03hdZ %s status=%s:0x%08lX\r\n",
+                           TimeFields.Year,
+                           TimeFields.Month,
+                           TimeFields.Day,
+                           TimeFields.Hour,
+                           TimeFields.Minute,
+                           TimeFields.Second,
+                           TimeFields.Milliseconds,
+                           Event,
+                           ZpClient_GetStatusTypeName(Status.Type),
+                           Status.Code);
     if (Length < 0)
     {
         return;
@@ -90,12 +150,18 @@ NTAPI
 ZpClient_StateCallback(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ ZP_CLIENT_STATE State,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
+    CHAR Event[48];
+
     UNREFERENCED_PARAMETER(Client);
     UNREFERENCED_PARAMETER(Context);
-    ZpClient_WriteLog(L"network.log", State, 0, Status);
+    sprintf_s(Event,
+              sizeof(Event),
+              "state=%s",
+              ZpClient_GetStateName(State));
+    ZpClient_WriteLog(L"network.log", Event, Status);
     if (State == ZpClientStateStopped)
     {
         SetEvent(ZpClientStoppedEvent);
@@ -109,14 +175,20 @@ ZpClient_OperationCallback(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ USHORT ModuleId,
     _In_ USHORT OperationId,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
+    CHAR Event[64];
+
     UNREFERENCED_PARAMETER(Client);
     UNREFERENCED_PARAMETER(Context);
+    sprintf_s(Event,
+              sizeof(Event),
+              "operation module=%hu id=%hu",
+              ModuleId,
+              OperationId);
     ZpClient_WriteLog(ZpClient_GetModuleLogName(ModuleId),
-                      ModuleId,
-                      OperationId,
+                      Event,
                       Status);
 }
 
@@ -280,7 +352,9 @@ wmain(VOID)
                                           &RootCertificateLength);
     if (!NT_SUCCESS(Status))
     {
-        ZpClient_WriteLog(L"network.log", 0, 0, Status);
+        ZpClient_WriteLog(L"network.log",
+                          "event=LoadRootCertificate",
+                          ZpStatus_FromNtStatus(Status));
         return (int)Status;
     }
     Config.Size = sizeof(Config);
@@ -297,7 +371,9 @@ wmain(VOID)
     Mem_Free(RootCertificate);
     if (!NT_SUCCESS(Status))
     {
-        ZpClient_WriteLog(L"network.log", 0, 0, Status);
+        ZpClient_WriteLog(L"network.log",
+                          "event=CreateClient",
+                          ZpStatus_FromNtStatus(Status));
         return (int)Status;
     }
     SetConsoleCtrlHandler(ZpClient_ConsoleHandler, TRUE);
@@ -310,6 +386,12 @@ wmain(VOID)
         {
             WaitForSingleObject(ZpClientStoppedEvent, INFINITE);
         }
+    }
+    else
+    {
+        ZpClient_WriteLog(L"network.log",
+                          "event=StartClient",
+                          ZpStatus_FromNtStatus(Status));
     }
     ZpClient_Close(Client);
     CloseHandle(ZpClientStoppedEvent);

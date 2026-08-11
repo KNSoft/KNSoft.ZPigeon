@@ -231,3 +231,50 @@ ZpTerminal_DecodeResize(
     }
     return Status;
 }
+
+NTSTATUS
+ZpTerminal_EncodeShells(
+    _In_ ULONG Shells,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+
+    if ((Shells & ~ZP_TERMINAL_SHELL_MASK) != 0)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *BytesWritten = sizeof(ULONG);
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < sizeof(ULONG))
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    return ZpCodec_WriteUInt32(&Writer, Shells);
+}
+
+NTSTATUS
+ZpTerminal_DecodeShells(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONG Shells)
+{
+    ZP_CODEC_READER Reader;
+
+    if (PayloadLength != sizeof(ULONG))
+    {
+        return STATUS_DATA_ERROR;
+    }
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    if (!NT_SUCCESS(ZpCodec_ReadUInt32(&Reader, Shells)) ||
+        (*Shells & ~ZP_TERMINAL_SHELL_MASK) != 0)
+    {
+        return STATUS_DATA_ERROR;
+    }
+    return STATUS_SUCCESS;
+}

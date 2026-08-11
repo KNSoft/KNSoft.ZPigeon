@@ -26,26 +26,27 @@ VOID
 NTAPI
 ZpServer_RegistryPageComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_REGISTRY_PAGE_CONTEXT RegistryContext = Context;
     ZP_REGISTRY_PAGE_VIEW Page;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = RegistryContext->Values ?
-                     ZpRegistry_DecodeValuePage(Payload->Buffer,
-                                                Payload->Length,
-                                                &Page) :
-                     ZpRegistry_DecodeKeyPage(Payload->Buffer,
-                                              Payload->Length,
-                                              &Page);
+        Status = ZpStatus_FromNtStatus(
+            RegistryContext->Values ?
+                ZpRegistry_DecodeValuePage(Payload->Buffer,
+                                           Payload->Length,
+                                           &Page) :
+                ZpRegistry_DecodeKeyPage(Payload->Buffer,
+                                         Payload->Length,
+                                         &Page));
     }
     RegistryContext->Callback(Request,
                               Status,
-                              NT_SUCCESS(Status) ? &Page : NULL,
+                              ZpStatus_IsSuccess(Status) ? &Page : NULL,
                               RegistryContext->Context);
     Mem_Free(RegistryContext);
 }
@@ -206,22 +207,23 @@ VOID
 NTAPI
 ZpServer_RegistryValueComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_REGISTRY_VALUE_CONTEXT RegistryContext = Context;
     ZP_REGISTRY_VALUE_VIEW Value;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpRegistry_DecodeValue(Payload->Buffer,
-                                        Payload->Length,
-                                        &Value);
+        Status = ZpStatus_FromNtStatus(
+            ZpRegistry_DecodeValue(Payload->Buffer,
+                                   Payload->Length,
+                                   &Value));
     }
     RegistryContext->Callback(Request,
                               Status,
-                              NT_SUCCESS(Status) ? &Value : NULL,
+                              ZpStatus_IsSuccess(Status) ? &Value : NULL,
                               RegistryContext->Context);
     Mem_Free(RegistryContext);
 }
@@ -310,15 +312,15 @@ VOID
 NTAPI
 ZpServer_RegistryStatusComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_REGISTRY_STATUS_CONTEXT RegistryContext = Context;
 
-    if (NT_SUCCESS(Status) && Payload->Length != 0)
+    if (ZpStatus_IsSuccess(Status) && Payload->Length != 0)
     {
-        Status = STATUS_DATA_ERROR;
+        Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
     }
     RegistryContext->Callback(Request, Status, RegistryContext->Context);
     Mem_Free(RegistryContext);

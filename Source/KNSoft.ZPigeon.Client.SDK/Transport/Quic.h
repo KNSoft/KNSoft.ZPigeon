@@ -14,7 +14,7 @@ typedef struct _ZP_CLIENT_QUIC_TRANSPORT
     struct _ZP_CLIENT_OBJECT* Owner;
     LOGICAL Initialized;
     ULONG EndpointIndex;
-    NTSTATUS ShutdownStatus;
+    ZP_STATUS ShutdownStatus;
     HQUIC Registration;
     HQUIC Configuration;
     HQUIC Connection;

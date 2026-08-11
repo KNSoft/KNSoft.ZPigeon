@@ -2,7 +2,7 @@
 
 #include <KNSoft/ZPigeon/EventLog.h>
 
-NTSTATUS
+ZP_STATUS
 ZpEventLog_Execute(
     _In_ USHORT OperationId,
     _In_reads_bytes_(RequestLength) const VOID* Request,

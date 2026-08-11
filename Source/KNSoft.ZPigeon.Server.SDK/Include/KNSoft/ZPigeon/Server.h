@@ -28,7 +28,7 @@ VOID
 (NTAPI *ZP_SERVER_STATE_CALLBACK)(
     _In_ ZP_SERVER_HANDLE Server,
     _In_ ZP_SERVER_STATE State,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context);
 
 typedef
@@ -37,7 +37,7 @@ VOID
     _In_ ZP_SERVER_HANDLE Server,
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_CONNECTION_PHASE Phase,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context);
 
 typedef struct _ZP_SERVER_DEPLOYMENT
@@ -72,7 +72,7 @@ ZpServer_Create(
     _In_ PCZP_SERVER_CONFIG Config,
     _Out_ ZP_SERVER_HANDLE* Server);
 
-NTSTATUS
+ZP_STATUS
 NTAPI
 ZpServer_Start(
     _In_ ZP_SERVER_HANDLE Server);
@@ -244,6 +244,15 @@ ZpServer_ResizeTerminal(
     _In_ USHORT Rows,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryTerminalShells(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_TERMINAL_SHELLS_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 

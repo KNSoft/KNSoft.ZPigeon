@@ -20,23 +20,24 @@ VOID
 NTAPI
 ZpProcess_EnumerateComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_PROCESS_CONTEXT ProcessContext = Context;
     ZP_PROCESS_LIST_VIEW Processes;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpProcess_DecodeList(Payload->Buffer,
-                                      Payload->Length,
-                                      &Processes);
+        Status = ZpStatus_FromNtStatus(
+            ZpProcess_DecodeList(Payload->Buffer,
+                                 Payload->Length,
+                                 &Processes));
     }
     ProcessContext->Callback.Enumerate(
         Request,
         Status,
-        NT_SUCCESS(Status) ? &Processes : NULL,
+        ZpStatus_IsSuccess(Status) ? &Processes : NULL,
         ProcessContext->Context);
     Mem_Free(ProcessContext);
 }
@@ -46,22 +47,23 @@ VOID
 NTAPI
 ZpProcess_QueryComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_PROCESS_CONTEXT ProcessContext = Context;
     ZP_PROCESS_INFO_VIEW Info;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpProcess_DecodeInfo(Payload->Buffer,
-                                      Payload->Length,
-                                      &Info);
+        Status = ZpStatus_FromNtStatus(
+            ZpProcess_DecodeInfo(Payload->Buffer,
+                                 Payload->Length,
+                                 &Info));
     }
     ProcessContext->Callback.Query(Request,
                                    Status,
-                                   NT_SUCCESS(Status) ? &Info : NULL,
+                                   ZpStatus_IsSuccess(Status) ? &Info : NULL,
                                    ProcessContext->Context);
     Mem_Free(ProcessContext);
 }
@@ -71,15 +73,15 @@ VOID
 NTAPI
 ZpProcess_StatusComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_PROCESS_CONTEXT ProcessContext = Context;
 
-    if (NT_SUCCESS(Status) && Payload->Length != 0)
+    if (ZpStatus_IsSuccess(Status) && Payload->Length != 0)
     {
-        Status = STATUS_DATA_ERROR;
+        Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
     }
     ProcessContext->Callback.Status(Request,
                                     Status,

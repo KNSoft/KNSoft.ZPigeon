@@ -26,11 +26,11 @@ NTSTATUS
 ZpServer_NotifyState(
     _In_ ZP_SERVER_HANDLE Server,
     _In_ ZP_SERVER_STATE State,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);
 
 VOID
 ZpServer_NotifyConnection(
     _In_ ZP_SERVER_HANDLE Server,
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_CONNECTION_PHASE Phase,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);

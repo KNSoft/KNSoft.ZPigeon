@@ -190,7 +190,7 @@ ZpClientLocalChannel_ReceiveClose(
 VOID
 ZpClientLocalChannel_CloseAll(
     _Inout_ PZP_CLIENT_OBJECT Object,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     PZP_CLIENT_LOCAL_CHANNEL Channel;
 

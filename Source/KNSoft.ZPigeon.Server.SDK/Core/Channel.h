@@ -45,15 +45,15 @@ ZpServerChannel_GetId(
 VOID
 ZpServerChannel_Abort(
     _Inout_ PZP_SERVER_CHANNEL_OBJECT Channel,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);
 
 VOID
 ZpServerConnection_RejectChannel(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
     _In_ ULONGLONG ChannelId,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);
 
 VOID
 ZpServerConnection_CloseChannels(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);

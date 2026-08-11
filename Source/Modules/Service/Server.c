@@ -20,23 +20,24 @@ VOID
 NTAPI
 ZpService_EnumerateComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVICE_CONTEXT ServiceContext = Context;
     ZP_SERVICE_LIST_VIEW Services;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpService_DecodeList(Payload->Buffer,
-                                      Payload->Length,
-                                      &Services);
+        Status = ZpStatus_FromNtStatus(
+            ZpService_DecodeList(Payload->Buffer,
+                                 Payload->Length,
+                                 &Services));
     }
     ServiceContext->Callback.Enumerate(
         Request,
         Status,
-        NT_SUCCESS(Status) ? &Services : NULL,
+        ZpStatus_IsSuccess(Status) ? &Services : NULL,
         ServiceContext->Context);
     Mem_Free(ServiceContext);
 }
@@ -46,22 +47,23 @@ VOID
 NTAPI
 ZpService_QueryComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVICE_CONTEXT ServiceContext = Context;
     ZP_SERVICE_INFO_VIEW Info;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpService_DecodeInfo(Payload->Buffer,
-                                      Payload->Length,
-                                      &Info);
+        Status = ZpStatus_FromNtStatus(
+            ZpService_DecodeInfo(Payload->Buffer,
+                                 Payload->Length,
+                                 &Info));
     }
     ServiceContext->Callback.Query(Request,
                                    Status,
-                                   NT_SUCCESS(Status) ? &Info : NULL,
+                                   ZpStatus_IsSuccess(Status) ? &Info : NULL,
                                    ServiceContext->Context);
     Mem_Free(ServiceContext);
 }
@@ -71,15 +73,15 @@ VOID
 NTAPI
 ZpService_StatusComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVICE_CONTEXT ServiceContext = Context;
 
-    if (NT_SUCCESS(Status) && Payload->Length != 0)
+    if (ZpStatus_IsSuccess(Status) && Payload->Length != 0)
     {
-        Status = STATUS_DATA_ERROR;
+        Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
     }
     ServiceContext->Callback.Status(Request,
                                     Status,

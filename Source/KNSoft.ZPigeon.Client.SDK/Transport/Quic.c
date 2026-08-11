@@ -9,6 +9,8 @@
 #pragma comment(lib, "Bcrypt.lib")
 #pragma comment(lib, "Ncrypt.lib")
 
+#define ZP_CLIENT_QUIC_KEEP_ALIVE_INTERVAL_MILLISECONDS 20000
+
 static const QUIC_REGISTRATION_CONFIG ZpClientQuicRegistrationConfig = {
     "KNSoft.ZPigeon.Client",
     QUIC_EXECUTION_PROFILE_LOW_LATENCY
@@ -21,6 +23,42 @@ ZpClientQuic_UninitializeAttempt(
 
 static
 NTSTATUS
+NTAPI
+ZpClientQuic_Send(
+    _In_opt_ PVOID Context,
+    _In_ ZP_MESSAGE_TYPE MessageType,
+    _In_reads_bytes_opt_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength);
+
+static
+VOID
+ZpClientQuic_SetShutdownStatus(
+    _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport,
+    _In_ ZP_STATUS Status)
+{
+    RtlAcquireSRWLockExclusive(&Transport->Owner->Lock);
+    if (Transport->ShutdownStatus.Type == ZpStatusNone)
+    {
+        Transport->ShutdownStatus = Status;
+    }
+    RtlReleaseSRWLockExclusive(&Transport->Owner->Lock);
+}
+
+static
+ZP_STATUS
+ZpClientQuic_GetShutdownStatus(
+    _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport)
+{
+    ZP_STATUS Status;
+
+    RtlAcquireSRWLockShared(&Transport->Owner->Lock);
+    Status = Transport->ShutdownStatus;
+    RtlReleaseSRWLockShared(&Transport->Owner->Lock);
+    return Status;
+}
+
+static
+ZP_STATUS
 ZpClientQuic_CreateIdentity(
     _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport)
 {
@@ -46,7 +84,7 @@ ZpClientQuic_CreateIdentity(
                                                0);
     if (SecurityStatus != ERROR_SUCCESS)
     {
-        return STATUS_CRYPTO_SYSTEM_INVALID;
+        return ZpStatus_FromCode(ZpStatusSecurity, (ULONG)SecurityStatus);
     }
     SecurityStatus = NCryptOpenKey(Transport->KeyProvider,
                                    &Transport->Key,
@@ -68,7 +106,7 @@ ZpClientQuic_CreateIdentity(
     }
     if (SecurityStatus != ERROR_SUCCESS)
     {
-        return SecurityStatus == NTE_NO_MEMORY ? STATUS_NO_MEMORY : STATUS_CRYPTO_SYSTEM_INVALID;
+        return ZpStatus_FromCode(ZpStatusSecurity, (ULONG)SecurityStatus);
     }
     Transport->KeyOwned = TRUE;
 
@@ -86,17 +124,19 @@ ExportKey:
         Blob->dwMagic != BCRYPT_ECDSA_PUBLIC_P256_MAGIC ||
         Blob->cbKey != 32)
     {
-        return STATUS_CRYPTO_SYSTEM_INVALID;
+        return SecurityStatus == ERROR_SUCCESS ?
+                   ZpStatus_FromNtStatus(STATUS_DATA_ERROR) :
+                   ZpStatus_FromCode(ZpStatusSecurity, (ULONG)SecurityStatus);
     }
     Transport->PublicKey[0] = 0x04;
     RtlCopyMemory(Transport->PublicKey + 1,
                   BlobBuffer + sizeof(*Blob),
                   sizeof(Transport->PublicKey) - 1);
-    return STATUS_SUCCESS;
+    return ZpStatus_FromNtStatus(STATUS_SUCCESS);
 }
 
 static
-NTSTATUS
+ZP_STATUS
 ZpClientQuic_SignChallenge(
     _In_ PZP_CLIENT_QUIC_TRANSPORT Transport,
     _In_reads_bytes_(ZP_SERVER_CHALLENGE_SIZE) const BYTE* Challenge,
@@ -112,7 +152,7 @@ ZpClientQuic_SignChallenge(
                                    Hash);
     if (!NT_SUCCESS(Status))
     {
-        return Status;
+        return ZpStatus_FromNtStatus(Status);
     }
     SecurityStatus = NCryptSignHash(Transport->Key,
                                     NULL,
@@ -125,9 +165,11 @@ ZpClientQuic_SignChallenge(
     RtlSecureZeroMemory(Hash, sizeof(Hash));
     if (SecurityStatus != ERROR_SUCCESS || SignatureSize != ZP_CLIENT_SIGNATURE_SIZE)
     {
-        return SecurityStatus == NTE_NO_MEMORY ? STATUS_NO_MEMORY : STATUS_CRYPTO_SYSTEM_INVALID;
+        return SecurityStatus == ERROR_SUCCESS ?
+                   ZpStatus_FromNtStatus(STATUS_DATA_ERROR) :
+                   ZpStatus_FromCode(ZpStatusSecurity, (ULONG)SecurityStatus);
     }
-    return STATUS_SUCCESS;
+    return ZpStatus_FromNtStatus(STATUS_SUCCESS);
 }
 
 static
@@ -155,8 +197,7 @@ ZpClientQuic_SendHello(
     {
         return Status;
     }
-    return ZpQuic_SendFrame(Transport->Stream,
-                            &Transport->ProtocolConnection,
+    return ZpClientQuic_Send(Transport,
                             ZpMessageClientHello,
                             Body,
                             BodyLength);
@@ -227,6 +268,7 @@ ZpClientQuic_MessageCallback(
     ULONGLONG RequestId;
     ULONG BodyLength;
     NTSTATUS Status;
+    ZP_STATUS SignStatus;
 
     switch (Frame->MessageType)
     {
@@ -236,9 +278,14 @@ ZpClientQuic_MessageCallback(
                                                       &Data);
             if (NT_SUCCESS(Status))
             {
-                Status = ZpClientQuic_SignChallenge(Transport,
-                                                    Data.Buffer,
-                                                    Signature);
+                SignStatus = ZpClientQuic_SignChallenge(Transport,
+                                                        Data.Buffer,
+                                                        Signature);
+                if (!ZpStatus_IsSuccess(SignStatus))
+                {
+                    ZpClientQuic_SetShutdownStatus(Transport, SignStatus);
+                    Status = STATUS_UNSUCCESSFUL;
+                }
             }
             if (NT_SUCCESS(Status))
             {
@@ -252,8 +299,7 @@ ZpClientQuic_MessageCallback(
             {
                 return Status;
             }
-            return ZpQuic_SendFrame(Transport->Stream,
-                                    Connection,
+            return ZpClientQuic_Send(Transport,
                                     ZpMessageClientAuthenticate,
                                     Body,
                                     BodyLength);
@@ -270,7 +316,8 @@ ZpClientQuic_MessageCallback(
             {
                 Status = ZpClient_NotifyState((ZP_CLIENT_HANDLE)Transport->Owner,
                                               ZpClientStateReady,
-                                              STATUS_SUCCESS);
+                                              ZpStatus_FromNtStatus(
+                                                  STATUS_SUCCESS));
             }
             return Status;
 
@@ -361,16 +408,35 @@ ZpClientQuic_Send(
     _In_ ULONG BodyLength)
 {
     PZP_CLIENT_QUIC_TRANSPORT Transport = Context;
+    QUIC_STATUS QuicStatus = QUIC_STATUS_SUCCESS;
+    NTSTATUS Status;
 
-    return ZpQuic_SendFrame(Transport->Stream,
-                            &Transport->ProtocolConnection,
-                            MessageType,
-                            Body,
-                            BodyLength);
+    if (Transport->Stream == NULL)
+    {
+        return STATUS_CONNECTION_DISCONNECTED;
+    }
+    Status = ZpQuic_SendFrame(Transport->Stream,
+                              &Transport->ProtocolConnection,
+                              MessageType,
+                              Body,
+                              BodyLength,
+                              &QuicStatus);
+    if (!NT_SUCCESS(Status))
+    {
+        ZpClientQuic_SetShutdownStatus(
+            Transport,
+            QUIC_FAILED(QuicStatus) ?
+                ZpStatus_FromCode(ZpStatusQuic, (ULONG)QuicStatus) :
+                ZpStatus_FromNtStatus(Status));
+        MsQuicConnectionShutdown(Transport->Connection,
+                                 QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                 0);
+    }
+    return Status;
 }
 
 static
-BOOLEAN
+ZP_STATUS
 ZpClientQuic_ValidateCertificate(
     _In_ PZP_CLIENT_QUIC_TRANSPORT Transport,
     _In_ PCCERT_CONTEXT Certificate)
@@ -380,7 +446,7 @@ ZpClientQuic_ValidateCertificate(
     CERT_CHAIN_POLICY_STATUS PolicyStatus = { sizeof(PolicyStatus) };
     SSL_EXTRA_CERT_CHAIN_POLICY_PARA SslParameters = { sizeof(SslParameters) };
     PCCERT_CHAIN_CONTEXT Chain;
-    BOOLEAN Valid;
+    ZP_STATUS Status;
 
     if (!CertGetCertificateChain(Transport->ChainEngine,
                                  Certificate,
@@ -391,19 +457,25 @@ ZpClientQuic_ValidateCertificate(
                                  NULL,
                                  &Chain))
     {
-        return FALSE;
+        return ZpStatus_FromCode(ZpStatusWin32, GetLastError());
     }
     SslParameters.dwAuthType = AUTHTYPE_SERVER;
     SslParameters.pwszServerName = (PWSTR)Transport->Owner->Config.Endpoints[
         Transport->EndpointIndex].ServerName;
     PolicyParameters.pvExtraPolicyPara = &SslParameters;
-    Valid = CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL,
-                                             Chain,
-                                             &PolicyParameters,
-                                             &PolicyStatus) &&
-            PolicyStatus.dwError == ERROR_SUCCESS;
+    if (!CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL,
+                                          Chain,
+                                          &PolicyParameters,
+                                          &PolicyStatus))
+    {
+        Status = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
+    }
+    else
+    {
+        Status = ZpStatus_FromCode(ZpStatusHResult, PolicyStatus.dwError);
+    }
     CertFreeCertificateChain(Chain);
-    return Valid;
+    return Status;
 }
 
 static
@@ -432,15 +504,17 @@ ZpClientQuic_StreamCallback(
             {
                 Status = ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
                                               ZpClientStateAuthenticating,
-                                              STATUS_SUCCESS);
+                                              ZpStatus_FromNtStatus(
+                                                  STATUS_SUCCESS));
                 if (NT_SUCCESS(Status))
                 {
                     Status = ZpClientQuic_SendHello(Transport);
                 }
                 if (!NT_SUCCESS(Status))
                 {
-                    InterlockedExchange((volatile LONG*)&Transport->ShutdownStatus,
-                                        Status);
+                    ZpClientQuic_SetShutdownStatus(
+                        Transport,
+                        ZpStatus_FromNtStatus(Status));
                     MsQuicConnectionShutdown(Transport->Connection,
                                              QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
                                              0);
@@ -448,8 +522,10 @@ ZpClientQuic_StreamCallback(
             }
             else
             {
-                InterlockedExchange((volatile LONG*)&Transport->ShutdownStatus,
-                                    ZpQuic_StatusToNtStatus(Event->START_COMPLETE.Status));
+                ZpClientQuic_SetShutdownStatus(
+                    Transport,
+                    ZpStatus_FromCode(ZpStatusQuic,
+                                      (ULONG)Event->START_COMPLETE.Status));
                 MsQuicConnectionShutdown(Transport->Connection,
                                          QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
                                          0);
@@ -472,8 +548,9 @@ ZpClientQuic_StreamCallback(
             }
             if (!NT_SUCCESS(Status))
             {
-                InterlockedExchange((volatile LONG*)&Transport->ShutdownStatus,
-                                    Status);
+                ZpClientQuic_SetShutdownStatus(
+                    Transport,
+                    ZpStatus_FromNtStatus(Status));
                 MsQuicConnectionShutdown(Transport->Connection,
                                          QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
                                          0);
@@ -483,8 +560,9 @@ ZpClientQuic_StreamCallback(
         case QUIC_STREAM_EVENT_PEER_SEND_SHUTDOWN:
         case QUIC_STREAM_EVENT_PEER_SEND_ABORTED:
         case QUIC_STREAM_EVENT_PEER_RECEIVE_ABORTED:
-            InterlockedExchange((volatile LONG*)&Transport->ShutdownStatus,
-                                STATUS_CONNECTION_DISCONNECTED);
+            ZpClientQuic_SetShutdownStatus(
+                Transport,
+                ZpStatus_FromNtStatus(STATUS_CONNECTION_DISCONNECTED));
             MsQuicConnectionShutdown(Transport->Connection,
                                      QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
                                      0);
@@ -520,6 +598,8 @@ ZpClientQuic_ConnectionCallback(
     PZP_CLIENT_OBJECT Object;
     HQUIC Stream;
     NTSTATUS Status;
+    ZP_STATUS ShutdownStatus;
+    ZP_STATUS CertificateStatus;
     BOOLEAN Valid;
 
     if (Transport == NULL)
@@ -530,13 +610,21 @@ ZpClientQuic_ConnectionCallback(
     switch (Event->Type)
     {
         case QUIC_CONNECTION_EVENT_PEER_CERTIFICATE_RECEIVED:
-            Valid = ZpClientQuic_ValidateCertificate(
+            CertificateStatus = ZpClientQuic_ValidateCertificate(
                 Transport,
                 (PCCERT_CONTEXT)Event->PEER_CERTIFICATE_RECEIVED.Certificate);
+            if (!ZpStatus_IsSuccess(CertificateStatus))
+            {
+                ZpClientQuic_SetShutdownStatus(Transport,
+                                               CertificateStatus);
+            }
+            Valid = ZpStatus_IsSuccess(CertificateStatus) ? TRUE : FALSE;
             MsQuicConnectionCertificateValidationComplete(
                 Connection,
                 Valid,
-                Valid ? QUIC_TLS_ALERT_CODE_SUCCESS : QUIC_TLS_ALERT_CODE_BAD_CERTIFICATE);
+                Valid ?
+                    QUIC_TLS_ALERT_CODE_SUCCESS :
+                    QUIC_TLS_ALERT_CODE_BAD_CERTIFICATE);
             return QUIC_STATUS_PENDING;
 
         case QUIC_CONNECTION_EVENT_CONNECTED:
@@ -546,8 +634,9 @@ ZpClientQuic_ConnectionCallback(
                                              Transport);
             if (!NT_SUCCESS(Status))
             {
-                InterlockedExchange((volatile LONG*)&Transport->ShutdownStatus,
-                                    Status);
+                ZpClientQuic_SetShutdownStatus(
+                    Transport,
+                    ZpStatus_FromNtStatus(Status));
                 MsQuicConnectionShutdown(Connection,
                                          QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
                                          0);
@@ -570,8 +659,9 @@ ZpClientQuic_ConnectionCallback(
             }
             if (QUIC_FAILED(QuicStatus))
             {
-                InterlockedExchange((volatile LONG*)&Transport->ShutdownStatus,
-                                    ZpQuic_StatusToNtStatus(QuicStatus));
+                ZpClientQuic_SetShutdownStatus(
+                    Transport,
+                    ZpStatus_FromCode(ZpStatusQuic, (ULONG)QuicStatus));
                 MsQuicConnectionShutdown(Connection,
                                          QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
                                          0);
@@ -579,14 +669,17 @@ ZpClientQuic_ConnectionCallback(
             break;
 
         case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_TRANSPORT:
-            InterlockedExchange(
-                (volatile LONG*)&Transport->ShutdownStatus,
-                ZpQuic_StatusToNtStatus(Event->SHUTDOWN_INITIATED_BY_TRANSPORT.Status));
+            ZpClientQuic_SetShutdownStatus(
+                Transport,
+                ZpStatus_FromCode(
+                    ZpStatusQuic,
+                    (ULONG)Event->SHUTDOWN_INITIATED_BY_TRANSPORT.Status));
             break;
 
         case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER:
-            InterlockedExchange((volatile LONG*)&Transport->ShutdownStatus,
-                                STATUS_CONNECTION_DISCONNECTED);
+            ZpClientQuic_SetShutdownStatus(
+                Transport,
+                ZpStatus_FromNtStatus(STATUS_CONNECTION_DISCONNECTED));
             break;
 
         case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
@@ -595,23 +688,25 @@ ZpClientQuic_ConnectionCallback(
             {
                 Transport->Connection = NULL;
             }
-            Status = Transport->ShutdownStatus;
             RtlReleaseSRWLockExclusive(&Object->Lock);
+            ShutdownStatus = ZpClientQuic_GetShutdownStatus(Transport);
             MsQuicConnectionClose(Connection);
-            ZpClient_TransportShutdown((ZP_CLIENT_HANDLE)Object, Status);
+            ZpClient_TransportShutdown((ZP_CLIENT_HANDLE)Object,
+                                       ShutdownStatus);
             break;
     }
     return QUIC_STATUS_SUCCESS;
 }
 
 static
-NTSTATUS
+ZP_STATUS
 ZpClientQuic_CreateRootChainEngine(
     _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport)
 {
     CERT_CHAIN_ENGINE_CONFIG EngineConfig = { sizeof(EngineConfig) };
     PZP_CLIENT_OBJECT Object = Transport->Owner;
     PCCERT_CONTEXT RootCertificate;
+    ULONG Error;
 
     RootCertificate = CertCreateCertificateContext(
         X509_ASN_ENCODING,
@@ -619,33 +714,39 @@ ZpClientQuic_CreateRootChainEngine(
         Object->Config.DeploymentRootCertificateLength);
     if (RootCertificate == NULL)
     {
-        return NTSTATUS_FROM_WIN32(GetLastError());
+        return ZpStatus_FromCode(ZpStatusWin32, GetLastError());
     }
     Transport->RootStore = CertOpenStore(CERT_STORE_PROV_MEMORY,
                                          X509_ASN_ENCODING,
                                          0,
                                          CERT_STORE_CREATE_NEW_FLAG,
                                          NULL);
-    if (Transport->RootStore == NULL ||
-        !CertAddCertificateContextToStore(Transport->RootStore,
+    if (Transport->RootStore == NULL)
+    {
+        Error = GetLastError();
+        CertFreeCertificateContext(RootCertificate);
+        return ZpStatus_FromCode(ZpStatusWin32, Error);
+    }
+    if (!CertAddCertificateContextToStore(Transport->RootStore,
                                           RootCertificate,
                                           CERT_STORE_ADD_ALWAYS,
                                           NULL))
     {
+        Error = GetLastError();
         CertFreeCertificateContext(RootCertificate);
-        return NTSTATUS_FROM_WIN32(GetLastError());
+        return ZpStatus_FromCode(ZpStatusWin32, Error);
     }
     CertFreeCertificateContext(RootCertificate);
     EngineConfig.hExclusiveRoot = Transport->RootStore;
     if (!CertCreateCertificateChainEngine(&EngineConfig, &Transport->ChainEngine))
     {
-        return NTSTATUS_FROM_WIN32(GetLastError());
+        return ZpStatus_FromCode(ZpStatusWin32, GetLastError());
     }
-    return STATUS_SUCCESS;
+    return ZpStatus_FromNtStatus(STATUS_SUCCESS);
 }
 
 static
-NTSTATUS
+ZP_STATUS
 ZpClientQuic_StartEndpoint(
     _Inout_ PZP_CLIENT_QUIC_TRANSPORT Transport)
 {
@@ -655,40 +756,43 @@ ZpClientQuic_StartEndpoint(
     QUIC_SETTINGS Settings = { 0 };
     QUIC_CREDENTIAL_CONFIG Credentials = { 0 };
     QUIC_ADDR Address;
-    NTSTATUS Status;
+    ZP_STATUS Status;
     PSTR ServerName;
     ULONG ServerNameSize;
 
     ZpClientQuic_UninitializeAttempt(Transport);
     Transport->Owner = Object;
-    Transport->ShutdownStatus = STATUS_SUCCESS;
+    Transport->ShutdownStatus = ZpStatus_FromNtStatus(STATUS_SUCCESS);
 
     QuicStatus = KNSoftQuicInitialize();
     if (QUIC_FAILED(QuicStatus))
     {
-        return ZpQuic_StatusToNtStatus(QuicStatus);
+        return ZpStatus_FromCode(ZpStatusQuic, (ULONG)QuicStatus);
     }
     Transport->Initialized = TRUE;
     QuicStatus = MsQuicRegistrationOpen(&ZpClientQuicRegistrationConfig,
                                         &Transport->Registration);
     if (QUIC_FAILED(QuicStatus))
     {
-        Status = ZpQuic_StatusToNtStatus(QuicStatus);
+        Status = ZpStatus_FromCode(ZpStatusQuic, (ULONG)QuicStatus);
         goto Cleanup;
     }
     Status = ZpClientQuic_CreateRootChainEngine(Transport);
-    if (!NT_SUCCESS(Status))
+    if (!ZpStatus_IsSuccess(Status))
     {
         goto Cleanup;
     }
     Status = ZpClientQuic_CreateIdentity(Transport);
-    if (!NT_SUCCESS(Status))
+    if (!ZpStatus_IsSuccess(Status))
     {
         goto Cleanup;
     }
 
     Settings.HandshakeIdleTimeoutMs = Object->Config.ConnectTimeoutMilliseconds;
     Settings.IsSet.HandshakeIdleTimeoutMs = TRUE;
+    Settings.KeepAliveIntervalMs =
+        ZP_CLIENT_QUIC_KEEP_ALIVE_INTERVAL_MILLISECONDS;
+    Settings.IsSet.KeepAliveIntervalMs = TRUE;
     Credentials.Type = QUIC_CREDENTIAL_TYPE_NONE;
     Credentials.Flags = QUIC_CREDENTIAL_FLAG_CLIENT |
                         QUIC_CREDENTIAL_FLAG_INDICATE_CERTIFICATE_RECEIVED |
@@ -705,7 +809,7 @@ ZpClientQuic_StartEndpoint(
                         Transport->Configuration,
                         &Credentials)))
     {
-        Status = ZpQuic_StatusToNtStatus(QuicStatus);
+        Status = ZpStatus_FromCode(ZpStatusQuic, (ULONG)QuicStatus);
         goto Cleanup;
     }
     QuicStatus = MsQuicConnectionOpen(Transport->Registration,
@@ -714,11 +818,11 @@ ZpClientQuic_StartEndpoint(
                                       &Transport->Connection);
     if (QUIC_FAILED(QuicStatus))
     {
-        Status = ZpQuic_StatusToNtStatus(QuicStatus);
+        Status = ZpStatus_FromCode(ZpStatusQuic, (ULONG)QuicStatus);
         goto Cleanup;
     }
     Status = ZpQuic_ResolveAddress(Endpoint->Host, Endpoint->Port, &Address);
-    if (!NT_SUCCESS(Status))
+    if (!ZpStatus_IsSuccess(Status))
     {
         goto Cleanup;
     }
@@ -728,7 +832,7 @@ ZpClientQuic_StartEndpoint(
                                 &Address);
     if (QUIC_FAILED(QuicStatus))
     {
-        Status = ZpQuic_StatusToNtStatus(QuicStatus);
+        Status = ZpStatus_FromCode(ZpStatusQuic, (ULONG)QuicStatus);
         goto Cleanup;
     }
     ServerNameSize = Str_UnicodeToUtf8(NULL, 0, Endpoint->ServerName);
@@ -737,7 +841,7 @@ ZpClientQuic_StartEndpoint(
         Str_UnicodeToUtf8(ServerName, ServerNameSize, Endpoint->ServerName) == 0)
     {
         Mem_Free(ServerName);
-        Status = STATUS_NO_MEMORY;
+        Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
         goto Cleanup;
     }
     QuicStatus = MsQuicConnectionStart(Transport->Connection,
@@ -748,10 +852,10 @@ ZpClientQuic_StartEndpoint(
     Mem_Free(ServerName);
     if (QUIC_FAILED(QuicStatus))
     {
-        Status = ZpQuic_StatusToNtStatus(QuicStatus);
+        Status = ZpStatus_FromCode(ZpStatusQuic, (ULONG)QuicStatus);
         goto Cleanup;
     }
-    return STATUS_SUCCESS;
+    return ZpStatus_FromNtStatus(STATUS_SUCCESS);
 
 Cleanup:
     ZpClientQuic_UninitializeAttempt(Transport);
@@ -760,7 +864,7 @@ Cleanup:
 }
 
 static
-NTSTATUS
+ZP_STATUS
 NTAPI
 ZpClientQuic_Start(
     _In_opt_ PVOID Context,
@@ -789,7 +893,7 @@ ZpClientQuic_Stop(
     StartPending = Object->StartPending;
     if (Connection != NULL)
     {
-        InterlockedExchange((volatile LONG*)&Transport->ShutdownStatus, STATUS_SUCCESS);
+        Transport->ShutdownStatus = ZpStatus_FromNtStatus(STATUS_SUCCESS);
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
     if (Connection != NULL)
@@ -803,7 +907,7 @@ ZpClientQuic_Stop(
     {
         ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
                              ZpClientStateStopped,
-                             STATUS_SUCCESS);
+                             ZpStatus_FromNtStatus(STATUS_SUCCESS));
     }
 }
 

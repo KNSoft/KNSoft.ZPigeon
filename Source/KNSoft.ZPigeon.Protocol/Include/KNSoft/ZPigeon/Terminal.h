@@ -8,6 +8,16 @@ EXTERN_C_START
 #define ZP_TERMINAL_MODULE_VERSION 1
 #define ZP_TERMINAL_OPERATION_CREATE 1
 #define ZP_TERMINAL_OPERATION_RESIZE 2
+#define ZP_TERMINAL_OPERATION_QUERY_SHELLS 3
+
+typedef enum _ZP_TERMINAL_SHELL
+{
+    ZpTerminalShellCommandPrompt = 0x00000001,
+    ZpTerminalShellWindowsPowerShell = 0x00000002,
+    ZpTerminalShellPowerShell = 0x00000004
+} ZP_TERMINAL_SHELL, *PZP_TERMINAL_SHELL;
+
+#define ZP_TERMINAL_SHELL_MASK 0x00000007UL
 
 typedef struct _ZP_TERMINAL_CREATE_VIEW
 {
@@ -66,5 +76,18 @@ ZpTerminal_DecodeResize(
     _Out_ PULONGLONG ChannelId,
     _Out_ PUSHORT Columns,
     _Out_ PUSHORT Rows);
+
+NTSTATUS
+ZpTerminal_EncodeShells(
+    _In_ ULONG Shells,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpTerminal_DecodeShells(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONG Shells);
 
 EXTERN_C_END

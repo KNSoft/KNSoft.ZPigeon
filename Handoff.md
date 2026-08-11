@@ -1,6 +1,6 @@
 # KNSoft.ZPigeon 项目交接
 
-更新时间：2026-08-10
+更新时间：2026-08-12
 
 ## 当前结论
 
@@ -14,7 +14,7 @@ System、Process、Service、Registry、File、Terminal 和 EventLog 均已迁�
 - 优先效率与安全；同步拒绝不创建异步对象，不把未完成操作伪报成功。
 - 最低 Windows 10，直接使用 Win10 及以上能力，不承担旧系统兼容、协议降级或未发布版本兼容。
 - 优先 KNSoft.NDK 的 NT 定义和 NT 系统调用；优先复用 KNSoft.MakeLifeEasier，不在本库复制通用函数。
-- 可抽到 MLE 的能力必须先询问 Owner。已获确认的 `Mem_ReAlloc` 只在父级 MLE 本地实现并同步当前引用副本，不提交；`IO_CreatePipe`、`PS_CreateProcessEx` 设计见 `MLE_Todo.md`，暂不实现。
+- 可抽到 MLE 的能力必须先询问 Owner。`Mem_ReAlloc` 与 `IO_CreatePipe` 只在父级 MLE 本地实现并同步当前引用副本，不提交；`PS_CreateProcessEx` 仍只保留在 `MLE_Todo.md` 供 Owner 审核。
 - 遵循 `.editorconfig`、SAL、原编码和 CRLF；工程文件只做必要的路径与编译项修改。
 
 ## 当前源码边界
@@ -35,7 +35,8 @@ Source/
 |   `-- Transport/                  Server 生命周期、监听、QUIC
 |-- KNSoft.ZPigeon.Client/          Client SDK 启动 EXE 与分模块日志
 |-- KNSoft.ZPigeon.Server.Native/   C# 可调用的 Server C DLL
-|-- KNSoft.ZPigeon.Web/             本地回环 C# Web 管理端
+|-- KNSoft.ZPigeon.Server.Managed/  可复用的 .NET Server SDK/Terminal 会话层
+|-- KNSoft.ZPigeon.Web/             本地回环 WebSocket/UI 适配层
 `-- SDK/                            共用 Handle 基础实现
 ```
 
@@ -50,15 +51,16 @@ Transport 不解析模块 Payload，不调用 Registry、SCM、进程、文件�
 - 已结束或被 Server 配额拒绝的 Channel 只以最高已见 ID 表示，不建立额外 tombstone 表；迟到 Window/Close 可忽略，未来 ID 和未知 Data 仍是协议错误。
 - Server 在发送会创建 Channel 的 Request 前锁内预留本地名额，避免 Client 先创建文件句柄或 ConPTY 后再被 Server 配额拒绝。
 - Server 正常停止时 Connection 生命周期可报告成功，但所有尚未完成的 Request/Channel 以 `STATUS_CONNECTION_DISCONNECTED` 完成，禁止伪成功。
+- Response、状态回调和 ChannelClose 使用 `ZP_STATUS`：Type 为 16 位，原始 Code 为 32 位，线上固定编码为 6 字节且不传结构体填充；保留 NTSTATUS、Win32、Winsock、HRESULT、Security、QUIC 和 ProcessExit 错误域，不跨域映射；同步本地提交错误仍返回 `NTSTATUS`。
 - 模块版本必须完全相同才参与协商；不保留旧 Decoder、自动降级或兼容分支。
 - 模块记录仅包含 ID 和 Version；未被业务读取的 Capabilities 已删除。产品从不发送的 Disconnect 消息也已删除，连接关闭直接使用 QUIC 生命周期。
 
 ## 已验证内容
 
-- Visual Studio 2026 下 x86/x64、Debug/Release 全 Solution Rebuild 均为零警告、零错误，直接产出三个静态库、Client EXE、Server Native DLL 与 C# Web；
-- 四配置 UnitTest 均为 324/324 通过，包含真实 localhost QUIC 集成；ConsumerTest 均通过；
-- Web/Native/QUIC/Client 本地回环已实际跑通，System.Info、EventLog 查询及 Bookmark 下一页和分模块日志已验证；
-- Registry 默认值空名称分页已修正；Terminal 已验证大于 100 KiB 输出、退出码 7、Resize、Cancel 和 ConPTY 最终输出排空。
+- Visual Studio 2026 下 x64 Debug/Release 全 Solution Rebuild 均为零警告、零错误，直接产出三个静态库、Client EXE、Server Native DLL、Managed SDK 与 C# Web；x86 配置已删除，ARM64 后续按需加入；
+- 四配置 UnitTest 均为 325/325 通过，包含真实 localhost QUIC 集成；ConsumerTest 均通过；
+- Web/Managed/Native/QUIC/Client 本地回环已实际跑通，System.Info、EventLog、三种本机 Shell 探测、cmd/PowerShell 交互、多会话切换与主动关闭已验证；QUIC 已启用 KeepAlive，Web 保留并显示 ProcessExit、NTSTATUS、Win32、Winsock、HRESULT、Security、QUIC 或 WebSocket 分类及原始码；
+- Registry 默认值空名称分页已修正；Terminal 已改为两个 NT 异步单向管道和专用输出线程，已验证大于 100 KiB 输出、退出码 7、Resize、Cancel 和 ConPTY 最终输出排空。
 
 ## 后续开发入口
 

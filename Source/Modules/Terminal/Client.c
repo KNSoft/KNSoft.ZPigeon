@@ -4,13 +4,16 @@
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Channel.h"
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 
-#define ZP_TERMINAL_CHANNEL_CHUNK_SIZE 0x00010000UL
+#define ZP_TERMINAL_CHANNEL_CHUNK_SIZE 0x00020000UL
 #define ZP_TERMINAL_INPUT_WINDOW_SIZE 0x00001000UL
+#define ZP_TERMINAL_PATH_BUFFER_SIZE 0x00010000UL
 
 struct _ZP_CLIENT_TERMINAL_CHANNEL
 {
     ZP_CLIENT_LOCAL_CHANNEL Header;
     LOGICAL WorkerActive;
+    LOGICAL InputPending;
+    volatile LONG CloseQueued;
     RTL_SRWLOCK InputLock;
     RTL_SRWLOCK PseudoConsoleLock;
     ULONGLONG Credit;
@@ -19,8 +22,65 @@ struct _ZP_CLIENT_TERMINAL_CHANNEL
     HANDLE Input;
     HANDLE Output;
     HANDLE Process;
+    HANDLE OutputThread;
+    HANDLE InputEvent;
+    HANDLE CreditEvent;
+    IO_STATUS_BLOCK InputIoStatus;
+    ULONG InputLength;
     ULONG ProcessId;
+    BYTE InputBuffer[ZP_TERMINAL_INPUT_WINDOW_SIZE];
 };
+
+static
+NTSTATUS
+ZpTerminal_QueryShells(
+    _Out_writes_bytes_(ResponseSize) PVOID Response,
+    _In_ ULONG ResponseSize,
+    _Out_ PULONG ResponseLength)
+{
+    static UNICODE_STRING PathName = RTL_CONSTANT_STRING(L"PATH");
+    static const PCWSTR Executables[] = {
+        L"cmd.exe",
+        L"powershell.exe",
+        L"pwsh.exe"
+    };
+    UNICODE_STRING Path = { 0 };
+    WCHAR FilePath[MAX_PATH];
+    PVOID Buffer;
+    ULONG Shells = 0, Index;
+    NTSTATUS Status;
+
+    Buffer = Mem_Alloc(ZP_TERMINAL_PATH_BUFFER_SIZE);
+    if (Buffer == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    Path.Buffer = Buffer;
+    Path.MaximumLength = MAXUSHORT - 1;
+    Status = RtlQueryEnvironmentVariable_U(NULL, &PathName, &Path);
+    if (NT_SUCCESS(Status))
+    {
+        Path.Buffer[Path.Length / sizeof(WCHAR)] = UNICODE_NULL;
+        for (Index = 0; Index < ARRAYSIZE(Executables); Index++)
+        {
+            if (RtlDosSearchPath_U(Path.Buffer,
+                                   Executables[Index],
+                                   NULL,
+                                   sizeof(FilePath),
+                                   FilePath,
+                                   NULL) != 0)
+            {
+                Shells |= 1UL << Index;
+            }
+        }
+        Status = ZpTerminal_EncodeShells(Shells,
+                                         Response,
+                                         ResponseSize,
+                                         ResponseLength);
+    }
+    Mem_Free(Buffer);
+    return Status;
+}
 
 static
 NTSTATUS
@@ -38,18 +98,23 @@ static
 NTSTATUS
 ZpTerminal_ChannelClose(
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);
 
 static
 VOID
 ZpTerminal_ChannelAbort(
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);
 
 static
 VOID
 ZpTerminal_ChannelDestroy(
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel);
+
+static
+NTSTATUS
+ZpTerminal_QueuePseudoConsoleClose(
+    _Inout_ PZP_CLIENT_TERMINAL_CHANNEL Channel);
 
 static
 NTSTATUS
@@ -75,9 +140,9 @@ static
 NTSTATUS
 ZpTerminal_SendCloseLocked(
     _Inout_ PZP_CLIENT_TERMINAL_CHANNEL Channel,
-    _In_ NTSTATUS CloseStatus)
+    _In_ ZP_STATUS CloseStatus)
 {
-    BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
+    BYTE Body[sizeof(ULONGLONG) + ZP_STATUS_WIRE_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -129,25 +194,47 @@ VOID
 ZpTerminal_Destroy(
     _Inout_ PZP_CLIENT_TERMINAL_CHANNEL Channel)
 {
-    if (Channel->Process != NULL)
+    IO_STATUS_BLOCK IoStatusBlock;
+
+    if (Channel->Process != NULL &&
+        PS_WaitForObject(Channel->Process, 0) == STATUS_TIMEOUT)
     {
-        if (PS_WaitForObject(Channel->Process, 0) == STATUS_TIMEOUT)
-        {
-            NtTerminateProcess(Channel->Process, STATUS_CANCELLED);
-        }
-        NtClose(Channel->Process);
-    }
-    if (Channel->PseudoConsole != NULL)
-    {
-        ClosePseudoConsole(Channel->PseudoConsole);
+        NtTerminateProcess(Channel->Process, STATUS_CANCELLED);
     }
     if (Channel->Input != NULL)
     {
+        if (Channel->InputPending)
+        {
+            NtCancelIoFileEx(Channel->Input,
+                             &Channel->InputIoStatus,
+                             &IoStatusBlock);
+            NtWaitForSingleObject(Channel->InputEvent, FALSE, NULL);
+        }
         NtClose(Channel->Input);
     }
     if (Channel->Output != NULL)
     {
         NtClose(Channel->Output);
+    }
+    if (Channel->PseudoConsole != NULL)
+    {
+        ClosePseudoConsole(Channel->PseudoConsole);
+    }
+    if (Channel->Process != NULL)
+    {
+        NtClose(Channel->Process);
+    }
+    if (Channel->OutputThread != NULL)
+    {
+        NtClose(Channel->OutputThread);
+    }
+    if (Channel->InputEvent != NULL)
+    {
+        NtClose(Channel->InputEvent);
+    }
+    if (Channel->CreditEvent != NULL)
+    {
+        NtClose(Channel->CreditEvent);
     }
     Mem_Free(Channel);
 }
@@ -164,20 +251,22 @@ static
 VOID
 ZpTerminal_ChannelAbort(
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL LocalChannel,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     PZP_CLIENT_TERMINAL_CHANNEL Channel =
         (PZP_CLIENT_TERMINAL_CHANNEL)LocalChannel;
 
     UNREFERENCED_PARAMETER(Status);
     NtTerminateProcess(Channel->Process, STATUS_CANCELLED);
+    ZpTerminal_QueuePseudoConsoleClose(Channel);
+    NtSetEvent(Channel->CreditEvent, NULL);
 }
 
 static
 VOID
 ZpTerminal_FinishWorker(
     _Inout_ PZP_CLIENT_TERMINAL_CHANNEL Channel,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ LOGICAL Notify)
 {
     PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
@@ -232,6 +321,10 @@ ZpTerminal_QueuePseudoConsoleClose(
 {
     PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
 
+    if (InterlockedCompareExchange(&Channel->CloseQueued, TRUE, FALSE))
+    {
+        return STATUS_SUCCESS;
+    }
     ZpClientLocalChannel_AddRef(&Channel->Header);
     RtlAcquireSRWLockExclusive(&Object->Lock);
     Object->CallbackCount++;
@@ -245,143 +338,169 @@ ZpTerminal_QueuePseudoConsoleClose(
     RtlAcquireSRWLockExclusive(&Object->Lock);
     Object->CallbackCount--;
     RtlReleaseSRWLockExclusive(&Object->Lock);
+    InterlockedExchange(&Channel->CloseQueued, FALSE);
     ZpClientLocalChannel_Release(&Channel->Header);
     return STATUS_NO_MEMORY;
 }
 
 static
-VOID
-CALLBACK
-ZpTerminal_ChannelCallback(
-    _Inout_ PTP_CALLBACK_INSTANCE Instance,
-    _In_opt_ PVOID Context)
+ZP_STATUS
+ZpTerminal_GetProcessStatus(
+    _In_ PZP_CLIENT_TERMINAL_CHANNEL Channel)
+{
+    PROCESS_BASIC_INFORMATION ProcessInfo;
+    NTSTATUS Status;
+
+    Status = NtQueryInformationProcess(Channel->Process,
+                                       ProcessBasicInformation,
+                                       &ProcessInfo,
+                                       sizeof(ProcessInfo),
+                                       NULL);
+    return NT_SUCCESS(Status) ?
+               ZpStatus_FromProcessExit((ULONG)ProcessInfo.ExitStatus) :
+               ZpStatus_FromNtStatus(Status);
+}
+
+static
+NTSTATUS
+NTAPI
+ZpTerminal_OutputThread(
+    _In_ PVOID Context)
 {
     PZP_CLIENT_TERMINAL_CHANNEL Channel = Context;
     PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
-    FILE_PIPE_LOCAL_INFORMATION PipeInfo;
-    PROCESS_BASIC_INFORMATION ProcessInfo;
     IO_STATUS_BLOCK IoStatusBlock;
-    PBYTE Body;
-    ULONG ReadLength, BytesRead, BodyLength;
-    NTSTATUS Status;
-    LOGICAL ProcessExited = FALSE;
-    LOGICAL PseudoConsoleCloseQueued = FALSE;
-    LOGICAL HasPseudoConsole;
+    HANDLE Event = NULL, Handles[2];
+    PBYTE Body = NULL;
+    ULONG ReadLength, ReservedLength, BytesRead, BodyLength;
+    NTSTATUS Status, WaitStatus;
+    ZP_STATUS CompletionStatus = { 0 };
+    LOGICAL Pending, ProcessExited = FALSE, Notify = TRUE, Removed;
 
-    CallbackMayRunLong(Instance);
+    Status = NtCreateEvent(&Event,
+                           EVENT_MODIFY_STATE | SYNCHRONIZE,
+                           NULL,
+                           NotificationEvent,
+                           FALSE);
+    if (!NT_SUCCESS(Status))
+    {
+        goto Finish;
+    }
     Body = Mem_Alloc(sizeof(ULONGLONG) + ZP_TERMINAL_CHANNEL_CHUNK_SIZE);
     if (Body == NULL)
     {
-        ZpTerminal_FinishWorker(Channel, STATUS_NO_MEMORY, TRUE);
-        return;
+        Status = STATUS_NO_MEMORY;
+        goto Finish;
     }
+
     for (;;)
     {
-        RtlAcquireSRWLockExclusive(&Object->Lock);
-        if (!Channel->Header.Pending)
-        {
-            Channel->WorkerActive = FALSE;
-            Object->CallbackCount--;
-            RtlReleaseSRWLockExclusive(&Object->Lock);
-            break;
-        }
-        RtlReleaseSRWLockExclusive(&Object->Lock);
-
         if (!ProcessExited &&
             PS_WaitForObject(Channel->Process, 0) == STATUS_SUCCESS)
         {
             ProcessExited = TRUE;
-        }
-        Status = NtQueryInformationFile(Channel->Output,
-                                        &IoStatusBlock,
-                                        &PipeInfo,
-                                        sizeof(PipeInfo),
-                                        FilePipeLocalInformation);
-        if (!NT_SUCCESS(Status))
-        {
-            if (Status == STATUS_PIPE_BROKEN && ProcessExited)
+            Status = ZpTerminal_QueuePseudoConsoleClose(Channel);
+            if (!NT_SUCCESS(Status))
             {
-                PipeInfo.ReadDataAvailable = 0;
+                break;
             }
-            else
-            {
-                Mem_Free(Body);
-                ZpTerminal_FinishWorker(Channel, Status, TRUE);
-                return;
-            }
-        }
-        if (PipeInfo.ReadDataAvailable == 0)
-        {
-            if (ProcessExited)
-            {
-                RtlAcquireSRWLockShared(&Channel->PseudoConsoleLock);
-                HasPseudoConsole = Channel->PseudoConsole != NULL;
-                RtlReleaseSRWLockShared(&Channel->PseudoConsoleLock);
-                if (HasPseudoConsole)
-                {
-                    if (!PseudoConsoleCloseQueued)
-                    {
-                        Status = ZpTerminal_QueuePseudoConsoleClose(Channel);
-                        if (!NT_SUCCESS(Status))
-                        {
-                            Mem_Free(Body);
-                            ZpTerminal_FinishWorker(Channel, Status, TRUE);
-                            return;
-                        }
-                        PseudoConsoleCloseQueued = TRUE;
-                    }
-                    PS_DelayExec(1);
-                    continue;
-                }
-                Status = NtQueryInformationProcess(
-                    Channel->Process,
-                    ProcessBasicInformation,
-                    &ProcessInfo,
-                    sizeof(ProcessInfo),
-                    NULL);
-                if (NT_SUCCESS(Status))
-                {
-                    Status = ProcessInfo.ExitStatus;
-                }
-                Mem_Free(Body);
-                ZpTerminal_FinishWorker(Channel, Status, TRUE);
-                return;
-            }
-            PS_DelayExec(10);
-            continue;
         }
 
         RtlAcquireSRWLockExclusive(&Object->Lock);
-        if (!Channel->Header.Pending)
-        {
-            Channel->WorkerActive = FALSE;
-            Object->CallbackCount--;
-            RtlReleaseSRWLockExclusive(&Object->Lock);
-            break;
-        }
-        ReadLength = (ULONG)min(min(Channel->Credit,
-                                    (ULONGLONG)PipeInfo.ReadDataAvailable),
-                                ZP_TERMINAL_CHANNEL_CHUNK_SIZE);
-        if (ReadLength == 0)
+        Pending = Channel->Header.Pending;
+        if (Pending && Channel->Credit == 0)
         {
             RtlReleaseSRWLockExclusive(&Object->Lock);
-            PS_DelayExec(10);
+            Handles[0] = Channel->CreditEvent;
+            Handles[1] = Channel->Process;
+            WaitStatus = NtWaitForMultipleObjects(ProcessExited ? 1 : 2,
+                                                  Handles,
+                                                  WaitAny,
+                                                  FALSE,
+                                                  NULL);
+            if (WaitStatus == STATUS_WAIT_1)
+            {
+                ProcessExited = TRUE;
+                Status = ZpTerminal_QueuePseudoConsoleClose(Channel);
+                if (!NT_SUCCESS(Status))
+                {
+                    break;
+                }
+            }
+            else if (WaitStatus != STATUS_WAIT_0)
+            {
+                Status = WaitStatus;
+                break;
+            }
             continue;
         }
-        Channel->Credit -= ReadLength;
+        ReadLength = Pending ?
+                         (ULONG)min(Channel->Credit,
+                                    ZP_TERMINAL_CHANNEL_CHUNK_SIZE) :
+                         ZP_TERMINAL_CHANNEL_CHUNK_SIZE;
+        ReservedLength = Pending ? ReadLength : 0;
+        Channel->Credit -= ReservedLength;
         RtlReleaseSRWLockExclusive(&Object->Lock);
 
-        Status = IO_ReadFile(Channel->Output,
-                             NULL,
-                             Add2Ptr(Body, sizeof(ULONGLONG)),
-                             ReadLength,
-                             &BytesRead);
+        NtClearEvent(Event);
+        Status = NtReadFile(Channel->Output,
+                            Event,
+                            NULL,
+                            NULL,
+                            &IoStatusBlock,
+                            Add2Ptr(Body, sizeof(ULONGLONG)),
+                            ReadLength,
+                            NULL,
+                            NULL);
+        while (Status == STATUS_PENDING)
+        {
+            Handles[0] = Event;
+            Handles[1] = Channel->Process;
+            WaitStatus = NtWaitForMultipleObjects(ProcessExited ? 1 : 2,
+                                                  Handles,
+                                                  WaitAny,
+                                                  FALSE,
+                                                  NULL);
+            if (WaitStatus == STATUS_WAIT_0)
+            {
+                Status = IoStatusBlock.Status;
+            }
+            else if (WaitStatus == STATUS_WAIT_1)
+            {
+                ProcessExited = TRUE;
+                WaitStatus = ZpTerminal_QueuePseudoConsoleClose(Channel);
+                if (!NT_SUCCESS(WaitStatus))
+                {
+                    Status = WaitStatus;
+                }
+            }
+            else
+            {
+                Status = WaitStatus;
+            }
+        }
         if (!NT_SUCCESS(Status))
         {
-            Mem_Free(Body);
-            ZpTerminal_FinishWorker(Channel, Status, TRUE);
-            return;
+            if (ProcessExited)
+            {
+                CompletionStatus = ZpTerminal_GetProcessStatus(Channel);
+            }
+            break;
         }
+        BytesRead = (ULONG)IoStatusBlock.Information;
+        if (BytesRead == 0)
+        {
+            if (ProcessExited)
+            {
+                CompletionStatus = ZpTerminal_GetProcessStatus(Channel);
+            }
+            else
+            {
+                Status = STATUS_PIPE_BROKEN;
+            }
+            break;
+        }
+
         Status = ZpMessage_EncodeChannelData(
             Channel->Header.ChannelId,
             Add2Ptr(Body, sizeof(ULONGLONG)),
@@ -391,33 +510,99 @@ ZpTerminal_ChannelCallback(
             &BodyLength);
         if (!NT_SUCCESS(Status))
         {
-            Mem_Free(Body);
-            ZpTerminal_FinishWorker(Channel, Status, TRUE);
-            return;
-        }
-        RtlAcquireSRWLockExclusive(&Object->Lock);
-        if (!Channel->Header.Pending)
-        {
-            Channel->WorkerActive = FALSE;
-            Object->CallbackCount--;
-            RtlReleaseSRWLockExclusive(&Object->Lock);
             break;
         }
-        Channel->Credit += ReadLength - BytesRead;
-        Status = ZpTerminal_SendLocked(Object,
-                                       ZpMessageChannelData,
-                                       Body,
-                                       BodyLength);
-        RtlReleaseSRWLockExclusive(&Object->Lock);
+        RtlAcquireSRWLockExclusive(&Object->Lock);
+        Pending = Channel->Header.Pending;
+        if (ReservedLength != 0)
+        {
+            Channel->Credit += ReservedLength - BytesRead;
+        }
+        Status = Pending ?
+                     ZpTerminal_SendLocked(Object,
+                                           ZpMessageChannelData,
+                                           Body,
+                                           BodyLength) :
+                     STATUS_SUCCESS;
         if (!NT_SUCCESS(Status))
         {
-            Mem_Free(Body);
-            ZpTerminal_FinishWorker(Channel, Status, FALSE);
-            return;
+            Removed = ZpClientLocalChannel_RemoveLocked(&Channel->Header);
+        }
+        else
+        {
+            Removed = FALSE;
+        }
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        if (Removed)
+        {
+            Notify = FALSE;
+            ZpClientLocalChannel_Release(&Channel->Header);
+            NtTerminateProcess(Channel->Process, STATUS_CANCELLED);
+            Status = ZpTerminal_QueuePseudoConsoleClose(Channel);
+            NtSetEvent(Channel->CreditEvent, NULL);
+            if (!NT_SUCCESS(Status))
+            {
+                break;
+            }
         }
     }
+
+Finish:
+    if (Event != NULL)
+    {
+        NtClose(Event);
+    }
     Mem_Free(Body);
-    ZpClientLocalChannel_Release(&Channel->Header);
+    if (CompletionStatus.Type == ZpStatusNone)
+    {
+        CompletionStatus = ZpStatus_FromNtStatus(Status);
+    }
+    ZpTerminal_FinishWorker(Channel, CompletionStatus, Notify);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpTerminal_StartWorker(
+    _Inout_ PZP_CLIENT_TERMINAL_CHANNEL Channel)
+{
+    PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
+    HANDLE Thread;
+    NTSTATUS Status;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    if (!Channel->Header.Pending || Channel->WorkerActive)
+    {
+        RtlReleaseSRWLockExclusive(&Object->Lock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    Channel->WorkerActive = TRUE;
+    ZpClientLocalChannel_AddRef(&Channel->Header);
+    Object->CallbackCount++;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+
+    Status = PS_CreateThread(NtCurrentProcess(),
+                             TRUE,
+                             ZpTerminal_OutputThread,
+                             Channel,
+                             &Thread,
+                             NULL);
+    if (NT_SUCCESS(Status))
+    {
+        Channel->OutputThread = Thread;
+        Status = NtResumeThread(Thread, NULL);
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        if (Channel->OutputThread != NULL)
+        {
+            NtTerminateThread(Channel->OutputThread, Status);
+        }
+        ZpTerminal_FinishWorker(Channel,
+                                ZpStatus_FromNtStatus(Status),
+                                TRUE);
+    }
+    return Status;
 }
 
 static
@@ -429,8 +614,6 @@ ZpTerminal_ChannelWindow(
     PZP_CLIENT_TERMINAL_CHANNEL Channel =
         (PZP_CLIENT_TERMINAL_CHANNEL)LocalChannel;
     PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
-    LOGICAL Queue = FALSE;
-
     RtlAcquireSRWLockExclusive(&Object->Lock);
     if (!Channel->Header.Pending ||
         MAXULONGLONG - Channel->Credit < CreditBytes)
@@ -439,21 +622,8 @@ ZpTerminal_ChannelWindow(
         return STATUS_PROTOCOL_UNREACHABLE;
     }
     Channel->Credit += CreditBytes;
-    if (!Channel->WorkerActive)
-    {
-        Channel->WorkerActive = TRUE;
-        ZpClientLocalChannel_AddRef(&Channel->Header);
-        Object->CallbackCount++;
-        Queue = TRUE;
-    }
     RtlReleaseSRWLockExclusive(&Object->Lock);
-    if (Queue && !TrySubmitThreadpoolCallback(ZpTerminal_ChannelCallback,
-                                              Channel,
-                                              NULL))
-    {
-        ZpTerminal_FinishWorker(Channel, STATUS_NO_MEMORY, TRUE);
-    }
-    return STATUS_SUCCESS;
+    return NtSetEvent(Channel->CreditEvent, NULL);
 }
 
 static
@@ -465,13 +635,13 @@ ZpTerminal_ChannelData(
     PZP_CLIENT_TERMINAL_CHANNEL Channel =
         (PZP_CLIENT_TERMINAL_CHANNEL)LocalChannel;
     PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
-    ULONG BytesWritten;
     NTSTATUS Status;
     LOGICAL Removed = FALSE;
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
     if (!Channel->Header.Pending ||
-        Message->Data.Length > Channel->ReceiveCredit)
+        Message->Data.Length > Channel->ReceiveCredit ||
+        Message->Data.Length > sizeof(Channel->InputBuffer))
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_PROTOCOL_UNREACHABLE;
@@ -479,16 +649,52 @@ ZpTerminal_ChannelData(
     Channel->ReceiveCredit -= Message->Data.Length;
     RtlReleaseSRWLockExclusive(&Object->Lock);
     RtlAcquireSRWLockExclusive(&Channel->InputLock);
-    Status = IO_WriteFile(Channel->Input,
-                          NULL,
-                          (PVOID)Message->Data.Buffer,
-                          Message->Data.Length,
-                          &BytesWritten);
-    RtlReleaseSRWLockExclusive(&Channel->InputLock);
-    if (NT_SUCCESS(Status) && BytesWritten != Message->Data.Length)
+    if (Channel->InputPending)
     {
-        Status = STATUS_UNSUCCESSFUL;
+        Status = NtWaitForSingleObject(Channel->InputEvent, FALSE, NULL);
+        if (NT_SUCCESS(Status))
+        {
+            Status = Channel->InputIoStatus.Status;
+        }
+        if (NT_SUCCESS(Status) &&
+            Channel->InputIoStatus.Information != Channel->InputLength)
+        {
+            Status = STATUS_UNSUCCESSFUL;
+        }
+        Channel->InputPending = FALSE;
     }
+    else
+    {
+        Status = STATUS_SUCCESS;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        RtlCopyMemory(Channel->InputBuffer,
+                      Message->Data.Buffer,
+                      Message->Data.Length);
+        Channel->InputLength = Message->Data.Length;
+        NtClearEvent(Channel->InputEvent);
+        Status = NtWriteFile(Channel->Input,
+                             Channel->InputEvent,
+                             NULL,
+                             NULL,
+                             &Channel->InputIoStatus,
+                             Channel->InputBuffer,
+                             Channel->InputLength,
+                             NULL,
+                             NULL);
+        if (Status == STATUS_PENDING)
+        {
+            Channel->InputPending = TRUE;
+            Status = STATUS_SUCCESS;
+        }
+        else if (NT_SUCCESS(Status) &&
+                 Channel->InputIoStatus.Information != Channel->InputLength)
+        {
+            Status = STATUS_UNSUCCESSFUL;
+        }
+    }
+    RtlReleaseSRWLockExclusive(&Channel->InputLock);
     RtlAcquireSRWLockExclusive(&Object->Lock);
     if (!Channel->Header.Pending)
     {
@@ -503,12 +709,14 @@ ZpTerminal_ChannelData(
     if (!NT_SUCCESS(Status))
     {
         Removed = ZpClientLocalChannel_RemoveLocked(&Channel->Header);
-        ZpTerminal_SendCloseLocked(Channel, Status);
+        ZpTerminal_SendCloseLocked(Channel, ZpStatus_FromNtStatus(Status));
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
     if (Removed)
     {
         NtTerminateProcess(Channel->Process, STATUS_CANCELLED);
+        ZpTerminal_QueuePseudoConsoleClose(Channel);
+        NtSetEvent(Channel->CreditEvent, NULL);
         ZpClientLocalChannel_Release(&Channel->Header);
     }
     return NT_SUCCESS(Status) ? STATUS_SUCCESS : Status;
@@ -518,7 +726,7 @@ static
 NTSTATUS
 ZpTerminal_ChannelClose(
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL LocalChannel,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     PZP_CLIENT_TERMINAL_CHANNEL Channel =
         (PZP_CLIENT_TERMINAL_CHANNEL)LocalChannel;
@@ -534,12 +742,14 @@ ZpTerminal_ChannelClose(
         return STATUS_PROTOCOL_UNREACHABLE;
     }
     NtTerminateProcess(Channel->Process, STATUS_CANCELLED);
+    ZpTerminal_QueuePseudoConsoleClose(Channel);
+    NtSetEvent(Channel->CreditEvent, NULL);
     ZpClientLocalChannel_Release(&Channel->Header);
     return STATUS_SUCCESS;
 }
 
 static
-NTSTATUS
+ZP_STATUS
 ZpTerminal_Create(
     _Inout_ PZP_CLIENT_OBJECT Object,
     _In_ const ZP_TERMINAL_CREATE_VIEW* Create,
@@ -549,30 +759,32 @@ ZpTerminal_Create(
     PROCESS_INFORMATION ProcessInfo = { 0 };
     PZP_CLIENT_TERMINAL_CHANNEL ChannelObject = NULL;
     PPROC_THREAD_ATTRIBUTE_LIST AttributeList = NULL;
-    HANDLE InputRead = NULL, InputWrite = NULL;
-    HANDLE OutputRead = NULL, OutputWrite = NULL;
+    HANDLE PipeDirectory = NULL;
+    HANDLE Input = NULL, InputPeer = NULL;
+    HANDLE Output = NULL, OutputPeer = NULL;
     HPCON PseudoConsole = NULL;
     PWCHAR CommandLine = NULL, WorkingDirectory = NULL;
     SIZE_T AttributeListSize = 0;
+    UNICODE_STRING PipeDirectoryPath = RTL_CONSTANT_STRING(DEVICE_NAMED_PIPE);
     COORD Size;
     HRESULT Result;
     NTSTATUS Status = STATUS_SUCCESS;
+    ZP_STATUS ResultStatus = { 0 };
     LOGICAL AttributeListInitialized = FALSE;
+    static UNICODE_STRING UserProfileName =
+        RTL_CONSTANT_STRING(L"USERPROFILE");
 
     if (Create->Columns > MAXSHORT || Create->Rows > MAXSHORT)
     {
-        return STATUS_INVALID_PARAMETER;
+        return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
     ChannelObject = Mem_Alloc(sizeof(*ChannelObject));
     CommandLine = Mem_Alloc(((SIZE_T)Create->CommandLine.Length + 1) *
                             sizeof(WCHAR));
-    if (Create->WorkingDirectory.Length != 0)
-    {
-        WorkingDirectory = Mem_Alloc(
-            ((SIZE_T)Create->WorkingDirectory.Length + 1) * sizeof(WCHAR));
-    }
-    if (ChannelObject == NULL || CommandLine == NULL ||
-        (Create->WorkingDirectory.Length != 0 && WorkingDirectory == NULL))
+    WorkingDirectory = Mem_Alloc(Create->WorkingDirectory.Length != 0 ?
+        ((SIZE_T)Create->WorkingDirectory.Length + 1) * sizeof(WCHAR) :
+        ZP_TERMINAL_PATH_BUFFER_SIZE);
+    if (ChannelObject == NULL || CommandLine == NULL || WorkingDirectory == NULL)
     {
         Status = STATUS_NO_MEMORY;
         goto Cleanup;
@@ -582,29 +794,86 @@ ZpTerminal_Create(
                   Create->CommandLine.Buffer,
                   (SIZE_T)Create->CommandLine.Length * sizeof(WCHAR));
     CommandLine[Create->CommandLine.Length] = UNICODE_NULL;
-    if (WorkingDirectory != NULL)
+    if (Create->WorkingDirectory.Length != 0)
     {
         RtlCopyMemory(WorkingDirectory,
                       Create->WorkingDirectory.Buffer,
                       (SIZE_T)Create->WorkingDirectory.Length * sizeof(WCHAR));
         WorkingDirectory[Create->WorkingDirectory.Length] = UNICODE_NULL;
     }
-    if (!CreatePipe(&InputRead, &InputWrite, NULL, 0) ||
-        !CreatePipe(&OutputRead, &OutputWrite, NULL, 0))
+    else
     {
-        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        UNICODE_STRING UserProfile = {
+            .Buffer = WorkingDirectory,
+            .MaximumLength = MAXUSHORT - 1
+        };
+        Status = RtlQueryEnvironmentVariable_U(NULL,
+                                                &UserProfileName,
+                                                &UserProfile);
+        if (!NT_SUCCESS(Status))
+        {
+            goto Cleanup;
+        }
+        WorkingDirectory[UserProfile.Length / sizeof(WCHAR)] = UNICODE_NULL;
+    }
+    Status = NtCreateEvent(&ChannelObject->InputEvent,
+                           EVENT_MODIFY_STATE | SYNCHRONIZE,
+                           NULL,
+                           NotificationEvent,
+                           FALSE);
+    if (!NT_SUCCESS(Status))
+    {
+        goto Cleanup;
+    }
+    Status = NtCreateEvent(&ChannelObject->CreditEvent,
+                           EVENT_MODIFY_STATE | SYNCHRONIZE,
+                           NULL,
+                           SynchronizationEvent,
+                           FALSE);
+    if (!NT_SUCCESS(Status))
+    {
+        goto Cleanup;
+    }
+    Status = IO_CreateFile(&PipeDirectory,
+                           &PipeDirectoryPath,
+                           NULL,
+                           SYNCHRONIZE | GENERIC_READ,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           FILE_OPEN,
+                           FILE_SYNCHRONOUS_IO_NONALERT);
+    if (NT_SUCCESS(Status))
+    {
+        Status = IO_CreatePipe(PipeDirectory,
+                               &Input,
+                               &InputPeer,
+                               FILE_PIPE_OUTBOUND,
+                               ZP_TERMINAL_CHANNEL_CHUNK_SIZE);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = IO_CreatePipe(PipeDirectory,
+                               &Output,
+                               &OutputPeer,
+                               FILE_PIPE_INBOUND,
+                               ZP_TERMINAL_CHANNEL_CHUNK_SIZE);
+        NtClose(PipeDirectory);
+        PipeDirectory = NULL;
+    }
+    if (!NT_SUCCESS(Status))
+    {
         goto Cleanup;
     }
     Size.X = (SHORT)Create->Columns;
     Size.Y = (SHORT)Create->Rows;
     Result = CreatePseudoConsole(Size,
-                                 InputRead,
-                                 OutputWrite,
+                                 InputPeer,
+                                 OutputPeer,
                                  0,
                                  &PseudoConsole);
     if (FAILED(Result))
     {
-        Status = NTSTATUS_FROM_WIN32(HRESULT_CODE(Result));
+        ResultStatus = ZpStatus_FromCode(ZpStatusHResult, (ULONG)Result);
+        Status = STATUS_UNSUCCESSFUL;
         goto Cleanup;
     }
     InitializeProcThreadAttributeList(NULL, 1, 0, &AttributeListSize);
@@ -619,7 +888,8 @@ ZpTerminal_Create(
                                            0,
                                            &AttributeListSize))
     {
-        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        ResultStatus = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
+        Status = STATUS_UNSUCCESSFUL;
         goto Cleanup;
     }
     AttributeListInitialized = TRUE;
@@ -631,7 +901,8 @@ ZpTerminal_Create(
                                    NULL,
                                    NULL))
     {
-        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        ResultStatus = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
+        Status = STATUS_UNSUCCESSFUL;
         goto Cleanup;
     }
     StartupInfo.StartupInfo.cb = sizeof(StartupInfo);
@@ -649,23 +920,24 @@ ZpTerminal_Create(
                         &StartupInfo.StartupInfo,
                         &ProcessInfo))
     {
-        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        ResultStatus = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
+        Status = STATUS_UNSUCCESSFUL;
         goto Cleanup;
     }
-    NtClose(InputRead);
-    InputRead = NULL;
-    NtClose(OutputWrite);
-    OutputWrite = NULL;
+    NtClose(InputPeer);
+    InputPeer = NULL;
+    NtClose(OutputPeer);
+    OutputPeer = NULL;
     NtClose(ProcessInfo.hThread);
     ProcessInfo.hThread = NULL;
     ChannelObject->PseudoConsole = PseudoConsole;
-    ChannelObject->Input = InputWrite;
-    ChannelObject->Output = OutputRead;
+    ChannelObject->Input = Input;
+    ChannelObject->Output = Output;
     ChannelObject->Process = ProcessInfo.hProcess;
     ChannelObject->ProcessId = ProcessInfo.dwProcessId;
     PseudoConsole = NULL;
-    InputWrite = NULL;
-    OutputRead = NULL;
+    Input = NULL;
+    Output = NULL;
     ProcessInfo.hProcess = NULL;
     Status = ZpClientLocalChannel_Insert(Object,
                                          &ChannelObject->Header,
@@ -700,21 +972,25 @@ Cleanup:
     {
         ClosePseudoConsole(PseudoConsole);
     }
-    if (InputRead != NULL)
+    if (PipeDirectory != NULL)
     {
-        NtClose(InputRead);
+        NtClose(PipeDirectory);
     }
-    if (InputWrite != NULL)
+    if (Input != NULL)
     {
-        NtClose(InputWrite);
+        NtClose(Input);
     }
-    if (OutputRead != NULL)
+    if (InputPeer != NULL)
     {
-        NtClose(OutputRead);
+        NtClose(InputPeer);
     }
-    if (OutputWrite != NULL)
+    if (Output != NULL)
     {
-        NtClose(OutputWrite);
+        NtClose(Output);
+    }
+    if (OutputPeer != NULL)
+    {
+        NtClose(OutputPeer);
     }
     Mem_Free(WorkingDirectory);
     Mem_Free(CommandLine);
@@ -722,11 +998,12 @@ Cleanup:
     {
         ZpTerminal_Destroy(ChannelObject);
     }
-    return Status;
+    return ResultStatus.Type != ZpStatusNone ?
+               ResultStatus : ZpStatus_FromNtStatus(Status);
 }
 
 static
-NTSTATUS
+ZP_STATUS
 ZpTerminal_Resize(
     _Inout_ PZP_CLIENT_OBJECT Object,
     _In_ ULONGLONG ChannelId,
@@ -741,7 +1018,7 @@ ZpTerminal_Resize(
 
     if (Columns > MAXSHORT || Rows > MAXSHORT)
     {
-        return STATUS_INVALID_PARAMETER;
+        return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
     Status = ZpClientLocalChannel_ReferenceById(Object,
                                                 ChannelId,
@@ -749,7 +1026,7 @@ ZpTerminal_Resize(
                                                 &LocalChannel);
     if (!NT_SUCCESS(Status))
     {
-        return Status;
+        return ZpStatus_FromNtStatus(Status);
     }
     Channel = (PZP_CLIENT_TERMINAL_CHANNEL)LocalChannel;
     Size.X = (SHORT)Columns;
@@ -760,10 +1037,11 @@ ZpTerminal_Resize(
     RtlReleaseSRWLockShared(&Channel->PseudoConsoleLock);
     ZpClientLocalChannel_Release(LocalChannel);
     return SUCCEEDED(Result) ?
-               STATUS_SUCCESS : NTSTATUS_FROM_WIN32(HRESULT_CODE(Result));
+               ZpStatus_FromNtStatus(STATUS_SUCCESS) :
+               ZpStatus_FromCode(ZpStatusHResult, (ULONG)Result);
 }
 
-NTSTATUS
+ZP_STATUS
 ZpTerminal_Execute(
     _Inout_ PZP_CLIENT_OBJECT Client,
     _In_ USHORT OperationId,
@@ -778,16 +1056,42 @@ ZpTerminal_Execute(
     ULONGLONG ChannelId;
     USHORT Columns, Rows;
     NTSTATUS Status;
+    ZP_STATUS ResultStatus;
 
     *Channel = NULL;
+    if (OperationId == ZP_TERMINAL_OPERATION_QUERY_SHELLS)
+    {
+        if (RequestLength != 0)
+        {
+            return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+        }
+        *Response = Mem_Alloc(sizeof(ULONG));
+        if (*Response == NULL)
+        {
+            return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+        }
+        Status = ZpTerminal_QueryShells(*Response,
+                                        sizeof(ULONG),
+                                        ResponseLength);
+        if (!NT_SUCCESS(Status))
+        {
+            Mem_Free(*Response);
+            *Response = NULL;
+        }
+        return ZpStatus_FromNtStatus(Status);
+    }
     if (OperationId == ZP_TERMINAL_OPERATION_CREATE)
     {
         Status = ZpTerminal_DecodeCreate(Request, RequestLength, &Create);
         if (NT_SUCCESS(Status))
         {
-            Status = ZpTerminal_Create(Client, &Create, &ChannelObject);
+            ResultStatus = ZpTerminal_Create(Client, &Create, &ChannelObject);
         }
-        if (NT_SUCCESS(Status))
+        else
+        {
+            ResultStatus = ZpStatus_FromNtStatus(Status);
+        }
+        if (ZpStatus_IsSuccess(ResultStatus))
         {
             Status = ZpTerminal_EncodeCreateResponse(
                 ChannelObject->Header.ChannelId,
@@ -796,10 +1100,15 @@ ZpTerminal_Execute(
                 0,
                 ResponseLength);
         }
+        else
+        {
+            Status = STATUS_UNSUCCESSFUL;
+        }
         *Response = NT_SUCCESS(Status) ? Mem_Alloc(*ResponseLength) : NULL;
         if (NT_SUCCESS(Status) && *Response == NULL)
         {
             Status = STATUS_NO_MEMORY;
+            ResultStatus = ZpStatus_FromNtStatus(Status);
         }
         if (NT_SUCCESS(Status))
         {
@@ -818,11 +1127,15 @@ ZpTerminal_Execute(
         {
             *Channel = ChannelObject;
         }
-        return Status;
+        if (!NT_SUCCESS(Status) && ZpStatus_IsSuccess(ResultStatus))
+        {
+            ResultStatus = ZpStatus_FromNtStatus(Status);
+        }
+        return ResultStatus;
     }
     if (OperationId != ZP_TERMINAL_OPERATION_RESIZE)
     {
-        return STATUS_NOT_SUPPORTED;
+        return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
     }
     Status = ZpTerminal_DecodeResize(Request,
                                      RequestLength,
@@ -830,7 +1143,8 @@ ZpTerminal_Execute(
                                      &Columns,
                                      &Rows);
     return NT_SUCCESS(Status) ?
-               ZpTerminal_Resize(Client, ChannelId, Columns, Rows) : Status;
+               ZpTerminal_Resize(Client, ChannelId, Columns, Rows) :
+               ZpStatus_FromNtStatus(Status);
 }
 
 VOID
@@ -841,6 +1155,7 @@ ZpTerminal_CommitChannel(
     PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
     NTSTATUS Status = STATUS_SUCCESS;
     LOGICAL Removed = FALSE;
+    LOGICAL StartWorker = FALSE;
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
     if (!ResponseSent)
@@ -855,10 +1170,18 @@ ZpTerminal_CommitChannel(
         {
             Removed = ZpClientLocalChannel_RemoveLocked(&Channel->Header);
         }
+        else
+        {
+            StartWorker = TRUE;
+        }
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
     if (Removed)
     {
         ZpClientLocalChannel_Release(&Channel->Header);
+    }
+    else if (StartWorker)
+    {
+        ZpTerminal_StartWorker(Channel);
     }
 }

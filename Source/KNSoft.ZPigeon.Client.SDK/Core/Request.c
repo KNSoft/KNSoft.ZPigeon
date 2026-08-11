@@ -38,11 +38,16 @@ NTSTATUS
 ZpClientInbound_SendResponse(
     _Inout_ PZP_CLIENT_OBJECT Object,
     _In_ ULONGLONG RequestId,
-    _In_ NTSTATUS ResponseStatus,
+    _In_ ZP_STATUS ResponseStatus,
     _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength)
 {
-    ZP_RESPONSE Response = { RequestId, ResponseStatus, Payload, PayloadLength };
+    ZP_RESPONSE Response = {
+        RequestId,
+        ResponseStatus,
+        Payload,
+        PayloadLength
+    };
     PCZP_TRANSPORT_OPERATIONS Operations;
     PVOID TransportContext;
     PBYTE Body;
@@ -114,14 +119,15 @@ ZpClientInbound_RequestCallback(
     PZP_CLIENT_FILE_CHANNEL FileChannel = NULL;
     PZP_CLIENT_TERMINAL_CHANNEL TerminalChannel = NULL;
     ULONG PayloadLength = 0;
-    NTSTATUS Status, SendStatus = STATUS_CANCELLED;
+    NTSTATUS ModuleStatus, SendStatus = STATUS_CANCELLED;
+    ZP_STATUS Status;
     LOGICAL Respond;
 
     UNREFERENCED_PARAMETER(Instance);
     if (Request->TimeoutMilliseconds != 0 &&
         GetTickCount64() - Request->ReceivedTickCount >= Request->TimeoutMilliseconds)
     {
-        Status = STATUS_IO_TIMEOUT;
+        Status = ZpStatus_FromNtStatus(STATUS_IO_TIMEOUT);
     }
     else if (Request->ModuleId == ZP_SYSTEM_MODULE_ID &&
              Request->OperationId == ZP_SYSTEM_OPERATION_INFO)
@@ -130,27 +136,29 @@ ZpClientInbound_RequestCallback(
                      ZpSystem_ExecuteInfo(Payload,
                                           sizeof(Payload),
                                           &PayloadLength) :
-                     STATUS_INVALID_PARAMETER;
+                     ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
     else if (Request->ModuleId == ZP_FILE_MODULE_ID)
     {
-        Status = ZpFile_Execute(Object,
-                                Request->OperationId,
-                                Request->Payload,
-                                Request->PayloadLength,
-                                &Request->Pending,
-                                &AllocatedResponse,
-                                &PayloadLength,
-                                &FileChannel);
+        ModuleStatus = ZpFile_Execute(Object,
+                                      Request->OperationId,
+                                      Request->Payload,
+                                      Request->PayloadLength,
+                                      &Request->Pending,
+                                      &AllocatedResponse,
+                                      &PayloadLength,
+                                      &FileChannel);
+        Status = ZpStatus_FromNtStatus(ModuleStatus);
         Response = AllocatedResponse;
     }
     else if (Request->ModuleId == ZP_PROCESS_MODULE_ID)
     {
-        Status = ZpProcess_Execute(Request->OperationId,
-                                   Request->Payload,
-                                   Request->PayloadLength,
-                                   &AllocatedResponse,
-                                   &PayloadLength);
+        ModuleStatus = ZpProcess_Execute(Request->OperationId,
+                                         Request->Payload,
+                                         Request->PayloadLength,
+                                         &AllocatedResponse,
+                                         &PayloadLength);
+        Status = ZpStatus_FromNtStatus(ModuleStatus);
         Response = AllocatedResponse;
     }
     else if (Request->ModuleId == ZP_SERVICE_MODULE_ID)
@@ -164,11 +172,12 @@ ZpClientInbound_RequestCallback(
     }
     else if (Request->ModuleId == ZP_REGISTRY_MODULE_ID)
     {
-        Status = ZpRegistry_Execute(Request->OperationId,
-                                    Request->Payload,
-                                    Request->PayloadLength,
-                                    &AllocatedResponse,
-                                    &PayloadLength);
+        ModuleStatus = ZpRegistry_Execute(Request->OperationId,
+                                           Request->Payload,
+                                           Request->PayloadLength,
+                                           &AllocatedResponse,
+                                           &PayloadLength);
+        Status = ZpStatus_FromNtStatus(ModuleStatus);
         Response = AllocatedResponse;
     }
     else if (Request->ModuleId == ZP_EVENT_LOG_MODULE_ID)
@@ -194,7 +203,7 @@ ZpClientInbound_RequestCallback(
     }
     else
     {
-        Status = STATUS_NOT_SUPPORTED;
+        Status = ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
     }
 
     if (Object->Config.OperationCallback != NULL)
@@ -221,8 +230,8 @@ ZpClientInbound_RequestCallback(
             Object,
             Request->RequestId,
             Status,
-            NT_SUCCESS(Status) ? Response : NULL,
-            NT_SUCCESS(Status) ? PayloadLength : 0);
+            ZpStatus_IsSuccess(Status) ? Response : NULL,
+            ZpStatus_IsSuccess(Status) ? PayloadLength : 0);
         ZpClientInbound_ReleaseRequest(Request);
     }
     if (FileChannel != NULL)
@@ -254,7 +263,6 @@ ZpClient_QueueRequest(
     PZP_CLIENT_INBOUND_REQUEST RequestObject;
     SIZE_T AllocationSize = FIELD_OFFSET(ZP_CLIENT_INBOUND_REQUEST, Payload) +
                             Request->Payload.Length;
-    NTSTATUS Status;
 
     if (Request->RequestId == 0)
     {
@@ -280,7 +288,8 @@ ZpClient_QueueRequest(
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return ZpClientInbound_SendResponse(Object,
                                             Request->RequestId,
-                                            STATUS_QUOTA_EXCEEDED,
+                                            ZpStatus_FromNtStatus(
+                                                STATUS_QUOTA_EXCEEDED),
                                             NULL,
                                             0);
     }
@@ -290,7 +299,8 @@ ZpClient_QueueRequest(
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return ZpClientInbound_SendResponse(Object,
                                             Request->RequestId,
-                                            STATUS_NO_MEMORY,
+                                            ZpStatus_FromNtStatus(
+                                                STATUS_NO_MEMORY),
                                             NULL,
                                             0);
     }
@@ -317,7 +327,7 @@ ZpClient_QueueRequest(
                                      RequestObject,
                                      NULL))
     {
-        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        ULONG Error = GetLastError();
         RtlAcquireSRWLockExclusive(&Object->Lock);
         InterlockedExchange(&RequestObject->Pending, FALSE);
         RemoveEntryList(&RequestObject->ListEntry);
@@ -328,7 +338,8 @@ ZpClient_QueueRequest(
         Mem_Free(RequestObject);
         return ZpClientInbound_SendResponse(Object,
                                             Request->RequestId,
-                                            Status,
+                                            ZpStatus_FromCode(ZpStatusWin32,
+                                                              Error),
                                             NULL,
                                             0);
     }

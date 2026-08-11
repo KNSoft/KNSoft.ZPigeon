@@ -28,7 +28,7 @@ ZpEventLog_CopyString(
 }
 
 static
-NTSTATUS
+ZP_STATUS
 ZpEventLog_RenderString(
     _In_opt_ EVT_HANDLE Context,
     _In_ EVT_HANDLE Fragment,
@@ -39,7 +39,6 @@ ZpEventLog_RenderString(
 {
     PWCHAR Buffer;
     DWORD BufferUsed = 0, PropertyCount = 0, Error;
-    NTSTATUS Status;
 
     if (EvtRender(Context,
                   Fragment,
@@ -49,23 +48,23 @@ ZpEventLog_RenderString(
                   &BufferUsed,
                   &PropertyCount))
     {
-        return STATUS_DATA_ERROR;
+        return ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
     }
     Error = GetLastError();
     if (Error != ERROR_INSUFFICIENT_BUFFER)
     {
-        return NTSTATUS_FROM_WIN32(Error);
+        return ZpStatus_FromCode(ZpStatusWin32, Error);
     }
     if (BufferUsed < sizeof(WCHAR) ||
         BufferUsed % sizeof(WCHAR) != 0 ||
         BufferUsed / sizeof(WCHAR) - 1 > MaximumLength)
     {
-        return STATUS_BUFFER_OVERFLOW;
+        return ZpStatus_FromNtStatus(STATUS_BUFFER_OVERFLOW);
     }
     Buffer = Mem_Alloc(BufferUsed);
     if (Buffer == NULL)
     {
-        return STATUS_NO_MEMORY;
+        return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
     }
     if (!EvtRender(Context,
                    Fragment,
@@ -75,24 +74,24 @@ ZpEventLog_RenderString(
                    &BufferUsed,
                    &PropertyCount))
     {
-        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        Error = GetLastError();
         Mem_Free(Buffer);
-        return Status;
+        return ZpStatus_FromCode(ZpStatusWin32, Error);
     }
     if (BufferUsed < sizeof(WCHAR) ||
         BufferUsed % sizeof(WCHAR) != 0 ||
         Buffer[BufferUsed / sizeof(WCHAR) - 1] != UNICODE_NULL)
     {
         Mem_Free(Buffer);
-        return STATUS_DATA_ERROR;
+        return ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
     }
     *String = Buffer;
     *Length = BufferUsed / sizeof(WCHAR) - 1;
-    return STATUS_SUCCESS;
+    return ZpStatus_FromNtStatus(STATUS_SUCCESS);
 }
 
 static
-NTSTATUS
+ZP_STATUS
 ZpEventLog_QueryPage(
     _In_ const ZP_EVENT_LOG_QUERY_VIEW* Query,
     _In_ volatile LONG* Pending,
@@ -110,12 +109,13 @@ ZpEventLog_QueryPage(
     ULONG RecordCount = 0, TargetCount, Index;
     ULONGLONG EncodedRecordsLength = 0, CandidateLength;
     BOOLEAN HasMore;
-    NTSTATUS Status;
+    NTSTATUS CodecStatus;
+    ZP_STATUS Status = { 0 };
 
     ChannelPath = ZpEventLog_CopyString(&Query->ChannelPath);
     if (ChannelPath == NULL)
     {
-        Status = STATUS_NO_MEMORY;
+        Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
         goto Cleanup;
     }
     if (Query->Query.Length != 0)
@@ -123,7 +123,7 @@ ZpEventLog_QueryPage(
         QueryString = ZpEventLog_CopyString(&Query->Query);
         if (QueryString == NULL)
         {
-            Status = STATUS_NO_MEMORY;
+            Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
             goto Cleanup;
         }
     }
@@ -133,7 +133,7 @@ ZpEventLog_QueryPage(
                            EvtQueryChannelPath | EvtQueryForwardDirection);
     if (QueryHandle == NULL)
     {
-        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        Status = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
         goto Cleanup;
     }
     if (Query->StartMode == ZpEventLogStartAfterBookmark)
@@ -141,13 +141,13 @@ ZpEventLog_QueryPage(
         BookmarkString = ZpEventLog_CopyString(&Query->Bookmark);
         if (BookmarkString == NULL)
         {
-            Status = STATUS_NO_MEMORY;
+            Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
             goto Cleanup;
         }
         BookmarkHandle = EvtCreateBookmark(BookmarkString->Buffer);
         if (BookmarkHandle == NULL)
         {
-            Status = NTSTATUS_FROM_WIN32(GetLastError());
+            Status = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
             goto Cleanup;
         }
         if (!EvtSeek(QueryHandle,
@@ -156,7 +156,7 @@ ZpEventLog_QueryPage(
                      0,
                      EvtSeekRelativeToBookmark | EvtSeekStrict))
         {
-            Status = NTSTATUS_FROM_WIN32(GetLastError());
+            Status = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
             goto Cleanup;
         }
         EvtClose(BookmarkHandle);
@@ -164,7 +164,7 @@ ZpEventLog_QueryPage(
     }
     if (!InterlockedCompareExchange(Pending, TRUE, TRUE))
     {
-        Status = STATUS_CANCELLED;
+        Status = ZpStatus_FromNtStatus(STATUS_CANCELLED);
         goto Cleanup;
     }
     if (!EvtNext(QueryHandle,
@@ -177,7 +177,7 @@ ZpEventLog_QueryPage(
         Error = GetLastError();
         if (Error != ERROR_NO_MORE_ITEMS && Error != ERROR_TIMEOUT)
         {
-            Status = NTSTATUS_FROM_WIN32(Error);
+            Status = ZpStatus_FromCode(ZpStatusWin32, Error);
             goto Cleanup;
         }
     }
@@ -188,7 +188,7 @@ ZpEventLog_QueryPage(
         BookmarkHandle = EvtCreateBookmark(NULL);
         if (BookmarkHandle == NULL)
         {
-            Status = NTSTATUS_FROM_WIN32(GetLastError());
+            Status = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
             goto Cleanup;
         }
     }
@@ -196,12 +196,12 @@ ZpEventLog_QueryPage(
     {
         if (!InterlockedCompareExchange(Pending, TRUE, TRUE))
         {
-            Status = STATUS_CANCELLED;
+            Status = ZpStatus_FromNtStatus(STATUS_CANCELLED);
             goto Cleanup;
         }
         if (!EvtUpdateBookmark(BookmarkHandle, Events[Index]))
         {
-            Status = NTSTATUS_FROM_WIN32(GetLastError());
+            Status = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
             goto Cleanup;
         }
         Status = ZpEventLog_RenderString(
@@ -211,7 +211,7 @@ ZpEventLog_QueryPage(
             ZP_EVENT_LOG_BOOKMARK_MAX_LENGTH,
             (PWCHAR*)&Records[Index].Bookmark,
             &Records[Index].BookmarkLength);
-        if (NT_SUCCESS(Status))
+        if (ZpStatus_IsSuccess(Status))
         {
             Status = ZpEventLog_RenderString(
                 NULL,
@@ -221,7 +221,7 @@ ZpEventLog_QueryPage(
                 (PWCHAR*)&Records[Index].Xml,
                 &Records[Index].XmlLength);
         }
-        if (!NT_SUCCESS(Status))
+        if (!ZpStatus_IsSuccess(Status))
         {
             goto Cleanup;
         }
@@ -237,7 +237,7 @@ ZpEventLog_QueryPage(
             Records[Index].Bookmark = NULL;
             if (RecordCount == 0)
             {
-                Status = STATUS_BUFFER_OVERFLOW;
+                Status = ZpStatus_FromNtStatus(STATUS_BUFFER_OVERFLOW);
                 goto Cleanup;
             }
             HasMore = TRUE;
@@ -258,30 +258,31 @@ ZpEventLog_QueryPage(
         NextBookmark = (PCWCH)Query->Bookmark.Buffer;
         NextBookmarkLength = Query->Bookmark.Length;
     }
-    Status = ZpEventLog_EncodePage(HasMore,
-                                   Records,
-                                   RecordCount,
-                                   NextBookmark,
-                                   NextBookmarkLength,
-                                   NULL,
-                                   0,
-                                   ResponseLength);
-    *Response = NT_SUCCESS(Status) ? Mem_Alloc(*ResponseLength) : NULL;
-    if (NT_SUCCESS(Status) && *Response == NULL)
+    CodecStatus = ZpEventLog_EncodePage(HasMore,
+                                        Records,
+                                        RecordCount,
+                                        NextBookmark,
+                                        NextBookmarkLength,
+                                        NULL,
+                                        0,
+                                        ResponseLength);
+    *Response = NT_SUCCESS(CodecStatus) ? Mem_Alloc(*ResponseLength) : NULL;
+    if (NT_SUCCESS(CodecStatus) && *Response == NULL)
     {
-        Status = STATUS_NO_MEMORY;
+        CodecStatus = STATUS_NO_MEMORY;
     }
-    if (NT_SUCCESS(Status))
+    if (NT_SUCCESS(CodecStatus))
     {
-        Status = ZpEventLog_EncodePage(HasMore,
-                                       Records,
-                                       RecordCount,
-                                       NextBookmark,
-                                       NextBookmarkLength,
-                                       *Response,
-                                       *ResponseLength,
-                                       ResponseLength);
+        CodecStatus = ZpEventLog_EncodePage(HasMore,
+                                            Records,
+                                            RecordCount,
+                                            NextBookmark,
+                                            NextBookmarkLength,
+                                            *Response,
+                                            *ResponseLength,
+                                            ResponseLength);
     }
+    Status = ZpStatus_FromNtStatus(CodecStatus);
 
 Cleanup:
     for (Index = 0; Index < ARRAYSIZE(Events); Index++)
@@ -316,7 +317,7 @@ Cleanup:
     {
         NT_FreeStringW(ChannelPath);
     }
-    if (!NT_SUCCESS(Status))
+    if (!ZpStatus_IsSuccess(Status))
     {
         Mem_Free(*Response);
         *Response = NULL;
@@ -326,7 +327,7 @@ Cleanup:
 }
 
 static
-NTSTATUS
+ZP_STATUS
 ZpEventLog_SetChannelEnabled(
     _In_ PCZP_STRING_VIEW ChannelPath,
     _In_ BOOLEAN Enabled)
@@ -334,18 +335,18 @@ ZpEventLog_SetChannelEnabled(
     EVT_HANDLE Config;
     EVT_VARIANT Value = { 0 };
     PUNICODE_STRING Path;
-    NTSTATUS Status;
+    ZP_STATUS Status;
 
     Path = ZpEventLog_CopyString(ChannelPath);
     if (Path == NULL)
     {
-        return STATUS_NO_MEMORY;
+        return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
     }
     Config = EvtOpenChannelConfig(NULL, Path->Buffer, 0);
     NT_FreeStringW(Path);
     if (Config == NULL)
     {
-        return NTSTATUS_FROM_WIN32(GetLastError());
+        return ZpStatus_FromCode(ZpStatusWin32, GetLastError());
     }
     Value.BooleanVal = Enabled;
     Value.Type = EvtVarTypeBoolean;
@@ -355,37 +356,37 @@ ZpEventLog_SetChannelEnabled(
                                      &Value) ||
         !EvtSaveChannelConfig(Config, 0))
     {
-        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        Status = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
     }
     else
     {
-        Status = STATUS_SUCCESS;
+        Status = ZpStatus_FromNtStatus(STATUS_SUCCESS);
     }
     EvtClose(Config);
     return Status;
 }
 
 static
-NTSTATUS
+ZP_STATUS
 ZpEventLog_Clear(
     _In_ PCZP_STRING_VIEW ChannelPath)
 {
     PUNICODE_STRING Path;
-    NTSTATUS Status;
+    ZP_STATUS Status;
 
     Path = ZpEventLog_CopyString(ChannelPath);
     if (Path == NULL)
     {
-        return STATUS_NO_MEMORY;
+        return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
     }
     Status = EvtClearLog(NULL, Path->Buffer, NULL, 0) ?
-                 STATUS_SUCCESS :
-                 NTSTATUS_FROM_WIN32(GetLastError());
+                 ZpStatus_FromNtStatus(STATUS_SUCCESS) :
+                 ZpStatus_FromCode(ZpStatusWin32, GetLastError());
     NT_FreeStringW(Path);
     return Status;
 }
 
-NTSTATUS
+ZP_STATUS
 ZpEventLog_Execute(
     _In_ USHORT OperationId,
     _In_reads_bytes_(RequestLength) const VOID* Request,
@@ -409,11 +410,11 @@ ZpEventLog_Execute(
                                         Pending,
                                         Response,
                                         ResponseLength) :
-                   Status;
+                   ZpStatus_FromNtStatus(Status);
     }
     if (!InterlockedCompareExchange(Pending, TRUE, TRUE))
     {
-        return STATUS_CANCELLED;
+        return ZpStatus_FromNtStatus(STATUS_CANCELLED);
     }
     if (OperationId == ZP_EVENT_LOG_OPERATION_SET_CHANNEL_ENABLED)
     {
@@ -423,14 +424,16 @@ ZpEventLog_Execute(
                                                            &Enabled);
         return NT_SUCCESS(Status) ?
                    ZpEventLog_SetChannelEnabled(&ChannelPath, Enabled) :
-                   Status;
+                   ZpStatus_FromNtStatus(Status);
     }
     if (OperationId == ZP_EVENT_LOG_OPERATION_CLEAR)
     {
         Status = ZpEventLog_DecodeClearRequest(Request,
                                                RequestLength,
                                                &ChannelPath);
-        return NT_SUCCESS(Status) ? ZpEventLog_Clear(&ChannelPath) : Status;
+        return NT_SUCCESS(Status) ?
+                   ZpEventLog_Clear(&ChannelPath) :
+                   ZpStatus_FromNtStatus(Status);
     }
-    return STATUS_NOT_SUPPORTED;
+    return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
 }

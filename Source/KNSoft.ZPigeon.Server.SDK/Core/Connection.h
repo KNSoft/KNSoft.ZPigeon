@@ -81,4 +81,4 @@ ZpServerConnection_ReceiveChannelWindow(
 VOID
 ZpServerConnection_Close(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);

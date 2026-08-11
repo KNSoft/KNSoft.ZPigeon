@@ -7,11 +7,11 @@
 ## 当前候选基线
 
 - 支持 Windows 10 及以上系统，语言与公共 ABI 为 C；
-- 目标架构为 x86、x64，配置为 Debug、Release；
-- 产物为三个静态库、`KNSoft.ZPigeon.Client.exe`、`KNSoft.ZPigeon.Server.Native.dll` 和 `KNSoft.ZPigeon.Web`；
+- 当前目标架构只保留 x64，配置为 Debug、Release；ARM64 后续按需加入；
+- 产物为三个静态库、`KNSoft.ZPigeon.Client.exe`、`KNSoft.ZPigeon.Server.Native.dll`、`KNSoft.ZPigeon.Server.Managed` 和 `KNSoft.ZPigeon.Web`；
 - QUIC 为第一版已实现 Transport，TLS 1.3、SNI、专属根证书链和客户端持久身份均已接通；
 - System、Process、Service、File、Terminal、EventLog、Registry Version 1 已实现；
-- x86/x64、Debug/Release 全 Solution Rebuild，四配置各自 324/324 测试及 ConsumerTest 通过；x64 的 Web/Native/QUIC/Client localhost 冒烟、System.Info 与 EventLog Bookmark 分页通过。
+- x64 Debug/Release 全 Solution Rebuild，两个配置各自 325/325 测试及 ConsumerTest 通过；Web/Managed/Native/QUIC/Client localhost 冒烟、Shell 多会话交互、QUIC 空闲保活、分类结束状态、System.Info 与 EventLog Bookmark 分页通过。
 
 ## 公共文件集合
 
@@ -24,8 +24,8 @@ Solution 产物对应的公共头文件保持 `KNSoft/ZPigeon/...` include 布�
 
 构建输出还必须包含：
 
-- 对应平台和配置的三个静态库、Client EXE、Server Native DLL 与 Web；
-- Debug/Release 和 x86/x64 隔离的 `OutDir`；
+- 对应平台和配置的三个静态库、Client EXE、Server Native DLL、Managed SDK 与 Web；
+- Debug/Release 隔离的 x64 `OutDir`；
 - Native DLL 与 Web 位于相同输出目录，可由 C# 直接加载；
 - Client 和 Web 位于相同输出目录，共享首次生成的本地试用根证书。
 
@@ -35,6 +35,7 @@ Solution 产物对应的公共头文件保持 `KNSoft/ZPigeon/...` include 布�
 - [x] Client/Server 公共入口统一使用 `NTAPI`，回调 typedef 与实现调用约定一致；
 - [x] Client/Server 配置以 `Size` 校验结构版本，字符串、数组和证书输入在 `Create` 中深拷贝或增加引用；
 - [x] Request、Channel 使用不透明 Handle，并定义取消、关闭和回调期 Buffer/View 生命周期；
+- [x] 异步与远程结果使用 `ZP_STATUS` 保留错误域和原始 32 位码；同步本地提交错误继续使用 `NTSTATUS`；
 - [x] 模块 ID、Version、Operation/Event ID 已在公共头文件与 `Design.md` 中固定；
 - [x] 仓库内独立 `ConsumerTest` 仅使用公共 include 根，在 C 与 C++ 翻译单元中编译全部 12 个公共头并链接三个静态库；
 - [x] ConsumerTest 不引用仓库私有头文件；
@@ -50,15 +51,13 @@ Solution 产物对应的公共头文件保持 `KNSoft/ZPigeon/...` include 布�
 - [x] File.OpenWrite 使用同目录随机临时文件，完整写入和刷新后原子提交，取消或失败时清理临时文件；
 - [x] 文件与 Terminal 长流使用窗口，EventLog 查询使用有界分页，不把无界数据堆入内存；
 - [ ] 对最终 Release 依赖执行漏洞与许可证复核，并记录可复现的依赖锁定结果；
-- [ ] 在受限普通用户账户下执行完整集成测试，确认权限失败均通过 NTSTATUS 返回且不残留资源。
+- [ ] 在受限普通用户账户下执行完整集成测试，确认权限失败保留 Win32 或 NTSTATUS 原始类型与代码且不残留资源。
 
 ## 构建与验证门槛
 
-- [x] x86 Debug：全 Solution Rebuild、324/324 测试和 ConsumerTest；
-- [x] x86 Release：全 Solution Rebuild、324/324 测试和 ConsumerTest；
-- [x] x64 Debug：全 Solution Rebuild、324/324 测试及本地试用链路通过；
-- [x] x64 Release：全 Solution Rebuild、324/324 测试和 ConsumerTest；
-- [x] 独立 `ConsumerTest` 在 x86/x64 Debug/Release 均构建并成功运行；
+- [x] x64 Debug：全 Solution Rebuild、325/325 测试及本地试用链路通过；
+- [x] x64 Release：全 Solution Rebuild、325/325 测试和 ConsumerTest；
+- [x] 独立 `ConsumerTest` 在 x64 Debug/Release 均构建并成功运行；
 - [x] MSVC x64 Debug 首轮静态分析完成，Protocol 为零告警，SDK 告警已按真实问题、框架 SAL 和第三方内联实现分流；
 - [ ] 在干净环境仅执行 restore + build + test，验证没有开发机隐式依赖；
 - [ ] 使用最终交付布局运行最小 Client/Server 示例和 localhost QUIC 集成测试；

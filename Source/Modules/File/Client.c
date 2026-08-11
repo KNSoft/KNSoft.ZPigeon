@@ -77,13 +77,13 @@ static
 NTSTATUS
 ZpFile_ChannelClose(
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);
 
 static
 VOID
 ZpFile_ChannelAbort(
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);
 
 static
 VOID
@@ -148,7 +148,7 @@ static
 VOID
 ZpFile_ChannelAbort(
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     UNREFERENCED_PARAMETER(Channel);
     UNREFERENCED_PARAMETER(Status);
@@ -180,12 +180,12 @@ ZpFile_SendCloseLocked(
     _In_ PZP_CLIENT_FILE_CHANNEL Channel,
     _In_ NTSTATUS CloseStatus)
 {
-    BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
+    BYTE Body[sizeof(ULONGLONG) + ZP_STATUS_WIRE_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;
 
     Status = ZpMessage_EncodeChannelClose(Channel->ChannelId,
-                                          CloseStatus,
+                                          ZpStatus_FromNtStatus(CloseStatus),
                                           Body,
                                           sizeof(Body),
                                           &BodyLength);
@@ -767,7 +767,7 @@ static
 NTSTATUS
 ZpFile_ChannelClose(
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL LocalChannel,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     PZP_CLIENT_FILE_CHANNEL Channel =
         (PZP_CLIENT_FILE_CHANNEL)LocalChannel;
@@ -775,7 +775,7 @@ ZpFile_ChannelClose(
     LOGICAL Removed;
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
-    if ((NT_SUCCESS(Status) && Channel->RemainingBytes != 0) ||
+    if ((ZpStatus_IsSuccess(Status) && Channel->RemainingBytes != 0) ||
         !ZpClientLocalChannel_RemoveLocked(&Channel->Header))
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);

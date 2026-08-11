@@ -75,7 +75,6 @@
         <KnsoftAsmPredefined Condition="$(Configuration.Contains(`Debug`))">_DEBUG=1;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
         <KnsoftAsmPredefined Condition="$(Configuration.Contains(`Release`))">NDEBUG=1;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
         <KnsoftAsmPredefined Condition="'$(Platform)' == 'x64' Or '$(Platform)' == 'ARM64EC'">_M_X64=100;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
-        <KnsoftAsmPredefined Condition="'$(Platform)' == 'Win32'">_M_IX86=600;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
         <KnsoftAsmPredefined Condition="'$(Platform)' == 'ARM64'">_M_ARM64=1;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
         <KnsoftAsmPredefined Condition="'$(Platform)' == 'ARM64EC'">_M_ARM64EC=1;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>
         <KnsoftAsmPredefined Condition="'$(Platform)' == 'ARM'">_M_ARM=7;$(KnsoftAsmPredefined)</KnsoftAsmPredefined>

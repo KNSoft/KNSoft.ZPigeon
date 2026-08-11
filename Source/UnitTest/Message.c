@@ -32,7 +32,12 @@ TEST_FUNC(ProtocolMessage)
     const BYTE ResponsePayload[] = { 4, 5 };
     ZP_REQUEST Request = { 7, 1, 2, 5000, RequestPayload, sizeof(RequestPayload) };
     ZP_REQUEST_VIEW RequestView;
-    ZP_RESPONSE Response = { 7, STATUS_SUCCESS, ResponsePayload, sizeof(ResponsePayload) };
+    ZP_RESPONSE Response = {
+        7,
+        { ZpStatusQuic, 0x80410006UL },
+        ResponsePayload,
+        sizeof(ResponsePayload)
+    };
     ZP_RESPONSE_VIEW ResponseView;
     ZP_CHANNEL_DATA_VIEW ChannelDataView;
     ZP_CHANNEL_CLOSE ChannelClose;
@@ -144,7 +149,7 @@ TEST_FUNC(ProtocolMessage)
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value, FileSize, FileOffset;
-    ULONG Length, Index, ExitCode, CreditBytes, ProcessId, MaxEntries;
+    ULONG Length, Index, ExitCode, CreditBytes, ProcessId, MaxEntries, Shells;
     USHORT Columns, Rows;
 
     for (Index = 0; Index < ARRAYSIZE(Challenge); Index++)
@@ -223,10 +228,11 @@ TEST_FUNC(ProtocolMessage)
     TEST_OK(ZpMessage_EncodeRequest(&Request, NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
     Request.RequestId = 7;
 
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeResponse(&Response, Buffer, sizeof(Buffer), &Length)) && Length == 14);
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeResponse(&Response, Buffer, sizeof(Buffer), &Length)) && Length == 16);
     TEST_OK(NT_SUCCESS(ZpMessage_DecodeResponse(Buffer, Length, &ResponseView)) &&
             ResponseView.RequestId == Response.RequestId &&
-            ResponseView.Status == Response.Status &&
+            ResponseView.Status.Type == Response.Status.Type &&
+            ResponseView.Status.Code == Response.Status.Code &&
             ResponseView.Payload.Length == sizeof(ResponsePayload) &&
             RtlCompareMemory(ResponseView.Payload.Buffer,
                              ResponsePayload,
@@ -262,15 +268,19 @@ TEST_FUNC(ProtocolMessage)
                              RequestPayload,
                              sizeof(RequestPayload)) == sizeof(RequestPayload));
     TEST_OK(NT_SUCCESS(ZpMessage_EncodeChannelClose(9,
-                                                    STATUS_CANCELLED,
+                                                    ZpStatus_Make(
+                                                        ZpStatusProcessExit,
+                                                        7),
                                                     Buffer,
                                                     sizeof(Buffer),
                                                     &Length)) &&
             NT_SUCCESS(ZpMessage_DecodeChannelClose(Buffer,
                                                     Length,
                                                     &ChannelClose)) &&
+            Length == sizeof(ULONGLONG) + ZP_STATUS_WIRE_SIZE &&
             ChannelClose.ChannelId == 9 &&
-            ChannelClose.Status == STATUS_CANCELLED);
+            ChannelClose.Status.Type == ZpStatusProcessExit &&
+            ChannelClose.Status.Code == 7);
     TEST_OK(NT_SUCCESS(ZpMessage_EncodeChannelWindow(9,
                                                      ZP_CHANNEL_DATA_MAX_SIZE,
                                                      Buffer,
@@ -901,6 +911,17 @@ TEST_FUNC(ProtocolMessage)
             Value == 2 &&
             Columns == 80 &&
             Rows == 25);
+    TEST_OK(NT_SUCCESS(ZpTerminal_EncodeShells(
+                           ZpTerminalShellCommandPrompt |
+                               ZpTerminalShellPowerShell,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpTerminal_DecodeShells(Buffer,
+                                               Length,
+                                               &Shells)) &&
+            Shells == (ZpTerminalShellCommandPrompt |
+                       ZpTerminalShellPowerShell));
     TEST_OK(ZpTerminal_EncodeCreateResponse(0,
                                              4321,
                                              Buffer,
@@ -911,5 +932,8 @@ TEST_FUNC(ProtocolMessage)
                                      25,
                                      Buffer,
                                      sizeof(Buffer),
-                                     &Length) == STATUS_INVALID_PARAMETER);
+                                     &Length) == STATUS_INVALID_PARAMETER &&
+            ZpTerminal_DecodeShells(Buffer,
+                                    sizeof(ULONG) - 1,
+                                    &Shells) == STATUS_DATA_ERROR);
 }

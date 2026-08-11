@@ -14,6 +14,105 @@ EXTERN_C_START
 #define ZP_SERVER_CHALLENGE_SIZE 32
 #define ZP_CLIENT_SIGNATURE_SIZE 64
 
+typedef USHORT ZP_STATUS_TYPE, *PZP_STATUS_TYPE;
+
+#define ZpStatusNone ((ZP_STATUS_TYPE)0)
+#define ZpStatusNtStatus ((ZP_STATUS_TYPE)1)
+#define ZpStatusWin32 ((ZP_STATUS_TYPE)2)
+#define ZpStatusWinsock ((ZP_STATUS_TYPE)3)
+#define ZpStatusHResult ((ZP_STATUS_TYPE)4)
+#define ZpStatusSecurity ((ZP_STATUS_TYPE)5)
+#define ZpStatusQuic ((ZP_STATUS_TYPE)6)
+#define ZpStatusProcessExit ((ZP_STATUS_TYPE)7)
+
+#define ZP_STATUS_WIRE_SIZE (sizeof(USHORT) + sizeof(ULONG))
+
+typedef struct _ZP_STATUS
+{
+    ZP_STATUS_TYPE Type;
+    ULONG Code;
+} ZP_STATUS, *PZP_STATUS;
+
+typedef const ZP_STATUS* PCZP_STATUS;
+
+static FORCEINLINE
+ZP_STATUS
+ZpStatus_Make(
+    _In_ ZP_STATUS_TYPE Type,
+    _In_ ULONG Code)
+{
+    ZP_STATUS Status = { Type, Code };
+
+    return Status;
+}
+
+static FORCEINLINE
+ZP_STATUS
+ZpStatus_FromNtStatus(
+    _In_ NTSTATUS Status)
+{
+    return ZpStatus_Make(Status == STATUS_SUCCESS ?
+                             ZpStatusNone :
+                             ZpStatusNtStatus,
+                         (ULONG)Status);
+}
+
+static FORCEINLINE
+ZP_STATUS
+ZpStatus_FromCode(
+    _In_ ZP_STATUS_TYPE Type,
+    _In_ ULONG Code)
+{
+    return ZpStatus_Make(Code == 0 ? ZpStatusNone : Type, Code);
+}
+
+static FORCEINLINE
+ZP_STATUS
+ZpStatus_FromProcessExit(
+    _In_ ULONG ExitCode)
+{
+    return ZpStatus_Make(ZpStatusProcessExit, ExitCode);
+}
+
+static FORCEINLINE
+LOGICAL
+ZpStatus_IsSuccess(
+    _In_ ZP_STATUS Status)
+{
+    switch (Status.Type)
+    {
+        case ZpStatusNone:
+            return Status.Code == 0;
+
+        case ZpStatusNtStatus:
+            return NT_SUCCESS((NTSTATUS)Status.Code);
+
+        case ZpStatusWin32:
+        case ZpStatusWinsock:
+            return Status.Code == ERROR_SUCCESS;
+
+        case ZpStatusHResult:
+        case ZpStatusSecurity:
+        case ZpStatusQuic:
+            return SUCCEEDED((HRESULT)Status.Code);
+
+        case ZpStatusProcessExit:
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static FORCEINLINE
+LOGICAL
+ZpStatus_IsValid(
+    _In_ ZP_STATUS Status)
+{
+    return Status.Type <= ZpStatusProcessExit &&
+           ((Status.Type == ZpStatusNone && Status.Code == 0) ||
+            (Status.Type != ZpStatusNone &&
+             (Status.Code != 0 || Status.Type == ZpStatusProcessExit)));
+}
+
 typedef enum _ZP_MESSAGE_TYPE
 {
     ZpMessageClientHello = 0x01,
@@ -139,7 +238,7 @@ typedef const ZP_REQUEST_VIEW* PCZP_REQUEST_VIEW;
 typedef struct _ZP_RESPONSE
 {
     ULONGLONG RequestId;
-    NTSTATUS Status;
+    ZP_STATUS Status;
     const VOID* Payload;
     ULONG PayloadLength;
 } ZP_RESPONSE, *PZP_RESPONSE;
@@ -149,7 +248,7 @@ typedef const ZP_RESPONSE* PCZP_RESPONSE;
 typedef struct _ZP_RESPONSE_VIEW
 {
     ULONGLONG RequestId;
-    NTSTATUS Status;
+    ZP_STATUS Status;
     ZP_BUFFER_VIEW Payload;
 } ZP_RESPONSE_VIEW, *PZP_RESPONSE_VIEW;
 
@@ -164,7 +263,7 @@ typedef struct _ZP_CHANNEL_DATA_VIEW
 typedef struct _ZP_CHANNEL_CLOSE
 {
     ULONGLONG ChannelId;
-    NTSTATUS Status;
+    ZP_STATUS Status;
 } ZP_CHANNEL_CLOSE, *PZP_CHANNEL_CLOSE;
 
 VOID
@@ -388,7 +487,7 @@ ZpMessage_DecodeChannelData(
 NTSTATUS
 ZpMessage_EncodeChannelClose(
     _In_ ULONGLONG ChannelId,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);

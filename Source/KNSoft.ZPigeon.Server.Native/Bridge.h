@@ -8,7 +8,7 @@ EXTERN_C_START
 typedef
 VOID
 (NTAPI *ZP_NATIVE_SYSTEM_INFO_CALLBACK)(
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ ZP_SYSTEM_ARCHITECTURE Architecture,
     _In_ ULONG MajorVersion,
     _In_ ULONG MinorVersion,
@@ -22,13 +22,13 @@ VOID
 typedef
 VOID
 (NTAPI *ZP_NATIVE_STATUS_CALLBACK)(
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context);
 
 typedef
 VOID
 (NTAPI *ZP_NATIVE_EVENT_LOG_CALLBACK)(
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ BOOLEAN HasMore,
     _In_reads_opt_(NextBookmarkLength) PCWCH NextBookmark,
     _In_ ULONG NextBookmarkLength,
@@ -36,8 +36,44 @@ VOID
     _In_ ULONG RecordCount,
     _In_opt_ PVOID Context);
 
+typedef struct _ZP_NATIVE_TERMINAL* ZP_NATIVE_TERMINAL_HANDLE;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_TERMINAL_SHELLS_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_ ULONG Shells,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_TERMINAL_CREATE_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_NATIVE_TERMINAL_HANDLE Terminal,
+    _In_ ULONG ProcessId,
+    _In_opt_ PVOID Context);
+
+typedef
+LOGICAL
+(NTAPI *ZP_NATIVE_TERMINAL_DATA_CALLBACK)(
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_TERMINAL_WRITABLE_CALLBACK)(
+    _In_ ULONG CreditBytes,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_TERMINAL_CLOSE_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_opt_ PVOID Context);
+
 __declspec(dllexport)
-NTSTATUS
+ZP_STATUS
 NTAPI
 ZpNative_Start(
     _In_ PCCERT_CONTEXT Certificate,
@@ -72,6 +108,53 @@ ZpNative_TerminateProcess(
     _In_ ULONG ProcessId,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_QueryTerminalShells(
+    _In_ ZP_NATIVE_TERMINAL_SHELLS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_CreateTerminal(
+    _In_ USHORT Columns,
+    _In_ USHORT Rows,
+    _In_reads_(CommandLineLength) PCWCH CommandLine,
+    _In_ ULONG CommandLineLength,
+    _In_reads_opt_(WorkingDirectoryLength) PCWCH WorkingDirectory,
+    _In_ ULONG WorkingDirectoryLength,
+    _In_ ZP_NATIVE_TERMINAL_CREATE_CALLBACK CreateCallback,
+    _In_ ZP_NATIVE_TERMINAL_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_TERMINAL_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_NATIVE_TERMINAL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_TerminalSend(
+    _In_ ZP_NATIVE_TERMINAL_HANDLE Terminal,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_ResizeTerminal(
+    _In_ ZP_NATIVE_TERMINAL_HANDLE Terminal,
+    _In_ USHORT Columns,
+    _In_ USHORT Rows,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_CloseTerminal(
+    _In_ ZP_NATIVE_TERMINAL_HANDLE Terminal);
 
 __declspec(dllexport)
 NTSTATUS

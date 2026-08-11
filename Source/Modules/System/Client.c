@@ -2,7 +2,7 @@
 
 #include <KNSoft/MakeLifeEasier/System/Info.h>
 
-NTSTATUS
+ZP_STATUS
 ZpSystem_ExecuteInfo(
     _Out_writes_bytes_to_(BufferSize, *PayloadLength) PBYTE Buffer,
     _In_ ULONG BufferSize,
@@ -30,7 +30,7 @@ ZpSystem_ExecuteInfo(
             break;
 
         default:
-            return STATUS_NOT_SUPPORTED;
+            return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
     }
     Status = NtQuerySystemInformation(SystemBasicInformation,
                                       &BasicInfo,
@@ -38,11 +38,11 @@ ZpSystem_ExecuteInfo(
                                       &ReturnLength);
     if (!NT_SUCCESS(Status))
     {
-        return Status;
+        return ZpStatus_FromNtStatus(Status);
     }
     if (!GetComputerNameW(ComputerName, &ComputerNameLength))
     {
-        return NTSTATUS_FROM_WIN32(GetLastError());
+        return ZpStatus_FromCode(ZpStatusWin32, GetLastError());
     }
     Info.MajorVersion = SharedUserData->NtMajorVersion;
     Info.MinorVersion = SharedUserData->NtMinorVersion;
@@ -51,5 +51,6 @@ ZpSystem_ExecuteInfo(
     Info.PhysicalMemoryBytes = (ULONGLONG)BasicInfo.NumberOfPhysicalPages * BasicInfo.PageSize;
     Info.ComputerName = ComputerName;
     Info.ComputerNameLength = ComputerNameLength;
-    return ZpSystem_EncodeInfo(&Info, Buffer, BufferSize, PayloadLength);
+    return ZpStatus_FromNtStatus(
+        ZpSystem_EncodeInfo(&Info, Buffer, BufferSize, PayloadLength));
 }

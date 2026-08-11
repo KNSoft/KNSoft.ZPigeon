@@ -43,13 +43,13 @@ ZpClient_SetTransport(
 VOID
 ZpClient_TransportShutdown(
     _In_ ZP_CLIENT_HANDLE Client,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);
 
 NTSTATUS
 ZpClient_NotifyState(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ ZP_CLIENT_STATE State,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);
 
 NTSTATUS
 ZpClient_NotifyPong(

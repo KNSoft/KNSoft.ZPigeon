@@ -19,7 +19,7 @@ KNSoft.ZPigeon 是面向合法 Windows 远程管理场景的 C/S 软件。计划
 设计基线：
 
 - SDK 使用纯 C，公开接口保持稳定的 C ABI；
-- 最低支持 Windows 10，第一版支持 x86 和 x64；
+- 最低支持 Windows 10，当前只支持 x64；ARM64 后续按需加入；
 - 稳定性、安全性和效率优先；
 - C 主动连接 S，S 对 C 拥有完整管理能力；
 - C/S 之间只建立加密连接，不允许自动降级到明文协议。
@@ -63,7 +63,7 @@ Transport -> Connection -> Protocol Dispatcher
 
 ## 3. 项目与代码组织
 
-解决方案包含三个静态库和三个可运行/互操作项目：
+解决方案包含三个静态库和四个可运行/互操作项目：
 
 ```text
 KNSoft.ZPigeon.Protocol
@@ -71,6 +71,7 @@ KNSoft.ZPigeon.Client.SDK
 KNSoft.ZPigeon.Server.SDK
 KNSoft.ZPigeon.Client
 KNSoft.ZPigeon.Server.Native
+KNSoft.ZPigeon.Server.Managed
 KNSoft.ZPigeon.Web
 ```
 
@@ -81,7 +82,8 @@ Client SDK ----> Protocol
 Server SDK ----> Protocol
 Client EXE ----> Client SDK + Protocol
 Server Native DLL ----> Server SDK + Protocol
-Web ----> Server Native DLL
+Managed SDK ----> Server Native DLL
+Web ----> Managed SDK
 ```
 
 - Protocol 项目由 C/S 共用，且只使用纯 C；
@@ -119,6 +121,7 @@ Source/
 |   `-- Transport/
 |-- KNSoft.ZPigeon.Client/
 |-- KNSoft.ZPigeon.Server.Native/
+|-- KNSoft.ZPigeon.Server.Managed/
 |-- KNSoft.ZPigeon.Web/
 `-- SDK/
 ```
@@ -218,7 +221,7 @@ Deployment 已由当前连接的 SNI 和证书上下文确定，握手中不重�
 
 C 不内置、不依赖 S 的协议版本。双方只选择当前实现明确支持的版本；不存在对应实现时拒绝协商，不保留未要求的旧版 Decoder、兼容路径或降级逻辑。
 
-QUIC、TLS/TCP 和 WSS 均使用 TLS 派生的对称会话密钥保护业务数据。分组公私钥不用于逐包加解密，也不在 TLS 外增加应用层二次加密。
+QUIC、TLS/TCP 和 WSS 均使用 TLS 派生的对称会话密钥保护业务数据。分组公私钥不用于逐包加解密，也不在 TLS 外增加应用层二次加密。Client QUIC 使用 20 秒 KeepAlive，避免空闲但仍有效的控制连接被默认空闲超时关闭。
 
 ### 6.1 Connection 状态机与接收缓存
 
@@ -294,10 +297,10 @@ BYTE[] Type-specific body
 | `0x03` | `ClientAuthenticate` | C -> S | 64 字节 ECDSA P-256 `r || s` 签名 |
 | `0x04` | `Ready` | S -> C | `UINT16 ModuleCount`、协商后的模块记录 |
 | `0x10` | `Request` | S -> C | `UINT64 RequestId`、`UINT16 ModuleId`、`UINT16 OperationId`、`UINT32 TimeoutMilliseconds`、Payload |
-| `0x11` | `Response` | C -> S | `UINT64 RequestId`、`INT32 Status`、Payload |
+| `0x11` | `Response` | C -> S | `UINT64 RequestId`、`UINT16 StatusType`、`UINT32 StatusCode`、Payload |
 | `0x12` | `Cancel` | S -> C | `UINT64 RequestId` |
 | `0x13` | `ChannelData` | 双向 | `UINT64 ChannelId`、非空数据 |
-| `0x14` | `ChannelClose` | 双向 | `UINT64 ChannelId`、`INT32 Status` |
+| `0x14` | `ChannelClose` | 双向 | `UINT64 ChannelId`、`UINT16 StatusType`、`UINT32 StatusCode` |
 | `0x15` | `Ping` | 双向 | `UINT64 Token` |
 | `0x16` | `Pong` | 双向 | `UINT64 Token` |
 | `0x17` | `ChannelWindow` | 双向 | `UINT64 ChannelId`、非零 `UINT32 CreditBytes` |
@@ -319,12 +322,14 @@ UINT16 ModuleVersion
 初始业务消息语义限制为：
 
 - `Request`：发起一次操作并携带请求关联信息；
-- `Response`：返回对应请求的 `NTSTATUS` 和结果；
+- `Response`：返回对应请求的类型化原始状态和结果；
 - `ChannelData`：传递文件或终端等长生命周期数据；
 - `ChannelWindow`：由接收方增加指定 Channel 的可发送字节额度；
 - `Ping`、`Pong`：连接存活检测。
 
 `RequestId` 和 `ChannelId` 均为连接内非零 `UINT64`，在各自命名空间从 1 单调递增且永不复用，不按奇偶或方向预留取值。第一版 Request 只由 Server 创建；Client 发来的业务 Request 是协议错误。Client 只接受严格大于本连接最高已见值的 RequestId，允许发送失败造成的序号空洞，但拒绝重复或倒序 Request。已结束 Request 的迟到 Cancel 和 Response 幂等忽略，未来未知 ID 仍是协议错误；只保存最高值或下一分配值，不建立 tombstone 表。第一版业务 Channel 只由 Client 创建。`ModuleId` 和 `OperationId` 为非零 `UINT16`。
+
+`StatusType` 固定占 16 位，`StatusCode` 固定占 32 位，线上合计 6 字节，不传本机结构体填充或 64 位扩展码。Type 定义为 `None = 0`、`NTSTATUS = 1`、`Win32 = 2`、`Winsock = 3`、`HRESULT = 4`、`Security = 5`、`QUIC = 6`、`ProcessExit = 7`；Code 保留来源 API 返回的原始 32 位 bit pattern，不做跨错误域映射。`None` 只允许 Code 0；其他错误域的 Code 0 统一编码为 None；ProcessExit 必须保留类型且允许退出码 0。NTSTATUS、HRESULT、Security 和 QUIC 按各自有符号成功语义判断，Win32/Winsock 仅 Code 0 成功，ProcessExit 表示会话正常收尾而不是把退出码解释成错误。
 
 `TimeoutMilliseconds` 是接收方从完整收到 Request 起计算的处理预算；0 表示协议层不额外施加超时。发送方 SDK 仍维护本地 Deadline：Deadline 到期后在本地以 `STATUS_IO_TIMEOUT` 完成操作，尽力发送 `Cancel`，并忽略迟到的 Response。显式取消在本地以 `STATUS_CANCELLED` 完成，`Cancel` 不要求单独响应。
 
@@ -361,7 +366,7 @@ Core Version 1 使用以下固定 Codec：
 - 纯 C ABI；
 - 使用项目既有 SAL 注解约定；
 - 网络和远程操作以异步接口为核心；
-- 本地和远程操作结果以 `NTSTATUS` 为主；
+- 同步本地调用失败返回 `NTSTATUS`；异步、Transport 和远程结果使用保留来源类型及 32 位原始码的 `ZP_STATUS`；
 - 不采用一连接一线程；
 - MsQuic 使用回调模型，其他 Windows Transport 使用适合的异步 I/O 模型；
 - 热路径避免无依据的堆分配、内存复制、编码转换、锁和间接调用；
@@ -426,7 +431,7 @@ Server 配置包含：
 - 单连接出站 Request 和 Channel Handle 上限；
 - Server 生命周期回调、单连接阶段回调和调用方 Context。
 
-Client 状态为 `Stopped`、`Connecting`、`Authenticating`、`Ready`、`RetryWait` 和 `Stopping`；Server 状态为 `Stopped`、`Starting`、`Running` 和 `Stopping`；Server 单连接以及需要统一表达的连接阶段使用 `Connecting`、`Authenticating`、`Ready` 和 `Closed`。状态回调中的 `NTSTATUS` 表示触发当前转换的结果，成功转换使用 `STATUS_SUCCESS`。
+Client 状态为 `Stopped`、`Connecting`、`Authenticating`、`Ready`、`RetryWait` 和 `Stopping`；Server 状态为 `Stopped`、`Starting`、`Running` 和 `Stopping`；Server 单连接以及需要统一表达的连接阶段使用 `Connecting`、`Authenticating`、`Ready` 和 `Closed`。状态回调中的 `ZP_STATUS` 表示触发当前转换的结果，成功转换使用 `{ None, 0 }`。
 
 `Create` 验证并复制数组、字符串、证书和模块配置，成功后对象处于 `Stopped`；回调函数指针和 Context 只保存值。`Start`、`Stop` 和 `Close` 遵循本节前述异步生命周期契约。第一版不公开内部 Connection 结构，也不允许调用方直接驱动 Frame 状态机。
 
@@ -446,7 +451,7 @@ Server 通过 `ZpServer_SendRequest` 对指定已认证 Connection 创建引用�
 
 Server 的非零 `TimeoutMilliseconds` 同时建立基于 `GetTickCount64` 的本地 Deadline；每条连接的线程池定时器始终只等待最近截止项，到期请求以 `STATUS_IO_TIMEOUT` 完成并尽力发送 Cancel，Response、取消和计时器竞争由同一请求表锁串行化。
 
-Client 完整收到 Request 后检查方向、协商模块和配额，随后复制 Payload 并投递线程池；MsQuic 接收回调不执行系统查询等业务工作。每条连接维护活动入站 Request 表和引用计数，Cancel、连接关闭与工作完成只竞争一次终止。来自已认证 Server 的已协商且协议合法的操作直接执行；Windows 本机权限或资源不足通过对应 `NTSTATUS` 返回。
+Client 完整收到 Request 后检查方向、协商模块和配额，随后复制 Payload 并投递线程池；MsQuic 接收回调不执行系统查询等业务工作。每条连接维护活动入站 Request 表和引用计数，Cancel、连接关闭与工作完成只竞争一次终止。来自已认证 Server 的已协商且协议合法的操作直接执行；Windows 本机权限或资源不足通过对应来源类型和原始码返回。
 
 Client 的 `MaxRequestsPerConnection` 和 `MaxRequestPayloadBytesPerConnection` 限制已投递且尚未完成的入站 Request 及其深拷贝 Payload；`MaxChannelsPerConnection` 限制正在创建或已经激活的本机 Channel。Server 使用同名对象上限约束每连接的调用方 Handle。名额在执行业务或创建 OS 资源前预留，达到上限返回 `STATUS_QUOTA_EXCEEDED`，并在创建失败、响应失败、取消、关闭或完成后立即归还。
 
@@ -476,7 +481,7 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 
 `Service.Query` 固定为 `OperationId = 2`，请求 Payload 为非空 UTF-16LE ServiceName 字符串。成功响应依次编码 `UINT32 ServiceType`、`CurrentState`、`ProcessId`、`StartType`、`ErrorControl`，随后为 UTF-16LE ServiceName、DisplayName、BinaryPathName 和 StartName 字符串；配置和状态字段沿用 Windows Service Control Manager 定义。
 
-`Service.Start` 和 `Service.Stop` 分别固定为 `OperationId = 3` 和 `4`，请求 Payload 复用非空 UTF-16LE ServiceName 字符串，成功响应 Payload 为空。Client 打开 Service Control Manager 句柄并执行启动或停止控制，权限失败按原始 `NTSTATUS` 返回。
+`Service.Start` 和 `Service.Stop` 分别固定为 `OperationId = 3` 和 `4`，请求 Payload 复用非空 UTF-16LE ServiceName 字符串，成功响应 Payload 为空。Client 打开 Service Control Manager 句柄并执行启动或停止控制，SCM 失败按原始 Win32 错误码返回。
 
 `File` 模块第一版固定为 `ModuleId = 4`、`ModuleVersion = 1`；`Enumerate` 固定为 `OperationId = 1`，`Query` 固定为 `OperationId = 2`，`OpenRead` 固定为 `OperationId = 3`，`Hash` 固定为 `OperationId = 4`，`OpenWrite` 固定为 `OperationId = 5`，`EnumeratePage` 固定为 `OperationId = 6`。
 
@@ -492,17 +497,17 @@ Hash 请求依次编码 `UINT16 Algorithm` 和非空 UTF-16LE Path，Version 1 �
 
 OpenWrite 请求依次编码 `UINT16 Disposition`、`UINT64 FileSize` 和非空 UTF-16LE Path；Version 1 定义 `CreateNew = 1` 与 `CreateAlways = 2`。成功响应编码 Client 创建的非零 `UINT64 ChannelId` 和确认的 `UINT64 FileSize`，后续 Server 只能在 Client 授予的窗口内发送恰好 FileSize 字节。Client 应写入同目录临时文件，完整接收并刷新后按 Disposition 原子提交；取消、断线、少传、多传或写入失败均删除临时文件，不暴露部分目标文件。属性值和 100ns 时间值沿用 Windows 文件系统定义。
 
-`Terminal` 模块第一版固定为 `ModuleId = 5`、`ModuleVersion = 1`；`Create` 固定为 `OperationId = 1`，请求依次编码非零 `UINT16 Columns`、`UINT16 Rows`、非空 UTF-16LE CommandLine 和可空 UTF-16LE WorkingDirectory，成功响应编码 Client 创建的非零 `UINT64 ChannelId` 与非零 `UINT32 ProcessId`。同一 Channel 上 Client 到 Server 的 Data 是 ConPTY VT 输出，Server 到 Client 的 Data 是输入字节，两个方向分别由对端 Window 授信。`Resize` 固定为 `OperationId = 2`，请求编码 ChannelId、非零 Columns 和 Rows，成功响应为空。Client 或 Server 发送 ChannelClose 终止会话；正常进程退出的 Close Status 使用进程退出码的原始 32 位值，基础设施错误使用失败 `NTSTATUS`。
+`Terminal` 模块固定为 `ModuleId = 5`、`ModuleVersion = 1`；`Create` 固定为 `OperationId = 1`，请求依次编码非零 `UINT16 Columns`、`UINT16 Rows`、非空 UTF-16LE CommandLine 和可空 UTF-16LE WorkingDirectory，成功响应编码 Client 创建的非零 `UINT64 ChannelId` 与非零 `UINT32 ProcessId`。同一 Channel 上 Client 到 Server 的 Data 是 ConPTY VT 输出，Server 到 Client 的 Data 是输入字节，两个方向分别由对端 Window 授信。`Resize` 固定为 `OperationId = 2`，请求编码 ChannelId、非零 Columns 和 Rows，成功响应为空。`QueryShells` 固定为 `OperationId = 3`，空请求返回 Client 当前 PATH 可解析的 `cmd.exe`、`powershell.exe`、`pwsh.exe` 位掩码。Client 或 Server 发送 ChannelClose 终止会话；正常进程退出使用 `ProcessExit` 和原始 32 位退出码，ConPTY 使用 HRESULT，进程 API 使用 Win32，NT I/O 使用 NTSTATUS。
 
-Server 以 `ZpServer_CreateTerminal` 异步建立终端并在成功回调中交付 Channel Handle 和 ProcessId；输出 Buffer 只在 Data 回调期间有效，回调返回后 SDK 自动补回接收窗口。Client 通过 `ChannelWindow` 增加 Server 输入发送额度，SDK 以 Writable 回调通知本次新增额度；`ZpChannel_Send` 不做隐藏排队，额度不足返回 `STATUS_RETRY`，成功发送后立即扣减额度。`ZpServer_ResizeTerminal` 复用 Channel Handle 定位会话并返回独立 Request Handle。
+Server 以 `ZpServer_CreateTerminal` 异步建立终端并在成功回调中交付 Channel Handle 和 ProcessId；输出 Buffer 只在 Data 回调期间有效，回调返回后 SDK 自动补回接收窗口。Client 通过 `ChannelWindow` 增加 Server 输入发送额度，SDK 以 Writable 回调通知本次新增额度；`ZpChannel_Send` 不做隐藏排队，额度不足返回 `STATUS_RETRY`，成功发送后立即扣减额度。`ZpServer_ResizeTerminal` 复用 Channel Handle 定位会话并返回独立 Request Handle。Managed 会话保存 Shell 元数据和完整 `ZP_STATUS`；WebSocket 只负责把 VT 字节流和该结构化结束结果适配给浏览器。
 
-Client 使用 ConPTY 建立同步输入/输出管道；传给 `CreatePseudoConsole` 的 Input Read 与 Output Write 端必须保持到附加终端属性的子进程创建成功后再关闭。输出在长生命周期线程池工作中持续排空并受 Server Window 限制；输入首窗固定为 4 KiB，Client 将获准数据写入 ConPTY 后等量补窗，限制同步写入对网络回调的占用。进程退出后由独立线程池回调关闭 ConPTY，输出工作继续排空最终 VT Frame，随后以原始进程退出码发送 ChannelClose；连接终止或本地关闭会终止仍存活的终端进程并回收全部句柄。
+Client 使用系统 ConPTY，并通过 `NtCreateNamedPipeFile` 建立输入、输出两个异步匿名字节流管道；传给 `CreatePseudoConsole` 的两个 Peer 端保持到附加终端属性的根进程创建成功后再关闭。未显式指定工作目录时，Client 以自身账户的 `USERPROFILE` 作为 Shell 起始目录。专用输出线程以事件驱动的 `NtReadFile` 持续排空 VT 输出，并以 Server 发放、Server SDK 同步校验的 Window 限制发送量；Client 侧额度只是发送优化，不是 Server 的信任边界。输入首窗固定为 4 KiB，单次仅保留一个异步写。根进程退出后由独立回调关闭 ConPTY，输出线程排空最终 VT Frame，随后以原始退出码发送 ChannelClose；Server Channel 关闭、连接断开或 Client 停止均终止仍存活的根进程并结束会话。
 
 `EventLog` 模块第一版固定为 `ModuleId = 6`、`ModuleVersion = 1`；`QueryPage`、`SetChannelEnabled` 和 `Clear` 分别固定为 `OperationId = 1`、`2` 和 `3`。ChannelPath 必须为非空 UTF-16LE 字符串；Query 是可空 XPath，空值等价于 `*`。Bookmark 是 Windows Event Log 渲染出的不透明 XML 字符串，只能作为同一 ChannelPath 与 Query 的恢复位置使用，Server 应用不解析或拼接其内容。
 
 QueryPage 请求依次编码 `UINT16 StartMode`、`UINT32 MaxEvents`、ChannelPath、Query 和 Bookmark。StartMode 只允许 `Oldest = 1` 或 `AfterBookmark = 2`；AfterBookmark 要求非空 Bookmark，Oldest 要求空 Bookmark。MaxEvents 范围为 1～256。成功响应依次编码 `BOOLEAN HasMore`、NextBookmark 和 EventRecord 数组；每条 EventRecord 编码该事件的 Bookmark 与 `EvtRenderEventXml` 产生的 XML。非空结果的 NextBookmark 必须等于最后一条记录的 Bookmark，空结果沿用请求 Bookmark。Client 以正向查询和严格 Bookmark Seek 返回 Bookmark 之后的记录，不在 Bookmark 失效时悄悄跳到最接近的位置；日志已清除、覆盖或 Bookmark 不属于结果集时原样返回相应失败状态。
 
-SetChannelEnabled 请求编码 ChannelPath 和 `BOOLEAN Enabled`，Client 通过 Windows Event Log Channel Configuration API 保存频道启停状态。Clear 请求只编码 ChannelPath，Client 清除该频道。两项成功响应均为空，Windows 权限或频道状态错误按 `NTSTATUS` 返回；不提供实时订阅。
+SetChannelEnabled 请求编码 ChannelPath 和 `BOOLEAN Enabled`，Client 通过 Windows Event Log Channel Configuration API 保存频道启停状态。Clear 请求只编码 ChannelPath，Client 清除该频道。两项成功响应均为空，Wevtapi 失败按原始 Win32 错误码返回；不提供实时订阅。
 
 Bookmark 和单条事件 XML 分别限制为 64 Ki 个 UTF-16 code unit 和 1 Mi 个 UTF-16 code unit；QueryPage 编码后仍不得超过 Core Frame 的 16 MiB 上限。
 
@@ -516,7 +521,7 @@ QueryValue 请求编码 Root、View、Path 和可空 ValueName；成功响应编
 
 Server 分页 API 以 `Cursor == NULL` 表示 CursorPresent=0；非空 Cursor 指针配合零长度表示 CursorPresent=1 且名称为空，即从默认值名称之后继续。响应 Page 和 Value 中的 View 仅在回调期间有效，与其他 Server 异步 API 的 Buffer 生命周期一致。
 
-CreateKey 请求编码 Root、View 和 Path，Path 必须非空；操作是幂等的，键已存在仍成功。DeleteKey 复用同一请求，只允许删除非空且无子键的目标，使用所选 WOW64 View，不提供递归删除，避免一次请求隐式扩大破坏范围。所有 Registry 原生错误映射为 `NTSTATUS` 原样返回；成功的 SetValue、DeleteValue、CreateKey 和 DeleteKey Response Payload 均为空。
+CreateKey 请求编码 Root、View 和 Path，Path 必须非空；操作是幂等的，键已存在仍成功。DeleteKey 复用同一请求，只允许删除非空且无子键的目标，使用所选 WOW64 View，不提供递归删除，避免一次请求隐式扩大破坏范围。Registry 使用 NT Registry 接口并返回原始 `NTSTATUS`；成功的 SetValue、DeleteValue、CreateKey 和 DeleteKey Response Payload 均为空。
 
 为完成 ordinal 排序，Client 的单次 Registry 枚举会建立有界快照：最多 65536 条记录，按当前最大名称长度估算的名称 Buffer 总量最多 16 MiB；超出时返回 `STATUS_QUOTA_EXCEEDED`，不得静默截断为看似完整的末页。分页响应仍按 Frame 上限自动缩小当前页，并通过 HasMore/NextCursor 继续推进。
 

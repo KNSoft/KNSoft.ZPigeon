@@ -12,16 +12,31 @@ typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
         ZP_NATIVE_SYSTEM_INFO_CALLBACK SystemInfo;
         ZP_NATIVE_STATUS_CALLBACK Status;
         ZP_NATIVE_EVENT_LOG_CALLBACK EventLog;
+        ZP_NATIVE_TERMINAL_SHELLS_CALLBACK TerminalShells;
     } Callback;
     PVOID Context;
 } ZP_NATIVE_CALLBACK_CONTEXT, *PZP_NATIVE_CALLBACK_CONTEXT;
+
+typedef struct _ZP_NATIVE_TERMINAL
+{
+    RTL_SRWLOCK Lock;
+    volatile LONG ReferenceCount;
+    volatile LONG CallerClosed;
+    ZP_CONNECTION_HANDLE Connection;
+    ZP_CHANNEL_HANDLE Channel;
+    ZP_NATIVE_TERMINAL_CREATE_CALLBACK CreateCallback;
+    ZP_NATIVE_TERMINAL_DATA_CALLBACK DataCallback;
+    ZP_NATIVE_TERMINAL_WRITABLE_CALLBACK WritableCallback;
+    ZP_NATIVE_TERMINAL_CLOSE_CALLBACK CloseCallback;
+    PVOID Context;
+} ZP_NATIVE_TERMINAL, *PZP_NATIVE_TERMINAL;
 
 static RTL_SRWLOCK ZpNativeLock = RTL_SRWLOCK_INIT;
 static ZP_SERVER_HANDLE ZpNativeServer;
 static ZP_CONNECTION_HANDLE ZpNativeConnection;
 static HANDLE ZpNativeStateEvent;
 static ZP_SERVER_STATE ZpNativeState = ZpServerStateStopped;
-static NTSTATUS ZpNativeStateStatus = STATUS_SUCCESS;
+static ZP_STATUS ZpNativeStateStatus;
 
 static
 VOID
@@ -29,7 +44,7 @@ NTAPI
 ZpNative_ServerStateCallback(
     _In_ ZP_SERVER_HANDLE Server,
     _In_ ZP_SERVER_STATE State,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     UNREFERENCED_PARAMETER(Server);
@@ -48,7 +63,7 @@ ZpNative_ServerConnectionCallback(
     _In_ ZP_SERVER_HANDLE Server,
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_CONNECTION_PHASE Phase,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     ZP_CONNECTION_HANDLE ReleasedConnection = NULL;
@@ -106,7 +121,7 @@ VOID
 NTAPI
 ZpNative_SystemInfoCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ const ZP_SYSTEM_INFO_VIEW* Info,
     _In_opt_ PVOID Context)
 {
@@ -114,14 +129,14 @@ ZpNative_SystemInfoCallback(
 
     CallbackContext->Callback.SystemInfo(
         Status,
-        NT_SUCCESS(Status) ? Info->Architecture : 0,
-        NT_SUCCESS(Status) ? Info->MajorVersion : 0,
-        NT_SUCCESS(Status) ? Info->MinorVersion : 0,
-        NT_SUCCESS(Status) ? Info->BuildNumber : 0,
-        NT_SUCCESS(Status) ? Info->ProcessorCount : 0,
-        NT_SUCCESS(Status) ? Info->PhysicalMemoryBytes : 0,
-        NT_SUCCESS(Status) ? (PCWCH)Info->ComputerName.Buffer : NULL,
-        NT_SUCCESS(Status) ? Info->ComputerName.Length : 0,
+        ZpStatus_IsSuccess(Status) ? Info->Architecture : 0,
+        ZpStatus_IsSuccess(Status) ? Info->MajorVersion : 0,
+        ZpStatus_IsSuccess(Status) ? Info->MinorVersion : 0,
+        ZpStatus_IsSuccess(Status) ? Info->BuildNumber : 0,
+        ZpStatus_IsSuccess(Status) ? Info->ProcessorCount : 0,
+        ZpStatus_IsSuccess(Status) ? Info->PhysicalMemoryBytes : 0,
+        ZpStatus_IsSuccess(Status) ? (PCWCH)Info->ComputerName.Buffer : NULL,
+        ZpStatus_IsSuccess(Status) ? Info->ComputerName.Length : 0,
         CallbackContext->Context);
     ZpRequest_Close(Request);
     ZpNative_FreeCallbackContext(CallbackContext);
@@ -132,7 +147,7 @@ VOID
 NTAPI
 ZpNative_StatusCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
@@ -147,7 +162,7 @@ VOID
 NTAPI
 ZpNative_EventLogCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ const ZP_EVENT_LOG_PAGE_VIEW* Page,
     _In_opt_ PVOID Context)
 {
@@ -155,39 +170,153 @@ ZpNative_EventLogCallback(
     PZP_EVENT_LOG_RECORD Records = NULL;
     ZP_EVENT_LOG_RECORD_VIEW Record;
     ULONG Index;
+    NTSTATUS DecodeStatus = STATUS_SUCCESS;
 
-    if (NT_SUCCESS(Status) && Page->Records.Count != 0)
+    if (ZpStatus_IsSuccess(Status) && Page->Records.Count != 0)
     {
         Records = Mem_Alloc((SIZE_T)Page->Records.Count * sizeof(*Records));
         if (Records == NULL)
         {
-            Status = STATUS_NO_MEMORY;
+            Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
         }
     }
     for (Index = 0;
-         NT_SUCCESS(Status) && Index < Page->Records.Count;
+         ZpStatus_IsSuccess(Status) && Index < Page->Records.Count;
          Index++)
     {
-        Status = ZpEventLog_GetRecord(&Page->Records, Index, &Record);
-        if (NT_SUCCESS(Status))
+        DecodeStatus = ZpEventLog_GetRecord(&Page->Records, Index, &Record);
+        if (NT_SUCCESS(DecodeStatus))
         {
             Records[Index].Bookmark = (PCWCH)Record.Bookmark.Buffer;
             Records[Index].BookmarkLength = Record.Bookmark.Length;
             Records[Index].Xml = (PCWCH)Record.Xml.Buffer;
             Records[Index].XmlLength = Record.Xml.Length;
         }
+        else
+        {
+            Status = ZpStatus_FromNtStatus(DecodeStatus);
+        }
     }
     CallbackContext->Callback.EventLog(
         Status,
-        NT_SUCCESS(Status) ? Page->HasMore : FALSE,
-        NT_SUCCESS(Status) ? (PCWCH)Page->NextBookmark.Buffer : NULL,
-        NT_SUCCESS(Status) ? Page->NextBookmark.Length : 0,
-        NT_SUCCESS(Status) ? Records : NULL,
-        NT_SUCCESS(Status) ? Page->Records.Count : 0,
+        ZpStatus_IsSuccess(Status) ? Page->HasMore : FALSE,
+        ZpStatus_IsSuccess(Status) ? (PCWCH)Page->NextBookmark.Buffer : NULL,
+        ZpStatus_IsSuccess(Status) ? Page->NextBookmark.Length : 0,
+        ZpStatus_IsSuccess(Status) ? Records : NULL,
+        ZpStatus_IsSuccess(Status) ? Page->Records.Count : 0,
         CallbackContext->Context);
     Mem_Free(Records);
     ZpRequest_Close(Request);
     ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_TerminalShellsCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ ULONG Shells,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+
+    CallbackContext->Callback.TerminalShells(Status,
+                                             Shells,
+                                             CallbackContext->Context);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+ZpNative_ReleaseTerminal(
+    _Inout_ PZP_NATIVE_TERMINAL Terminal)
+{
+    if (InterlockedDecrement(&Terminal->ReferenceCount) == 0)
+    {
+        ZpConnection_Release(Terminal->Connection);
+        Mem_Free(Terminal);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_TerminalCreateCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONG ProcessId,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_TERMINAL Terminal = Context;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Terminal->Channel = Channel;
+        Terminal->ReferenceCount = 2;
+    }
+    Terminal->CreateCallback(Status,
+                             ZpStatus_IsSuccess(Status) ? Terminal : NULL,
+                             ProcessId,
+                             Terminal->Context);
+    ZpRequest_Close(Request);
+    if (!ZpStatus_IsSuccess(Status))
+    {
+        ZpConnection_Release(Terminal->Connection);
+        Mem_Free(Terminal);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_TerminalDataCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ PCZP_BUFFER_VIEW Data,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_TERMINAL Terminal = Context;
+
+    if (!Terminal->DataCallback(Data->Buffer,
+                                Data->Length,
+                                Terminal->Context))
+    {
+        ZpChannel_Cancel(Channel);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_TerminalWritableCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONG CreditBytes,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_TERMINAL Terminal = Context;
+
+    UNREFERENCED_PARAMETER(Channel);
+    Terminal->WritableCallback(CreditBytes, Terminal->Context);
+}
+
+static
+VOID
+NTAPI
+ZpNative_TerminalCloseCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_TERMINAL Terminal = Context;
+
+    RtlAcquireSRWLockExclusive(&Terminal->Lock);
+    Terminal->Channel = NULL;
+    RtlReleaseSRWLockExclusive(&Terminal->Lock);
+    Terminal->CloseCallback(Status, Terminal->Context);
+    ZpChannel_Close(Channel);
+    ZpNative_ReleaseTerminal(Terminal);
 }
 
 static
@@ -207,7 +336,7 @@ ZpNative_CreateCallbackContext(
     return CallbackContext;
 }
 
-NTSTATUS
+ZP_STATUS
 NTAPI
 ZpNative_Start(
     _In_ PCCERT_CONTEXT Certificate,
@@ -230,23 +359,24 @@ ZpNative_Start(
     };
     ZP_SERVER_DEPLOYMENT Deployment = { L"localhost", Certificate };
     ZP_SERVER_CONFIG Config = { 0 };
-    NTSTATUS Status;
+    NTSTATUS CreateStatus;
+    ZP_STATUS Status;
 
     if (Certificate == NULL || Port == 0)
     {
-        return STATUS_INVALID_PARAMETER;
+        return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
     RtlAcquireSRWLockExclusive(&ZpNativeLock);
     if (ZpNativeServer != NULL)
     {
         RtlReleaseSRWLockExclusive(&ZpNativeLock);
-        return STATUS_INVALID_DEVICE_STATE;
+        return ZpStatus_FromNtStatus(STATUS_INVALID_DEVICE_STATE);
     }
     RtlReleaseSRWLockExclusive(&ZpNativeLock);
     ZpNativeStateEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (ZpNativeStateEvent == NULL)
     {
-        return NTSTATUS_FROM_WIN32(GetLastError());
+        return ZpStatus_FromCode(ZpStatusWin32, GetLastError());
     }
     Config.Size = sizeof(Config);
     Config.Listeners = &Listener;
@@ -257,23 +387,28 @@ ZpNative_Start(
     Config.ModuleCount = ARRAYSIZE(Modules);
     Config.StateCallback = ZpNative_ServerStateCallback;
     Config.ConnectionCallback = ZpNative_ServerConnectionCallback;
-    Status = ZpServer_Create(&Config, &ZpNativeServer);
-    if (NT_SUCCESS(Status))
+    CreateStatus = ZpServer_Create(&Config, &ZpNativeServer);
+    if (NT_SUCCESS(CreateStatus))
     {
         Status = ZpServer_Start(ZpNativeServer);
     }
-    if (NT_SUCCESS(Status) &&
+    else
+    {
+        Status = ZpStatus_FromNtStatus(CreateStatus);
+    }
+    if (ZpStatus_IsSuccess(Status) &&
         WaitForSingleObject(ZpNativeStateEvent,
                             ZP_NATIVE_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0)
     {
-        Status = STATUS_IO_TIMEOUT;
+        Status = ZpStatus_FromNtStatus(STATUS_IO_TIMEOUT);
     }
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         Status = ZpNativeState == ZpServerStateRunning ?
-                     ZpNativeStateStatus : STATUS_INVALID_DEVICE_STATE;
+                     ZpNativeStateStatus :
+                     ZpStatus_FromNtStatus(STATUS_INVALID_DEVICE_STATE);
     }
-    if (!NT_SUCCESS(Status))
+    if (!ZpStatus_IsSuccess(Status))
     {
         ZpNative_Stop();
     }
@@ -434,6 +569,197 @@ ZpNative_TerminateProcess(
                                   ZpNative_StatusCallback,
                                   CallbackContext,
                                   &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_QueryTerminalShells(
+    _In_ ZP_NATIVE_TERMINAL_SHELLS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL)
+    {
+        return STATUS_DEVICE_NOT_CONNECTED;
+    }
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.TerminalShells = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_QueryTerminalShells(Connection,
+                                     ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                     ZpNative_TerminalShellsCallback,
+                                     CallbackContext,
+                                     &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_CreateTerminal(
+    _In_ USHORT Columns,
+    _In_ USHORT Rows,
+    _In_reads_(CommandLineLength) PCWCH CommandLine,
+    _In_ ULONG CommandLineLength,
+    _In_reads_opt_(WorkingDirectoryLength) PCWCH WorkingDirectory,
+    _In_ ULONG WorkingDirectoryLength,
+    _In_ ZP_NATIVE_TERMINAL_CREATE_CALLBACK CreateCallback,
+    _In_ ZP_NATIVE_TERMINAL_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_TERMINAL_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_NATIVE_TERMINAL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_TERMINAL Terminal;
+    ZP_REQUEST_HANDLE Request;
+    NTSTATUS Status;
+
+    if (CreateCallback == NULL || DataCallback == NULL ||
+        WritableCallback == NULL || CloseCallback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL)
+    {
+        return STATUS_DEVICE_NOT_CONNECTED;
+    }
+    Terminal = Mem_Alloc(sizeof(*Terminal));
+    if (Terminal == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(Terminal, sizeof(*Terminal));
+    Terminal->Connection = Connection;
+    Terminal->CreateCallback = CreateCallback;
+    Terminal->DataCallback = DataCallback;
+    Terminal->WritableCallback = WritableCallback;
+    Terminal->CloseCallback = CloseCallback;
+    Terminal->Context = Context;
+    Status = ZpServer_CreateTerminal(Connection,
+                                     Columns,
+                                     Rows,
+                                     CommandLine,
+                                     CommandLineLength,
+                                     WorkingDirectory,
+                                     WorkingDirectoryLength,
+                                     ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                     ZpNative_TerminalCreateCallback,
+                                     ZpNative_TerminalDataCallback,
+                                     ZpNative_TerminalWritableCallback,
+                                     ZpNative_TerminalCloseCallback,
+                                     Terminal,
+                                     &Request);
+    if (!NT_SUCCESS(Status))
+    {
+        ZpConnection_Release(Connection);
+        Mem_Free(Terminal);
+    }
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_TerminalSend(
+    _In_ ZP_NATIVE_TERMINAL_HANDLE Terminal,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength)
+{
+    NTSTATUS Status;
+
+    if (Terminal == NULL)
+    {
+        return STATUS_INVALID_HANDLE;
+    }
+    RtlAcquireSRWLockShared(&Terminal->Lock);
+    Status = Terminal->Channel != NULL ?
+                 ZpChannel_Send(Terminal->Channel, Data, DataLength) :
+                 STATUS_INVALID_DEVICE_STATE;
+    RtlReleaseSRWLockShared(&Terminal->Lock);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_ResizeTerminal(
+    _In_ ZP_NATIVE_TERMINAL_HANDLE Terminal,
+    _In_ USHORT Columns,
+    _In_ USHORT Rows,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+    NTSTATUS Status;
+
+    if (Terminal == NULL || Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RtlAcquireSRWLockShared(&Terminal->Lock);
+    if (Terminal->Channel == NULL)
+    {
+        RtlReleaseSRWLockShared(&Terminal->Lock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    ZpConnection_AddRef(Terminal->Connection);
+    CallbackContext = ZpNative_CreateCallbackContext(Terminal->Connection,
+                                                     Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Terminal->Connection);
+        RtlReleaseSRWLockShared(&Terminal->Lock);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    Status = ZpServer_ResizeTerminal(Terminal->Connection,
+                                     Terminal->Channel,
+                                     Columns,
+                                     Rows,
+                                     ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                     ZpNative_StatusCallback,
+                                     CallbackContext,
+                                     &Request);
+    RtlReleaseSRWLockShared(&Terminal->Lock);
+    return ZpNative_SendStatusRequest(CallbackContext, Status);
+}
+
+NTSTATUS
+NTAPI
+ZpNative_CloseTerminal(
+    _In_ ZP_NATIVE_TERMINAL_HANDLE Terminal)
+{
+    ZP_CHANNEL_HANDLE Channel;
+    NTSTATUS Status;
+
+    if (Terminal == NULL)
+    {
+        return STATUS_INVALID_HANDLE;
+    }
+    if (InterlockedExchange(&Terminal->CallerClosed, TRUE))
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    RtlAcquireSRWLockExclusive(&Terminal->Lock);
+    Channel = Terminal->Channel;
+    Terminal->Channel = NULL;
+    RtlReleaseSRWLockExclusive(&Terminal->Lock);
+    Status = Channel != NULL ? ZpChannel_Cancel(Channel) : STATUS_SUCCESS;
+    ZpNative_ReleaseTerminal(Terminal);
+    return Status;
 }
 
 NTSTATUS

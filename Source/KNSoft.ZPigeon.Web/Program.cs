@@ -1,3 +1,4 @@
+using KNSoft.ZPigeon.Server.Managed;
 using KNSoft.ZPigeon.Web;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -6,6 +7,7 @@ var server = new NativeServer(AppContext.BaseDirectory);
 builder.Services.AddSingleton(server);
 var app = builder.Build();
 
+app.UseWebSockets();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.MapGet("/api/status", () => new
@@ -26,6 +28,10 @@ app.MapPost("/api/eventlog/channel", async (EventLogChannelRequest request) =>
                                                 request.Enabled));
 app.MapPost("/api/eventlog/clear", async (EventLogRequest request) =>
     await server.ClearEventLogAsync(request.ChannelPath));
+app.MapGet("/api/terminal/shells", async () =>
+    await server.GetTerminalShellsAsync());
+app.Map("/api/terminal", context =>
+    TerminalWebSocket.RunAsync(context, server));
 app.Lifetime.ApplicationStopping.Register(server.Dispose);
 server.Start();
 app.Run();

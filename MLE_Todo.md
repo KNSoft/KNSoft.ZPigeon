@@ -1,31 +1,131 @@
 # KNSoft.MakeLifeEasier candidates
 
-These candidates are intentionally not implemented yet. They should be reviewed and added to `KNSoft.MakeLifeEasier` together, then consumed by ZPigeon through the updated MLE package.
+These candidates remain pending Owner review. `IO_CreatePipe` is locally prototyped in the parent MLE repository and the ZPigeon package copy, but is not committed there; `PS_CreateProcessEx` is not implemented.
 
 ## `IO_CreatePipe`
 
-Add a minimal native anonymous byte-stream pipe helper to the MLE I/O module:
+Add a minimal native asynchronous anonymous byte-stream pipe helper to the MLE I/O module. This follows the implementation used by Microsoft Windows Terminal rather than synthesizing a discoverable pipe name:
 
 ```c
 NTSTATUS
 NTAPI
 IO_CreatePipe(
-    _Out_ PHANDLE ReadHandle,
-    _Out_ PHANDLE WriteHandle,
+    _In_ HANDLE PipeDirectoryHandle,
+    _Out_ PHANDLE Handle,
+    _Out_ PHANDLE PeerHandle,
+    _In_ ULONG Mode,
     _In_ ULONG BufferSize);
+```
+
+Reference implementation for review:
+
+```c
+NTSTATUS
+NTAPI
+IO_CreatePipe(
+    _In_ HANDLE PipeDirectoryHandle,
+    _Out_ PHANDLE Handle,
+    _Out_ PHANDLE PeerHandle,
+    _In_ ULONG Mode,
+    _In_ ULONG BufferSize)
+{
+    UNICODE_STRING EmptyName = { 0 };
+    OBJECT_ATTRIBUTES ObjectAttributes;
+    IO_STATUS_BLOCK IoStatusBlock;
+    LARGE_INTEGER Timeout;
+    ACCESS_MASK HandleAccess, PeerAccess;
+    ULONG HandleShare, PeerShare;
+    HANDLE LocalHandle, LocalPeerHandle;
+    NTSTATUS Status;
+
+    switch (Mode)
+    {
+    case FILE_PIPE_INBOUND:
+        HandleAccess = SYNCHRONIZE | GENERIC_READ | FILE_WRITE_ATTRIBUTES;
+        PeerAccess = SYNCHRONIZE | GENERIC_WRITE | FILE_READ_ATTRIBUTES;
+        HandleShare = FILE_SHARE_WRITE;
+        PeerShare = FILE_SHARE_READ;
+        break;
+    case FILE_PIPE_OUTBOUND:
+        HandleAccess = SYNCHRONIZE | GENERIC_WRITE | FILE_READ_ATTRIBUTES;
+        PeerAccess = SYNCHRONIZE | GENERIC_READ | FILE_WRITE_ATTRIBUTES;
+        HandleShare = FILE_SHARE_READ;
+        PeerShare = FILE_SHARE_WRITE;
+        break;
+    case FILE_PIPE_FULL_DUPLEX:
+        HandleAccess = PeerAccess = SYNCHRONIZE | GENERIC_READ | GENERIC_WRITE;
+        HandleShare = PeerShare = FILE_SHARE_READ | FILE_SHARE_WRITE;
+        break;
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    NT_InitObject(&ObjectAttributes,
+                  &EmptyName,
+                  OBJ_CASE_INSENSITIVE,
+                  PipeDirectoryHandle);
+    Status = NtCreateNamedPipeFile(&LocalHandle,
+                                   HandleAccess,
+                                   &ObjectAttributes,
+                                   &IoStatusBlock,
+                                   HandleShare,
+                                   FILE_CREATE,
+                                   0,
+                                   FILE_PIPE_BYTE_STREAM_TYPE,
+                                   FILE_PIPE_BYTE_STREAM_MODE,
+                                   FILE_PIPE_QUEUE_OPERATION,
+                                   1,
+                                   BufferSize,
+                                   BufferSize,
+                                   NT_MillisecondsToTimeout(&Timeout, 1000));
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+
+    ObjectAttributes.RootDirectory = LocalHandle;
+    Status = NtCreateFile(&LocalPeerHandle,
+                          PeerAccess,
+                          &ObjectAttributes,
+                          &IoStatusBlock,
+                          NULL,
+                          0,
+                          PeerShare,
+                          FILE_OPEN,
+                          FILE_NON_DIRECTORY_FILE,
+                          NULL,
+                          0);
+    if (!NT_SUCCESS(Status))
+    {
+        NtClose(LocalHandle);
+        return Status;
+    }
+
+    *Handle = LocalHandle;
+    *PeerHandle = LocalPeerHandle;
+    return STATUS_SUCCESS;
+}
 ```
 
 Implementation:
 
-- Generate a process-unique name below `\Device\NamedPipe\`; use a monotonic 64-bit sequence combined with the process ID and retry only `STATUS_OBJECT_NAME_COLLISION`.
-- Create the read/server endpoint with `NtCreateNamedPipeFile`, byte-stream type and mode, queued completion, one instance, `FILE_SYNCHRONOUS_IO_NONALERT`, and `OBJ_DONT_REPARSE`.
-- Open the write/client endpoint with `NtOpenFile`, matching share access and synchronous options.
-- Request only `FILE_READ_DATA | SYNCHRONIZE` for the read endpoint and `FILE_WRITE_DATA | SYNCHRONIZE` for the write endpoint.
-- Use `BufferSize` for inbound/outbound quota; reject zero rather than adding a default.
-- Publish output handles only after both syscalls succeed. On failure, close every created handle with `NtClose`; do not initialize outputs or add a Win32 fallback.
-- Keep handles non-inheritable. ConPTY receives them explicitly through `CreatePseudoConsole`.
+- Accept only `FILE_PIPE_INBOUND`, `FILE_PIPE_OUTBOUND`, or `FILE_PIPE_FULL_DUPLEX`. `Mode` describes `Handle`; derive the opposite access and matching share access for `PeerHandle`.
+- Require the caller to supply an open `\Device\NamedPipe\` directory handle. MLE does not open, cache, close, or own that handle; a high-frequency caller may cache it, while a low-frequency caller may open it only around `IO_CreatePipe`.
+- Use an empty `UNICODE_STRING` relative to that directory in `NtCreateNamedPipeFile`. Do not generate a name, ACL, sequence, process-ID suffix, collision retry, or Win32 fallback. The resulting anonymous pipe cannot be enumerated through NPFS directory queries.
+- Create `Handle` asynchronously with byte-stream type and mode, queued completion, one instance, and the caller's `BufferSize` as both quotas. Use a one-second relative default timeout.
+- For inbound mode, request `SYNCHRONIZE | GENERIC_READ | FILE_WRITE_ATTRIBUTES` on `Handle` and `SYNCHRONIZE | GENERIC_WRITE | FILE_READ_ATTRIBUTES` on `PeerHandle`; reverse these for outbound mode. Request read/write access and sharing on both endpoints for full duplex.
+- Open `PeerHandle` with `NtCreateFile`, using `Handle` as `RootDirectory`, the same empty name, `FILE_OPEN`, and `FILE_NON_DIRECTORY_FILE`. Do not use `NtOpenFile` or a named path.
+- Keep both endpoints non-inheritable. Publish output handles only after both calls succeed; close partial handles with `NtClose` on failure. Do not initialize failed outputs.
 
-ZPigeon use: replace both `CreatePipe` calls in the Client-side Terminal executor. The read endpoint feeds ConPTY input and the write endpoint is retained by ZPigeon; the second pipe reverses those roles for ConPTY output.
+ZPigeon use:
+
+- For each Terminal creation, open `\Device\NamedPipe\` with `NtCreateFile`, `SYNCHRONIZE | GENERIC_READ`, shared read/write, and `FILE_SYNCHRONOUS_IO_NONALERT`; close the directory handle immediately after `IO_CreatePipe`. Terminal creation is not a hot path, so ZPigeon does not cache it.
+- Create two 128 KiB asynchronous pipes: `FILE_PIPE_OUTBOUND` for ConPTY input and `FILE_PIPE_INBOUND` for ConPTY output. Pass their peer endpoints to `CreatePseudoConsole` and retain the two local endpoints in the Client Terminal channel. These pipes are local to ZPigeon Client and ConPTY; they are unrelated to the remote ZPigeon Server/Client transport.
+- Windows Terminal normally links the repository's `src/winconpty` implementation and passes one duplex endpoint twice to `ConptyCreatePseudoConsole`; only its Windows-internal build maps that call to the system `CreatePseudoConsole`. ZPigeon uses the Windows system ConPTY API, where reusing one duplex endpoint caused sustained `cmd.exe` output to terminate after its initial banner with `STATUS_CONTROL_C_EXIT` on the validated build. Two directional pipes pass the public API distinct streams while retaining the same asynchronous I/O behavior.
+- Use a dedicated output thread, a manual-reset event-backed `NtReadFile`, and process/event waits. Remove `FilePipeLocalInformation` polling and timed delays.
+- Serialize input writes with independent event/`IO_STATUS_BLOCK` state, preserve pending input data until completion, and never allow more than one input write in flight. The next receive waits for the prior write; accepted input replenishes the corresponding channel window without hidden buffering.
+- On Server channel close or transport disconnect, close the pseudoconsole, cancel pipe I/O with `NtCancelIoFileEx`, wait for the output thread, and release the channel. Reconnection never resumes an old Terminal channel.
+- The Terminal root process means the first process launched from the Server-supplied command line, such as `cmd.exe` or `powershell.exe`; it is not the ZPigeon Client process. Root-process exit is local session state, whereas Server channel/connection loss is the remote ownership boundary.
 
 ## `PS_CreateProcessEx`
 

@@ -5,7 +5,7 @@
 typedef struct _ZP_CLIENT_TERMINAL_CHANNEL ZP_CLIENT_TERMINAL_CHANNEL,
   *PZP_CLIENT_TERMINAL_CHANNEL;
 
-NTSTATUS
+ZP_STATUS
 ZpTerminal_Execute(
     _Inout_ struct _ZP_CLIENT_OBJECT* Client,
     _In_ USHORT OperationId,

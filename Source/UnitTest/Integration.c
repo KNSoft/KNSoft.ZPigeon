@@ -47,87 +47,87 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE RegistryValueEvent;
     HANDLE RegistryStatusEvent;
     ZP_CONNECTION_HANDLE Connection;
-    volatile LONG ClientReadyStatus;
-    volatile LONG ClientStoppedStatus;
-    volatile LONG ServerReadyStatus;
-    volatile LONG ServerStoppedStatus;
+    ZP_STATUS ClientReadyStatus;
+    ZP_STATUS ClientStoppedStatus;
+    ZP_STATUS ServerReadyStatus;
+    ZP_STATUS ServerStoppedStatus;
     ULONGLONG ClientPongToken;
-    volatile LONG SystemInfoStatus;
+    ZP_STATUS SystemInfoStatus;
     ZP_SYSTEM_ARCHITECTURE SystemArchitecture;
     ULONG SystemProcessorCount;
     ULONGLONG SystemPhysicalMemoryBytes;
     ULONG SystemComputerNameLength;
-    volatile LONG ProcessListStatus;
+    ZP_STATUS ProcessListStatus;
     ULONG ProcessCount;
     LOGICAL FoundCurrentProcess;
     volatile LONG ProcessCompletionCount;
     LONG ExpectedProcessCompletions;
     LOGICAL CollectProcessDetails;
-    volatile LONG ProcessInfoStatus;
+    ZP_STATUS ProcessInfoStatus;
     ULONG ProcessInfoId;
     ULONG ProcessInfoThreadCount;
     ULONGLONG ProcessInfoCreateTime;
     ULONG ProcessInfoImageNameLength;
-    volatile LONG ServiceListStatus;
+    ZP_STATUS ServiceListStatus;
     ULONG ServiceCount;
     LOGICAL FoundNamedService;
     WCHAR ServiceName[256];
     ULONG ServiceNameLength;
-    volatile LONG ServiceInfoStatus;
+    ZP_STATUS ServiceInfoStatus;
     ULONG ServiceInfoType;
     ULONG ServiceInfoStartType;
     ULONG ServiceInfoNameLength;
     ULONG ServiceInfoDisplayNameLength;
     ULONG ServiceInfoBinaryPathLength;
-    volatile LONG ProcessTerminateStatus;
-    volatile LONG ServiceControlStatus;
-    volatile LONG FileInfoStatus;
+    ZP_STATUS ProcessTerminateStatus;
+    ZP_STATUS ServiceControlStatus;
+    ZP_STATUS FileInfoStatus;
     ULONG FileAttributes;
     ULONGLONG FileSize;
     ULONGLONG FileLastWriteTime;
-    volatile LONG FileListStatus;
+    ZP_STATUS FileListStatus;
     ULONG FileCount;
     WCHAR ExpectedFileName[MAX_PATH];
     ULONG ExpectedFileNameLength;
     LOGICAL FoundExpectedFile;
-    volatile LONG FilePageStatus;
+    ZP_STATUS FilePageStatus;
     ULONG FilePageCount;
     WCHAR FilePageCursor[MAX_PATH];
     ULONG FilePageCursorLength;
     WCHAR FilePageName[MAX_PATH];
     ULONG FilePageNameLength;
-    volatile LONG EventLogPageStatus;
+    ZP_STATUS EventLogPageStatus;
     ULONG EventLogPageCount;
     BOOLEAN EventLogHasMore;
     WCHAR EventLogBookmark[4096];
     ULONG EventLogBookmarkLength;
     ULONG EventLogXmlLength;
-    volatile LONG FileHashStatus;
+    ZP_STATUS FileHashStatus;
     ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
     ULONGLONG FileHashSize;
     BYTE FileDigest[ZP_FILE_SHA256_SIZE];
-    volatile LONG FileOpenReadStatus;
-    volatile LONG FileReadCloseStatus;
+    ZP_STATUS FileOpenReadStatus;
+    ZP_STATUS FileReadCloseStatus;
     ZP_CHANNEL_HANDLE FileReadChannel;
     ULONGLONG FileReadSize;
     ULONGLONG FileReadOffset;
     ULONGLONG FileReadBytes;
     ULONGLONG FileReadHash;
-    volatile LONG FileOpenWriteStatus;
-    volatile LONG FileWriteStatus;
+    ZP_STATUS FileOpenWriteStatus;
+    ZP_STATUS FileWriteStatus;
     ZP_CHANNEL_HANDLE FileWriteChannel;
     const BYTE* FileWriteData;
     ULONG FileWriteLength;
     ULONG FileWriteOffset;
     LOGICAL CancelFileWrite;
-    volatile LONG TerminalCreateStatus;
-    volatile LONG TerminalResizeStatus;
-    volatile LONG TerminalCloseStatus;
+    ZP_STATUS TerminalCreateStatus;
+    ZP_STATUS TerminalResizeStatus;
+    ZP_STATUS TerminalCloseStatus;
     ZP_CHANNEL_HANDLE TerminalChannel;
     ULONG TerminalProcessId;
     ULONG TerminalWritableCredit;
     ULONGLONG TerminalDataBytes;
-    volatile LONG RegistryPageStatus;
+    ZP_STATUS RegistryPageStatus;
     ULONG RegistryRecordCount;
     LOGICAL RegistryPageValues;
     BOOLEAN RegistryHasMore;
@@ -135,11 +135,11 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONG RegistryRecordNameLength;
     WCHAR RegistryCursor[256];
     ULONG RegistryCursorLength;
-    volatile LONG RegistryValueStatus;
+    ZP_STATUS RegistryValueStatus;
     ULONG RegistryValueType;
     BYTE RegistryValueData[64];
     ULONG RegistryValueDataLength;
-    volatile LONG RegistryStatus;
+    ZP_STATUS RegistryStatus;
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
 
 static
@@ -148,7 +148,7 @@ NTAPI
 SDKIntegration_ClientStateCallback(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ ZP_CLIENT_STATE State,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
@@ -156,7 +156,7 @@ SDKIntegration_ClientStateCallback(
     UNREFERENCED_PARAMETER(Client);
     if (State == ZpClientStateReady)
     {
-        InterlockedExchange(&TestContext->ClientReadyStatus, Status);
+        TestContext->ClientReadyStatus = Status;
         SetEvent(TestContext->ClientReadyEvent);
     }
     else if (State == ZpClientStateRetryWait)
@@ -165,7 +165,7 @@ SDKIntegration_ClientStateCallback(
     }
     else if (State == ZpClientStateStopped)
     {
-        InterlockedExchange(&TestContext->ClientStoppedStatus, Status);
+        TestContext->ClientStoppedStatus = Status;
         SetEvent(TestContext->ClientStoppedEvent);
     }
 }
@@ -190,21 +190,21 @@ VOID
 NTAPI
 SDKIntegration_SystemInfoCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ const ZP_SYSTEM_INFO_VIEW* Info,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Request);
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         TestContext->SystemArchitecture = Info->Architecture;
         TestContext->SystemProcessorCount = Info->ProcessorCount;
         TestContext->SystemPhysicalMemoryBytes = Info->PhysicalMemoryBytes;
         TestContext->SystemComputerNameLength = Info->ComputerName.Length;
     }
-    InterlockedExchange(&TestContext->SystemInfoStatus, Status);
+    TestContext->SystemInfoStatus = Status;
     SetEvent(TestContext->SystemInfoEvent);
 }
 
@@ -213,7 +213,7 @@ VOID
 NTAPI
 SDKIntegration_ProcessListCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PCZP_PROCESS_LIST_VIEW Processes,
     _In_opt_ PVOID Context)
 {
@@ -222,13 +222,14 @@ SDKIntegration_ProcessListCallback(
     ULONG Index;
 
     UNREFERENCED_PARAMETER(Request);
-    if (NT_SUCCESS(Status) && TestContext->CollectProcessDetails)
+    if (ZpStatus_IsSuccess(Status) && TestContext->CollectProcessDetails)
     {
         TestContext->ProcessCount = Processes->Count;
         for (Index = 0; Index < Processes->Count; Index++)
         {
-            Status = ZpProcess_GetRecord(Processes, Index, &Process);
-            if (!NT_SUCCESS(Status))
+            Status = ZpStatus_FromNtStatus(
+                ZpProcess_GetRecord(Processes, Index, &Process));
+            if (!ZpStatus_IsSuccess(Status))
             {
                 break;
             }
@@ -238,7 +239,7 @@ SDKIntegration_ProcessListCallback(
             }
         }
     }
-    InterlockedExchange(&TestContext->ProcessListStatus, Status);
+    TestContext->ProcessListStatus = Status;
     if (InterlockedIncrement(&TestContext->ProcessCompletionCount) >=
         TestContext->ExpectedProcessCompletions)
     {
@@ -251,21 +252,21 @@ VOID
 NTAPI
 SDKIntegration_ProcessInfoCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ const ZP_PROCESS_INFO_VIEW* Info,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Request);
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         TestContext->ProcessInfoId = Info->ProcessId;
         TestContext->ProcessInfoThreadCount = Info->ThreadCount;
         TestContext->ProcessInfoCreateTime = Info->CreateTime;
         TestContext->ProcessInfoImageNameLength = Info->ImageName.Length;
     }
-    InterlockedExchange(&TestContext->ProcessInfoStatus, Status);
+    TestContext->ProcessInfoStatus = Status;
     SetEvent(TestContext->ProcessInfoEvent);
 }
 
@@ -274,7 +275,7 @@ VOID
 NTAPI
 SDKIntegration_ServiceListCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PCZP_SERVICE_LIST_VIEW Services,
     _In_opt_ PVOID Context)
 {
@@ -283,13 +284,14 @@ SDKIntegration_ServiceListCallback(
     ULONG Index;
 
     UNREFERENCED_PARAMETER(Request);
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         TestContext->ServiceCount = Services->Count;
         for (Index = 0; Index < Services->Count; Index++)
         {
-            Status = ZpService_GetRecord(Services, Index, &Service);
-            if (!NT_SUCCESS(Status))
+            Status = ZpStatus_FromNtStatus(
+                ZpService_GetRecord(Services, Index, &Service));
+            if (!ZpStatus_IsSuccess(Status))
             {
                 break;
             }
@@ -313,7 +315,7 @@ SDKIntegration_ServiceListCallback(
             }
         }
     }
-    InterlockedExchange(&TestContext->ServiceListStatus, Status);
+    TestContext->ServiceListStatus = Status;
     SetEvent(TestContext->ServiceListEvent);
 }
 
@@ -322,14 +324,14 @@ VOID
 NTAPI
 SDKIntegration_ServiceInfoCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ const ZP_SERVICE_INFO_VIEW* Info,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Request);
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         TestContext->ServiceInfoType = Info->ServiceType;
         TestContext->ServiceInfoStartType = Info->StartType;
@@ -337,7 +339,7 @@ SDKIntegration_ServiceInfoCallback(
         TestContext->ServiceInfoDisplayNameLength = Info->DisplayName.Length;
         TestContext->ServiceInfoBinaryPathLength = Info->BinaryPathName.Length;
     }
-    InterlockedExchange(&TestContext->ServiceInfoStatus, Status);
+    TestContext->ServiceInfoStatus = Status;
     SetEvent(TestContext->ServiceInfoEvent);
 }
 
@@ -346,13 +348,13 @@ VOID
 NTAPI
 SDKIntegration_ProcessTerminateCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Request);
-    InterlockedExchange(&TestContext->ProcessTerminateStatus, Status);
+    TestContext->ProcessTerminateStatus = Status;
     SetEvent(TestContext->ProcessTerminateEvent);
 }
 
@@ -361,13 +363,13 @@ VOID
 NTAPI
 SDKIntegration_ServiceControlCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Request);
-    InterlockedExchange(&TestContext->ServiceControlStatus, Status);
+    TestContext->ServiceControlStatus = Status;
     SetEvent(TestContext->ServiceControlEvent);
 }
 
@@ -376,20 +378,20 @@ VOID
 NTAPI
 SDKIntegration_FileInfoCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PCZP_FILE_INFO Info,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Request);
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         TestContext->FileAttributes = Info->Attributes;
         TestContext->FileSize = Info->Size;
         TestContext->FileLastWriteTime = Info->LastWriteTime;
     }
-    InterlockedExchange(&TestContext->FileInfoStatus, Status);
+    TestContext->FileInfoStatus = Status;
     SetEvent(TestContext->FileInfoEvent);
 }
 
@@ -398,7 +400,7 @@ VOID
 NTAPI
 SDKIntegration_FileListCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PCZP_FILE_LIST_VIEW Files,
     _In_opt_ PVOID Context)
 {
@@ -407,13 +409,14 @@ SDKIntegration_FileListCallback(
     ULONG Index;
 
     UNREFERENCED_PARAMETER(Request);
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         TestContext->FileCount = Files->Count;
         for (Index = 0; Index < Files->Count; Index++)
         {
-            Status = ZpFile_GetRecord(Files, Index, &File);
-            if (!NT_SUCCESS(Status))
+            Status = ZpStatus_FromNtStatus(
+                ZpFile_GetRecord(Files, Index, &File));
+            if (!ZpStatus_IsSuccess(Status))
             {
                 break;
             }
@@ -427,7 +430,7 @@ SDKIntegration_FileListCallback(
             }
         }
     }
-    InterlockedExchange(&TestContext->FileListStatus, Status);
+    TestContext->FileListStatus = Status;
     SetEvent(TestContext->FileListEvent);
 }
 
@@ -436,7 +439,7 @@ VOID
 NTAPI
 SDKIntegration_FilePageCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PCZP_FILE_PAGE_VIEW Page,
     _In_opt_ PVOID Context)
 {
@@ -444,13 +447,13 @@ SDKIntegration_FilePageCallback(
     ZP_FILE_RECORD_VIEW File;
 
     UNREFERENCED_PARAMETER(Request);
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         TestContext->FilePageCount = Page->Files.Count;
         TestContext->FilePageCursorLength = Page->NextCursor.Length;
         if (Page->NextCursor.Length >= ARRAYSIZE(TestContext->FilePageCursor))
         {
-            Status = STATUS_NAME_TOO_LONG;
+            Status = ZpStatus_FromNtStatus(STATUS_NAME_TOO_LONG);
         }
         else if (Page->NextCursor.Length != 0)
         {
@@ -459,15 +462,16 @@ SDKIntegration_FilePageCallback(
                           (SIZE_T)Page->NextCursor.Length * sizeof(WCHAR));
         }
     }
-    if (NT_SUCCESS(Status) && Page->Files.Count != 0)
+    if (ZpStatus_IsSuccess(Status) && Page->Files.Count != 0)
     {
-        Status = ZpFile_GetRecord(&Page->Files, 0, &File);
-        if (NT_SUCCESS(Status) &&
+        Status = ZpStatus_FromNtStatus(
+            ZpFile_GetRecord(&Page->Files, 0, &File));
+        if (ZpStatus_IsSuccess(Status) &&
             File.Name.Length >= ARRAYSIZE(TestContext->FilePageName))
         {
-            Status = STATUS_NAME_TOO_LONG;
+            Status = ZpStatus_FromNtStatus(STATUS_NAME_TOO_LONG);
         }
-        if (NT_SUCCESS(Status))
+        if (ZpStatus_IsSuccess(Status))
         {
             TestContext->FilePageNameLength = File.Name.Length;
             RtlCopyMemory(TestContext->FilePageName,
@@ -475,7 +479,7 @@ SDKIntegration_FilePageCallback(
                           (SIZE_T)File.Name.Length * sizeof(WCHAR));
         }
     }
-    InterlockedExchange(&TestContext->FilePageStatus, Status);
+    TestContext->FilePageStatus = Status;
     SetEvent(TestContext->FilePageEvent);
 }
 
@@ -484,7 +488,7 @@ VOID
 NTAPI
 SDKIntegration_EventLogPageCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ const ZP_EVENT_LOG_PAGE_VIEW* Page,
     _In_opt_ PVOID Context)
 {
@@ -493,7 +497,7 @@ SDKIntegration_EventLogPageCallback(
     ULONG Index;
 
     UNREFERENCED_PARAMETER(Request);
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         TestContext->EventLogPageCount = Page->Records.Count;
         TestContext->EventLogHasMore = Page->HasMore;
@@ -501,7 +505,7 @@ SDKIntegration_EventLogPageCallback(
         if (Page->NextBookmark.Length >=
             ARRAYSIZE(TestContext->EventLogBookmark))
         {
-            Status = STATUS_NAME_TOO_LONG;
+            Status = ZpStatus_FromNtStatus(STATUS_NAME_TOO_LONG);
         }
         else if (Page->NextBookmark.Length != 0)
         {
@@ -511,21 +515,22 @@ SDKIntegration_EventLogPageCallback(
         }
     }
     for (Index = 0;
-         NT_SUCCESS(Status) && Index < Page->Records.Count;
+         ZpStatus_IsSuccess(Status) && Index < Page->Records.Count;
          Index++)
     {
-        Status = ZpEventLog_GetRecord(&Page->Records, Index, &Record);
-        if (NT_SUCCESS(Status) &&
+        Status = ZpStatus_FromNtStatus(
+            ZpEventLog_GetRecord(&Page->Records, Index, &Record));
+        if (ZpStatus_IsSuccess(Status) &&
             (Record.Bookmark.Length == 0 || Record.Xml.Length == 0))
         {
-            Status = STATUS_DATA_ERROR;
+            Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
         }
-        if (NT_SUCCESS(Status))
+        if (ZpStatus_IsSuccess(Status))
         {
             TestContext->EventLogXmlLength = Record.Xml.Length;
         }
     }
-    InterlockedExchange(&TestContext->EventLogPageStatus, Status);
+    TestContext->EventLogPageStatus = Status;
     SetEvent(TestContext->EventLogPageEvent);
 }
 
@@ -534,14 +539,14 @@ VOID
 NTAPI
 SDKIntegration_FileHashCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PCZP_FILE_HASH_VIEW Hash,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Request);
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         TestContext->FileHashAlgorithm = Hash->Algorithm;
         TestContext->FileHashSize = Hash->FileSize;
@@ -549,7 +554,7 @@ SDKIntegration_FileHashCallback(
                       Hash->Digest.Buffer,
                       Hash->Digest.Length);
     }
-    InterlockedExchange(&TestContext->FileHashStatus, Status);
+    TestContext->FileHashStatus = Status;
     SetEvent(TestContext->FileHashEvent);
 }
 
@@ -558,7 +563,7 @@ VOID
 NTAPI
 SDKIntegration_FileOpenReadCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ ZP_CHANNEL_HANDLE Channel,
     _In_ ULONGLONG FileSize,
     _In_ ULONGLONG Offset,
@@ -570,8 +575,8 @@ SDKIntegration_FileOpenReadCallback(
     TestContext->FileReadChannel = Channel;
     TestContext->FileReadSize = FileSize;
     TestContext->FileReadOffset = Offset;
-    InterlockedExchange(&TestContext->FileOpenReadStatus, Status);
-    if (!NT_SUCCESS(Status))
+    TestContext->FileOpenReadStatus = Status;
+    if (!ZpStatus_IsSuccess(Status))
     {
         SetEvent(TestContext->FileReadEvent);
     }
@@ -582,7 +587,7 @@ VOID
 NTAPI
 SDKIntegration_FileOpenWriteCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ ZP_CHANNEL_HANDLE Channel,
     _In_ ULONGLONG FileSize,
     _In_opt_ PVOID Context)
@@ -591,11 +596,11 @@ SDKIntegration_FileOpenWriteCallback(
 
     UNREFERENCED_PARAMETER(Request);
     TestContext->FileWriteChannel = Channel;
-    if (NT_SUCCESS(Status) && FileSize != TestContext->FileWriteLength)
+    if (ZpStatus_IsSuccess(Status) && FileSize != TestContext->FileWriteLength)
     {
-        Status = STATUS_DATA_ERROR;
+        Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
     }
-    InterlockedExchange(&TestContext->FileOpenWriteStatus, Status);
+    TestContext->FileOpenWriteStatus = Status;
 }
 
 static
@@ -635,7 +640,7 @@ SDKIntegration_FileWriteWritableCallback(
     }
     if (!NT_SUCCESS(Status))
     {
-        InterlockedExchange(&TestContext->FileWriteStatus, Status);
+        TestContext->FileWriteStatus = ZpStatus_FromNtStatus(Status);
         ZpChannel_Cancel(Channel);
     }
 }
@@ -645,13 +650,13 @@ VOID
 NTAPI
 SDKIntegration_FileWriteCloseCallback(
     _In_ ZP_CHANNEL_HANDLE Channel,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Channel);
-    InterlockedExchange(&TestContext->FileWriteStatus, Status);
+    TestContext->FileWriteStatus = Status;
     SetEvent(TestContext->FileWriteEvent);
 }
 
@@ -680,13 +685,13 @@ VOID
 NTAPI
 SDKIntegration_ChannelCloseCallback(
     _In_ ZP_CHANNEL_HANDLE Channel,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Channel);
-    InterlockedExchange(&TestContext->FileReadCloseStatus, Status);
+    TestContext->FileReadCloseStatus = Status;
     SetEvent(TestContext->FileReadEvent);
 }
 
@@ -695,7 +700,7 @@ VOID
 NTAPI
 SDKIntegration_TerminalCreateCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ ZP_CHANNEL_HANDLE Channel,
     _In_ ULONG ProcessId,
     _In_opt_ PVOID Context)
@@ -705,8 +710,8 @@ SDKIntegration_TerminalCreateCallback(
     UNREFERENCED_PARAMETER(Request);
     TestContext->TerminalChannel = Channel;
     TestContext->TerminalProcessId = ProcessId;
-    InterlockedExchange(&TestContext->TerminalCreateStatus, Status);
-    if (!NT_SUCCESS(Status))
+    TestContext->TerminalCreateStatus = Status;
+    if (!ZpStatus_IsSuccess(Status))
     {
         SetEvent(TestContext->TerminalCloseEvent);
     }
@@ -746,13 +751,13 @@ VOID
 NTAPI
 SDKIntegration_TerminalResizeCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Request);
-    InterlockedExchange(&TestContext->TerminalResizeStatus, Status);
+    TestContext->TerminalResizeStatus = Status;
     SetEvent(TestContext->TerminalResizeEvent);
 }
 
@@ -761,13 +766,13 @@ VOID
 NTAPI
 SDKIntegration_TerminalCloseCallback(
     _In_ ZP_CHANNEL_HANDLE Channel,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Channel);
-    InterlockedExchange(&TestContext->TerminalCloseStatus, Status);
+    TestContext->TerminalCloseStatus = Status;
     SetEvent(TestContext->TerminalCloseEvent);
 }
 
@@ -776,7 +781,7 @@ VOID
 NTAPI
 SDKIntegration_RegistryPageCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PCZP_REGISTRY_PAGE_VIEW Page,
     _In_opt_ PVOID Context)
 {
@@ -787,7 +792,7 @@ SDKIntegration_RegistryPageCallback(
     TestContext->RegistryRecordCount = 0;
     TestContext->RegistryRecordNameLength = 0;
     TestContext->RegistryCursorLength = 0;
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         TestContext->RegistryRecordCount = Page->Records.Count;
         TestContext->RegistryHasMore = Page->HasMore;
@@ -814,7 +819,7 @@ SDKIntegration_RegistryPageCallback(
             }
         }
     }
-    InterlockedExchange(&TestContext->RegistryPageStatus, Status);
+    TestContext->RegistryPageStatus = Status;
     SetEvent(TestContext->RegistryPageEvent);
 }
 
@@ -823,7 +828,7 @@ VOID
 NTAPI
 SDKIntegration_RegistryValueCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PCZP_REGISTRY_VALUE_VIEW Value,
     _In_opt_ PVOID Context)
 {
@@ -831,7 +836,7 @@ SDKIntegration_RegistryValueCallback(
 
     UNREFERENCED_PARAMETER(Request);
     TestContext->RegistryValueDataLength = 0;
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         TestContext->RegistryValueType = Value->Type;
         TestContext->RegistryValueDataLength = Value->Data.Length;
@@ -843,7 +848,7 @@ SDKIntegration_RegistryValueCallback(
                           Value->Data.Length);
         }
     }
-    InterlockedExchange(&TestContext->RegistryValueStatus, Status);
+    TestContext->RegistryValueStatus = Status;
     SetEvent(TestContext->RegistryValueEvent);
 }
 
@@ -852,13 +857,13 @@ VOID
 NTAPI
 SDKIntegration_RegistryStatusCallback(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
 
     UNREFERENCED_PARAMETER(Request);
-    InterlockedExchange(&TestContext->RegistryStatus, Status);
+    TestContext->RegistryStatus = Status;
     SetEvent(TestContext->RegistryStatusEvent);
 }
 
@@ -986,7 +991,7 @@ NTAPI
 SDKIntegration_ServerStateCallback(
     _In_ ZP_SERVER_HANDLE Server,
     _In_ ZP_SERVER_STATE State,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
@@ -994,14 +999,14 @@ SDKIntegration_ServerStateCallback(
     UNREFERENCED_PARAMETER(Server);
     if (State == ZpServerStateRunning)
     {
-        if (NT_SUCCESS(Status))
+        if (ZpStatus_IsSuccess(Status))
         {
             SetEvent(TestContext->ServerRunningEvent);
         }
     }
     else if (State == ZpServerStateStopped)
     {
-        InterlockedExchange(&TestContext->ServerStoppedStatus, Status);
+        TestContext->ServerStoppedStatus = Status;
         SetEvent(TestContext->ServerStoppedEvent);
     }
 }
@@ -1013,7 +1018,7 @@ SDKIntegration_ServerConnectionCallback(
     _In_ ZP_SERVER_HANDLE Server,
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_CONNECTION_PHASE Phase,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
@@ -1030,7 +1035,7 @@ SDKIntegration_ServerConnectionCallback(
         {
             ZpConnection_Release(Previous);
         }
-        InterlockedExchange(&TestContext->ServerReadyStatus, Status);
+        TestContext->ServerReadyStatus = Status;
         SetEvent(TestContext->ServerReadyEvent);
     }
     else if (Phase == ZpConnectionPhaseClosed)
@@ -1348,6 +1353,7 @@ TEST_FUNC(SDKQuicIntegration)
     ULONG FirstEventBookmarkLength;
     BYTE FileWriteData[0x20000 + 17];
     NTSTATUS Status;
+    ZP_STATUS StartStatus;
     DWORD WaitStatus;
     DWORD ServerStopWait = MAXDWORD, RetryWait = MAXDWORD, ProcessWait = MAXDWORD;
     ULONG Index;
@@ -1475,8 +1481,8 @@ TEST_FUNC(SDKQuicIntegration)
     {
         goto Cleanup;
     }
-    Status = ZpServer_Start(Server);
-    if (!NT_SUCCESS(Status))
+    StartStatus = ZpServer_Start(Server);
+    if (!ZpStatus_IsSuccess(StartStatus))
     {
         goto Cleanup;
     }
@@ -1502,8 +1508,8 @@ TEST_FUNC(SDKQuicIntegration)
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         WaitForSingleObject(TestContext.ServerReadyEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.ClientReadyStatus) ||
-        !NT_SUCCESS(TestContext.ServerReadyStatus))
+        !ZpStatus_IsSuccess(TestContext.ClientReadyStatus) ||
+        !ZpStatus_IsSuccess(TestContext.ServerReadyStatus))
     {
         goto Cleanup;
     }
@@ -1539,7 +1545,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.EventLogPageEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.EventLogPageStatus) ||
+        !ZpStatus_IsSuccess(TestContext.EventLogPageStatus) ||
         TestContext.EventLogPageCount != 1 ||
         TestContext.EventLogBookmarkLength == 0 ||
         TestContext.EventLogXmlLength == 0)
@@ -1551,7 +1557,7 @@ TEST_FUNC(SDKQuicIntegration)
                   TestContext.EventLogBookmark,
                   (SIZE_T)FirstEventBookmarkLength * sizeof(WCHAR));
     ResetEvent(TestContext.EventLogPageEvent);
-    InterlockedExchange(&TestContext.EventLogPageStatus, STATUS_PENDING);
+    TestContext.EventLogPageStatus = ZpStatus_FromNtStatus(STATUS_PENDING);
     TestContext.EventLogPageCount = 0;
     TestContext.EventLogBookmarkLength = 0;
     TestContext.EventLogXmlLength = 0;
@@ -1577,7 +1583,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.EventLogPageEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.EventLogPageStatus) ||
+        !ZpStatus_IsSuccess(TestContext.EventLogPageStatus) ||
         TestContext.EventLogPageCount > 1 ||
         (TestContext.EventLogPageCount != 0 &&
          TestContext.EventLogBookmarkLength == 0))
@@ -1598,7 +1604,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.SystemInfoEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.SystemInfoStatus) ||
+        !ZpStatus_IsSuccess(TestContext.SystemInfoStatus) ||
         TestContext.SystemArchitecture < ZpSystemArchitectureX86 ||
         TestContext.SystemArchitecture > ZpSystemArchitectureArm64 ||
         TestContext.SystemProcessorCount == 0 ||
@@ -1623,7 +1629,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.ProcessListEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.ProcessListStatus) ||
+        !ZpStatus_IsSuccess(TestContext.ProcessListStatus) ||
         TestContext.ProcessCount == 0 ||
         !TestContext.FoundCurrentProcess)
     {
@@ -1644,7 +1650,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.ProcessInfoEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.ProcessInfoStatus) ||
+        !ZpStatus_IsSuccess(TestContext.ProcessInfoStatus) ||
         TestContext.ProcessInfoId != GetCurrentProcessId() ||
         TestContext.ProcessInfoThreadCount == 0 ||
         TestContext.ProcessInfoCreateTime == 0 ||
@@ -1666,7 +1672,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.ServiceListEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.ServiceListStatus) ||
+        !ZpStatus_IsSuccess(TestContext.ServiceListStatus) ||
         TestContext.ServiceCount == 0 ||
         !TestContext.FoundNamedService)
     {
@@ -1688,7 +1694,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.ServiceInfoEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.ServiceInfoStatus) ||
+        !ZpStatus_IsSuccess(TestContext.ServiceInfoStatus) ||
         TestContext.ServiceInfoType == 0 ||
         TestContext.ServiceInfoNameLength != TestContext.ServiceNameLength ||
         TestContext.ServiceInfoDisplayNameLength == 0 ||
@@ -1725,7 +1731,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.ProcessTerminateEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.ProcessTerminateStatus) ||
+        !ZpStatus_IsSuccess(TestContext.ProcessTerminateStatus) ||
         WaitForSingleObject(TemporaryProcess.hProcess,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0)
     {
@@ -1747,8 +1753,9 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.ServiceControlEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        NT_SUCCESS(TestContext.ServiceControlStatus) ||
-        TestContext.ServiceControlStatus == STATUS_ACCESS_DENIED)
+        ZpStatus_IsSuccess(TestContext.ServiceControlStatus) ||
+        (TestContext.ServiceControlStatus.Type == ZpStatusWin32 &&
+         TestContext.ServiceControlStatus.Code == ERROR_ACCESS_DENIED))
     {
         goto Cleanup;
     }
@@ -1773,7 +1780,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.FileInfoEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.FileInfoStatus) ||
+        !ZpStatus_IsSuccess(TestContext.FileInfoStatus) ||
         TestContext.FileAttributes == INVALID_FILE_ATTRIBUTES ||
         TestContext.FileSize == 0 ||
         TestContext.FileLastWriteTime == 0)
@@ -1800,7 +1807,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.FileHashEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.FileHashStatus) ||
+        !ZpStatus_IsSuccess(TestContext.FileHashStatus) ||
         TestContext.FileHashAlgorithm != ZpFileHashSha256 ||
         TestContext.FileHashSize != TestContext.FileSize ||
         RtlCompareMemory(TestContext.FileDigest,
@@ -1835,8 +1842,8 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.FileReadEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.FileOpenReadStatus) ||
-        !NT_SUCCESS(TestContext.FileReadCloseStatus) ||
+        !ZpStatus_IsSuccess(TestContext.FileOpenReadStatus) ||
+        !ZpStatus_IsSuccess(TestContext.FileReadCloseStatus) ||
         TestContext.FileReadChannel == NULL ||
         TestContext.FileReadSize != TestContext.FileSize ||
         TestContext.FileReadOffset != 17 ||
@@ -1882,7 +1889,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.FileListEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.FileListStatus) ||
+        !ZpStatus_IsSuccess(TestContext.FileListStatus) ||
         TestContext.FileCount == 0 ||
         !TestContext.FoundExpectedFile)
     {
@@ -1908,7 +1915,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.FilePageEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.FilePageStatus) ||
+        !ZpStatus_IsSuccess(TestContext.FilePageStatus) ||
         TestContext.FilePageCount != 1 ||
         TestContext.FilePageCursorLength == 0 ||
         TestContext.FilePageCursorLength != TestContext.FilePageNameLength)
@@ -1920,7 +1927,7 @@ TEST_FUNC(SDKQuicIntegration)
                   TestContext.FilePageName,
                   (SIZE_T)FirstPageNameLength * sizeof(WCHAR));
     ResetEvent(TestContext.FilePageEvent);
-    InterlockedExchange(&TestContext.FilePageStatus, STATUS_PENDING);
+    TestContext.FilePageStatus = ZpStatus_FromNtStatus(STATUS_PENDING);
     TestContext.FilePageCount = 0;
     TestContext.FilePageNameLength = 0;
     Status = ZpServer_EnumerateFilesPage(
@@ -1942,7 +1949,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.FilePageEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.FilePageStatus) ||
+        !ZpStatus_IsSuccess(TestContext.FilePageStatus) ||
         TestContext.FilePageCount != 1 ||
         CompareStringOrdinal(FirstPageName,
                              FirstPageNameLength,
@@ -1990,8 +1997,8 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.FileWriteEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.FileOpenWriteStatus) ||
-        !NT_SUCCESS(TestContext.FileWriteStatus) ||
+        !ZpStatus_IsSuccess(TestContext.FileOpenWriteStatus) ||
+        !ZpStatus_IsSuccess(TestContext.FileWriteStatus) ||
         TestContext.FileWriteChannel == NULL ||
         TestContext.FileWriteOffset != sizeof(FileWriteData) ||
         !SDKIntegration_HashFile(UploadPath,
@@ -2008,8 +2015,8 @@ TEST_FUNC(SDKQuicIntegration)
     ResetEvent(TestContext.FileWriteEvent);
     TestContext.FileWriteLength = 0;
     TestContext.FileWriteOffset = 0;
-    InterlockedExchange(&TestContext.FileOpenWriteStatus, STATUS_PENDING);
-    InterlockedExchange(&TestContext.FileWriteStatus, STATUS_PENDING);
+    TestContext.FileOpenWriteStatus = ZpStatus_FromNtStatus(STATUS_PENDING);
+    TestContext.FileWriteStatus = ZpStatus_FromNtStatus(STATUS_PENDING);
     Status = ZpServer_OpenFileWrite(TestContext.Connection,
                                     UploadPath,
                                     (ULONG)wcslen(UploadPath),
@@ -2029,8 +2036,8 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.FileWriteEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.FileOpenWriteStatus) ||
-        !NT_SUCCESS(TestContext.FileWriteStatus) ||
+        !ZpStatus_IsSuccess(TestContext.FileOpenWriteStatus) ||
+        !ZpStatus_IsSuccess(TestContext.FileWriteStatus) ||
         TestContext.FileWriteChannel == NULL ||
         !SDKIntegration_HashFile(UploadPath,
                                  0,
@@ -2050,8 +2057,8 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.FileWriteLength = sizeof(FileWriteData);
     TestContext.FileWriteOffset = 0;
     TestContext.CancelFileWrite = TRUE;
-    InterlockedExchange(&TestContext.FileOpenWriteStatus, STATUS_PENDING);
-    InterlockedExchange(&TestContext.FileWriteStatus, STATUS_PENDING);
+    TestContext.FileOpenWriteStatus = ZpStatus_FromNtStatus(STATUS_PENDING);
+    TestContext.FileWriteStatus = ZpStatus_FromNtStatus(STATUS_PENDING);
     Status = ZpServer_OpenFileWrite(TestContext.Connection,
                                     UploadPath,
                                     (ULONG)wcslen(UploadPath),
@@ -2071,8 +2078,9 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.FileWriteEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.FileOpenWriteStatus) ||
-        TestContext.FileWriteStatus != STATUS_CANCELLED ||
+        !ZpStatus_IsSuccess(TestContext.FileOpenWriteStatus) ||
+        TestContext.FileWriteStatus.Type != ZpStatusNtStatus ||
+        TestContext.FileWriteStatus.Code != (ULONG)STATUS_CANCELLED ||
         TestContext.FileWriteChannel == NULL)
     {
         goto Cleanup;
@@ -2140,7 +2148,7 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryStatusEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.RegistryStatus))
+        !ZpStatus_IsSuccess(TestContext.RegistryStatus))
     {
         goto Cleanup;
     }
@@ -2169,7 +2177,8 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryStatusEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        TestContext.RegistryStatus != STATUS_QUOTA_EXCEEDED)
+        TestContext.RegistryStatus.Type != ZpStatusNtStatus ||
+        TestContext.RegistryStatus.Code != (ULONG)STATUS_QUOTA_EXCEEDED)
     {
         goto Cleanup;
     }
@@ -2193,7 +2202,7 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryStatusEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.RegistryStatus))
+        !ZpStatus_IsSuccess(TestContext.RegistryStatus))
     {
         goto Cleanup;
     }
@@ -2222,7 +2231,7 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryStatusEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.RegistryStatus))
+        !ZpStatus_IsSuccess(TestContext.RegistryStatus))
     {
         goto Cleanup;
     }
@@ -2251,7 +2260,7 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryStatusEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.RegistryStatus))
+        !ZpStatus_IsSuccess(TestContext.RegistryStatus))
     {
         goto Cleanup;
     }
@@ -2280,7 +2289,7 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryPageEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.RegistryPageStatus) ||
+        !ZpStatus_IsSuccess(TestContext.RegistryPageStatus) ||
         TestContext.RegistryRecordCount != 1)
     {
         goto Cleanup;
@@ -2310,7 +2319,7 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryPageEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.RegistryPageStatus) ||
+        !ZpStatus_IsSuccess(TestContext.RegistryPageStatus) ||
         TestContext.RegistryRecordCount != 1 ||
         !TestContext.RegistryHasMore ||
         TestContext.RegistryRecordNameLength != 0 ||
@@ -2341,7 +2350,7 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryPageEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.RegistryPageStatus) ||
+        !ZpStatus_IsSuccess(TestContext.RegistryPageStatus) ||
         TestContext.RegistryRecordCount != 1 ||
         TestContext.RegistryHasMore ||
         TestContext.RegistryRecordNameLength !=
@@ -2376,7 +2385,7 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryValueEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.RegistryValueStatus) ||
+        !ZpStatus_IsSuccess(TestContext.RegistryValueStatus) ||
         TestContext.RegistryValueType != REG_DWORD ||
         TestContext.RegistryValueDataLength != sizeof(RegistryNamedData) ||
         RtlCompareMemory(TestContext.RegistryValueData,
@@ -2409,7 +2418,7 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryStatusEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.RegistryStatus))
+        !ZpStatus_IsSuccess(TestContext.RegistryStatus))
     {
         goto Cleanup;
     }
@@ -2435,7 +2444,7 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryStatusEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.RegistryStatus))
+        !ZpStatus_IsSuccess(TestContext.RegistryStatus))
     {
         goto Cleanup;
     }
@@ -2459,7 +2468,7 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryStatusEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.RegistryStatus))
+        !ZpStatus_IsSuccess(TestContext.RegistryStatus))
     {
         goto Cleanup;
     }
@@ -2483,7 +2492,7 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.RegistryStatusEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
             WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.RegistryStatus))
+        !ZpStatus_IsSuccess(TestContext.RegistryStatus))
     {
         goto Cleanup;
     }
@@ -2511,7 +2520,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.TerminalWritableEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.TerminalCreateStatus) ||
+        !ZpStatus_IsSuccess(TestContext.TerminalCreateStatus) ||
         TestContext.TerminalChannel == NULL ||
         TestContext.TerminalProcessId == 0 ||
         TestContext.TerminalWritableCredit < sizeof(TerminalInput) - 1)
@@ -2534,7 +2543,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.TerminalResizeEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.TerminalResizeStatus))
+        !ZpStatus_IsSuccess(TestContext.TerminalResizeStatus))
     {
         goto Cleanup;
     }
@@ -2551,7 +2560,8 @@ TEST_FUNC(SDKQuicIntegration)
     if (
         WaitForSingleObject(TestContext.TerminalCloseEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        TestContext.TerminalCloseStatus != 7 ||
+        TestContext.TerminalCloseStatus.Type != ZpStatusProcessExit ||
+        TestContext.TerminalCloseStatus.Code != 7 ||
         TestContext.TerminalDataBytes < 100000)
     {
         goto Cleanup;
@@ -2564,8 +2574,8 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.TerminalWritableCredit = 0;
     TestContext.TerminalDataBytes = 0;
     TestContext.TerminalProcessId = 0;
-    InterlockedExchange(&TestContext.TerminalCreateStatus, STATUS_PENDING);
-    InterlockedExchange(&TestContext.TerminalCloseStatus, STATUS_PENDING);
+    TestContext.TerminalCreateStatus = ZpStatus_FromNtStatus(STATUS_PENDING);
+    TestContext.TerminalCloseStatus = ZpStatus_FromNtStatus(STATUS_PENDING);
     Status = ZpServer_CreateTerminal(
         TestContext.Connection,
         80,
@@ -2589,7 +2599,7 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(Status) ||
         WaitForSingleObject(TestContext.TerminalWritableEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.TerminalCreateStatus) ||
+        !ZpStatus_IsSuccess(TestContext.TerminalCreateStatus) ||
         TestContext.TerminalChannel == NULL ||
         TestContext.TerminalProcessId == 0)
     {
@@ -2598,7 +2608,7 @@ TEST_FUNC(SDKQuicIntegration)
     ActiveTerminalChannel = TestContext.TerminalChannel;
     TestContext.TerminalChannel = NULL;
     ResetEvent(TestContext.TerminalCloseEvent);
-    InterlockedExchange(&TestContext.TerminalCreateStatus, STATUS_PENDING);
+    TestContext.TerminalCreateStatus = ZpStatus_FromNtStatus(STATUS_PENDING);
     Status = ZpServer_CreateTerminal(
         TestContext.Connection,
         80,
@@ -2621,7 +2631,8 @@ TEST_FUNC(SDKQuicIntegration)
     }
     if (Status != STATUS_QUOTA_EXCEEDED ||
         WaitForSingleObject(TestContext.TerminalCloseEvent, 0) != WAIT_TIMEOUT ||
-        TestContext.TerminalCreateStatus != STATUS_PENDING ||
+        TestContext.TerminalCreateStatus.Type != ZpStatusNtStatus ||
+        TestContext.TerminalCreateStatus.Code != (ULONG)STATUS_PENDING ||
         TestContext.TerminalChannel != NULL)
     {
         ZpChannel_Cancel(ActiveTerminalChannel);
@@ -2633,7 +2644,8 @@ TEST_FUNC(SDKQuicIntegration)
     if (!NT_SUCCESS(ZpChannel_Cancel(TestContext.TerminalChannel)) ||
         WaitForSingleObject(TestContext.TerminalCloseEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        TestContext.TerminalCloseStatus != STATUS_CANCELLED)
+        TestContext.TerminalCloseStatus.Type != ZpStatusNtStatus ||
+        TestContext.TerminalCloseStatus.Code != (ULONG)STATUS_CANCELLED)
     {
         goto Cleanup;
     }
@@ -2678,16 +2690,16 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
     ResetEvent(TestContext.ServerStoppedEvent);
-    Status = ZpServer_Start(Server);
-    if (!NT_SUCCESS(Status) ||
+    StartStatus = ZpServer_Start(Server);
+    if (!ZpStatus_IsSuccess(StartStatus) ||
         WaitForSingleObject(TestContext.ServerRunningEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         WaitForSingleObject(TestContext.ClientReadyEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         WaitForSingleObject(TestContext.ServerReadyEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !NT_SUCCESS(TestContext.ClientReadyStatus) ||
-        !NT_SUCCESS(TestContext.ServerReadyStatus))
+        !ZpStatus_IsSuccess(TestContext.ClientReadyStatus) ||
+        !ZpStatus_IsSuccess(TestContext.ServerReadyStatus))
     {
         goto Cleanup;
     }
@@ -2723,7 +2735,7 @@ Cleanup:
                                          SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
         Status = ZpClient_Close(Client);
         Result = Result && WaitStatus == WAIT_OBJECT_0 &&
-                 NT_SUCCESS(TestContext.ClientStoppedStatus) && NT_SUCCESS(Status);
+                 ZpStatus_IsSuccess(TestContext.ClientStoppedStatus) && NT_SUCCESS(Status);
     }
     if (Server != NULL)
     {
@@ -2732,7 +2744,7 @@ Cleanup:
                                          SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
         Status = ZpServer_Close(Server);
         Result = Result && WaitStatus == WAIT_OBJECT_0 &&
-                 NT_SUCCESS(TestContext.ServerStoppedStatus) && NT_SUCCESS(Status);
+                 ZpStatus_IsSuccess(TestContext.ServerStoppedStatus) && NT_SUCCESS(Status);
     }
     if (UploadPath[0] != UNICODE_NULL)
     {

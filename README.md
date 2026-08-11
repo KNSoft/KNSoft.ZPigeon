@@ -9,7 +9,8 @@ KNSoft.ZPigeon 是面向 Windows 10 及以上系统的远程管理项目。原�
 - `KNSoft.ZPigeon.Server.SDK`：管理端监听、认证、连接持有和异步操作发起。
 - `KNSoft.ZPigeon.Client.exe`：启动 Client SDK，连接本地 Server，并把网络及各模块日志分别写入同目录 `logs`；
 - `KNSoft.ZPigeon.Server.Native.dll`：供托管程序直接调用 Server SDK 的 C ABI 桥；
-- `KNSoft.ZPigeon.Web`：通过 Native DLL 控制本地 Client 的 C# Web 管理端。
+- `KNSoft.ZPigeon.Server.Managed`：封装 Native DLL 的可复用 .NET Server SDK 与 Terminal 会话 API；
+- `KNSoft.ZPigeon.Web`：只负责本地回环 WebSocket 和 UI 的 C# Web 管理端。
 
 ZPigeon 本身不生成 NuGet 包；三个原生依赖仍由现有 `packages.config` 提供。
 
@@ -29,7 +30,7 @@ msbuild Source\KNSoft.ZPigeon.slnx /t:Rebuild /p:Configuration=Debug /p:Platform
 Source\OutDir\x64\Debug\UnitTest.exe -Run
 ```
 
-当前改动已通过 x86/x64、Debug/Release 全 Solution Rebuild；四个配置各自 324/324 测试和 ConsumerTest 通过，并完成 x64 Debug 的 Web、Native Server、QUIC、Client 实际 localhost 冒烟。
+当前改动已通过 x64 Debug/Release 全 Solution Rebuild；两个配置各自 325/325 测试和 ConsumerTest 通过，并完成 x64 Debug 的 Web、Managed/Native Server、QUIC、Client 实际 localhost 冒烟。
 
 ## 本地试用
 
@@ -37,7 +38,7 @@ Source\OutDir\x64\Debug\UnitTest.exe -Run
 2. 运行同目录的 `KNSoft.ZPigeon.Client.exe`。
 3. 打开 `http://127.0.0.1:5080`。Web 和 Server 仅监听本地回环；Client 连接 `127.0.0.1:4433`。
 
-当前页面可读取系统信息、终止指定进程，并按 Bookmark 分页查询 EventLog、启停频道或清除频道；不包含实时订阅。
+当前页面可探测远端主机上的 `cmd`、Windows PowerShell 和 PowerShell，新建/关闭多个 Shell、切换标签并进行完整 ConPTY 命令交互；也可读取系统信息、终止指定进程，并按 Bookmark 分页查询 EventLog、启停频道或清除频道。EventLog 不包含实时订阅。
 
 Client 的 `network.log` 与各业务模块日志位于同目录 `logs`。试用 EXE 使用当前用户范围的持久 CNG 身份密钥；SDK 默认仍使用机器范围，服务化部署不改变原安全边界。
 
@@ -56,7 +57,7 @@ NTAPI
 ServerStateCallback(
     ZP_SERVER_HANDLE Server,
     ZP_SERVER_STATE State,
-    NTSTATUS Status,
+    ZP_STATUS Status,
     PVOID Context)
 {
     UNREFERENCED_PARAMETER(Server);
@@ -72,7 +73,7 @@ ServerConnectionCallback(
     ZP_SERVER_HANDLE Server,
     ZP_CONNECTION_HANDLE Connection,
     ZP_CONNECTION_PHASE Phase,
-    NTSTATUS Status,
+    ZP_STATUS Status,
     PVOID Context)
 {
     UNREFERENCED_PARAMETER(Server);
@@ -82,7 +83,7 @@ ServerConnectionCallback(
     UNREFERENCED_PARAMETER(Context);
 }
 
-NTSTATUS
+ZP_STATUS
 StartServer(
     PCCERT_CONTEXT Certificate,
     ZP_SERVER_HANDLE* Server)
@@ -111,11 +112,9 @@ StartServer(
     Config.ConnectionCallback = ServerConnectionCallback;
 
     Status = ZpServer_Create(&Config, Server);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpServer_Start(*Server);
-    }
-    return Status;
+    return NT_SUCCESS(Status) ?
+               ZpServer_Start(*Server) :
+               ZpStatus_FromNtStatus(Status);
 }
 ```
 
@@ -136,7 +135,7 @@ NTAPI
 ClientStateCallback(
     ZP_CLIENT_HANDLE Client,
     ZP_CLIENT_STATE State,
-    NTSTATUS Status,
+    ZP_STATUS Status,
     PVOID Context)
 {
     UNREFERENCED_PARAMETER(Client);
@@ -184,6 +183,8 @@ StartClient(
 ```
 
 `ZpClientStateReady` 表示被控端已可接收并执行 Server 请求；Client 不发起管理业务请求。停止顺序为 `ZpClient_Stop`，等待 `ZpClientStateStopped`，最后调用 `ZpClient_Close`。
+
+异步操作、连接状态和 Channel 结束均使用自然对齐的 `ZP_STATUS`：`Type` 为 16 位，原始 `Code` 为 32 位。线上按字段编码为 6 字节，不传结构体填充。当前类型包括 NTSTATUS、Win32、Winsock、HRESULT、Security、QUIC 和 ProcessExit；SDK 不把来源码映射成另一套错误码。同步的本地参数、Handle 和提交错误仍直接返回 `NTSTATUS`。
 
 ## 异步 Handle 与 Buffer 规则
 

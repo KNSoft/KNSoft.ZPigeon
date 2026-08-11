@@ -42,22 +42,23 @@ VOID
 NTAPI
 ZpServerFile_QueryComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_FILE_CONTEXT FileContext = Context;
     ZP_FILE_INFO Info;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpFile_DecodeInfo(Payload->Buffer,
-                                   Payload->Length,
-                                   &Info);
+        Status = ZpStatus_FromNtStatus(
+            ZpFile_DecodeInfo(Payload->Buffer,
+                              Payload->Length,
+                              &Info));
     }
     FileContext->Callback.Query(Request,
                                 Status,
-                                NT_SUCCESS(Status) ? &Info : NULL,
+                                ZpStatus_IsSuccess(Status) ? &Info : NULL,
                                 FileContext->Context);
     Mem_Free(FileContext);
 }
@@ -67,22 +68,23 @@ VOID
 NTAPI
 ZpServerFile_EnumerateComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_FILE_CONTEXT FileContext = Context;
     ZP_FILE_LIST_VIEW Files;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpFile_DecodeList(Payload->Buffer,
-                                   Payload->Length,
-                                   &Files);
+        Status = ZpStatus_FromNtStatus(
+            ZpFile_DecodeList(Payload->Buffer,
+                              Payload->Length,
+                              &Files));
     }
     FileContext->Callback.Enumerate(Request,
                                     Status,
-                                    NT_SUCCESS(Status) ? &Files : NULL,
+                                    ZpStatus_IsSuccess(Status) ? &Files : NULL,
                                     FileContext->Context);
     Mem_Free(FileContext);
 }
@@ -92,22 +94,23 @@ VOID
 NTAPI
 ZpServerFile_PageComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_FILE_CONTEXT FileContext = Context;
     ZP_FILE_PAGE_VIEW Page;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpFile_DecodePage(Payload->Buffer,
-                                   Payload->Length,
-                                   &Page);
+        Status = ZpStatus_FromNtStatus(
+            ZpFile_DecodePage(Payload->Buffer,
+                              Payload->Length,
+                              &Page));
     }
     FileContext->Callback.Page(Request,
                                Status,
-                               NT_SUCCESS(Status) ? &Page : NULL,
+                               ZpStatus_IsSuccess(Status) ? &Page : NULL,
                                FileContext->Context);
     Mem_Free(FileContext);
 }
@@ -117,22 +120,23 @@ VOID
 NTAPI
 ZpServerFile_HashComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_FILE_CONTEXT FileContext = Context;
     ZP_FILE_HASH_VIEW Hash;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpFile_DecodeHashResponse(Payload->Buffer,
-                                           Payload->Length,
-                                           &Hash);
+        Status = ZpStatus_FromNtStatus(
+            ZpFile_DecodeHashResponse(Payload->Buffer,
+                                      Payload->Length,
+                                      &Hash));
     }
     FileContext->Callback.Hash(Request,
                                Status,
-                               NT_SUCCESS(Status) ? &Hash : NULL,
+                               ZpStatus_IsSuccess(Status) ? &Hash : NULL,
                                FileContext->Context);
     Mem_Free(FileContext);
 }
@@ -429,49 +433,52 @@ VOID
 NTAPI
 ZpServerFile_OpenReadComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_FILE_OPEN_READ_CONTEXT FileContext = Context;
     PZP_SERVER_CHANNEL_OBJECT Channel = NULL;
     ULONGLONG ChannelId = 0, FileSize = 0, Offset = 0, Remaining = 0;
+    NTSTATUS ChannelStatus;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpFile_DecodeOpenReadResponse(Payload->Buffer,
-                                               Payload->Length,
-                                               &ChannelId,
-                                               &FileSize,
-                                               &Offset);
+        Status = ZpStatus_FromNtStatus(
+            ZpFile_DecodeOpenReadResponse(Payload->Buffer,
+                                          Payload->Length,
+                                          &ChannelId,
+                                          &FileSize,
+                                          &Offset));
     }
-    if (NT_SUCCESS(Status) && Offset > FileSize)
+    if (ZpStatus_IsSuccess(Status) && Offset > FileSize)
     {
-        Status = STATUS_DATA_ERROR;
+        Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
     }
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
         Remaining = FileSize - Offset;
-        Status = ZpServerChannel_Create(
-            FileContext->Connection,
-            ChannelId,
-            ZP_FILE_MODULE_ID,
-            TRUE,
-            Remaining,
-            FALSE,
-            0,
-            FileContext->DataCallback,
-            NULL,
-            FileContext->CloseCallback,
-            FileContext->Context,
-            TRUE,
-            &Channel);
+        Status = ZpStatus_FromNtStatus(
+            ZpServerChannel_Create(
+                FileContext->Connection,
+                ChannelId,
+                ZP_FILE_MODULE_ID,
+                TRUE,
+                Remaining,
+                FALSE,
+                0,
+                FileContext->DataCallback,
+                NULL,
+                FileContext->CloseCallback,
+                FileContext->Context,
+                TRUE,
+                &Channel));
     }
     else
     {
         ZpServerChannel_ReleaseReservation(FileContext->Connection);
     }
-    if (!NT_SUCCESS(Status) && ChannelId != 0)
+    if (!ZpStatus_IsSuccess(Status) && ChannelId != 0)
     {
         ZpServerConnection_RejectChannel(FileContext->Connection,
                                          ChannelId,
@@ -480,21 +487,22 @@ ZpServerFile_OpenReadComplete(
     FileContext->OpenCallback(
         Request,
         Status,
-        NT_SUCCESS(Status) ? (ZP_CHANNEL_HANDLE)Channel : NULL,
-        NT_SUCCESS(Status) ? FileSize : 0,
-        NT_SUCCESS(Status) ? Offset : 0,
+        ZpStatus_IsSuccess(Status) ? (ZP_CHANNEL_HANDLE)Channel : NULL,
+        ZpStatus_IsSuccess(Status) ? FileSize : 0,
+        ZpStatus_IsSuccess(Status) ? Offset : 0,
         FileContext->Context);
     if (Channel != NULL)
     {
         if (Remaining != 0)
         {
-            Status = ZpServerChannel_SendWindow(
+            ChannelStatus = ZpServerChannel_SendWindow(
                 Channel,
                 (ULONG)min(Remaining,
                            ZP_SERVER_DEFAULT_CHANNEL_WINDOW_SIZE));
-            if (!NT_SUCCESS(Status))
+            if (!NT_SUCCESS(ChannelStatus))
             {
-                ZpServerChannel_Abort(Channel, Status);
+                ZpServerChannel_Abort(Channel,
+                                      ZpStatus_FromNtStatus(ChannelStatus));
             }
         }
         ZpChannel_Close((ZP_CHANNEL_HANDLE)Channel);
@@ -595,7 +603,7 @@ VOID
 NTAPI
 ZpServerFile_OpenWriteComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
@@ -603,35 +611,37 @@ ZpServerFile_OpenWriteComplete(
     PZP_SERVER_CHANNEL_OBJECT Channel = NULL;
     ULONGLONG ChannelId = 0, FileSize = 0;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpFile_DecodeOpenWriteResponse(Payload->Buffer,
-                                                Payload->Length,
-                                                &ChannelId,
-                                                &FileSize);
+        Status = ZpStatus_FromNtStatus(
+            ZpFile_DecodeOpenWriteResponse(Payload->Buffer,
+                                           Payload->Length,
+                                           &ChannelId,
+                                           &FileSize));
     }
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpServerChannel_Create(
-            FileContext->Connection,
-            ChannelId,
-            ZP_FILE_MODULE_ID,
-            FALSE,
-            0,
-            TRUE,
-            FileSize,
-            NULL,
-            FileContext->WritableCallback,
-            FileContext->CloseCallback,
-            FileContext->Context,
-            TRUE,
-            &Channel);
+        Status = ZpStatus_FromNtStatus(
+            ZpServerChannel_Create(
+                FileContext->Connection,
+                ChannelId,
+                ZP_FILE_MODULE_ID,
+                FALSE,
+                0,
+                TRUE,
+                FileSize,
+                NULL,
+                FileContext->WritableCallback,
+                FileContext->CloseCallback,
+                FileContext->Context,
+                TRUE,
+                &Channel));
     }
     else
     {
         ZpServerChannel_ReleaseReservation(FileContext->Connection);
     }
-    if (!NT_SUCCESS(Status) && ChannelId != 0)
+    if (!ZpStatus_IsSuccess(Status) && ChannelId != 0)
     {
         ZpServerConnection_RejectChannel(FileContext->Connection,
                                          ChannelId,
@@ -640,8 +650,8 @@ ZpServerFile_OpenWriteComplete(
     FileContext->OpenCallback(
         Request,
         Status,
-        NT_SUCCESS(Status) ? (ZP_CHANNEL_HANDLE)Channel : NULL,
-        NT_SUCCESS(Status) ? FileSize : 0,
+        ZpStatus_IsSuccess(Status) ? (ZP_CHANNEL_HANDLE)Channel : NULL,
+        ZpStatus_IsSuccess(Status) ? FileSize : 0,
         FileContext->Context);
     if (Channel != NULL)
     {

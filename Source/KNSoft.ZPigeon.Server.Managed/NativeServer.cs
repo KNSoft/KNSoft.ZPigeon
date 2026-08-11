@@ -2,15 +2,14 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
-namespace KNSoft.ZPigeon.Web;
+namespace KNSoft.ZPigeon.Server.Managed;
 
-internal sealed class NativeServer(string directory) : IDisposable
+public sealed partial class NativeServer(string directory) : IDisposable
 {
-    private const int Success = 0;
     private const ushort Port = 4433;
     private static readonly NativeMethods.SystemInfoCallback SystemCallback =
         CompleteSystemInfo;
-    private static readonly NativeMethods.StatusCallback StatusCallback =
+    internal static readonly NativeMethods.StatusCallback StatusCallback =
         CompleteStatus;
     private static readonly NativeMethods.EventLogCallback EventLogCallback =
         CompleteEventLog;
@@ -32,7 +31,7 @@ internal sealed class NativeServer(string directory) : IDisposable
         var handle = GCHandle.Alloc(completion);
         var status = NativeMethods.GetSystemInfo(SystemCallback,
                                                   GCHandle.ToIntPtr(handle));
-        if (status < Success)
+        if (status < 0)
         {
             handle.Free();
             ThrowIfFailed(status);
@@ -63,7 +62,7 @@ internal sealed class NativeServer(string directory) : IDisposable
             maxEvents,
             EventLogCallback,
             GCHandle.ToIntPtr(handle));
-        if (status < Success)
+        if (status < 0)
         {
             handle.Free();
             ThrowIfFailed(status);
@@ -93,7 +92,7 @@ internal sealed class NativeServer(string directory) : IDisposable
             TaskCreationOptions.RunContinuationsAsynchronously);
         var handle = GCHandle.Alloc(completion);
         var status = start(StatusCallback, GCHandle.ToIntPtr(handle));
-        if (status < Success)
+        if (status < 0)
         {
             handle.Free();
             ThrowIfFailed(status);
@@ -102,7 +101,7 @@ internal sealed class NativeServer(string directory) : IDisposable
     }
 
     private static void CompleteSystemInfo(
-        int status,
+        ZpStatus status,
         int architecture,
         uint majorVersion,
         uint minorVersion,
@@ -116,7 +115,7 @@ internal sealed class NativeServer(string directory) : IDisposable
         var handle = GCHandle.FromIntPtr(context);
         var completion = (TaskCompletionSource<SystemInfo>)handle.Target!;
         handle.Free();
-        if (status < Success)
+        if (!status.IsSuccess)
         {
             completion.SetException(new NativeException(status));
             return;
@@ -132,12 +131,12 @@ internal sealed class NativeServer(string directory) : IDisposable
                 string.Empty));
     }
 
-    private static void CompleteStatus(int status, nint context)
+    private static void CompleteStatus(ZpStatus status, nint context)
     {
         var handle = GCHandle.FromIntPtr(context);
         var completion = (TaskCompletionSource)handle.Target!;
         handle.Free();
-        if (status < Success)
+        if (!status.IsSuccess)
         {
             completion.SetException(new NativeException(status));
         }
@@ -148,7 +147,7 @@ internal sealed class NativeServer(string directory) : IDisposable
     }
 
     private static void CompleteEventLog(
-        int status,
+        ZpStatus status,
         [MarshalAs(UnmanagedType.U1)] bool hasMore,
         nint nextBookmark,
         uint nextBookmarkLength,
@@ -159,7 +158,7 @@ internal sealed class NativeServer(string directory) : IDisposable
         var handle = GCHandle.FromIntPtr(context);
         var completion = (TaskCompletionSource<EventLogPage>)handle.Target!;
         handle.Free();
-        if (status < Success)
+        if (!status.IsSuccess)
         {
             completion.SetException(new NativeException(status));
             return;
@@ -246,9 +245,17 @@ internal sealed class NativeServer(string directory) : IDisposable
         File.WriteAllBytes(serverPath, server.Export(X509ContentType.Pkcs12));
     }
 
-    private static void ThrowIfFailed(int status)
+    internal static void ThrowIfFailed(int status)
     {
-        if (status < Success)
+        if (status < 0)
+        {
+            throw new NativeException(ZpStatus.FromNtStatus(status));
+        }
+    }
+
+    internal static void ThrowIfFailed(ZpStatus status)
+    {
+        if (!status.IsSuccess)
         {
             throw new NativeException(status);
         }
@@ -261,7 +268,7 @@ internal sealed class NativeServer(string directory) : IDisposable
     }
 }
 
-internal sealed record SystemInfo(
+public sealed record SystemInfo(
     int Architecture,
     uint MajorVersion,
     uint MinorVersion,
@@ -270,14 +277,49 @@ internal sealed record SystemInfo(
     ulong PhysicalMemoryBytes,
     string ComputerName);
 
-internal sealed record EventLogRecord(string Bookmark, string Xml);
-internal sealed record EventLogPage(
+public sealed record EventLogRecord(string Bookmark, string Xml);
+public sealed record EventLogPage(
     bool HasMore,
     string NextBookmark,
     EventLogRecord[] Records);
 
-internal sealed class NativeException(int status) :
-    Exception($"ZPigeon NTSTATUS: 0x{status:X8}");
+public enum ZpStatusType : ushort
+{
+    None,
+    NtStatus,
+    Win32,
+    Winsock,
+    HResult,
+    Security,
+    Quic,
+    ProcessExit
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public readonly record struct ZpStatus(ZpStatusType Type, uint Code)
+{
+    public bool IsSuccess => Type switch
+    {
+        ZpStatusType.None => Code == 0,
+        ZpStatusType.NtStatus or
+        ZpStatusType.HResult or
+        ZpStatusType.Security or
+        ZpStatusType.Quic => unchecked((int)Code) >= 0,
+        ZpStatusType.Win32 or ZpStatusType.Winsock => Code == 0,
+        ZpStatusType.ProcessExit => true,
+        _ => false
+    };
+
+    internal static ZpStatus FromNtStatus(int status) =>
+        new(status == 0 ? ZpStatusType.None : ZpStatusType.NtStatus,
+            unchecked((uint)status));
+}
+
+public sealed class NativeException(ZpStatus status) :
+    Exception($"ZPigeon {status.Type}: 0x{status.Code:X8}")
+{
+    public ZpStatus Status { get; } = status;
+}
 
 internal static partial class NativeMethods
 {
@@ -285,7 +327,7 @@ internal static partial class NativeMethods
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void SystemInfoCallback(
-        int status,
+        ZpStatus status,
         int architecture,
         uint majorVersion,
         uint minorVersion,
@@ -297,11 +339,11 @@ internal static partial class NativeMethods
         nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-    internal delegate void StatusCallback(int status, nint context);
+    internal delegate void StatusCallback(ZpStatus status, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void EventLogCallback(
-        int status,
+        ZpStatus status,
         [MarshalAs(UnmanagedType.U1)] bool hasMore,
         nint nextBookmark,
         uint nextBookmarkLength,
@@ -319,7 +361,7 @@ internal static partial class NativeMethods
     }
 
     [LibraryImport(Library, EntryPoint = "ZpNative_Start")]
-    internal static partial int Start(nint certificate, ushort port);
+    internal static partial ZpStatus Start(nint certificate, ushort port);
 
     [LibraryImport(Library, EntryPoint = "ZpNative_Stop")]
     internal static partial int Stop();

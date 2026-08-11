@@ -189,7 +189,7 @@ static
 VOID
 ZpClient_ScheduleRetry(
     _Inout_ PZP_CLIENT_OBJECT Object,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ LOGICAL RestartRound)
 {
     LARGE_INTEGER DueTime;
@@ -248,13 +248,13 @@ ZpClient_ScheduleRetry(
 }
 
 static
-NTSTATUS
+ZP_STATUS
 ZpClient_StartEndpoints(
     _Inout_ PZP_CLIENT_OBJECT Object)
 {
     PCZP_TRANSPORT_OPERATIONS Operations;
     PVOID TransportContext;
-    NTSTATUS Status = STATUS_NOT_SUPPORTED;
+    ZP_STATUS Status = ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
     ULONG Index;
 
     for (Index = Object->NextEndpointIndex;
@@ -273,9 +273,9 @@ ZpClient_StartEndpoints(
         Object->NextEndpointIndex = Index + 1;
         RtlReleaseSRWLockExclusive(&Object->Lock);
         Status = Operations->Start(TransportContext, Index);
-        if (NT_SUCCESS(Status))
+        if (ZpStatus_IsSuccess(Status))
         {
-            return STATUS_SUCCESS;
+            return Status;
         }
     }
     return Status;
@@ -285,7 +285,7 @@ static
 VOID
 ZpClient_CompleteStart(
     _Inout_ PZP_CLIENT_OBJECT Object,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     LARGE_INTEGER DueTime;
     PCZP_TRANSPORT_OPERATIONS Operations;
@@ -309,7 +309,7 @@ ZpClient_CompleteStart(
 
     if (State == ZpClientStateStopping)
     {
-        if (NT_SUCCESS(Status))
+        if (ZpStatus_IsSuccess(Status))
         {
             Operations->Stop(TransportContext);
         }
@@ -317,10 +317,11 @@ ZpClient_CompleteStart(
         {
             ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
                                  ZpClientStateStopped,
-                                 STATUS_SUCCESS);
+                                 ZpStatus_FromNtStatus(STATUS_SUCCESS));
         }
     }
-    else if (!NT_SUCCESS(Status) && State == ZpClientStateConnecting)
+    else if (!ZpStatus_IsSuccess(Status) &&
+             State == ZpClientStateConnecting)
     {
         ZpClient_ScheduleRetry(Object, Status, FALSE);
     }
@@ -336,6 +337,7 @@ ZpClient_RetryTimerCallback(
 {
     PZP_CLIENT_OBJECT Object = Context;
     NTSTATUS Status;
+    ZP_STATUS StartStatus = ZpStatus_FromNtStatus(STATUS_SUCCESS);
     LOGICAL Start;
 
     UNREFERENCED_PARAMETER(Instance);
@@ -361,7 +363,7 @@ ZpClient_RetryTimerCallback(
 
     Status = ZpClient_NotifyState((ZP_CLIENT_HANDLE)Object,
                                   ZpClientStateConnecting,
-                                  STATUS_SUCCESS);
+                                  ZpStatus_FromNtStatus(STATUS_SUCCESS));
     if (NT_SUCCESS(Status))
     {
         RtlAcquireSRWLockShared(&Object->Lock);
@@ -369,10 +371,14 @@ ZpClient_RetryTimerCallback(
         RtlReleaseSRWLockShared(&Object->Lock);
         if (Start)
         {
-            Status = ZpClient_StartEndpoints(Object);
+            StartStatus = ZpClient_StartEndpoints(Object);
         }
     }
-    ZpClient_CompleteStart(Object, Status);
+    else
+    {
+        StartStatus = ZpStatus_FromNtStatus(Status);
+    }
+    ZpClient_CompleteStart(Object, StartStatus);
 }
 
 NTSTATUS
@@ -380,7 +386,7 @@ NTAPI
 ZpClient_Start(
     _In_ ZP_CLIENT_HANDLE Client)
 {
-    NTSTATUS Status;
+    ZP_STATUS Status;
     PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
     ULONG EndpointIndex;
 
@@ -419,7 +425,7 @@ ZpClient_Start(
 
     Object->Config.StateCallback(Client,
                                  ZpClientStateConnecting,
-                                 STATUS_SUCCESS,
+                                 ZpStatus_FromNtStatus(STATUS_SUCCESS),
                                  Object->Config.CallbackContext);
     RtlAcquireSRWLockExclusive(&Object->Lock);
     Object->CallbackCount--;
@@ -468,7 +474,7 @@ ZpClient_Stop(
 
     Object->Config.StateCallback(Client,
                                  ZpClientStateStopping,
-                                 STATUS_SUCCESS,
+                                 ZpStatus_FromNtStatus(STATUS_SUCCESS),
                                  Object->Config.CallbackContext);
     RtlAcquireSRWLockExclusive(&Object->Lock);
     Object->CallbackCount--;
@@ -577,7 +583,7 @@ NTSTATUS
 ZpClient_NotifyState(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ ZP_CLIENT_STATE State,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
 
@@ -636,7 +642,7 @@ ZpClient_NotifyPong(
 VOID
 ZpClient_TransportShutdown(
     _In_ ZP_CLIENT_HANDLE Client,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
     ZP_CLIENT_STATE State;

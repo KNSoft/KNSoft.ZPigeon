@@ -38,7 +38,7 @@ VOID
 (NTAPI *ZP_CLIENT_STATE_CALLBACK)(
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ ZP_CLIENT_STATE State,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context);
 
 typedef
@@ -54,7 +54,7 @@ VOID
     _In_ ZP_CLIENT_HANDLE Client,
     _In_ USHORT ModuleId,
     _In_ USHORT OperationId,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context);
 
 typedef struct _ZP_CLIENT_CONFIG

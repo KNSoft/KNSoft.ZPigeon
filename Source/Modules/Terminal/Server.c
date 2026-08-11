@@ -21,12 +21,18 @@ typedef struct _ZP_SERVER_TERMINAL_RESIZE_CONTEXT
 } ZP_SERVER_TERMINAL_RESIZE_CONTEXT,
   *PZP_SERVER_TERMINAL_RESIZE_CONTEXT;
 
+typedef struct _ZP_SERVER_TERMINAL_SHELL_CONTEXT
+{
+    ZP_TERMINAL_SHELLS_CALLBACK Callback;
+    PVOID Context;
+} ZP_SERVER_TERMINAL_SHELL_CONTEXT, *PZP_SERVER_TERMINAL_SHELL_CONTEXT;
+
 static
 VOID
 NTAPI
 ZpServerTerminal_CreateComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
@@ -34,36 +40,39 @@ ZpServerTerminal_CreateComplete(
     PZP_SERVER_CHANNEL_OBJECT Channel = NULL;
     ULONGLONG ChannelId = 0;
     ULONG ProcessId = 0;
+    NTSTATUS ChannelStatus;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpTerminal_DecodeCreateResponse(Payload->Buffer,
-                                                 Payload->Length,
-                                                 &ChannelId,
-                                                 &ProcessId);
+        Status = ZpStatus_FromNtStatus(
+            ZpTerminal_DecodeCreateResponse(Payload->Buffer,
+                                            Payload->Length,
+                                            &ChannelId,
+                                            &ProcessId));
     }
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpServerChannel_Create(
-            TerminalContext->Connection,
-            ChannelId,
-            ZP_TERMINAL_MODULE_ID,
-            FALSE,
-            0,
-            FALSE,
-            0,
-            TerminalContext->DataCallback,
-            TerminalContext->WritableCallback,
-            TerminalContext->CloseCallback,
-            TerminalContext->Context,
-            TRUE,
-            &Channel);
+        Status = ZpStatus_FromNtStatus(
+            ZpServerChannel_Create(
+                TerminalContext->Connection,
+                ChannelId,
+                ZP_TERMINAL_MODULE_ID,
+                FALSE,
+                0,
+                FALSE,
+                0,
+                TerminalContext->DataCallback,
+                TerminalContext->WritableCallback,
+                TerminalContext->CloseCallback,
+                TerminalContext->Context,
+                TRUE,
+                &Channel));
     }
     else
     {
         ZpServerChannel_ReleaseReservation(TerminalContext->Connection);
     }
-    if (!NT_SUCCESS(Status) && ChannelId != 0)
+    if (!ZpStatus_IsSuccess(Status) && ChannelId != 0)
     {
         ZpServerConnection_RejectChannel(TerminalContext->Connection,
                                          ChannelId,
@@ -72,17 +81,19 @@ ZpServerTerminal_CreateComplete(
     TerminalContext->CreateCallback(
         Request,
         Status,
-        NT_SUCCESS(Status) ? (ZP_CHANNEL_HANDLE)Channel : NULL,
-        NT_SUCCESS(Status) ? ProcessId : 0,
+        ZpStatus_IsSuccess(Status) ? (ZP_CHANNEL_HANDLE)Channel : NULL,
+        ZpStatus_IsSuccess(Status) ? ProcessId : 0,
         TerminalContext->Context);
     if (Channel != NULL)
     {
-        Status = ZpServerChannel_SendWindow(
+        ChannelStatus = ZpServerChannel_SendWindow(
             Channel,
             ZP_SERVER_DEFAULT_CHANNEL_WINDOW_SIZE);
-        if (!NT_SUCCESS(Status))
+        if (!NT_SUCCESS(ChannelStatus))
         {
-            ZpServerChannel_Abort(Channel, Status);
+            ZpServerChannel_Abort(
+                Channel,
+                ZpStatus_FromNtStatus(ChannelStatus));
         }
         ZpChannel_Close((ZP_CHANNEL_HANDLE)Channel);
     }
@@ -94,18 +105,44 @@ VOID
 NTAPI
 ZpServerTerminal_ResizeComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_TERMINAL_RESIZE_CONTEXT ResizeContext = Context;
 
-    if (NT_SUCCESS(Status) && Payload->Length != 0)
+    if (ZpStatus_IsSuccess(Status) && Payload->Length != 0)
     {
-        Status = STATUS_DATA_ERROR;
+        Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
     }
     ResizeContext->Callback(Request, Status, ResizeContext->Context);
     Mem_Free(ResizeContext);
+}
+
+static
+VOID
+NTAPI
+ZpServerTerminal_QueryShellsComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_SERVER_TERMINAL_SHELL_CONTEXT ShellContext = Context;
+    ULONG Shells = 0;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(
+            ZpTerminal_DecodeShells(Payload->Buffer,
+                                    Payload->Length,
+                                    &Shells));
+    }
+    ShellContext->Callback(Request,
+                           Status,
+                           ZpStatus_IsSuccess(Status) ? Shells : 0,
+                           ShellContext->Context);
+    Mem_Free(ShellContext);
 }
 
 NTSTATUS
@@ -266,6 +303,45 @@ ZpServer_ResizeTerminal(
         {
             Mem_Free(ResizeContext);
         }
+    }
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_QueryTerminalShells(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_TERMINAL_SHELLS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_SERVER_TERMINAL_SHELL_CONTEXT ShellContext;
+    NTSTATUS Status;
+
+    if (Connection == NULL || Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    ShellContext = Mem_Alloc(sizeof(*ShellContext));
+    if (ShellContext == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    ShellContext->Callback = Callback;
+    ShellContext->Context = Context;
+    Status = ZpServer_SendRequest(Connection,
+                                  ZP_TERMINAL_MODULE_ID,
+                                  ZP_TERMINAL_OPERATION_QUERY_SHELLS,
+                                  TimeoutMilliseconds,
+                                  NULL,
+                                  0,
+                                  ZpServerTerminal_QueryShellsComplete,
+                                  ShellContext,
+                                  Request);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(ShellContext);
     }
     return Status;
 }

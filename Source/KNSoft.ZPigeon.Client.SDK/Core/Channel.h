@@ -21,13 +21,13 @@ typedef
 NTSTATUS
 (*ZP_CLIENT_LOCAL_CHANNEL_CLOSE_ROUTINE)(
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);
 
 typedef
 VOID
 (*ZP_CLIENT_LOCAL_CHANNEL_ABORT_ROUTINE)(
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);
 
 typedef
 VOID
@@ -109,4 +109,4 @@ ZpClientLocalChannel_ReceiveClose(
 VOID
 ZpClientLocalChannel_CloseAll(
     _Inout_ PZP_CLIENT_OBJECT Object,
-    _In_ NTSTATUS Status);
+    _In_ ZP_STATUS Status);

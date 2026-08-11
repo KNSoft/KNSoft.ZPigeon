@@ -13,22 +13,23 @@ VOID
 NTAPI
 ZpServerEventLog_QueryComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_EVENT_LOG_QUERY_CONTEXT EventContext = Context;
     ZP_EVENT_LOG_PAGE_VIEW Page;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpEventLog_DecodePage(Payload->Buffer,
-                                       Payload->Length,
-                                       &Page);
+        Status = ZpStatus_FromNtStatus(
+            ZpEventLog_DecodePage(Payload->Buffer,
+                                  Payload->Length,
+                                  &Page));
     }
     EventContext->Callback(Request,
                            Status,
-                           NT_SUCCESS(Status) ? &Page : NULL,
+                           ZpStatus_IsSuccess(Status) ? &Page : NULL,
                            EventContext->Context);
     Mem_Free(EventContext);
 }
@@ -129,15 +130,15 @@ VOID
 NTAPI
 ZpServerEventLog_StatusComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_EVENT_LOG_STATUS_CONTEXT EventContext = Context;
 
-    if (NT_SUCCESS(Status) && Payload->Length != 0)
+    if (ZpStatus_IsSuccess(Status) && Payload->Length != 0)
     {
-        Status = STATUS_DATA_ERROR;
+        Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
     }
     EventContext->Callback(Request, Status, EventContext->Context);
     Mem_Free(EventContext);

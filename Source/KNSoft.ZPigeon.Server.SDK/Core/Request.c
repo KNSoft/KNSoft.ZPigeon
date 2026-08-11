@@ -88,7 +88,7 @@ static
 VOID
 ZpServerConnection_InvokeRequest(
     _Inout_ PZP_SERVER_REQUEST_OBJECT Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_opt_ PCZP_BUFFER_VIEW Payload)
 {
     static const ZP_BUFFER_VIEW EmptyPayload = { NULL, 0 };
@@ -148,7 +148,10 @@ ZpServerConnection_RequestTimerCallback(
         Connection->RequestCount--;
         RtlReleaseSRWLockExclusive(&Connection->Lock);
         ZpServerConnection_SendCancel(Connection, Request->RequestId);
-        ZpServerConnection_InvokeRequest(Request, STATUS_IO_TIMEOUT, NULL);
+        ZpServerConnection_InvokeRequest(
+            Request,
+            ZpStatus_FromNtStatus(STATUS_IO_TIMEOUT),
+            NULL);
     }
 }
 
@@ -176,7 +179,10 @@ ZpServerConnection_CancelRequest(
     ZpServerConnection_ArmRequestTimer(Connection);
     RtlReleaseSRWLockExclusive(&Connection->Lock);
     ZpServerConnection_SendCancel(Connection, RequestObject->RequestId);
-    ZpServerConnection_InvokeRequest(RequestObject, STATUS_CANCELLED, NULL);
+    ZpServerConnection_InvokeRequest(
+        RequestObject,
+        ZpStatus_FromNtStatus(STATUS_CANCELLED),
+        NULL);
     return STATUS_SUCCESS;
 }
 
@@ -374,12 +380,14 @@ ZpServerConnection_ReceiveResponse(
 VOID
 ZpServerConnection_Close(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     PZP_SERVER_REQUEST_OBJECT Request;
     PTP_TIMER Timer;
-    NTSTATUS CompletionStatus = NT_SUCCESS(Status) ?
-                                    STATUS_CONNECTION_DISCONNECTED : Status;
+    ZP_STATUS CompletionStatus = ZpStatus_IsSuccess(Status) ?
+                                     ZpStatus_FromNtStatus(
+                                         STATUS_CONNECTION_DISCONNECTED) :
+                                     Status;
 
     RtlAcquireSRWLockExclusive(&Connection->Lock);
     Connection->Phase = ZpConnectionPhaseClosed;

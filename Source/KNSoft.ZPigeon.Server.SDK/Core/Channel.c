@@ -68,10 +68,10 @@ static
 VOID
 ZpServerChannel_SendClose(
     _Inout_ PZP_SERVER_CHANNEL_OBJECT Channel,
-    _In_ NTSTATUS CloseStatus)
+    _In_ ZP_STATUS CloseStatus)
 {
     PZP_CONNECTION_OBJECT Connection = Channel->Owner;
-    BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
+    BYTE Body[sizeof(ULONGLONG) + ZP_STATUS_WIRE_SIZE];
     ULONG BodyLength;
 
     if (!NT_SUCCESS(ZpMessage_EncodeChannelClose(Channel->ChannelId,
@@ -97,7 +97,7 @@ static
 VOID
 ZpServerChannel_InvokeClose(
     _Inout_ PZP_SERVER_CHANNEL_OBJECT Channel,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     PZP_CONNECTION_OBJECT Connection = Channel->Owner;
 
@@ -150,7 +150,7 @@ static
 VOID
 ZpServerChannel_Complete(
     _Inout_ PZP_SERVER_CHANNEL_OBJECT Channel,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     PZP_CONNECTION_OBJECT Connection = Channel->Owner;
 
@@ -331,7 +331,7 @@ ZpServerChannel_GetId(
 VOID
 ZpServerChannel_Abort(
     _Inout_ PZP_SERVER_CHANNEL_OBJECT Channel,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     if (Channel->Owner != NULL)
     {
@@ -343,9 +343,9 @@ VOID
 ZpServerConnection_RejectChannel(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
     _In_ ULONGLONG ChannelId,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
-    BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
+    BYTE Body[sizeof(ULONGLONG) + ZP_STATUS_WIRE_SIZE];
     ULONG BodyLength;
 
     if (!NT_SUCCESS(ZpMessage_EncodeChannelClose(ChannelId,
@@ -390,8 +390,10 @@ ZpServerChannel_Cancel(
     RemoveEntryList(&ChannelObject->ListEntry);
     Connection->ChannelCount--;
     RtlReleaseSRWLockExclusive(&Connection->Lock);
-    ZpServerChannel_SendClose(ChannelObject, STATUS_CANCELLED);
-    ZpServerChannel_InvokeClose(ChannelObject, STATUS_CANCELLED);
+    ZpServerChannel_SendClose(ChannelObject,
+                             ZpStatus_FromNtStatus(STATUS_CANCELLED));
+    ZpServerChannel_InvokeClose(ChannelObject,
+                               ZpStatus_FromNtStatus(STATUS_CANCELLED));
     return STATUS_SUCCESS;
 }
 
@@ -515,7 +517,7 @@ ZpServerConnection_ReceiveChannelData(
         Status = ZpServerChannel_SendWindow(Channel, Message->Data.Length);
         if (!NT_SUCCESS(Status) && Channel->Owner != NULL)
         {
-            ZpServerChannel_Complete(Channel, Status);
+            ZpServerChannel_Complete(Channel, ZpStatus_FromNtStatus(Status));
         }
     }
     ZpChannel_Release(&Channel->Header);
@@ -540,7 +542,7 @@ ZpServerConnection_ReceiveChannelClose(
         RtlReleaseSRWLockExclusive(&Connection->Lock);
         return Status;
     }
-    if ((NT_SUCCESS(Message->Status) &&
+    if ((ZpStatus_IsSuccess(Message->Status) &&
          ((Channel->BoundedReceive && Channel->RemainingBytes != 0) ||
           (Channel->BoundedSend && Channel->RemainingSendBytes != 0))))
     {
@@ -595,7 +597,7 @@ ZpServerConnection_ReceiveChannelWindow(
 VOID
 ZpServerConnection_CloseChannels(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ NTSTATUS Status)
+    _In_ ZP_STATUS Status)
 {
     PZP_SERVER_CHANNEL_OBJECT Channel;
 

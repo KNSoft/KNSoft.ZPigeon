@@ -13,22 +13,23 @@ VOID
 NTAPI
 ZpSystem_InfoComplete(
     _In_ ZP_REQUEST_HANDLE Request,
-    _In_ NTSTATUS Status,
+    _In_ ZP_STATUS Status,
     _In_ PCZP_BUFFER_VIEW Payload,
     _In_opt_ PVOID Context)
 {
     PZP_SYSTEM_INFO_CONTEXT SystemContext = Context;
     ZP_SYSTEM_INFO_VIEW Info;
 
-    if (NT_SUCCESS(Status))
+    if (ZpStatus_IsSuccess(Status))
     {
-        Status = ZpSystem_DecodeInfo(Payload->Buffer,
-                                     Payload->Length,
-                                     &Info);
+        Status = ZpStatus_FromNtStatus(
+            ZpSystem_DecodeInfo(Payload->Buffer,
+                                Payload->Length,
+                                &Info));
     }
     SystemContext->Callback(Request,
                             Status,
-                            NT_SUCCESS(Status) ? &Info : NULL,
+                            ZpStatus_IsSuccess(Status) ? &Info : NULL,
                             SystemContext->Context);
     Mem_Free(SystemContext);
 }
