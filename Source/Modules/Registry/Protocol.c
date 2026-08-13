@@ -3,13 +3,10 @@
 static
 LOGICAL
 ZpRegistry_IsScopeValid(
-    _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View)
+    _In_ ZP_REGISTRY_ROOT Root)
 {
     return Root >= ZpRegistryClassesRoot &&
-           Root <= ZpRegistryCurrentConfig &&
-           View >= ZpRegistryViewDefault &&
-           View <= ZpRegistryView64;
+           Root <= ZpRegistryCurrentConfig;
 }
 
 static
@@ -26,37 +23,23 @@ static
 NTSTATUS
 ZpRegistry_WriteScope(
     _Inout_ PZP_CODEC_WRITER Writer,
-    _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View)
+    _In_ ZP_REGISTRY_ROOT Root)
 {
-    NTSTATUS Status;
-
-    Status = ZpCodec_WriteUInt16(Writer, (USHORT)Root);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteUInt16(Writer, (USHORT)View);
-    }
-    return Status;
+    return ZpCodec_WriteUInt16(Writer, (USHORT)Root);
 }
 
 static
 NTSTATUS
 ZpRegistry_ReadScope(
     _Inout_ PZP_CODEC_READER Reader,
-    _Out_ PZP_REGISTRY_ROOT Root,
-    _Out_ PZP_REGISTRY_VIEW View)
+    _Out_ PZP_REGISTRY_ROOT Root)
 {
-    USHORT RootValue = 0, ViewValue = 0;
+    USHORT RootValue = 0;
     NTSTATUS Status;
 
     Status = ZpCodec_ReadUInt16(Reader, &RootValue);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_ReadUInt16(Reader, &ViewValue);
-    }
     *Root = (ZP_REGISTRY_ROOT)RootValue;
-    *View = (ZP_REGISTRY_VIEW)ViewValue;
-    if (NT_SUCCESS(Status) && !ZpRegistry_IsScopeValid(*Root, *View))
+    if (NT_SUCCESS(Status) && !ZpRegistry_IsScopeValid(*Root))
     {
         Status = STATUS_DATA_ERROR;
     }
@@ -66,7 +49,6 @@ ZpRegistry_ReadScope(
 NTSTATUS
 ZpRegistry_EncodeEnumerateRequest(
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_ ULONG MaxEntries,
     _In_ BOOLEAN CursorPresent,
     _In_reads_opt_(PathLength) PCWCH Path,
@@ -81,7 +63,7 @@ ZpRegistry_EncodeEnumerateRequest(
     ULONGLONG RequiredSize;
     NTSTATUS Status;
 
-    if (!ZpRegistry_IsScopeValid(Root, View) ||
+    if (!ZpRegistry_IsScopeValid(Root) ||
         MaxEntries == 0 || MaxEntries > ZP_REGISTRY_PAGE_MAX_COUNT ||
         (CursorPresent != FALSE && CursorPresent != TRUE) ||
         !ZpRegistry_IsStringValid(Path, PathLength) ||
@@ -90,7 +72,7 @@ ZpRegistry_EncodeEnumerateRequest(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 2 * sizeof(USHORT) + sizeof(ULONG) + sizeof(BYTE) +
+    RequiredSize = sizeof(USHORT) + sizeof(ULONG) + sizeof(BYTE) +
                    2 * sizeof(ULONG) +
                    ((ULONGLONG)PathLength + CursorLength) * sizeof(WCHAR);
     if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
@@ -107,7 +89,7 @@ ZpRegistry_EncodeEnumerateRequest(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpRegistry_WriteScope(&Writer, Root, View);
+    Status = ZpRegistry_WriteScope(&Writer, Root);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_WriteUInt32(&Writer, MaxEntries);
@@ -137,7 +119,7 @@ ZpRegistry_DecodeEnumerateRequest(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpRegistry_ReadScope(&Reader, &Request->Root, &Request->View);
+    Status = ZpRegistry_ReadScope(&Reader, &Request->Root);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadUInt32(&Reader, &Request->MaxEntries);
@@ -181,6 +163,10 @@ ZpRegistry_ReadKeyRecord(
     {
         Status = ZpCodec_ReadUInt64(Reader, &LocalRecord.LastWriteTime);
     }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadBoolean(Reader, &LocalRecord.HasChildren);
+    }
     if (NT_SUCCESS(Status) &&
         (LocalRecord.Name.Length == 0 ||
          LocalRecord.Name.Length > ZP_REGISTRY_PATH_MAX_LENGTH))
@@ -212,9 +198,15 @@ ZpRegistry_ReadValueRecord(
     {
         Status = ZpCodec_ReadUInt32(Reader, &LocalRecord.DataLength);
     }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadByteString(Reader, &LocalRecord.Preview);
+    }
     if (NT_SUCCESS(Status) &&
         (LocalRecord.Name.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
-         LocalRecord.DataLength > ZP_REGISTRY_DATA_MAX_LENGTH))
+         LocalRecord.Preview.Length >
+             ZP_REGISTRY_VALUE_PREVIEW_MAX_LENGTH ||
+         LocalRecord.Preview.Length > LocalRecord.DataLength))
     {
         Status = STATUS_DATA_ERROR;
     }
@@ -297,7 +289,7 @@ ZpRegistry_EncodeKeyPage(
         {
             return STATUS_INVALID_PARAMETER;
         }
-        RequiredSize += sizeof(ULONG) + sizeof(ULONGLONG) +
+        RequiredSize += sizeof(ULONG) + sizeof(ULONGLONG) + sizeof(BYTE) +
                         (ULONGLONG)Records[Index].NameLength * sizeof(WCHAR);
         if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
         {
@@ -332,6 +324,11 @@ ZpRegistry_EncodeKeyPage(
         {
             Status = ZpCodec_WriteUInt64(&Writer,
                                          Records[Index].LastWriteTime);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteBoolean(&Writer,
+                                          Records[Index].HasChildren);
         }
     }
     return Status;
@@ -451,12 +448,17 @@ ZpRegistry_EncodeValuePage(
     {
         if (!ZpRegistry_IsStringValid(Records[Index].Name,
                                       Records[Index].NameLength) ||
-            Records[Index].DataLength > ZP_REGISTRY_DATA_MAX_LENGTH)
+            Records[Index].PreviewLength >
+                ZP_REGISTRY_VALUE_PREVIEW_MAX_LENGTH ||
+            Records[Index].PreviewLength > Records[Index].DataLength ||
+            (Records[Index].PreviewLength != 0 &&
+             Records[Index].Preview == NULL))
         {
             return STATUS_INVALID_PARAMETER;
         }
-        RequiredSize += 3 * sizeof(ULONG) +
-                        (ULONGLONG)Records[Index].NameLength * sizeof(WCHAR);
+        RequiredSize += 4 * sizeof(ULONG) +
+                        (ULONGLONG)Records[Index].NameLength * sizeof(WCHAR) +
+                        Records[Index].PreviewLength;
         if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
         {
             return STATUS_BUFFER_OVERFLOW;
@@ -494,6 +496,12 @@ ZpRegistry_EncodeValuePage(
         {
             Status = ZpCodec_WriteUInt32(&Writer,
                                          Records[Index].DataLength);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteByteString(&Writer,
+                                             Records[Index].Preview,
+                                             Records[Index].PreviewLength);
         }
     }
     return Status;
@@ -578,7 +586,6 @@ ZpRegistry_GetValueRecord(
 NTSTATUS
 ZpRegistry_EncodeValueRequest(
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(ValueNameLength) PCWCH ValueName,
@@ -591,13 +598,13 @@ ZpRegistry_EncodeValueRequest(
     ULONGLONG RequiredSize;
     NTSTATUS Status;
 
-    if (!ZpRegistry_IsScopeValid(Root, View) ||
+    if (!ZpRegistry_IsScopeValid(Root) ||
         !ZpRegistry_IsStringValid(Path, PathLength) ||
         !ZpRegistry_IsStringValid(ValueName, ValueNameLength))
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 2 * sizeof(USHORT) + 2 * sizeof(ULONG) +
+    RequiredSize = sizeof(USHORT) + 2 * sizeof(ULONG) +
                    ((ULONGLONG)PathLength + ValueNameLength) * sizeof(WCHAR);
     if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
     {
@@ -613,7 +620,7 @@ ZpRegistry_EncodeValueRequest(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpRegistry_WriteScope(&Writer, Root, View);
+    Status = ZpRegistry_WriteScope(&Writer, Root);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_WriteString(&Writer, Path, PathLength);
@@ -637,7 +644,7 @@ ZpRegistry_DecodeValueRequest(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpRegistry_ReadScope(&Reader, &Request->Root, &Request->View);
+    Status = ZpRegistry_ReadScope(&Reader, &Request->Root);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadString(&Reader, &Request->Path);
@@ -718,7 +725,6 @@ ZpRegistry_DecodeValue(
 NTSTATUS
 ZpRegistry_EncodeSetValueRequest(
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_ ULONG Type,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
@@ -734,7 +740,7 @@ ZpRegistry_EncodeSetValueRequest(
     ULONGLONG RequiredSize;
     NTSTATUS Status;
 
-    if (!ZpRegistry_IsScopeValid(Root, View) ||
+    if (!ZpRegistry_IsScopeValid(Root) ||
         !ZpRegistry_IsStringValid(Path, PathLength) ||
         !ZpRegistry_IsStringValid(ValueName, ValueNameLength) ||
         DataLength > ZP_REGISTRY_DATA_MAX_LENGTH ||
@@ -742,7 +748,7 @@ ZpRegistry_EncodeSetValueRequest(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 2 * sizeof(USHORT) + 4 * sizeof(ULONG) +
+    RequiredSize = sizeof(USHORT) + 4 * sizeof(ULONG) +
                    ((ULONGLONG)PathLength + ValueNameLength) * sizeof(WCHAR) +
                    DataLength;
     if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
@@ -759,7 +765,7 @@ ZpRegistry_EncodeSetValueRequest(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpRegistry_WriteScope(&Writer, Root, View);
+    Status = ZpRegistry_WriteScope(&Writer, Root);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_WriteUInt32(&Writer, Type);
@@ -791,7 +797,7 @@ ZpRegistry_DecodeSetValueRequest(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpRegistry_ReadScope(&Reader, &Request->Root, &Request->View);
+    Status = ZpRegistry_ReadScope(&Reader, &Request->Root);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadUInt32(&Reader, &Request->Type);
@@ -822,7 +828,6 @@ ZpRegistry_DecodeSetValueRequest(
 NTSTATUS
 ZpRegistry_EncodeKeyRequest(
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
@@ -833,13 +838,13 @@ ZpRegistry_EncodeKeyRequest(
     ULONGLONG RequiredSize;
     NTSTATUS Status;
 
-    if (!ZpRegistry_IsScopeValid(Root, View) ||
+    if (!ZpRegistry_IsScopeValid(Root) ||
         PathLength == 0 ||
         !ZpRegistry_IsStringValid(Path, PathLength))
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 2 * sizeof(USHORT) + sizeof(ULONG) +
+    RequiredSize = sizeof(USHORT) + sizeof(ULONG) +
                    (ULONGLONG)PathLength * sizeof(WCHAR);
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL)
@@ -851,7 +856,7 @@ ZpRegistry_EncodeKeyRequest(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpRegistry_WriteScope(&Writer, Root, View);
+    Status = ZpRegistry_WriteScope(&Writer, Root);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_WriteString(&Writer, Path, PathLength);
@@ -869,7 +874,7 @@ ZpRegistry_DecodeKeyRequest(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpRegistry_ReadScope(&Reader, &Request->Root, &Request->View);
+    Status = ZpRegistry_ReadScope(&Reader, &Request->Root);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadString(&Reader, &Request->Path);
@@ -877,6 +882,100 @@ ZpRegistry_DecodeKeyRequest(
     if (!NT_SUCCESS(Status) ||
         Request->Path.Length == 0 ||
         Request->Path.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
+        Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpRegistry_EncodeRenameRequest(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_reads_(NewNameLength) PCWCH NewName,
+    _In_ ULONG NewNameLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize;
+    NTSTATUS Status;
+
+    if (!ZpRegistry_IsScopeValid(Root) ||
+        !ZpRegistry_IsStringValid(Path, PathLength) ||
+        !ZpRegistry_IsStringValid(Name, NameLength) || NameLength == 0 ||
+        !ZpRegistry_IsStringValid(NewName, NewNameLength) ||
+        NewNameLength == 0)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = sizeof(USHORT) + 3 * sizeof(ULONG) +
+                   ((ULONGLONG)PathLength + NameLength + NewNameLength) *
+                       sizeof(WCHAR);
+    if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
+    {
+        return STATUS_BUFFER_OVERFLOW;
+    }
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < RequiredSize)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpRegistry_WriteScope(&Writer, Root);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer, Path, PathLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer, Name, NameLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer, NewName, NewNameLength);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpRegistry_DecodeRenameRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_REGISTRY_RENAME_REQUEST_VIEW Request)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpRegistry_ReadScope(&Reader, &Request->Root);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(&Reader, &Request->Path);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(&Reader, &Request->Name);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(&Reader, &Request->NewName);
+    }
+    if (!NT_SUCCESS(Status) ||
+        Request->Path.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
+        Request->Name.Length == 0 ||
+        Request->Name.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
+        Request->NewName.Length == 0 ||
+        Request->NewName.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
         Reader.Offset != PayloadLength)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;

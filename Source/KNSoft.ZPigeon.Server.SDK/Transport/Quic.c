@@ -572,6 +572,7 @@ ZpServerQuic_ListenerCallback(
     PZP_SERVER_OBJECT Object;
     PZP_SERVER_QUIC_CONNECTION QuicConnection;
     QUIC_STATUS QuicStatus;
+    NTSTATUS Status;
     LONG DeploymentIndex;
 
     if (QuicListener == NULL)
@@ -596,11 +597,17 @@ ZpServerQuic_ListenerCallback(
             }
             RtlZeroMemory(QuicConnection, sizeof(*QuicConnection));
             QuicConnection->Transport = Transport;
-            ZpServerConnection_Initialize(&QuicConnection->Public,
-                                          Object->Config.MaxRequestsPerConnection,
-                                          Object->Config.MaxChannelsPerConnection,
-                                          ZpServerQuic_Send,
-                                          ZpServerQuic_DestroyConnection);
+            Status = ZpServerConnection_Initialize(
+                         &QuicConnection->Public,
+                         Object->Config.MaxRequestsPerConnection,
+                         Object->Config.MaxChannelsPerConnection,
+                         ZpServerQuic_Send,
+                         ZpServerQuic_DestroyConnection);
+            if (!NT_SUCCESS(Status))
+            {
+                Mem_Free(QuicConnection);
+                return QUIC_STATUS_OUT_OF_MEMORY;
+            }
             QuicConnection->Connection = Event->NEW_CONNECTION.Connection;
             QuicConnection->ShutdownStatus = ZpStatus_FromNtStatus(STATUS_SUCCESS);
             MsQuicSetCallbackHandler(QuicConnection->Connection,

@@ -36,6 +36,61 @@ VOID
     _In_ ULONG RecordCount,
     _In_opt_ PVOID Context);
 
+typedef struct _ZP_NATIVE_REGISTRY_KEY_RECORD
+{
+    PCWCH Name;
+    ULONG NameLength;
+    ULONGLONG LastWriteTime;
+    BOOLEAN HasChildren;
+} ZP_NATIVE_REGISTRY_KEY_RECORD, *PZP_NATIVE_REGISTRY_KEY_RECORD;
+
+typedef const ZP_NATIVE_REGISTRY_KEY_RECORD*
+    PCZP_NATIVE_REGISTRY_KEY_RECORD;
+
+typedef struct _ZP_NATIVE_REGISTRY_VALUE_RECORD
+{
+    PCWCH Name;
+    ULONG NameLength;
+    ULONG Type;
+    ULONG DataLength;
+    const VOID* Preview;
+    ULONG PreviewLength;
+} ZP_NATIVE_REGISTRY_VALUE_RECORD, *PZP_NATIVE_REGISTRY_VALUE_RECORD;
+
+typedef const ZP_NATIVE_REGISTRY_VALUE_RECORD*
+    PCZP_NATIVE_REGISTRY_VALUE_RECORD;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_REGISTRY_KEY_PAGE_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_ BOOLEAN HasMore,
+    _In_reads_opt_(NextCursorLength) PCWCH NextCursor,
+    _In_ ULONG NextCursorLength,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_REGISTRY_KEY_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_REGISTRY_VALUE_PAGE_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_ BOOLEAN HasMore,
+    _In_reads_opt_(NextCursorLength) PCWCH NextCursor,
+    _In_ ULONG NextCursorLength,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_REGISTRY_VALUE_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_REGISTRY_VALUE_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_ ULONG Type,
+    _In_reads_bytes_opt_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_opt_ PVOID Context);
+
 typedef struct _ZP_NATIVE_TERMINAL* ZP_NATIVE_TERMINAL_HANDLE;
 
 typedef
@@ -186,6 +241,62 @@ NTAPI
 ZpNative_ClearEventLog(
     _In_reads_(ChannelPathLength) PCWCH ChannelPath,
     _In_ ULONG ChannelPathLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateRegistryKeysPage(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(CursorLength) PCWCH Cursor,
+    _In_ ULONG CursorLength,
+    _In_ ULONG MaxEntries,
+    _In_ ZP_NATIVE_REGISTRY_KEY_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateRegistryValuesPage(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(CursorLength) PCWCH Cursor,
+    _In_ ULONG CursorLength,
+    _In_ ULONG MaxEntries,
+    _In_ ZP_NATIVE_REGISTRY_VALUE_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_QueryRegistryValue(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ZP_NATIVE_REGISTRY_VALUE_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_ExecuteRegistryStatus(
+    _In_ USHORT OperationId,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_reads_opt_(NewNameLength) PCWCH NewName,
+    _In_ ULONG NewNameLength,
+    _In_ ULONG Type,
+    _In_reads_bytes_opt_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 

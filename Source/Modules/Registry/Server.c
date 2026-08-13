@@ -57,7 +57,6 @@ ZpServer_EnumerateRegistryPage(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ USHORT OperationId,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(CursorLength) PCWCH Cursor,
@@ -78,7 +77,6 @@ ZpServer_EnumerateRegistryPage(
         return STATUS_INVALID_PARAMETER;
     }
     Status = ZpRegistry_EncodeEnumerateRequest(Root,
-                                               View,
                                                MaxEntries,
                                                Cursor != NULL,
                                                Path,
@@ -96,7 +94,6 @@ ZpServer_EnumerateRegistryPage(
     if (NT_SUCCESS(Status))
     {
         Status = ZpRegistry_EncodeEnumerateRequest(Root,
-                                                   View,
                                                    MaxEntries,
                                                    Cursor != NULL,
                                                    Path,
@@ -143,7 +140,6 @@ NTAPI
 ZpServer_EnumerateRegistryKeysPage(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(CursorLength) PCWCH Cursor,
@@ -158,7 +154,6 @@ ZpServer_EnumerateRegistryKeysPage(
                Connection,
                ZP_REGISTRY_OPERATION_ENUMERATE_KEYS_PAGE,
                Root,
-               View,
                Path,
                PathLength,
                Cursor,
@@ -175,7 +170,6 @@ NTAPI
 ZpServer_EnumerateRegistryValuesPage(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(CursorLength) PCWCH Cursor,
@@ -190,7 +184,6 @@ ZpServer_EnumerateRegistryValuesPage(
                Connection,
                ZP_REGISTRY_OPERATION_ENUMERATE_VALUES_PAGE,
                Root,
-               View,
                Path,
                PathLength,
                Cursor,
@@ -233,7 +226,6 @@ NTAPI
 ZpServer_QueryRegistryValue(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(ValueNameLength) PCWCH ValueName,
@@ -253,7 +245,6 @@ ZpServer_QueryRegistryValue(
         return STATUS_INVALID_PARAMETER;
     }
     Status = ZpRegistry_EncodeValueRequest(Root,
-                                           View,
                                            Path,
                                            PathLength,
                                            ValueName,
@@ -269,7 +260,6 @@ ZpServer_QueryRegistryValue(
     if (NT_SUCCESS(Status))
     {
         Status = ZpRegistry_EncodeValueRequest(Root,
-                                               View,
                                                Path,
                                                PathLength,
                                                ValueName,
@@ -369,7 +359,6 @@ NTAPI
 ZpServer_SetRegistryValue(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(ValueNameLength) PCWCH ValueName,
@@ -391,7 +380,6 @@ ZpServer_SetRegistryValue(
         return STATUS_INVALID_PARAMETER;
     }
     Status = ZpRegistry_EncodeSetValueRequest(Root,
-                                              View,
                                               Type,
                                               Path,
                                               PathLength,
@@ -410,7 +398,6 @@ ZpServer_SetRegistryValue(
     if (NT_SUCCESS(Status))
     {
         Status = ZpRegistry_EncodeSetValueRequest(Root,
-                                                  View,
                                                   Type,
                                                   Path,
                                                   PathLength,
@@ -444,7 +431,6 @@ ZpServer_SendRegistryValueStatusRequest(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ USHORT OperationId,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(ValueNameLength) PCWCH ValueName,
@@ -463,7 +449,6 @@ ZpServer_SendRegistryValueStatusRequest(
         return STATUS_INVALID_PARAMETER;
     }
     Status = ZpRegistry_EncodeValueRequest(Root,
-                                           View,
                                            Path,
                                            PathLength,
                                            ValueName,
@@ -479,7 +464,6 @@ ZpServer_SendRegistryValueStatusRequest(
     if (NT_SUCCESS(Status))
     {
         Status = ZpRegistry_EncodeValueRequest(Root,
-                                               View,
                                                Path,
                                                PathLength,
                                                ValueName,
@@ -508,7 +492,6 @@ NTAPI
 ZpServer_DeleteRegistryValue(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(ValueNameLength) PCWCH ValueName,
@@ -522,7 +505,6 @@ ZpServer_DeleteRegistryValue(
                Connection,
                ZP_REGISTRY_OPERATION_DELETE_VALUE,
                Root,
-               View,
                Path,
                PathLength,
                ValueName,
@@ -539,7 +521,6 @@ ZpServer_SendRegistryKeyStatusRequest(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ USHORT OperationId,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_ ULONG TimeoutMilliseconds,
@@ -556,7 +537,6 @@ ZpServer_SendRegistryKeyStatusRequest(
         return STATUS_INVALID_PARAMETER;
     }
     Status = ZpRegistry_EncodeKeyRequest(Root,
-                                         View,
                                          Path,
                                          PathLength,
                                          NULL,
@@ -570,7 +550,6 @@ ZpServer_SendRegistryKeyStatusRequest(
     if (NT_SUCCESS(Status))
     {
         Status = ZpRegistry_EncodeKeyRequest(Root,
-                                             View,
                                              Path,
                                              PathLength,
                                              Payload,
@@ -597,7 +576,6 @@ NTAPI
 ZpServer_CreateRegistryKey(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_ ULONG TimeoutMilliseconds,
@@ -609,7 +587,6 @@ ZpServer_CreateRegistryKey(
                Connection,
                ZP_REGISTRY_OPERATION_CREATE_KEY,
                Root,
-               View,
                Path,
                PathLength,
                TimeoutMilliseconds,
@@ -623,7 +600,6 @@ NTAPI
 ZpServer_DeleteRegistryKey(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_ ULONG TimeoutMilliseconds,
@@ -635,9 +611,140 @@ ZpServer_DeleteRegistryKey(
                Connection,
                ZP_REGISTRY_OPERATION_DELETE_KEY,
                Root,
-               View,
                Path,
                PathLength,
+               TimeoutMilliseconds,
+               Callback,
+               Context,
+               Request);
+}
+
+static
+NTSTATUS
+ZpServer_RenameRegistryEntry(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT OperationId,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_reads_(NewNameLength) PCWCH NewName,
+    _In_ ULONG NewNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpRegistry_EncodeRenameRequest(Root,
+                                            Path,
+                                            PathLength,
+                                            Name,
+                                            NameLength,
+                                            NewName,
+                                            NewNameLength,
+                                            NULL,
+                                            0,
+                                            &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpRegistry_EncodeRenameRequest(Root,
+                                                Path,
+                                                PathLength,
+                                                Name,
+                                                NameLength,
+                                                NewName,
+                                                NewNameLength,
+                                                Payload,
+                                                PayloadLength,
+                                                &PayloadLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpServer_SendRegistryStatusRequest(Connection,
+                                                     OperationId,
+                                                     TimeoutMilliseconds,
+                                                     Payload,
+                                                     PayloadLength,
+                                                     Callback,
+                                                     Context,
+                                                     Request);
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_RenameRegistryKey(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_reads_(NewNameLength) PCWCH NewName,
+    _In_ ULONG NewNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    return ZpServer_RenameRegistryEntry(
+               Connection,
+               ZP_REGISTRY_OPERATION_RENAME_KEY,
+               Root,
+               Path,
+               PathLength,
+               Name,
+               NameLength,
+               NewName,
+               NewNameLength,
+               TimeoutMilliseconds,
+               Callback,
+               Context,
+               Request);
+}
+
+NTSTATUS
+NTAPI
+ZpServer_RenameRegistryValue(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_reads_(NewNameLength) PCWCH NewName,
+    _In_ ULONG NewNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    return ZpServer_RenameRegistryEntry(
+               Connection,
+               ZP_REGISTRY_OPERATION_RENAME_VALUE,
+               Root,
+               Path,
+               PathLength,
+               Name,
+               NameLength,
+               NewName,
+               NewNameLength,
                TimeoutMilliseconds,
                Callback,
                Context,

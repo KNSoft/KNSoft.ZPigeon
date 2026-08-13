@@ -4,6 +4,8 @@
 #include "../../Network/Config.inl"
 #include "Retry.inl"
 
+#define ZP_CLIENT_DEBUG_RETRY_MILLISECONDS 5000
+
 #include <Bcrypt.h>
 
 static
@@ -193,7 +195,10 @@ ZpClient_ScheduleRetry(
     _In_ LOGICAL RestartRound)
 {
     LARGE_INTEGER DueTime;
-    ULONG Delay, EndpointIndex, RandomValue;
+    ULONG Delay, EndpointIndex;
+#ifndef _DEBUG
+    ULONG RandomValue;
+#endif
 
     if (RestartRound)
     {
@@ -204,11 +209,18 @@ ZpClient_ScheduleRetry(
                                   &EndpointIndex))
     {
         Object->NextEndpointIndex = EndpointIndex;
+#ifdef _DEBUG
+        Delay = ZP_CLIENT_DEBUG_RETRY_MILLISECONDS;
+#else
         Delay = 1;
+#endif
     }
     else
     {
         Object->NextEndpointIndex = 0;
+#ifdef _DEBUG
+        Delay = ZP_CLIENT_DEBUG_RETRY_MILLISECONDS;
+#else
         if (!NT_SUCCESS(BCryptGenRandom(NULL,
                                         (PUCHAR)&RandomValue,
                                         sizeof(RandomValue),
@@ -218,6 +230,7 @@ ZpClient_ScheduleRetry(
                           ZP_CLIENT_DEFAULT_RETRY_JITTER_PERCENT / 100;
         }
         Delay = ZpClientRetry_GetDelay(Object->FailureRound, RandomValue);
+#endif
         if (Object->FailureRound != MAXULONG)
         {
             Object->FailureRound++;

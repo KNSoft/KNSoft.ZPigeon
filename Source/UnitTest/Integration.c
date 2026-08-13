@@ -2132,7 +2132,6 @@ TEST_FUNC(SDKQuicIntegration)
     Status = ZpServer_CreateRegistryKey(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryPath,
                  (ULONG)wcslen(RegistryPath),
                  SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
@@ -2156,7 +2155,6 @@ TEST_FUNC(SDKQuicIntegration)
     Status = ZpServer_SetRegistryValue(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryPath,
                  (ULONG)wcslen(RegistryPath),
                  L"Oversized",
@@ -2186,7 +2184,6 @@ TEST_FUNC(SDKQuicIntegration)
     Status = ZpServer_CreateRegistryKey(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryChildPath,
                  (ULONG)wcslen(RegistryChildPath),
                  SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
@@ -2210,7 +2207,6 @@ TEST_FUNC(SDKQuicIntegration)
     Status = ZpServer_SetRegistryValue(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryPath,
                  (ULONG)wcslen(RegistryPath),
                  NULL,
@@ -2239,7 +2235,6 @@ TEST_FUNC(SDKQuicIntegration)
     Status = ZpServer_SetRegistryValue(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryPath,
                  (ULONG)wcslen(RegistryPath),
                  RegistryValueName,
@@ -2270,7 +2265,6 @@ TEST_FUNC(SDKQuicIntegration)
     Status = ZpServer_EnumerateRegistryKeysPage(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryPath,
                  (ULONG)wcslen(RegistryPath),
                  NULL,
@@ -2296,11 +2290,38 @@ TEST_FUNC(SDKQuicIntegration)
     }
 
     ResetEvent(TestContext.RegistryPageEvent);
+    Status = ZpServer_EnumerateRegistryKeysPage(
+                 TestContext.Connection,
+                 ZpRegistryLocalMachine,
+                 NULL,
+                 0,
+                 NULL,
+                 0,
+                 ZP_REGISTRY_PAGE_MAX_COUNT,
+                 SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                 SDKIntegration_RegistryPageCallback,
+                 &TestContext,
+                 &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.RegistryPageEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) !=
+            WAIT_OBJECT_0 ||
+        !ZpStatus_IsSuccess(TestContext.RegistryPageStatus) ||
+        TestContext.RegistryRecordCount == 0)
+    {
+        goto Cleanup;
+    }
+
+    ResetEvent(TestContext.RegistryPageEvent);
     TestContext.RegistryPageValues = TRUE;
     Status = ZpServer_EnumerateRegistryValuesPage(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryPath,
                  (ULONG)wcslen(RegistryPath),
                  NULL,
@@ -2331,7 +2352,6 @@ TEST_FUNC(SDKQuicIntegration)
     Status = ZpServer_EnumerateRegistryValuesPage(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryPath,
                  (ULONG)wcslen(RegistryPath),
                  L"",
@@ -2367,7 +2387,6 @@ TEST_FUNC(SDKQuicIntegration)
     Status = ZpServer_QueryRegistryValue(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryPath,
                  (ULONG)wcslen(RegistryPath),
                  RegistryValueName,
@@ -2400,7 +2419,6 @@ TEST_FUNC(SDKQuicIntegration)
     Status = ZpServer_DeleteRegistryValue(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryPath,
                  (ULONG)wcslen(RegistryPath),
                  RegistryValueName,
@@ -2426,7 +2444,6 @@ TEST_FUNC(SDKQuicIntegration)
     Status = ZpServer_DeleteRegistryValue(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryPath,
                  (ULONG)wcslen(RegistryPath),
                  NULL,
@@ -2452,7 +2469,6 @@ TEST_FUNC(SDKQuicIntegration)
     Status = ZpServer_DeleteRegistryKey(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryChildPath,
                  (ULONG)wcslen(RegistryChildPath),
                  SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
@@ -2476,7 +2492,6 @@ TEST_FUNC(SDKQuicIntegration)
     Status = ZpServer_DeleteRegistryKey(
                  TestContext.Connection,
                  ZpRegistryCurrentUser,
-                 ZpRegistryViewDefault,
                  RegistryPath,
                  (ULONG)wcslen(RegistryPath),
                  SDK_INTEGRATION_TIMEOUT_MILLISECONDS,

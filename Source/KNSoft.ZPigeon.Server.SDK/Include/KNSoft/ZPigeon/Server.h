@@ -342,7 +342,6 @@ NTAPI
 ZpServer_EnumerateRegistryKeysPage(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(CursorLength) PCWCH Cursor,
@@ -358,7 +357,6 @@ NTAPI
 ZpServer_EnumerateRegistryValuesPage(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(CursorLength) PCWCH Cursor,
@@ -374,7 +372,6 @@ NTAPI
 ZpServer_QueryRegistryValue(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(ValueNameLength) PCWCH ValueName,
@@ -389,7 +386,6 @@ NTAPI
 ZpServer_SetRegistryValue(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(ValueNameLength) PCWCH ValueName,
@@ -407,7 +403,6 @@ NTAPI
 ZpServer_DeleteRegistryValue(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(ValueNameLength) PCWCH ValueName,
@@ -422,7 +417,6 @@ NTAPI
 ZpServer_CreateRegistryKey(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_ ULONG TimeoutMilliseconds,
@@ -435,9 +429,40 @@ NTAPI
 ZpServer_DeleteRegistryKey(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_RenameRegistryKey(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_reads_(NewNameLength) PCWCH NewName,
+    _In_ ULONG NewNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_RenameRegistryValue(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_reads_(NewNameLength) PCWCH NewName,
+    _In_ ULONG NewNameLength,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,

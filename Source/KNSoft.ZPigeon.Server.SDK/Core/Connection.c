@@ -1,6 +1,6 @@
 ﻿#include "Connection.h"
 
-VOID
+NTSTATUS
 ZpServerConnection_Initialize(
     _Out_ PZP_CONNECTION_OBJECT Connection,
     _In_ ULONG MaxRequests,
@@ -8,7 +8,16 @@ ZpServerConnection_Initialize(
     _In_ ZP_CONNECTION_SEND_ROUTINE Send,
     _In_ ZP_CONNECTION_DESTROY_ROUTINE Destroy)
 {
+    NTSTATUS Status;
+
     RtlInitializeSRWLock(&Connection->Lock);
+    Status = RtlInitializeCriticalSectionEx(&Connection->RequestSendLock,
+                                            0,
+                                            RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
     InitializeListHead(&Connection->Requests);
     InitializeListHead(&Connection->Channels);
     Connection->NextRequestId = 1;
@@ -25,6 +34,7 @@ ZpServerConnection_Initialize(
     Connection->Send = Send;
     Connection->ReferenceCount = 1;
     Connection->Destroy = Destroy;
+    return STATUS_SUCCESS;
 }
 
 VOID
@@ -64,6 +74,7 @@ ZpConnection_Release(
 {
     if (InterlockedDecrement(&Connection->ReferenceCount) == 0)
     {
+        RtlDeleteCriticalSection(&Connection->RequestSendLock);
         Connection->Destroy(Connection);
     }
 }

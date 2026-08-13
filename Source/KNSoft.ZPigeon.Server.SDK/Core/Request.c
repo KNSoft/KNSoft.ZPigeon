@@ -251,6 +251,7 @@ ZpServer_SendRequest(
     RequestObject->Callback = Callback;
     RequestObject->Context = Context;
 
+    RtlEnterCriticalSection(&ConnectionObject->RequestSendLock);
     RtlAcquireSRWLockExclusive(&ConnectionObject->Lock);
     if (ConnectionObject->Phase != ZpConnectionPhaseReady ||
         !ZpServerConnection_HasModule(ConnectionObject, ModuleId))
@@ -259,6 +260,7 @@ ZpServer_SendRequest(
                      STATUS_NOT_SUPPORTED :
                      STATUS_INVALID_DEVICE_STATE;
         RtlReleaseSRWLockExclusive(&ConnectionObject->Lock);
+        RtlLeaveCriticalSection(&ConnectionObject->RequestSendLock);
         Mem_Free(RequestObject);
         Mem_Free(Body);
         return Status;
@@ -266,6 +268,7 @@ ZpServer_SendRequest(
     if (ConnectionObject->RequestCount == ConnectionObject->MaxRequests)
     {
         RtlReleaseSRWLockExclusive(&ConnectionObject->Lock);
+        RtlLeaveCriticalSection(&ConnectionObject->RequestSendLock);
         Mem_Free(RequestObject);
         Mem_Free(Body);
         return STATUS_QUOTA_EXCEEDED;
@@ -273,6 +276,7 @@ ZpServer_SendRequest(
     if (ConnectionObject->NextRequestId == 0)
     {
         RtlReleaseSRWLockExclusive(&ConnectionObject->Lock);
+        RtlLeaveCriticalSection(&ConnectionObject->RequestSendLock);
         Mem_Free(RequestObject);
         Mem_Free(Body);
         return STATUS_INTEGER_OVERFLOW;
@@ -286,6 +290,7 @@ ZpServer_SendRequest(
         if (ConnectionObject->RequestTimer == NULL)
         {
             RtlReleaseSRWLockExclusive(&ConnectionObject->Lock);
+            RtlLeaveCriticalSection(&ConnectionObject->RequestSendLock);
             Mem_Free(RequestObject);
             Mem_Free(Body);
             return STATUS_NO_MEMORY;
@@ -311,6 +316,7 @@ ZpServer_SendRequest(
                                         Body,
                                         BodyLength);
     }
+    RtlLeaveCriticalSection(&ConnectionObject->RequestSendLock);
     Mem_Free(Body);
     if (!NT_SUCCESS(Status))
     {

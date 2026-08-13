@@ -20,6 +20,7 @@ VOID
 struct _ZP_CONNECTION_OBJECT
 {
     RTL_SRWLOCK Lock;
+    RTL_CRITICAL_SECTION RequestSendLock;
     LIST_ENTRY Requests;
     LIST_ENTRY Channels;
     ULONGLONG NextRequestId;
@@ -38,7 +39,7 @@ struct _ZP_CONNECTION_OBJECT
     ZP_CONNECTION_DESTROY_ROUTINE Destroy;
 };
 
-VOID
+NTSTATUS
 ZpServerConnection_Initialize(
     _Out_ PZP_CONNECTION_OBJECT Connection,
     _In_ ULONG MaxRequests,

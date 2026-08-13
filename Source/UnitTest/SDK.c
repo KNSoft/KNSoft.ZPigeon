@@ -120,8 +120,21 @@ typedef struct _SDK_REQUEST_CONNECTION
 {
     ZP_CONNECTION_OBJECT Connection;
     PSDK_TEST_CONTEXT Context;
+    volatile LONG ActiveSend;
+    volatile LONG OrderedSendCount;
+    volatile LONG Failed;
+    ULONG SendDelay;
     ULONG DestroyCount;
 } SDK_REQUEST_CONNECTION, *PSDK_REQUEST_CONNECTION;
+
+#define SDK_ORDERED_REQUEST_COUNT 16
+
+typedef struct _SDK_ORDERED_REQUEST_THREAD
+{
+    PSDK_REQUEST_CONNECTION Connection;
+    HANDLE StartEvent;
+    NTSTATUS Status;
+} SDK_ORDERED_REQUEST_THREAD, *PSDK_ORDERED_REQUEST_THREAD;
 
 static
 VOID
@@ -156,7 +169,19 @@ SDKTest_RequestConnectionSend(
     ZP_CHANNEL_CLOSE ChannelClose;
     NTSTATUS Status;
 
-    TestContext->SendMessageType = MessageType;
+    if (RequestConnection->SendDelay != 0 &&
+        InterlockedIncrement(&RequestConnection->ActiveSend) != 1)
+    {
+        InterlockedExchange(&RequestConnection->Failed, TRUE);
+    }
+    if (RequestConnection->SendDelay != 0)
+    {
+        Sleep(RequestConnection->SendDelay);
+    }
+    if (TestContext != NULL)
+    {
+        TestContext->SendMessageType = MessageType;
+    }
     if (MessageType == ZpMessageChannelData)
     {
         Status = ZpMessage_DecodeChannelData(Body,
@@ -201,13 +226,157 @@ SDKTest_RequestConnectionSend(
     Status = ZpMessage_DecodeRequest(Body, BodyLength, &Request);
     if (NT_SUCCESS(Status))
     {
-        TestContext->SendCount++;
-        TestContext->SendRequestId = Request.RequestId;
-        TestContext->SendModuleId = Request.ModuleId;
-        TestContext->SendOperationId = Request.OperationId;
-        TestContext->SendPayloadLength = Request.Payload.Length;
+        if (RequestConnection->SendDelay != 0)
+        {
+            if (Request.RequestId != (ULONGLONG)InterlockedIncrement(
+                                         &RequestConnection->OrderedSendCount))
+            {
+                InterlockedExchange(&RequestConnection->Failed, TRUE);
+            }
+        }
+        else
+        {
+            TestContext->SendCount++;
+            TestContext->SendRequestId = Request.RequestId;
+            TestContext->SendModuleId = Request.ModuleId;
+            TestContext->SendOperationId = Request.OperationId;
+            TestContext->SendPayloadLength = Request.Payload.Length;
+        }
+    }
+    if (RequestConnection->SendDelay != 0)
+    {
+        InterlockedDecrement(&RequestConnection->ActiveSend);
     }
     return Status;
+}
+
+static
+VOID
+NTAPI
+SDKTest_OrderedRequestCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    UNREFERENCED_PARAMETER(Request);
+    UNREFERENCED_PARAMETER(Status);
+    UNREFERENCED_PARAMETER(Payload);
+    UNREFERENCED_PARAMETER(Context);
+}
+
+static
+DWORD
+WINAPI
+SDKTest_OrderedRequestThread(
+    _In_ PVOID Context)
+{
+    PSDK_ORDERED_REQUEST_THREAD Thread = Context;
+    ZP_REQUEST_HANDLE Request;
+
+    WaitForSingleObject(Thread->StartEvent, INFINITE);
+    Thread->Status = ZpServer_SendRequest(
+                         (ZP_CONNECTION_HANDLE)&Thread->Connection->Connection,
+                         ZP_SYSTEM_MODULE_ID,
+                         ZP_SYSTEM_OPERATION_INFO,
+                         0,
+                         NULL,
+                         0,
+                         SDKTest_OrderedRequestCallback,
+                         NULL,
+                         &Request);
+    if (NT_SUCCESS(Thread->Status))
+    {
+        ZpRequest_Close(Request);
+    }
+    return 0;
+}
+
+static
+LOGICAL
+SDKTest_OrderedConcurrentRequests(VOID)
+{
+    static const ZP_MODULE_RECORD Module = {
+        ZP_SYSTEM_MODULE_ID,
+        ZP_SYSTEM_MODULE_VERSION
+    };
+    SDK_REQUEST_CONNECTION Connection = { 0 };
+    SDK_ORDERED_REQUEST_THREAD Threads[SDK_ORDERED_REQUEST_COUNT] = { 0 };
+    HANDLE ThreadHandles[SDK_ORDERED_REQUEST_COUNT] = { 0 };
+    HANDLE StartEvent = NULL;
+    ULONG Index;
+    LOGICAL Result = FALSE;
+
+    if (!NT_SUCCESS(ZpServerConnection_Initialize(
+                        &Connection.Connection,
+                        SDK_ORDERED_REQUEST_COUNT,
+                        1,
+                        SDKTest_RequestConnectionSend,
+                        SDKTest_RequestConnectionDestroy)))
+    {
+        return FALSE;
+    }
+    ZpServerConnection_SetModules(&Connection.Connection, &Module, 1);
+    ZpServerConnection_SetPhase(&Connection.Connection,
+                                ZpConnectionPhaseReady);
+    Connection.SendDelay = 5;
+    StartEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (StartEvent == NULL)
+    {
+        goto Cleanup;
+    }
+    for (Index = 0; Index < ARRAYSIZE(Threads); Index++)
+    {
+        Threads[Index].Connection = &Connection;
+        Threads[Index].StartEvent = StartEvent;
+        ThreadHandles[Index] = CreateThread(NULL,
+                                            0,
+                                            SDKTest_OrderedRequestThread,
+                                            &Threads[Index],
+                                            0,
+                                            NULL);
+        if (ThreadHandles[Index] == NULL)
+        {
+            goto Cleanup;
+        }
+    }
+    SetEvent(StartEvent);
+    if (WaitForMultipleObjects(ARRAYSIZE(ThreadHandles),
+                               ThreadHandles,
+                               TRUE,
+                               INFINITE) != WAIT_OBJECT_0)
+    {
+        goto Cleanup;
+    }
+    Result = Connection.Failed == FALSE &&
+             Connection.OrderedSendCount == SDK_ORDERED_REQUEST_COUNT;
+    for (Index = 0; Result && Index < ARRAYSIZE(Threads); Index++)
+    {
+        Result = NT_SUCCESS(Threads[Index].Status);
+    }
+
+Cleanup:
+    if (StartEvent != NULL)
+    {
+        SetEvent(StartEvent);
+    }
+    for (Index = 0; Index < ARRAYSIZE(ThreadHandles); Index++)
+    {
+        if (ThreadHandles[Index] != NULL)
+        {
+            WaitForSingleObject(ThreadHandles[Index], INFINITE);
+            CloseHandle(ThreadHandles[Index]);
+        }
+    }
+    if (StartEvent != NULL)
+    {
+        CloseHandle(StartEvent);
+    }
+    ZpServerConnection_Close(&Connection.Connection,
+                              ZpStatus_FromNtStatus(
+                                  STATUS_CONNECTION_DISCONNECTED));
+    ZpConnection_Release((ZP_CONNECTION_HANDLE)&Connection.Connection);
+    return Result && Connection.DestroyCount == 1;
 }
 
 static
@@ -1012,10 +1181,10 @@ TEST_FUNC(SDKContract)
     BYTE FilePageResponse[256];
     ULONG FilePageResponseLength;
     ZP_REGISTRY_KEY_RECORD RegistryKeyRecords[] = {
-        { L"Child", 5, 123 }
+        { L"Child", 5, 123, TRUE }
     };
     ZP_REGISTRY_VALUE_RECORD RegistryValueRecords[] = {
-        { L"", 0, 4, sizeof(ULONG) }
+        { L"", 0, 4, sizeof(ULONG), NULL, 0 }
     };
     BYTE RegistryResponse[256];
     ULONG RegistryResponseLength;
@@ -1098,11 +1267,13 @@ TEST_FUNC(SDKContract)
             ZpStatus_IsValid(ZpStatus_FromProcessExit(0)) &&
             !ZpStatus_IsValid(ZpStatus_Make(ZpStatusQuic, 0)));
     TEST_OK(SDKTest_AuthenticationRoundTrip());
-    ZpServerConnection_Initialize(&SystemLoopback.Connection,
-                                  1,
-                                  1,
-                                  SDKTest_SystemConnectionSend,
-                                  SDKTest_SystemConnectionDestroy);
+    TEST_OK(SDKTest_OrderedConcurrentRequests());
+    TEST_OK(NT_SUCCESS(ZpServerConnection_Initialize(
+                           &SystemLoopback.Connection,
+                           1,
+                           1,
+                           SDKTest_SystemConnectionSend,
+                           SDKTest_SystemConnectionDestroy)));
     ZpServerConnection_SetModules(&SystemLoopback.Connection,
                                   LoopbackModules,
                                   ARRAYSIZE(LoopbackModules));
@@ -1144,7 +1315,6 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpServer_EnumerateRegistryKeysPage(
                 (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
                 ZpRegistryLocalMachine,
-                ZpRegistryViewDefault,
                 L"Software",
                 ARRAYSIZE(L"Software") - 1,
                 NULL,
@@ -1375,11 +1545,12 @@ TEST_FUNC(SDKContract)
                                           InboundRequest.RequestId + 1) ==
                 STATUS_PROTOCOL_UNREACHABLE);
     RegistryConnection.Context = &TestContext;
-    ZpServerConnection_Initialize(&RegistryConnection.Connection,
-                                  1,
-                                  1,
-                                  SDKTest_RequestConnectionSend,
-                                  SDKTest_RequestConnectionDestroy);
+    TEST_OK(NT_SUCCESS(ZpServerConnection_Initialize(
+                           &RegistryConnection.Connection,
+                           1,
+                           1,
+                           SDKTest_RequestConnectionSend,
+                           SDKTest_RequestConnectionDestroy)));
     ZpServerConnection_SetModules(&RegistryConnection.Connection,
                                   ServerModules,
                                   ARRAYSIZE(ServerModules));
@@ -1388,7 +1559,6 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpServer_SetRegistryValue(
                            (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
-                           ZpRegistryViewDefault,
                            L"Software\\KNSoft",
                            15,
                            L"Value",
@@ -1516,7 +1686,6 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpServer_EnumerateRegistryKeysPage(
                            (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
-                           ZpRegistryViewDefault,
                            L"Software\\KNSoft",
                            15,
                            NULL,
@@ -1552,7 +1721,6 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpServer_EnumerateRegistryValuesPage(
                            (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
-                           ZpRegistryView32,
                            L"Software\\KNSoft",
                            15,
                            L"",
@@ -1584,7 +1752,6 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpServer_QueryRegistryValue(
                            (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
-                           ZpRegistryViewDefault,
                            L"Software\\KNSoft",
                            15,
                            L"Value",
@@ -1613,7 +1780,6 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpServer_SetRegistryValue(
                            (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
-                           ZpRegistryViewDefault,
                            L"Software\\KNSoft",
                            15,
                            L"Value",
@@ -1637,7 +1803,6 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpServer_DeleteRegistryValue(
                            (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
-                           ZpRegistryViewDefault,
                            L"Software\\KNSoft",
                            15,
                            L"Value",
@@ -1656,7 +1821,6 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpServer_CreateRegistryKey(
                            (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
-                           ZpRegistryViewDefault,
                            L"Software\\KNSoft\\Child",
                            21,
                            1000,
@@ -1673,7 +1837,6 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpServer_DeleteRegistryKey(
                            (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
                            ZpRegistryCurrentUser,
-                           ZpRegistryViewDefault,
                            L"Software\\KNSoft\\Child",
                            21,
                            1000,
@@ -2055,6 +2218,9 @@ TEST_FUNC(SDKContract)
             TestContext.ClientStateCount == 2 &&
             TestContext.ClientStates[1] == ZpClientStateRetryWait &&
             SDK_STATUS_IS(TestContext.ClientStatuses[1], STATUS_ACCESS_DENIED));
+#ifdef _DEBUG
+    TEST_OK(ClientObject->RetryDelay == 5000);
+#endif
     TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) && TestContext.StopCount == 1);
     TEST_OK(NT_SUCCESS(ZpClient_NotifyState(Client,
                                             ZpClientStateStopped,

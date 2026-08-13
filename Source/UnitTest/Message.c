@@ -17,6 +17,7 @@ TEST_FUNC(ProtocolMessage)
     static const WCHAR EventXml[] = L"<Event/>";
     static const WCHAR RegistryPath[] = L"Software\\KNSoft";
     static const WCHAR RegistryValueName[] = L"Enabled";
+    static const WCHAR RegistryNewName[] = L"Active";
     static const BYTE RegistryData[] = { 1, 2, 3, 4 };
     ZP_MODULE_RECORD Modules[] = {
         { 1, 1 },
@@ -134,12 +135,13 @@ TEST_FUNC(ProtocolMessage)
     ZP_REGISTRY_VALUE_REQUEST_VIEW RegistryValueRequest;
     ZP_REGISTRY_SET_VALUE_VIEW RegistrySetValue;
     ZP_REGISTRY_KEY_REQUEST_VIEW RegistryKeyRequest;
+    ZP_REGISTRY_RENAME_REQUEST_VIEW RegistryRenameRequest;
     ZP_REGISTRY_KEY_RECORD RegistryKeys[] = {
-        { L"Alpha", 5, 100 },
-        { L"Beta", 4, 200 }
+        { L"Alpha", 5, 100, FALSE },
+        { L"Beta", 4, 200, TRUE }
     };
     ZP_REGISTRY_VALUE_RECORD RegistryValues[] = {
-        { L"", 0, 1, 8 }
+        { L"", 0, 1, 8, RegistryData, sizeof(RegistryData) }
     };
     ZP_REGISTRY_PAGE_VIEW RegistryPage;
     ZP_REGISTRY_KEY_RECORD_VIEW RegistryKey;
@@ -732,7 +734,6 @@ TEST_FUNC(ProtocolMessage)
             EventLogChannel.Length == ARRAYSIZE(EventChannel) - 1);
     TEST_OK(NT_SUCCESS(ZpRegistry_EncodeEnumerateRequest(
                            ZpRegistryLocalMachine,
-                           ZpRegistryView64,
                            32,
                            TRUE,
                            RegistryPath,
@@ -746,14 +747,12 @@ TEST_FUNC(ProtocolMessage)
                                                          Length,
                                                          &RegistryEnumerate)) &&
             RegistryEnumerate.Root == ZpRegistryLocalMachine &&
-            RegistryEnumerate.View == ZpRegistryView64 &&
             RegistryEnumerate.MaxEntries == 32 &&
             RegistryEnumerate.CursorPresent &&
             RegistryEnumerate.Path.Length == ARRAYSIZE(RegistryPath) - 1 &&
             RegistryEnumerate.Cursor.Length == 0);
     TEST_OK(ZpRegistry_EncodeEnumerateRequest(
                 0,
-                ZpRegistryViewDefault,
                 1,
                 FALSE,
                 NULL,
@@ -781,7 +780,8 @@ TEST_FUNC(ProtocolMessage)
                                                1,
                                                &RegistryKey)) &&
             RegistryKey.Name.Length == 4 &&
-            RegistryKey.LastWriteTime == 200);
+            RegistryKey.LastWriteTime == 200 &&
+            RegistryKey.HasChildren);
     TEST_OK(NT_SUCCESS(ZpRegistry_EncodeValuePage(
                            TRUE,
                            RegistryValues,
@@ -801,10 +801,10 @@ TEST_FUNC(ProtocolMessage)
                                                  &RegistryValueRecord)) &&
             RegistryValueRecord.Name.Length == 0 &&
             RegistryValueRecord.Type == 1 &&
-            RegistryValueRecord.DataLength == 8);
+            RegistryValueRecord.DataLength == 8 &&
+            RegistryValueRecord.Preview.Length == sizeof(RegistryData));
     TEST_OK(NT_SUCCESS(ZpRegistry_EncodeValueRequest(
                            ZpRegistryCurrentUser,
-                           ZpRegistryViewDefault,
                            RegistryPath,
                            ARRAYSIZE(RegistryPath) - 1,
                            RegistryValueName,
@@ -834,7 +834,6 @@ TEST_FUNC(ProtocolMessage)
                              sizeof(RegistryData)) == sizeof(RegistryData));
     TEST_OK(NT_SUCCESS(ZpRegistry_EncodeSetValueRequest(
                            ZpRegistryCurrentUser,
-                           ZpRegistryView32,
                            3,
                            RegistryPath,
                            ARRAYSIZE(RegistryPath) - 1,
@@ -848,12 +847,10 @@ TEST_FUNC(ProtocolMessage)
             NT_SUCCESS(ZpRegistry_DecodeSetValueRequest(Buffer,
                                                         Length,
                                                         &RegistrySetValue)) &&
-            RegistrySetValue.View == ZpRegistryView32 &&
             RegistrySetValue.Type == 3 &&
             RegistrySetValue.Data.Length == sizeof(RegistryData));
     TEST_OK(NT_SUCCESS(ZpRegistry_EncodeKeyRequest(
                            ZpRegistryLocalMachine,
-                           ZpRegistryView64,
                            RegistryPath,
                            ARRAYSIZE(RegistryPath) - 1,
                            Buffer,
@@ -864,12 +861,30 @@ TEST_FUNC(ProtocolMessage)
                                                    &RegistryKeyRequest)) &&
             RegistryKeyRequest.Path.Length == ARRAYSIZE(RegistryPath) - 1 &&
             ZpRegistry_EncodeKeyRequest(ZpRegistryLocalMachine,
-                                        ZpRegistryView64,
                                         NULL,
                                         0,
                                         Buffer,
                                         sizeof(Buffer),
                                         &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpRegistry_EncodeRenameRequest(
+                           ZpRegistryCurrentUser,
+                           RegistryPath,
+                           ARRAYSIZE(RegistryPath) - 1,
+                           RegistryValueName,
+                           ARRAYSIZE(RegistryValueName) - 1,
+                           RegistryNewName,
+                           ARRAYSIZE(RegistryNewName) - 1,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpRegistry_DecodeRenameRequest(
+                Buffer,
+                Length,
+                &RegistryRenameRequest)) &&
+            RegistryRenameRequest.Name.Length ==
+                ARRAYSIZE(RegistryValueName) - 1 &&
+            RegistryRenameRequest.NewName.Length ==
+                ARRAYSIZE(RegistryNewName) - 1);
     TEST_OK(NT_SUCCESS(ZpTerminal_EncodeCreate(120,
                                                30,
                                                L"cmd.exe /Q",

@@ -13,9 +13,12 @@ EXTERN_C_START
 #define ZP_REGISTRY_OPERATION_DELETE_VALUE 5
 #define ZP_REGISTRY_OPERATION_CREATE_KEY 6
 #define ZP_REGISTRY_OPERATION_DELETE_KEY 7
+#define ZP_REGISTRY_OPERATION_RENAME_KEY 8
+#define ZP_REGISTRY_OPERATION_RENAME_VALUE 9
 #define ZP_REGISTRY_PAGE_MAX_COUNT 4096
 #define ZP_REGISTRY_PATH_MAX_LENGTH 32767
 #define ZP_REGISTRY_DATA_MAX_LENGTH 0x00100000UL
+#define ZP_REGISTRY_VALUE_PREVIEW_MAX_LENGTH 256
 
 typedef enum _ZP_REGISTRY_ROOT
 {
@@ -26,17 +29,9 @@ typedef enum _ZP_REGISTRY_ROOT
     ZpRegistryCurrentConfig = 5
 } ZP_REGISTRY_ROOT, *PZP_REGISTRY_ROOT;
 
-typedef enum _ZP_REGISTRY_VIEW
-{
-    ZpRegistryViewDefault = 1,
-    ZpRegistryView32 = 2,
-    ZpRegistryView64 = 3
-} ZP_REGISTRY_VIEW, *PZP_REGISTRY_VIEW;
-
 typedef struct _ZP_REGISTRY_ENUMERATE_VIEW
 {
     ZP_REGISTRY_ROOT Root;
-    ZP_REGISTRY_VIEW View;
     ULONG MaxEntries;
     BOOLEAN CursorPresent;
     ZP_STRING_VIEW Path;
@@ -48,7 +43,6 @@ typedef const ZP_REGISTRY_ENUMERATE_VIEW* PCZP_REGISTRY_ENUMERATE_VIEW;
 typedef struct _ZP_REGISTRY_VALUE_REQUEST_VIEW
 {
     ZP_REGISTRY_ROOT Root;
-    ZP_REGISTRY_VIEW View;
     ZP_STRING_VIEW Path;
     ZP_STRING_VIEW ValueName;
 } ZP_REGISTRY_VALUE_REQUEST_VIEW, *PZP_REGISTRY_VALUE_REQUEST_VIEW;
@@ -58,7 +52,6 @@ typedef const ZP_REGISTRY_VALUE_REQUEST_VIEW* PCZP_REGISTRY_VALUE_REQUEST_VIEW;
 typedef struct _ZP_REGISTRY_SET_VALUE_VIEW
 {
     ZP_REGISTRY_ROOT Root;
-    ZP_REGISTRY_VIEW View;
     ULONG Type;
     ZP_STRING_VIEW Path;
     ZP_STRING_VIEW ValueName;
@@ -70,17 +63,28 @@ typedef const ZP_REGISTRY_SET_VALUE_VIEW* PCZP_REGISTRY_SET_VALUE_VIEW;
 typedef struct _ZP_REGISTRY_KEY_REQUEST_VIEW
 {
     ZP_REGISTRY_ROOT Root;
-    ZP_REGISTRY_VIEW View;
     ZP_STRING_VIEW Path;
 } ZP_REGISTRY_KEY_REQUEST_VIEW, *PZP_REGISTRY_KEY_REQUEST_VIEW;
 
 typedef const ZP_REGISTRY_KEY_REQUEST_VIEW* PCZP_REGISTRY_KEY_REQUEST_VIEW;
+
+typedef struct _ZP_REGISTRY_RENAME_REQUEST_VIEW
+{
+    ZP_REGISTRY_ROOT Root;
+    ZP_STRING_VIEW Path;
+    ZP_STRING_VIEW Name;
+    ZP_STRING_VIEW NewName;
+} ZP_REGISTRY_RENAME_REQUEST_VIEW, *PZP_REGISTRY_RENAME_REQUEST_VIEW;
+
+typedef const ZP_REGISTRY_RENAME_REQUEST_VIEW*
+    PCZP_REGISTRY_RENAME_REQUEST_VIEW;
 
 typedef struct _ZP_REGISTRY_KEY_RECORD
 {
     PCWCH Name;
     ULONG NameLength;
     ULONGLONG LastWriteTime;
+    BOOLEAN HasChildren;
 } ZP_REGISTRY_KEY_RECORD, *PZP_REGISTRY_KEY_RECORD;
 
 typedef const ZP_REGISTRY_KEY_RECORD* PCZP_REGISTRY_KEY_RECORD;
@@ -89,6 +93,7 @@ typedef struct _ZP_REGISTRY_KEY_RECORD_VIEW
 {
     ZP_STRING_VIEW Name;
     ULONGLONG LastWriteTime;
+    BOOLEAN HasChildren;
 } ZP_REGISTRY_KEY_RECORD_VIEW, *PZP_REGISTRY_KEY_RECORD_VIEW;
 
 typedef struct _ZP_REGISTRY_VALUE_RECORD
@@ -97,6 +102,8 @@ typedef struct _ZP_REGISTRY_VALUE_RECORD
     ULONG NameLength;
     ULONG Type;
     ULONG DataLength;
+    const VOID* Preview;
+    ULONG PreviewLength;
 } ZP_REGISTRY_VALUE_RECORD, *PZP_REGISTRY_VALUE_RECORD;
 
 typedef const ZP_REGISTRY_VALUE_RECORD* PCZP_REGISTRY_VALUE_RECORD;
@@ -106,6 +113,7 @@ typedef struct _ZP_REGISTRY_VALUE_RECORD_VIEW
     ZP_STRING_VIEW Name;
     ULONG Type;
     ULONG DataLength;
+    ZP_BUFFER_VIEW Preview;
 } ZP_REGISTRY_VALUE_RECORD_VIEW, *PZP_REGISTRY_VALUE_RECORD_VIEW;
 
 typedef struct _ZP_REGISTRY_LIST_VIEW
@@ -137,7 +145,6 @@ typedef const ZP_REGISTRY_VALUE_VIEW* PCZP_REGISTRY_VALUE_VIEW;
 NTSTATUS
 ZpRegistry_EncodeEnumerateRequest(
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_ ULONG MaxEntries,
     _In_ BOOLEAN CursorPresent,
     _In_reads_opt_(PathLength) PCWCH Path,
@@ -203,7 +210,6 @@ ZpRegistry_GetValueRecord(
 NTSTATUS
 ZpRegistry_EncodeValueRequest(
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_reads_opt_(ValueNameLength) PCWCH ValueName,
@@ -236,7 +242,6 @@ ZpRegistry_DecodeValue(
 NTSTATUS
 ZpRegistry_EncodeSetValueRequest(
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_ ULONG Type,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
@@ -257,7 +262,6 @@ ZpRegistry_DecodeSetValueRequest(
 NTSTATUS
 ZpRegistry_EncodeKeyRequest(
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
@@ -269,5 +273,24 @@ ZpRegistry_DecodeKeyRequest(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_REGISTRY_KEY_REQUEST_VIEW Request);
+
+NTSTATUS
+ZpRegistry_EncodeRenameRequest(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_reads_(NewNameLength) PCWCH NewName,
+    _In_ ULONG NewNameLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpRegistry_DecodeRenameRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_REGISTRY_RENAME_REQUEST_VIEW Request);
 
 EXTERN_C_END

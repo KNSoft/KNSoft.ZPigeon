@@ -9,23 +9,25 @@
     :root{color-scheme:dark;--bg:#0c1017;--panel:#141a24;--line:#283142;--text:#d9e1ee;--muted:#8491a5;--accent:#70a5ff;--danger:#ff7382}
     *{box-sizing:border-box}[hidden]{display:none!important}html,body{height:100%;margin:0}body{font:14px system-ui,"Microsoft YaHei UI",sans-serif;background:var(--bg);color:var(--text);overflow:hidden}
     button,input,select{font:inherit;color:inherit;background:#1c2431;border:1px solid #344056;border-radius:6px;padding:7px 10px}button{cursor:pointer}button:hover{border-color:#60718e}button:disabled{cursor:not-allowed;opacity:.45}
-    header{height:54px;display:flex;align-items:center;gap:18px;padding:0 18px;border-bottom:1px solid var(--line);background:#111722}header strong{font-size:16px}header .status{margin-left:auto;color:var(--muted)}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 6px 0 14px;background:#596579}.dot.ok{background:#43d17d}.dot.off{background:#e2616e}
+    header{height:54px;display:flex;align-items:center;gap:18px;padding:0 18px;border-bottom:1px solid var(--line);background:#111722}header strong{font-size:16px}header .status{margin-left:auto;color:var(--muted)}.app-nav{display:flex;gap:4px}.app-nav button{border-color:transparent;background:transparent}.app-nav button.active{color:var(--accent);background:#1c2635;border-color:#344056}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 6px 0 14px;background:#596579}.dot.ok{background:#43d17d}.dot.off{background:#e2616e}
     main{display:grid;grid-template-rows:auto 1fr;height:calc(100% - 54px)}.toolbar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line)}.toolbar .spacer{flex:1}.danger{color:#ff9aa5}
     .shell-select{min-width:190px}.add-shell{font-size:18px;line-height:1;padding:6px 10px}
     .workspace{min-height:0;display:grid;grid-template-rows:39px 1fr}.tabs{display:flex;align-items:end;gap:2px;padding:5px 10px 0;background:#0f141d;border-bottom:1px solid var(--line);overflow-x:auto}.tab{max-width:220px;min-width:120px;border-radius:6px 6px 0 0;border-bottom:0;padding:8px 12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tab.active{background:#171e2a;color:var(--text);border-color:var(--line)}
     .terminals{position:relative;min-height:0;background:#0b0f15}.terminal-panel{position:absolute;inset:0;padding:10px;display:none}.terminal-panel.active{display:block}.terminal-host{width:100%;height:100%}.empty{height:100%;display:grid;place-content:center;text-align:center;color:var(--muted);gap:12px}.empty b{color:var(--text);font-size:18px}.empty button{justify-self:center}
-    dialog{width:min(780px,calc(100% - 30px));max-height:80vh;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px}dialog::backdrop{background:#0009}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.dialog-input{width:100%}.clipboard-preview{max-height:280px;white-space:pre-wrap;word-break:break-word}.context-menu{position:fixed;z-index:10;display:grid;min-width:150px;padding:5px;background:#1a2230;border:1px solid #3a465c;border-radius:7px;box-shadow:0 10px 30px #0008}.context-menu button{text-align:left;background:transparent;border:0;border-radius:4px}.context-menu button:hover{background:#2a3547}.toast{position:fixed;right:16px;bottom:16px;z-index:20;max-width:min(480px,calc(100% - 32px));padding:10px 13px;background:#30202a;border:1px solid #713b4e;border-radius:7px}.tools{display:grid;gap:16px}.card{border:1px solid var(--line);border-radius:8px;padding:14px}.card h2{font-size:15px;margin:0 0 10px}.card label{display:block;color:var(--muted);margin:8px 0 4px}.card input{width:min(100%,420px)}pre{white-space:pre-wrap;word-break:break-word;background:#090d13;padding:12px;border-radius:7px;max-height:260px;overflow:auto}.xterm{height:100%;padding:2px}.xterm-viewport{border-radius:5px}
+    dialog{width:min(780px,calc(100% - 30px));max-height:80vh;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px}dialog::backdrop{background:#0009}dialog label{display:block;color:var(--muted);margin:12px 0 5px}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.dialog-input{width:100%}.clipboard-preview{max-height:280px;white-space:pre-wrap;word-break:break-word}.context-menu{position:fixed;z-index:10;display:grid;min-width:150px;padding:5px;background:#1a2230;border:1px solid #3a465c;border-radius:7px;box-shadow:0 10px 30px #0008}.context-menu button{text-align:left;background:transparent;border:0;border-radius:4px}.context-menu button:hover{background:#2a3547}.toast{position:fixed;right:16px;bottom:16px;z-index:20;max-width:min(480px,calc(100% - 32px));padding:10px 13px;background:#30202a;border:1px solid #713b4e;border-radius:7px}.tools{display:grid;gap:16px}.card{border:1px solid var(--line);border-radius:8px;padding:14px}.card h2{font-size:15px;margin:0 0 10px}.card label{display:block;color:var(--muted);margin:8px 0 4px}.card input{width:min(100%,420px)}pre{white-space:pre-wrap;word-break:break-word;background:#090d13;padding:12px;border-radius:7px;max-height:260px;overflow:auto}.xterm{height:100%;padding:2px}.xterm-viewport{border-radius:5px}
+    #registryView{display:block;height:calc(100% - 54px)}.registry-editor{height:100%;display:grid;grid-template-rows:auto 1fr;min-height:0}.registry-toolbar{display:flex;gap:8px;align-items:center;padding:9px 12px;background:var(--panel);border-bottom:1px solid var(--line)}.registry-address{display:flex;align-items:center;flex:1;min-width:80px;min-height:34px;padding:7px 11px;background:#0c1119;border:1px solid #344056;border-radius:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.registry-body{display:grid;grid-template-columns:minmax(260px,32%) 1fr;min-height:0}.registry-tree,.registry-list{min-width:0;overflow:auto;background:#0d121a}.registry-tree{border-right:1px solid var(--line);padding:8px 4px}.registry-tree ul{list-style:none;margin:0;padding-left:18px}.registry-tree>ul{padding-left:0}.registry-node-row{display:flex;align-items:center;border-radius:4px}.registry-node-row:hover,.registry-node-row.selected,.registry-list tr.selected{background:#24334a}.registry-arrow,.registry-node-label{border:0;background:transparent;padding:4px}.registry-arrow{width:24px}.registry-arrow:disabled{opacity:1}.registry-node-label{flex:1;text-align:left;white-space:nowrap}.registry-list{position:relative}.registry-list table{width:100%;border-collapse:collapse;table-layout:fixed}.registry-list th{position:sticky;top:0;z-index:1;background:#17202c;text-align:left;color:var(--muted);font-weight:500}.registry-list th,.registry-list td{height:30px;padding:5px 10px;border-bottom:1px solid #202937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.registry-list th:nth-child(1){width:30%}.registry-list th:nth-child(2){width:24%}.registry-list tr:hover{background:#192331}.registry-empty{position:absolute;inset:31px 0 0;display:grid;place-content:center;color:var(--muted);pointer-events:none}.registry-more,.registry-more-node{margin:8px}.registry-value-data{width:100%;min-height:180px;resize:vertical;color:var(--text);background:#0c1119;border:1px solid #344056;border-radius:6px;padding:9px;font:14px "Cascadia Mono",Consolas,monospace}
+    @media(max-width:760px){.status{display:none}.registry-body{grid-template-columns:minmax(180px,42%) 1fr}}
   </style>
 </head>
 <body>
   <header>
     <strong>KNSoft ZPigeon</strong>
-    <span>远程终端</span>
+    <nav class="app-nav"><button class="active" data-view="terminal">远程终端</button><button data-view="registry">注册表</button></nav>
     <div class="status"><span id="serverDot" class="dot"></span>Server <span id="server">读取中</span><span id="clientDot" class="dot"></span>Client <span id="client">读取中</span></div>
   </header>
-  <main>
+  <main id="terminalView">
     <div class="toolbar">
-      <select id="shellSelect" class="shell-select" disabled><option>正在读取远端 Shell…</option></select>
+      <select id="shellSelect" class="shell-select" disabled><option>Client 未连接</option></select>
       <button id="newShell" class="add-shell" disabled title="新建 Shell">＋</button>
       <span class="spacer"></span>
       <button id="toolsButton">其他控制</button>
@@ -38,6 +40,8 @@
       </div>
     </section>
   </main>
+
+  <main id="registryView" hidden><section id="registryEditor" class="registry-editor"></section></main>
 
   <dialog id="toolsDialog">
     <div class="toolbar"><strong>其他控制</strong><span class="spacer"></span><button id="closeTools">关闭</button></div>
@@ -83,28 +87,33 @@
     import {Terminal} from './vendor/xterm/xterm.mjs';
     import {FitAddon} from './vendor/xterm/addon-fit.mjs';
     import {bindTerminalInteractions,exportTerminal,pasteTerminal} from './terminal-interactions.mjs';
+    import {RegistryEditor} from './registry-editor.mjs';
 
     const $=id=>document.getElementById(id),encoder=new TextEncoder(),sessions=new Map(),shellCounters=new Map();
     const shellSelect=$('shellSelect'),newShell=$('newShell'),emptyNew=$('emptyNew'),tabs=$('tabs'),terminals=$('terminals'),empty=$('empty'),closeShell=$('closeShell'),tabMenu=$('tabMenu'),renameDialog=$('renameDialog'),pasteDialog=$('pasteDialog');
-    let active=null,serial=0,eventBookmark='',selectedShell=null,fitFrame=0,contextSession=null,renameSession=null,pendingPaste=null,toastTimer=0;
+    let active=null,serial=0,eventBookmark='',selectedShell=null,clientConnected=false,shellsLoaded=false,shellsLoading=false,currentView='terminal',fitFrame=0,contextSession=null,renameSession=null,pendingPaste=null,toastTimer=0;
+    const registry=new RegistryEditor($('registryEditor'),{call,notify});
 
     async function refresh(){
       try{
-        const state=await fetch('/api/status').then(r=>r.json()),connected=state.clientConnected;
+        const state=await fetch('/api/status').then(r=>r.json()),connected=state.clientConnected,disconnected=clientConnected&&!connected;clientConnected=connected;
         $('server').textContent=state.state===2?'运行中':`状态 ${state.state}`;$('client').textContent=connected?'已连接':'未连接';
         $('serverDot').className=`dot ${state.state===2?'ok':'off'}`;$('clientDot').className=`dot ${connected?'ok':'off'}`;
+        if(disconnected){selectedShell=null;shellsLoaded=false;shellSelect.replaceChildren(new Option('Client 未连接'))}
         shellSelect.disabled=newShell.disabled=emptyNew.disabled=!connected||selectedShell===null;
-      }catch{$('server').textContent='不可用';}
+        return connected;
+      }catch{$('server').textContent='不可用';return false}
     }
 
     async function loadShells(){
+      if(!clientConnected||currentView!=='terminal'||shellsLoaded||shellsLoading)return;shellsLoading=true;shellSelect.replaceChildren(new Option('正在读取远端 Shell…'));
       try{
         const values=await fetch('/api/terminal/shells').then(async r=>{if(!r.ok)throw new Error(await r.text());return r.json()});
         const previous=selectedShell?.id;selectedShell=values.find(value=>value.id===previous)||values[0]||null;
         shellSelect.replaceChildren(...values.map(value=>new Option(value.name,value.id)));
-        selectShell(selectedShell);
-      }catch{selectedShell=null;shellSelect.replaceChildren(new Option('等待 Client 连接…'));shellSelect.disabled=true;}
-      refresh();
+        selectShell(selectedShell);shellsLoaded=true;
+      }catch{selectedShell=null;shellSelect.replaceChildren(new Option(clientConnected?'读取 Shell 失败':'Client 未连接'));shellSelect.disabled=true}
+      finally{shellsLoading=false}
     }
 
     function selectShell(value){
@@ -185,7 +194,9 @@
 
     function closeActive(){closeSession(active)}
 
-    async function call(url,body){const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:body?JSON.stringify(body):null}),text=await response.text();if(!response.ok)throw new Error(text);return text?JSON.parse(text):'操作成功'}
+    function showView(name){currentView=name;$('terminalView').hidden=name!=='terminal';$('registryView').hidden=name!=='registry';for(const button of document.querySelectorAll('.app-nav button'))button.classList.toggle('active',button.dataset.view===name);if(name==='terminal'){scheduleFit();loadShells()}}
+
+    async function call(url,body){const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:body?JSON.stringify(body):null}),text=await response.text();if(!response.ok){let error;try{error=JSON.parse(text)}catch{}throw new Error(error?.message||text||`HTTP ${response.status}`)}return text?JSON.parse(text):'操作成功'}
     async function run(action){try{$('result').textContent=JSON.stringify(await action(),null,2)}catch(error){$('result').textContent=error}}
     shellSelect.onchange=()=>selectShell({id:Number(shellSelect.value),name:shellSelect.selectedOptions[0].text});newShell.onclick=emptyNew.onclick=createShell;closeShell.onclick=closeActive;$('toolsButton').onclick=()=>$('toolsDialog').showModal();$('closeTools').onclick=()=>$('toolsDialog').close();
     $('renameTab').onclick=()=>{const session=sessions.get(contextSession);hideTabMenu();if(!session)return;renameSession=session.id;$('renameInput').value=session.title;renameDialog.returnValue='';renameDialog.showModal();$('renameInput').select()};
@@ -194,10 +205,11 @@
     renameDialog.onclose=()=>{const session=sessions.get(renameSession),title=$('renameInput').value.trim();if(renameDialog.returnValue==='rename'&&session&&title){session.title=title;session.tab.textContent=title}renameSession=null;if(session)session.terminal.focus()};
     pasteDialog.onclose=()=>{const paste=pendingPaste;pendingPaste=null;const session=paste&&sessions.get(paste.id);if(pasteDialog.returnValue==='paste'&&session&&!session.ended&&session.socket.readyState===WebSocket.OPEN)pasteTerminal(session.terminal,paste.text);else if(session)session.terminal.focus()};
     document.addEventListener('pointerdown',event=>{if(!tabMenu.hidden&&!tabMenu.contains(event.target))hideTabMenu()});document.addEventListener('keydown',event=>{if(event.key==='Escape')hideTabMenu()});addEventListener('resize',hideTabMenu);tabs.addEventListener('scroll',hideTabMenu);
+    for(const button of document.querySelectorAll('.app-nav button'))button.onclick=()=>showView(button.dataset.view);
     $('systemInfo').onclick=()=>run(()=>call('/api/system'));$('terminateProcess').onclick=()=>run(()=>call('/api/process/terminate',{processId:Number($('pid').value)}));
     $('queryEvents').onclick=()=>queryEvents(false);$('nextEvents').onclick=()=>queryEvents(true);function queryEvents(next){if(!next)eventBookmark='';run(async()=>{const page=await call('/api/eventlog/query',{channelPath:$('channel').value,query:$('query').value||null,bookmark:eventBookmark||null,maxEvents:Number($('maxEvents').value)});eventBookmark=page.nextBookmark;return page})}
     $('enableChannel').onclick=()=>setChannel(true);$('disableChannel').onclick=()=>setChannel(false);function setChannel(enabled){run(()=>call('/api/eventlog/channel',{channelPath:$('channel').value,enabled}))}$('clearChannel').onclick=()=>{if(confirm('确定清除此频道的全部事件？'))run(()=>call('/api/eventlog/clear',{channelPath:$('channel').value}))};
-    new ResizeObserver(scheduleFit).observe(terminals);await loadShells();setInterval(refresh,1000);setInterval(()=>{if(shellSelect.disabled)loadShells()},3000);
+    new ResizeObserver(scheduleFit).observe(terminals);if(await refresh())await loadShells();setInterval(async()=>{const wasConnected=clientConnected,connected=await refresh();if(connected&&!wasConnected&&currentView==='terminal')loadShells()},1000);
   </script>
 </body>
 </html>

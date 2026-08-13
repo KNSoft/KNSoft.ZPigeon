@@ -5,21 +5,21 @@
 
 #define ZP_REGISTRY_SNAPSHOT_MAX_COUNT 65536
 #define ZP_REGISTRY_SNAPSHOT_MAX_NAME_BYTES 0x01000000UL
+#define ZP_REGISTRY_DELETE_MAX_DEPTH 512
 
-typedef struct _ZP_REGISTRY_KEY_ENTRY
-{
-    PWCHAR Name;
-    ULONG NameLength;
-    ULONGLONG LastWriteTime;
-} ZP_REGISTRY_KEY_ENTRY, *PZP_REGISTRY_KEY_ENTRY;
+typedef ZP_REGISTRY_KEY_RECORD ZP_REGISTRY_KEY_ENTRY, *PZP_REGISTRY_KEY_ENTRY;
+typedef ZP_REGISTRY_VALUE_RECORD ZP_REGISTRY_VALUE_ENTRY, *PZP_REGISTRY_VALUE_ENTRY;
 
-typedef struct _ZP_REGISTRY_VALUE_ENTRY
+static
+VOID
+ZpRegistry_InitializeUnicodeString(
+    _In_ PCZP_STRING_VIEW View,
+    _Out_ PUNICODE_STRING String)
 {
-    PWCHAR Name;
-    ULONG NameLength;
-    ULONG Type;
-    ULONG DataLength;
-} ZP_REGISTRY_VALUE_ENTRY, *PZP_REGISTRY_VALUE_ENTRY;
+    String->Buffer = (PWSTR)View->Buffer;
+    String->Length = (USHORT)(View->Length * sizeof(WCHAR));
+    String->MaximumLength = String->Length;
+}
 
 static
 NTSTATUS
@@ -28,12 +28,9 @@ ZpRegistry_BuildPath(
     _In_ PCZP_STRING_VIEW Path,
     _Out_ PUNICODE_STRING NativePath)
 {
-    static const UNICODE_STRING ClassesRoot =
-        RTL_CONSTANT_STRING(L"\\Registry\\Machine\\Software\\Classes");
-    static const UNICODE_STRING LocalMachine =
-        RTL_CONSTANT_STRING(L"\\Registry\\Machine");
-    static const UNICODE_STRING Users =
-        RTL_CONSTANT_STRING(L"\\Registry\\User");
+    static const UNICODE_STRING ClassesRoot = RTL_CONSTANT_STRING(L"\\Registry\\Machine\\Software\\Classes");
+    static const UNICODE_STRING LocalMachine = RTL_CONSTANT_STRING(L"\\Registry\\Machine");
+    static const UNICODE_STRING Users = RTL_CONSTANT_STRING(L"\\Registry\\User");
     static const UNICODE_STRING CurrentConfig = RTL_CONSTANT_STRING(
         L"\\Registry\\Machine\\System\\CurrentControlSet\\Hardware Profiles\\Current");
     UNICODE_STRING CurrentUser, RootPath;
@@ -57,6 +54,7 @@ ZpRegistry_BuildPath(
         FreeRoot = TRUE;
         break;
     case ZpRegistryLocalMachine:
+        // The native namespace includes every currently mounted machine hive.
         RootPath = LocalMachine;
         break;
     case ZpRegistryUsers:
@@ -85,9 +83,7 @@ ZpRegistry_BuildPath(
     if (PathBytes != 0)
     {
         Buffer[RootPath.Length / sizeof(WCHAR)] = L'\\';
-        RtlCopyMemory(Add2Ptr(Buffer, RootPath.Length + sizeof(WCHAR)),
-                      Path->Buffer,
-                      PathBytes);
+        RtlCopyMemory(Add2Ptr(Buffer, RootPath.Length + sizeof(WCHAR)), Path->Buffer, PathBytes);
     }
     NativePath->Buffer = Buffer;
     NativePath->Length = (USHORT)Length;
@@ -103,48 +99,53 @@ Cleanup:
 }
 
 static
-ACCESS_MASK
-ZpRegistry_GetViewAccess(
-    _In_ ZP_REGISTRY_VIEW View)
-{
-    switch (View)
-    {
-    case ZpRegistryViewDefault:
-        return 0;
-    case ZpRegistryView32:
-        return KEY_WOW64_32KEY;
-    case ZpRegistryView64:
-        return KEY_WOW64_64KEY;
-    default:
-        return MAXULONG;
-    }
-}
-
-static
 NTSTATUS
 ZpRegistry_OpenKey(
     _In_ ZP_REGISTRY_ROOT Root,
-    _In_ ZP_REGISTRY_VIEW View,
     _In_ PCZP_STRING_VIEW Path,
     _In_ ACCESS_MASK Access,
     _Out_ PHANDLE Key)
 {
     UNICODE_STRING NativePath;
-    ACCESS_MASK ViewAccess;
     NTSTATUS Status;
 
-    ViewAccess = ZpRegistry_GetViewAccess(View);
-    if (ViewAccess == MAXULONG)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
     Status = ZpRegistry_BuildPath(Root, Path, &NativePath);
     if (NT_SUCCESS(Status))
     {
-        Status = Sys_RegOpenKey(Key, Access | ViewAccess, &NativePath);
+        Status = Sys_RegOpenKey(Key, Access, &NativePath);
         Mem_Free(NativePath.Buffer);
     }
     return Status;
+}
+
+static
+NTSTATUS
+ZpRegistry_JoinPath(
+    _In_ PCZP_STRING_VIEW Path,
+    _In_ PCZP_STRING_VIEW Name,
+    _Out_ PZP_STRING_VIEW Result)
+{
+    SIZE_T Length = (SIZE_T)Path->Length + (Path->Length != 0) + Name->Length;
+    PWCHAR Buffer;
+
+    if (Length > ZP_REGISTRY_PATH_MAX_LENGTH)
+    {
+        return STATUS_NAME_TOO_LONG;
+    }
+    Buffer = Mem_Alloc(Length * sizeof(WCHAR));
+    if (Buffer == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    if (Path->Length != 0)
+    {
+        RtlCopyMemory(Buffer, Path->Buffer, (SIZE_T)Path->Length * sizeof(WCHAR));
+        Buffer[Path->Length] = L'\\';
+    }
+    RtlCopyMemory(Buffer + Path->Length + (Path->Length != 0), Name->Buffer, (SIZE_T)Name->Length * sizeof(WCHAR));
+    Result->Buffer = (const BYTE*)Buffer;
+    Result->Length = (ULONG)Length;
+    return STATUS_SUCCESS;
 }
 
 static
@@ -161,21 +162,12 @@ ZpRegistry_CompareNames(
     {
         return LeftLength < RightLength ? -1 : LeftLength != RightLength;
     }
-    Result = CompareStringOrdinal(Left,
-                                  (INT)LeftLength,
-                                  Right,
-                                  (INT)RightLength,
-                                  TRUE);
+    Result = CompareStringOrdinal(Left, (INT)LeftLength, Right, (INT)RightLength, TRUE);
     if (Result == CSTR_EQUAL)
     {
-        Result = CompareStringOrdinal(Left,
-                                      (INT)LeftLength,
-                                      Right,
-                                      (INT)RightLength,
-                                      FALSE);
+        Result = CompareStringOrdinal(Left, (INT)LeftLength, Right, (INT)RightLength, FALSE);
     }
-    return Result == CSTR_LESS_THAN ? -1 :
-           Result == CSTR_GREATER_THAN ? 1 : 0;
+    return Result == CSTR_LESS_THAN ? -1 : Result == CSTR_GREATER_THAN ? 1 : 0;
 }
 
 static
@@ -188,10 +180,7 @@ ZpRegistry_CompareKeyEntries(
     const ZP_REGISTRY_KEY_ENTRY* LeftEntry = Left;
     const ZP_REGISTRY_KEY_ENTRY* RightEntry = Right;
 
-    return ZpRegistry_CompareNames(LeftEntry->Name,
-                                         LeftEntry->NameLength,
-                                         RightEntry->Name,
-                                         RightEntry->NameLength);
+    return ZpRegistry_CompareNames(LeftEntry->Name, LeftEntry->NameLength, RightEntry->Name, RightEntry->NameLength);
 }
 
 static
@@ -204,17 +193,12 @@ ZpRegistry_CompareValueEntries(
     const ZP_REGISTRY_VALUE_ENTRY* LeftEntry = Left;
     const ZP_REGISTRY_VALUE_ENTRY* RightEntry = Right;
 
-    return ZpRegistry_CompareNames(LeftEntry->Name,
-                                         LeftEntry->NameLength,
-                                         RightEntry->Name,
-                                         RightEntry->NameLength);
+    return ZpRegistry_CompareNames(LeftEntry->Name, LeftEntry->NameLength, RightEntry->Name, RightEntry->NameLength);
 }
 
 static
 VOID
-ZpRegistry_FreeKeyEntries(
-    _In_reads_opt_(Count) PZP_REGISTRY_KEY_ENTRY Entries,
-    _In_ ULONG Count)
+ZpRegistry_FreeKeyEntries(_In_opt_ PZP_REGISTRY_KEY_ENTRY Entries, _In_ ULONG Count)
 {
     ULONG Index;
 
@@ -224,16 +208,14 @@ ZpRegistry_FreeKeyEntries(
     }
     for (Index = 0; Index < Count; Index++)
     {
-        Mem_Free(Entries[Index].Name);
+        Mem_Free((PVOID)Entries[Index].Name);
     }
     Mem_Free(Entries);
 }
 
 static
 VOID
-ZpRegistry_FreeValueEntries(
-    _In_reads_opt_(Count) PZP_REGISTRY_VALUE_ENTRY Entries,
-    _In_ ULONG Count)
+ZpRegistry_FreeValueEntries(_In_opt_ PZP_REGISTRY_VALUE_ENTRY Entries, _In_ ULONG Count)
 {
     ULONG Index;
 
@@ -243,42 +225,56 @@ ZpRegistry_FreeValueEntries(
     }
     for (Index = 0; Index < Count; Index++)
     {
-        Mem_Free(Entries[Index].Name);
+        Mem_Free((PVOID)Entries[Index].Name);
+        Mem_Free((PVOID)Entries[Index].Preview);
     }
     Mem_Free(Entries);
 }
 
 static
 NTSTATUS
-ZpRegistry_QueryKeyInformation(
-    _In_ HANDLE Key,
-    _Outptr_ PKEY_FULL_INFORMATION* Information)
+ZpRegistry_QueryCachedInformation(_In_ HANDLE Key, _Out_ PKEY_CACHED_INFORMATION Information)
 {
-    PKEY_FULL_INFORMATION Buffer;
     ULONG Length;
+
+    return NtQueryKey(Key, KeyCachedInformation, Information, sizeof(*Information), &Length);
+}
+
+static
+NTSTATUS
+ZpRegistry_QueryHasChildren(
+    _In_ HANDLE Parent,
+    _In_ PKEY_BASIC_INFORMATION Information,
+    _Out_ PBOOLEAN HasChildren)
+{
+    KEY_CACHED_INFORMATION KeyInformation;
+    OBJECT_ATTRIBUTES ObjectAttributes;
+    UNICODE_STRING Name;
+    HANDLE Key;
     NTSTATUS Status;
 
-    Status = NtQueryKey(Key, KeyFullInformation, NULL, 0, &Length);
-    if (Status != STATUS_BUFFER_TOO_SMALL && Status != STATUS_BUFFER_OVERFLOW)
-    {
-        return Status;
-    }
-    Buffer = Mem_Alloc(Length);
-    if (Buffer == NULL)
-    {
-        return STATUS_NO_MEMORY;
-    }
-    Status = NtQueryKey(Key,
-                        KeyFullInformation,
-                        Buffer,
-                        Length,
-                        &Length);
+    Name.Buffer = Information->Name;
+    Name.Length = (USHORT)Information->NameLength;
+    Name.MaximumLength = Name.Length;
+    InitializeObjectAttributes(&ObjectAttributes, &Name, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE, Parent, NULL);
+    Status = NtOpenKey(&Key, KEY_QUERY_VALUE, &ObjectAttributes);
     if (!NT_SUCCESS(Status))
     {
-        Mem_Free(Buffer);
+        if (Status == STATUS_ACCESS_DENIED || Status == STATUS_PRIVILEGE_NOT_HELD)
+        {
+            // Keep inaccessible keys expandable so opening them reports the actual error.
+            *HasChildren = TRUE;
+            return STATUS_SUCCESS;
+        }
         return Status;
     }
-    *Information = Buffer;
+    Status = ZpRegistry_QueryCachedInformation(Key, &KeyInformation);
+    NtClose(Key);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    *HasChildren = KeyInformation.SubKeys != 0;
     return STATUS_SUCCESS;
 }
 
@@ -290,68 +286,58 @@ ZpRegistry_EnumerateKeys(
     _Out_ PULONG EntryCount)
 {
     PZP_REGISTRY_KEY_ENTRY Result;
-    PKEY_FULL_INFORMATION FullInfo;
     PKEY_BASIC_INFORMATION KeyInfo;
+    KEY_CACHED_INFORMATION Information;
     HANDLE Key;
     SIZE_T NameBytes;
-    ULONG Count, Index, Length, InfoSize;
+    ULONG Capacity, Count = 0, Index, Length, InfoSize;
     NTSTATUS Status;
 
-    *Entries = NULL;
-    *EntryCount = 0;
-    Status = ZpRegistry_OpenKey(Request->Root,
-                                Request->View,
-                                &Request->Path,
-                                KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE,
-                                &Key);
+    Status = ZpRegistry_OpenKey(Request->Root, &Request->Path, KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE, &Key);
     if (!NT_SUCCESS(Status))
     {
         return Status;
     }
-    Status = ZpRegistry_QueryKeyInformation(Key, &FullInfo);
+    Status = ZpRegistry_QueryCachedInformation(Key, &Information);
     if (!NT_SUCCESS(Status))
     {
         NtClose(Key);
         return Status;
     }
-    Count = FullInfo->SubKeys;
-    NameBytes = (SIZE_T)Count * FullInfo->MaxNameLength;
-    if (FullInfo->MaxNameLength > ZP_REGISTRY_PATH_MAX_LENGTH * sizeof(WCHAR) ||
-        Count > ZP_REGISTRY_SNAPSHOT_MAX_COUNT ||
-        Count > MAXSIZE_T / sizeof(*Result) ||
+    Capacity = Information.SubKeys;
+    NameBytes = (SIZE_T)Capacity * Information.MaxNameLength;
+    if (Information.MaxNameLength > ZP_REGISTRY_PATH_MAX_LENGTH * sizeof(WCHAR) ||
+        Capacity > ZP_REGISTRY_SNAPSHOT_MAX_COUNT ||
+        Capacity > MAXSIZE_T / sizeof(*Result) ||
         NameBytes > ZP_REGISTRY_SNAPSHOT_MAX_NAME_BYTES)
     {
-        Mem_Free(FullInfo);
         NtClose(Key);
         return STATUS_QUOTA_EXCEEDED;
     }
-    if (Count == 0)
+    if (Capacity == 0)
     {
-        Mem_Free(FullInfo);
+        *Entries = NULL;
+        *EntryCount = 0;
         NtClose(Key);
         return STATUS_SUCCESS;
     }
-    InfoSize = FIELD_OFFSET(KEY_BASIC_INFORMATION, Name) +
-               FullInfo->MaxNameLength;
-    Mem_Free(FullInfo);
-    Result = Mem_Alloc((SIZE_T)Count * sizeof(*Result));
-    KeyInfo = Mem_Alloc(InfoSize);
-    if (Result == NULL || KeyInfo == NULL)
+    InfoSize = FIELD_OFFSET(KEY_BASIC_INFORMATION, Name) + Information.MaxNameLength;
+    Result = Mem_Alloc((SIZE_T)Capacity * sizeof(*Result));
+    if (Result == NULL)
     {
-        Mem_Free(Result);
-        Mem_Free(KeyInfo);
         NtClose(Key);
         return STATUS_NO_MEMORY;
     }
-    RtlZeroMemory(Result, (SIZE_T)Count * sizeof(*Result));
-    for (Index = 0; Index < Count; Index++)
+    KeyInfo = Mem_Alloc(InfoSize);
+    if (KeyInfo == NULL)
     {
-        Status = NtEnumerateKey(Key,
-                                Index,
-                                KeyBasicInformation,
-                                KeyInfo,
-                                InfoSize,
-                                &Length);
+        Mem_Free(Result);
+        NtClose(Key);
+        return STATUS_NO_MEMORY;
+    }
+    for (Index = 0; Index < Capacity; Index++)
+    {
+        Status = NtEnumerateKey(Key, Index, KeyBasicInformation, KeyInfo, InfoSize, &Length);
         if (Status == STATUS_NO_MORE_ENTRIES)
         {
             Status = STATUS_SUCCESS;
@@ -361,25 +347,40 @@ ZpRegistry_EnumerateKeys(
         {
             break;
         }
-        Result[Index].Name = Mem_Alloc(KeyInfo->NameLength);
-        if (Result[Index].Name == NULL)
+        Status = ZpRegistry_QueryHasChildren(Key, KeyInfo, &Result[Count].HasChildren);
+        if (Status == STATUS_OBJECT_NAME_NOT_FOUND ||
+            Status == STATUS_OBJECT_PATH_NOT_FOUND ||
+            Status == STATUS_KEY_DELETED)
+        {
+            Status = STATUS_SUCCESS;
+            continue;
+        }
+        if (!NT_SUCCESS(Status))
+        {
+            break;
+        }
+        Result[Count].Name = Mem_Alloc(KeyInfo->NameLength);
+        if (Result[Count].Name == NULL)
         {
             Status = STATUS_NO_MEMORY;
             break;
         }
-        RtlCopyMemory(Result[Index].Name, KeyInfo->Name, KeyInfo->NameLength);
-        Result[Index].NameLength = KeyInfo->NameLength / sizeof(WCHAR);
-        Result[Index].LastWriteTime = KeyInfo->LastWriteTime.QuadPart;
+        RtlCopyMemory((PVOID)Result[Count].Name, KeyInfo->Name, KeyInfo->NameLength);
+        Result[Count].NameLength = KeyInfo->NameLength / sizeof(WCHAR);
+        Result[Count].LastWriteTime = KeyInfo->LastWriteTime.QuadPart;
+        Count++;
     }
     Mem_Free(KeyInfo);
     NtClose(Key);
     if (!NT_SUCCESS(Status))
     {
-        ZpRegistry_FreeKeyEntries(Result, Index + 1);
+        ZpRegistry_FreeKeyEntries(Result, Count);
         return Status;
     }
-    Count = Index;
-    qsort(Result, Count, sizeof(*Result), ZpRegistry_CompareKeyEntries);
+    if (Count > 1)
+    {
+        qsort(Result, Count, sizeof(*Result), ZpRegistry_CompareKeyEntries);
+    }
     *Entries = Result;
     *EntryCount = Count;
     return STATUS_SUCCESS;
@@ -393,108 +394,123 @@ ZpRegistry_EnumerateValues(
     _Out_ PULONG EntryCount)
 {
     PZP_REGISTRY_VALUE_ENTRY Result;
-    PKEY_FULL_INFORMATION FullInfo;
     PKEY_VALUE_FULL_INFORMATION ValueInfo;
+    KEY_CACHED_INFORMATION Information;
     HANDLE Key;
+    PVOID Name, Preview;
     SIZE_T NameBytes, Size;
-    ULONG Count, Index, Length, InfoSize;
+    ULONG AvailableData, Capacity, Count = 0, Index, Length, InfoSize, PreviewLength;
     NTSTATUS Status;
 
-    *Entries = NULL;
-    *EntryCount = 0;
-    Status = ZpRegistry_OpenKey(Request->Root,
-                                Request->View,
-                                &Request->Path,
-                                KEY_QUERY_VALUE,
-                                &Key);
+    Status = ZpRegistry_OpenKey(Request->Root, &Request->Path, KEY_QUERY_VALUE, &Key);
     if (!NT_SUCCESS(Status))
     {
         return Status;
     }
-    Status = ZpRegistry_QueryKeyInformation(Key, &FullInfo);
+    Status = ZpRegistry_QueryCachedInformation(Key, &Information);
     if (!NT_SUCCESS(Status))
     {
         NtClose(Key);
         return Status;
     }
-    Count = FullInfo->Values;
-    NameBytes = (SIZE_T)Count * FullInfo->MaxValueNameLength;
-    Size = FIELD_OFFSET(KEY_VALUE_FULL_INFORMATION, Name) +
-           (SIZE_T)FullInfo->MaxValueNameLength +
-           FullInfo->MaxValueDataLength + sizeof(ULONGLONG);
-    if (FullInfo->MaxValueNameLength > ZP_REGISTRY_PATH_MAX_LENGTH * sizeof(WCHAR) ||
-        FullInfo->MaxValueDataLength > ZP_REGISTRY_DATA_MAX_LENGTH ||
-        Count > ZP_REGISTRY_SNAPSHOT_MAX_COUNT ||
-        Count > MAXSIZE_T / sizeof(*Result) ||
+    Capacity = Information.Values;
+    NameBytes = (SIZE_T)Capacity * Information.MaxValueNameLength;
+    Size = FIELD_OFFSET(KEY_VALUE_FULL_INFORMATION, Name) + (SIZE_T)Information.MaxValueNameLength +
+           ZP_REGISTRY_VALUE_PREVIEW_MAX_LENGTH + sizeof(ULONGLONG);
+    if (Information.MaxValueNameLength > ZP_REGISTRY_PATH_MAX_LENGTH * sizeof(WCHAR) ||
+        Capacity > ZP_REGISTRY_SNAPSHOT_MAX_COUNT ||
+        Capacity > MAXSIZE_T / sizeof(*Result) ||
         NameBytes > ZP_REGISTRY_SNAPSHOT_MAX_NAME_BYTES ||
         Size > MAXULONG)
     {
-        Mem_Free(FullInfo);
         NtClose(Key);
         return STATUS_QUOTA_EXCEEDED;
     }
-    if (Count == 0)
+    if (Capacity == 0)
     {
-        Mem_Free(FullInfo);
+        *Entries = NULL;
+        *EntryCount = 0;
         NtClose(Key);
         return STATUS_SUCCESS;
     }
     InfoSize = (ULONG)Size;
-    Mem_Free(FullInfo);
-    Result = Mem_Alloc((SIZE_T)Count * sizeof(*Result));
-    ValueInfo = Mem_Alloc(InfoSize);
-    if (Result == NULL || ValueInfo == NULL)
+    Result = Mem_Alloc((SIZE_T)Capacity * sizeof(*Result));
+    if (Result == NULL)
     {
-        Mem_Free(Result);
-        Mem_Free(ValueInfo);
         NtClose(Key);
         return STATUS_NO_MEMORY;
     }
-    RtlZeroMemory(Result, (SIZE_T)Count * sizeof(*Result));
-    for (Index = 0; Index < Count; Index++)
+    ValueInfo = Mem_Alloc(InfoSize);
+    if (ValueInfo == NULL)
     {
-        Status = NtEnumerateValueKey(Key,
-                                     Index,
-                                     KeyValueFullInformation,
-                                     ValueInfo,
-                                     InfoSize,
-                                     &Length);
+        Mem_Free(Result);
+        NtClose(Key);
+        return STATUS_NO_MEMORY;
+    }
+    for (Index = 0; Index < Capacity; Index++)
+    {
+        Status = NtEnumerateValueKey(Key, Index, KeyValueFullInformation, ValueInfo, InfoSize, &Length);
         if (Status == STATUS_NO_MORE_ENTRIES)
         {
             Status = STATUS_SUCCESS;
             break;
         }
-        if (!NT_SUCCESS(Status))
+        if (!NT_SUCCESS(Status) && Status != STATUS_BUFFER_OVERFLOW)
         {
             break;
         }
-        Result[Index].Name = ValueInfo->NameLength != 0 ?
-                                 Mem_Alloc(ValueInfo->NameLength) :
-                                 NULL;
-        if (ValueInfo->NameLength != 0 && Result[Index].Name == NULL)
+        // Overflow is expected when only a bounded preview fits in the buffer.
+        if (ValueInfo->NameLength > InfoSize - UFIELD_OFFSET(KEY_VALUE_FULL_INFORMATION, Name) ||
+            ValueInfo->NameLength % sizeof(WCHAR) != 0 ||
+            (ValueInfo->DataLength != 0 &&
+             ValueInfo->DataOffset < UFIELD_OFFSET(KEY_VALUE_FULL_INFORMATION, Name) + ValueInfo->NameLength))
+        {
+            Status = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+        Status = STATUS_SUCCESS;
+        Name = ValueInfo->NameLength != 0 ? Mem_Alloc(ValueInfo->NameLength) : NULL;
+        if (ValueInfo->NameLength != 0 && Name == NULL)
         {
             Status = STATUS_NO_MEMORY;
             break;
         }
         if (ValueInfo->NameLength != 0)
         {
-            RtlCopyMemory(Result[Index].Name,
-                          ValueInfo->Name,
-                          ValueInfo->NameLength);
+            RtlCopyMemory(Name, ValueInfo->Name, ValueInfo->NameLength);
         }
-        Result[Index].NameLength = ValueInfo->NameLength / sizeof(WCHAR);
-        Result[Index].Type = ValueInfo->Type;
-        Result[Index].DataLength = ValueInfo->DataLength;
+        AvailableData = ValueInfo->DataOffset < InfoSize ? InfoSize - ValueInfo->DataOffset : 0;
+        PreviewLength = min(ValueInfo->DataLength, min(ZP_REGISTRY_VALUE_PREVIEW_MAX_LENGTH, AvailableData));
+        Preview = PreviewLength != 0 ? Mem_Alloc(PreviewLength) : NULL;
+        if (PreviewLength != 0 && Preview == NULL)
+        {
+            Mem_Free(Name);
+            Status = STATUS_NO_MEMORY;
+            break;
+        }
+        if (PreviewLength != 0)
+        {
+            RtlCopyMemory(Preview, Add2Ptr(ValueInfo, ValueInfo->DataOffset), PreviewLength);
+        }
+        Result[Count].Name = Name;
+        Result[Count].NameLength = ValueInfo->NameLength / sizeof(WCHAR);
+        Result[Count].Type = ValueInfo->Type;
+        Result[Count].DataLength = ValueInfo->DataLength;
+        Result[Count].Preview = Preview;
+        Result[Count].PreviewLength = PreviewLength;
+        Count++;
     }
     Mem_Free(ValueInfo);
     NtClose(Key);
     if (!NT_SUCCESS(Status))
     {
-        ZpRegistry_FreeValueEntries(Result, Index + 1);
+        ZpRegistry_FreeValueEntries(Result, Count);
         return Status;
     }
-    Count = Index;
-    qsort(Result, Count, sizeof(*Result), ZpRegistry_CompareValueEntries);
+    if (Count > 1)
+    {
+        qsort(Result, Count, sizeof(*Result), ZpRegistry_CompareValueEntries);
+    }
     *Entries = Result;
     *EntryCount = Count;
     return STATUS_SUCCESS;
@@ -503,53 +519,106 @@ ZpRegistry_EnumerateValues(
 static
 ULONG
 ZpRegistry_FindKeyStart(
-    _In_reads_(Count) const ZP_REGISTRY_KEY_ENTRY* Entries,
+    _In_reads_(Count) PCZP_REGISTRY_KEY_RECORD Entries,
     _In_ ULONG Count,
     _In_ PCZP_REGISTRY_ENUMERATE_VIEW Request)
 {
-    ULONG Index;
+    ULONG Left = 0, Middle, Right = Count;
 
     if (!Request->CursorPresent)
     {
         return 0;
     }
-    for (Index = 0; Index < Count; Index++)
+    while (Left < Right)
     {
-        if (ZpRegistry_CompareNames(Entries[Index].Name,
-                                          Entries[Index].NameLength,
-                                          (PCWCH)Request->Cursor.Buffer,
-                                          Request->Cursor.Length) > 0)
+        Middle = Left + (Right - Left) / 2;
+        if (ZpRegistry_CompareNames(Entries[Middle].Name,
+                                   Entries[Middle].NameLength,
+                                   (PCWCH)Request->Cursor.Buffer,
+                                   Request->Cursor.Length) > 0)
         {
-            break;
+            Right = Middle;
+        }
+        else
+        {
+            Left = Middle + 1;
         }
     }
-    return Index;
+    return Left;
 }
 
 static
 ULONG
 ZpRegistry_FindValueStart(
-    _In_reads_(Count) const ZP_REGISTRY_VALUE_ENTRY* Entries,
+    _In_reads_(Count) PCZP_REGISTRY_VALUE_RECORD Entries,
     _In_ ULONG Count,
     _In_ PCZP_REGISTRY_ENUMERATE_VIEW Request)
 {
-    ULONG Index;
+    ULONG Left = 0, Middle, Right = Count;
 
     if (!Request->CursorPresent)
     {
         return 0;
     }
-    for (Index = 0; Index < Count; Index++)
+    while (Left < Right)
     {
-        if (ZpRegistry_CompareNames(Entries[Index].Name,
-                                          Entries[Index].NameLength,
-                                          (PCWCH)Request->Cursor.Buffer,
-                                          Request->Cursor.Length) > 0)
+        Middle = Left + (Right - Left) / 2;
+        if (ZpRegistry_CompareNames(Entries[Middle].Name,
+                                   Entries[Middle].NameLength,
+                                   (PCWCH)Request->Cursor.Buffer,
+                                   Request->Cursor.Length) > 0)
         {
-            break;
+            Right = Middle;
+        }
+        else
+        {
+            Left = Middle + 1;
         }
     }
-    return Index;
+    return Left;
+}
+
+static
+NTSTATUS
+ZpRegistry_QueryValueData(_In_ HANDLE Key,
+                          _In_ PCUNICODE_STRING ValueName,
+                          _Outptr_ PKEY_VALUE_PARTIAL_INFORMATION* Data)
+{
+    PKEY_VALUE_PARTIAL_INFORMATION Buffer;
+    ULONG Length;
+    NTSTATUS Status;
+
+    Status = NtQueryValueKey(Key, (PUNICODE_STRING)ValueName, KeyValuePartialInformation, NULL, 0, &Length);
+    if (Status != STATUS_BUFFER_TOO_SMALL && Status != STATUS_BUFFER_OVERFLOW)
+    {
+        // A successful zero-length probe is not a valid NtQueryValueKey result.
+        return NT_SUCCESS(Status) ? STATUS_UNSUCCESSFUL : Status;
+    }
+    if (Length < UFIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data) ||
+        Length - UFIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data) > ZP_REGISTRY_DATA_MAX_LENGTH)
+    {
+        return STATUS_BUFFER_OVERFLOW;
+    }
+    Buffer = Mem_Alloc(Length);
+    if (Buffer == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    Status = NtQueryValueKey(Key, (PUNICODE_STRING)ValueName, KeyValuePartialInformation, Buffer, Length, &Length);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Buffer);
+        return Status;
+    }
+    if (Length < UFIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data) ||
+        Buffer->DataLength > ZP_REGISTRY_DATA_MAX_LENGTH ||
+        Buffer->DataLength > Length - UFIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data))
+    {
+        Mem_Free(Buffer);
+        return STATUS_BUFFER_OVERFLOW;
+    }
+    *Data = Buffer;
+    return STATUS_SUCCESS;
 }
 
 static
@@ -562,49 +631,21 @@ ZpRegistry_EncodeKeyPageResponse(
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
 {
-    PZP_REGISTRY_KEY_RECORD Records = NULL;
     ULONG Available = EntryCount - Start;
     ULONG Count = min(Available, MaxEntries);
-    ULONG Index;
+    PCZP_REGISTRY_KEY_RECORD Records = Count != 0 ? Entries + Start : NULL;
+    PBYTE Buffer;
     PCWCH NextCursor = NULL;
-    ULONG NextCursorLength = 0;
+    ULONG Length, NextCursorLength = 0;
     BOOLEAN HasMore;
     NTSTATUS Status;
 
-    if (Count != 0)
-    {
-        Records = Mem_Alloc((SIZE_T)Count * sizeof(*Records));
-        if (Records == NULL)
-        {
-            return STATUS_NO_MEMORY;
-        }
-        for (Index = 0; Index < Count; Index++)
-        {
-            Records[Index].Name = Entries[Start + Index].Name;
-            Records[Index].NameLength = Entries[Start + Index].NameLength;
-            Records[Index].LastWriteTime =
-                Entries[Start + Index].LastWriteTime;
-        }
-    }
     do
     {
         HasMore = Count < Available;
-        if (HasMore && (Records == NULL || Count == 0))
-        {
-            Status = STATUS_INVALID_PARAMETER;
-            break;
-        }
         NextCursor = HasMore ? Records[Count - 1].Name : NULL;
         NextCursorLength = HasMore ? Records[Count - 1].NameLength : 0;
-        Status = ZpRegistry_EncodeKeyPage(
-                     HasMore,
-                     Records,
-                     Count,
-                     NextCursor,
-                     NextCursorLength,
-                     NULL,
-                     0,
-                     ResponseLength);
+        Status = ZpRegistry_EncodeKeyPage(HasMore, Records, Count, NextCursor, NextCursorLength, NULL, 0, &Length);
         if (Status == STATUS_BUFFER_OVERFLOW && Count > 1)
         {
             Count /= 2;
@@ -614,25 +655,25 @@ ZpRegistry_EncodeKeyPageResponse(
             break;
         }
     } while (TRUE);
-    *Response = NT_SUCCESS(Status) ? Mem_Alloc(*ResponseLength) : NULL;
-    if (NT_SUCCESS(Status) && *Response == NULL)
+    if (!NT_SUCCESS(Status))
     {
-        Status = STATUS_NO_MEMORY;
+        return Status;
     }
-    if (NT_SUCCESS(Status))
+    Buffer = Mem_Alloc(Length);
+    if (Buffer == NULL)
     {
-        Status = ZpRegistry_EncodeKeyPage(
-                     HasMore,
-                     Records,
-                     Count,
-                     NextCursor,
-                     NextCursorLength,
-                     *Response,
-                     *ResponseLength,
-                     ResponseLength);
+        return STATUS_NO_MEMORY;
     }
-    Mem_Free(Records);
-    return Status;
+    Status = ZpRegistry_EncodeKeyPage(
+        HasMore, Records, Count, NextCursor, NextCursorLength, Buffer, Length, &Length);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Buffer);
+        return Status;
+    }
+    *Response = Buffer;
+    *ResponseLength = Length;
+    return STATUS_SUCCESS;
 }
 
 static
@@ -645,49 +686,21 @@ ZpRegistry_EncodeValuePageResponse(
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
 {
-    PZP_REGISTRY_VALUE_RECORD Records = NULL;
     ULONG Available = EntryCount - Start;
     ULONG Count = min(Available, MaxEntries);
-    ULONG Index;
+    PCZP_REGISTRY_VALUE_RECORD Records = Count != 0 ? Entries + Start : NULL;
+    PBYTE Buffer;
     PCWCH NextCursor = NULL;
-    ULONG NextCursorLength = 0;
+    ULONG Length, NextCursorLength = 0;
     BOOLEAN HasMore;
     NTSTATUS Status;
 
-    if (Count != 0)
-    {
-        Records = Mem_Alloc((SIZE_T)Count * sizeof(*Records));
-        if (Records == NULL)
-        {
-            return STATUS_NO_MEMORY;
-        }
-        for (Index = 0; Index < Count; Index++)
-        {
-            Records[Index].Name = Entries[Start + Index].Name;
-            Records[Index].NameLength = Entries[Start + Index].NameLength;
-            Records[Index].Type = Entries[Start + Index].Type;
-            Records[Index].DataLength = Entries[Start + Index].DataLength;
-        }
-    }
     do
     {
         HasMore = Count < Available;
-        if (HasMore && (Records == NULL || Count == 0))
-        {
-            Status = STATUS_INVALID_PARAMETER;
-            break;
-        }
         NextCursor = HasMore ? Records[Count - 1].Name : NULL;
         NextCursorLength = HasMore ? Records[Count - 1].NameLength : 0;
-        Status = ZpRegistry_EncodeValuePage(
-                     HasMore,
-                     Records,
-                     Count,
-                     NextCursor,
-                     NextCursorLength,
-                     NULL,
-                     0,
-                     ResponseLength);
+        Status = ZpRegistry_EncodeValuePage(HasMore, Records, Count, NextCursor, NextCursorLength, NULL, 0, &Length);
         if (Status == STATUS_BUFFER_OVERFLOW && Count > 1)
         {
             Count /= 2;
@@ -697,25 +710,25 @@ ZpRegistry_EncodeValuePageResponse(
             break;
         }
     } while (TRUE);
-    *Response = NT_SUCCESS(Status) ? Mem_Alloc(*ResponseLength) : NULL;
-    if (NT_SUCCESS(Status) && *Response == NULL)
+    if (!NT_SUCCESS(Status))
     {
-        Status = STATUS_NO_MEMORY;
+        return Status;
     }
-    if (NT_SUCCESS(Status))
+    Buffer = Mem_Alloc(Length);
+    if (Buffer == NULL)
     {
-        Status = ZpRegistry_EncodeValuePage(
-                     HasMore,
-                     Records,
-                     Count,
-                     NextCursor,
-                     NextCursorLength,
-                     *Response,
-                     *ResponseLength,
-                     ResponseLength);
+        return STATUS_NO_MEMORY;
     }
-    Mem_Free(Records);
-    return Status;
+    Status = ZpRegistry_EncodeValuePage(
+        HasMore, Records, Count, NextCursor, NextCursorLength, Buffer, Length, &Length);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Buffer);
+        return Status;
+    }
+    *Response = Buffer;
+    *ResponseLength = Length;
+    return STATUS_SUCCESS;
 }
 
 static
@@ -725,56 +738,50 @@ ZpRegistry_QueryValue(
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
 {
-    HANDLE Key = NULL;
+    PKEY_VALUE_PARTIAL_INFORMATION Data;
     UNICODE_STRING ValueName;
-    PKEY_VALUE_PARTIAL_INFORMATION Data = NULL;
+    HANDLE Key;
+    PBYTE Buffer;
+    ULONG Length;
     NTSTATUS Status;
 
-    Status = ZpRegistry_OpenKey(Request->Root,
-                                Request->View,
-                                &Request->Path,
-                                KEY_QUERY_VALUE,
-                                &Key);
-    if (NT_SUCCESS(Status))
+    Status = ZpRegistry_OpenKey(Request->Root, &Request->Path, KEY_QUERY_VALUE, &Key);
+    if (!NT_SUCCESS(Status))
     {
-        ValueName.Buffer = (PWSTR)Request->ValueName.Buffer;
-        ValueName.Length = (USHORT)(Request->ValueName.Length * sizeof(WCHAR));
-        ValueName.MaximumLength = ValueName.Length;
-        Status = Sys_RegQueryData(Key, &ValueName, &Data);
+        return Status;
     }
-    if (NT_SUCCESS(Status) && Data->DataLength > ZP_REGISTRY_DATA_MAX_LENGTH)
-    {
-        Status = STATUS_BUFFER_OVERFLOW;
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpRegistry_EncodeValue(Data->Type,
-                                        Data->Data,
-                                        Data->DataLength,
-                                        NULL,
-                                        0,
-                                        ResponseLength);
-    }
-    *Response = NT_SUCCESS(Status) ? Mem_Alloc(*ResponseLength) : NULL;
-    if (NT_SUCCESS(Status) && *Response == NULL)
-    {
-        Status = STATUS_NO_MEMORY;
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpRegistry_EncodeValue(Data->Type,
-                                        Data->Data,
-                                        Data->DataLength,
-                                        *Response,
-                                        *ResponseLength,
-                                        ResponseLength);
-    }
-    Mem_Free(Data);
-    if (Key != NULL)
+    ZpRegistry_InitializeUnicodeString(&Request->ValueName, &ValueName);
+    Status = ZpRegistry_QueryValueData(Key, &ValueName, &Data);
+    if (!NT_SUCCESS(Status))
     {
         NtClose(Key);
+        return Status;
     }
-    return Status;
+    Status = ZpRegistry_EncodeValue(Data->Type, Data->Data, Data->DataLength, NULL, 0, &Length);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Data);
+        NtClose(Key);
+        return Status;
+    }
+    Buffer = Mem_Alloc(Length);
+    if (Buffer == NULL)
+    {
+        Mem_Free(Data);
+        NtClose(Key);
+        return STATUS_NO_MEMORY;
+    }
+    Status = ZpRegistry_EncodeValue(Data->Type, Data->Data, Data->DataLength, Buffer, Length, &Length);
+    Mem_Free(Data);
+    NtClose(Key);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Buffer);
+        return Status;
+    }
+    *Response = Buffer;
+    *ResponseLength = Length;
+    return STATUS_SUCCESS;
 }
 
 static
@@ -782,31 +789,18 @@ NTSTATUS
 ZpRegistry_SetValue(
     _In_ PCZP_REGISTRY_SET_VALUE_VIEW Request)
 {
-    HANDLE Key = NULL;
+    HANDLE Key;
     UNICODE_STRING ValueName;
     NTSTATUS Status;
 
-    Status = ZpRegistry_OpenKey(Request->Root,
-                                Request->View,
-                                &Request->Path,
-                                KEY_SET_VALUE,
-                                &Key);
-    if (NT_SUCCESS(Status))
+    Status = ZpRegistry_OpenKey(Request->Root, &Request->Path, KEY_SET_VALUE, &Key);
+    if (!NT_SUCCESS(Status))
     {
-        ValueName.Buffer = (PWSTR)Request->ValueName.Buffer;
-        ValueName.Length = (USHORT)(Request->ValueName.Length * sizeof(WCHAR));
-        ValueName.MaximumLength = ValueName.Length;
-        Status = NtSetValueKey(Key,
-                               &ValueName,
-                               0,
-                               Request->Type,
-                               (PVOID)Request->Data.Buffer,
-                               Request->Data.Length);
+        return Status;
     }
-    if (Key != NULL)
-    {
-        NtClose(Key);
-    }
+    ZpRegistry_InitializeUnicodeString(&Request->ValueName, &ValueName);
+    Status = NtSetValueKey(Key, &ValueName, 0, Request->Type, (PVOID)Request->Data.Buffer, Request->Data.Length);
+    NtClose(Key);
     return Status;
 }
 
@@ -815,26 +809,18 @@ NTSTATUS
 ZpRegistry_DeleteValue(
     _In_ PCZP_REGISTRY_VALUE_REQUEST_VIEW Request)
 {
-    HANDLE Key = NULL;
+    HANDLE Key;
     UNICODE_STRING ValueName;
     NTSTATUS Status;
 
-    Status = ZpRegistry_OpenKey(Request->Root,
-                                Request->View,
-                                &Request->Path,
-                                KEY_SET_VALUE,
-                                &Key);
-    if (NT_SUCCESS(Status))
+    Status = ZpRegistry_OpenKey(Request->Root, &Request->Path, KEY_SET_VALUE, &Key);
+    if (!NT_SUCCESS(Status))
     {
-        ValueName.Buffer = (PWSTR)Request->ValueName.Buffer;
-        ValueName.Length = (USHORT)(Request->ValueName.Length * sizeof(WCHAR));
-        ValueName.MaximumLength = ValueName.Length;
-        Status = NtDeleteValueKey(Key, &ValueName);
+        return Status;
     }
-    if (Key != NULL)
-    {
-        NtClose(Key);
-    }
+    ZpRegistry_InitializeUnicodeString(&Request->ValueName, &ValueName);
+    Status = NtDeleteValueKey(Key, &ValueName);
+    NtClose(Key);
     return Status;
 }
 
@@ -845,37 +831,85 @@ ZpRegistry_CreateKey(
 {
     OBJECT_ATTRIBUTES ObjectAttributes;
     UNICODE_STRING NativePath;
-    HANDLE Key = NULL;
-    ACCESS_MASK ViewAccess;
+    HANDLE Key;
     ULONG Disposition;
     NTSTATUS Status;
 
-    ViewAccess = ZpRegistry_GetViewAccess(Request->View);
-    if (ViewAccess == MAXULONG)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
     Status = ZpRegistry_BuildPath(Request->Root, &Request->Path, &NativePath);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    InitializeObjectAttributes(
+        &ObjectAttributes, &NativePath, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE, NULL, NULL);
+    Status = NtCreateKey(&Key, 0, &ObjectAttributes, 0, NULL, REG_OPTION_NON_VOLATILE, &Disposition);
+    Mem_Free(NativePath.Buffer);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    NtClose(Key);
+    return Disposition == REG_OPENED_EXISTING_KEY ? STATUS_OBJECT_NAME_COLLISION : STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpRegistry_DeleteKeyTree(
+    _In_ HANDLE Key,
+    _In_ ULONG Depth)
+{
+    PKEY_BASIC_INFORMATION BasicInfo;
+    KEY_CACHED_INFORMATION Information;
+    OBJECT_ATTRIBUTES ObjectAttributes;
+    UNICODE_STRING Name;
+    HANDLE Child;
+    ULONG BufferSize, ResultLength;
+    NTSTATUS Status;
+
+    if (Depth == ZP_REGISTRY_DELETE_MAX_DEPTH)
+    {
+        return STATUS_NAME_TOO_LONG;
+    }
+    Status = ZpRegistry_QueryCachedInformation(Key, &Information);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    BufferSize = FIELD_OFFSET(KEY_BASIC_INFORMATION, Name) + Information.MaxNameLength;
+    BasicInfo = Mem_Alloc(BufferSize);
+    if (BasicInfo == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    while (NT_SUCCESS(Status))
+    {
+        // Always remove index zero: deleting it compacts the remaining list.
+        Status = NtEnumerateKey(Key, 0, KeyBasicInformation, BasicInfo, BufferSize, &ResultLength);
+        if (Status == STATUS_NO_MORE_ENTRIES)
+        {
+            Status = STATUS_SUCCESS;
+            break;
+        }
+        if (!NT_SUCCESS(Status))
+        {
+            break;
+        }
+        Name.Buffer = BasicInfo->Name;
+        Name.Length = (USHORT)BasicInfo->NameLength;
+        Name.MaximumLength = Name.Length;
+        InitializeObjectAttributes(&ObjectAttributes, &Name, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE, Key, NULL);
+        Status = NtOpenKey(&Child, KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE | DELETE, &ObjectAttributes);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpRegistry_DeleteKeyTree(Child, Depth + 1);
+            NtClose(Child);
+        }
+    }
     if (NT_SUCCESS(Status))
     {
-        InitializeObjectAttributes(&ObjectAttributes,
-                                   &NativePath,
-                                   OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
-                                   NULL,
-                                   NULL);
-        Status = NtCreateKey(&Key,
-                             KEY_READ | ViewAccess,
-                             &ObjectAttributes,
-                             0,
-                             NULL,
-                             REG_OPTION_NON_VOLATILE,
-                             &Disposition);
-        Mem_Free(NativePath.Buffer);
+        Status = NtDeleteKey(Key);
     }
-    if (Key != NULL)
-    {
-        NtClose(Key);
-    }
+    Mem_Free(BasicInfo);
     return Status;
 }
 
@@ -887,16 +921,94 @@ ZpRegistry_DeleteKey(
     HANDLE Key;
     NTSTATUS Status;
 
-    Status = ZpRegistry_OpenKey(Request->Root,
-                                Request->View,
-                                &Request->Path,
-                                DELETE,
-                                &Key);
+    Status = ZpRegistry_OpenKey(Request->Root, &Request->Path, KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE | DELETE, &Key);
     if (NT_SUCCESS(Status))
     {
-        Status = NtDeleteKey(Key);
+        Status = ZpRegistry_DeleteKeyTree(Key, 0);
         NtClose(Key);
     }
+    return Status;
+}
+
+static
+NTSTATUS
+ZpRegistry_RenameKey(
+    _In_ PCZP_REGISTRY_RENAME_REQUEST_VIEW Request)
+{
+    ZP_STRING_VIEW Path;
+    UNICODE_STRING NewName;
+    HANDLE Key;
+    NTSTATUS Status;
+
+    Status = ZpRegistry_JoinPath(&Request->Path, &Request->Name, &Path);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    Status = ZpRegistry_OpenKey(Request->Root, &Path, KEY_WRITE, &Key);
+    Mem_Free((PVOID)Path.Buffer);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    ZpRegistry_InitializeUnicodeString(&Request->NewName, &NewName);
+    Status = NtRenameKey(Key, &NewName);
+    NtClose(Key);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpRegistry_RenameValue(
+    _In_ PCZP_REGISTRY_RENAME_REQUEST_VIEW Request)
+{
+    PKEY_VALUE_PARTIAL_INFORMATION Data;
+    UNICODE_STRING Name, NewName;
+    HANDLE Key;
+    ULONG RequiredLength;
+    NTSTATUS Status;
+    LOGICAL SameName;
+
+    Status = ZpRegistry_OpenKey(Request->Root, &Request->Path, KEY_QUERY_VALUE | KEY_SET_VALUE, &Key);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    ZpRegistry_InitializeUnicodeString(&Request->Name, &Name);
+    ZpRegistry_InitializeUnicodeString(&Request->NewName, &NewName);
+    SameName = CompareStringOrdinal(Name.Buffer,
+                                    Name.Length / sizeof(WCHAR),
+                                    NewName.Buffer,
+                                    NewName.Length / sizeof(WCHAR),
+                                    TRUE) == CSTR_EQUAL;
+    // Registry values have no native rename; copy first to avoid data loss.
+    if (!SameName)
+    {
+        Status = NtQueryValueKey(Key, &NewName, KeyValueBasicInformation, NULL, 0, &RequiredLength);
+        if (Status == STATUS_BUFFER_TOO_SMALL || Status == STATUS_BUFFER_OVERFLOW)
+        {
+            NtClose(Key);
+            return STATUS_OBJECT_NAME_COLLISION;
+        }
+        if (Status != STATUS_OBJECT_NAME_NOT_FOUND)
+        {
+            NtClose(Key);
+            return Status;
+        }
+    }
+    Status = ZpRegistry_QueryValueData(Key, &Name, &Data);
+    if (!NT_SUCCESS(Status))
+    {
+        NtClose(Key);
+        return Status;
+    }
+    Status = NtSetValueKey(Key, &NewName, 0, Data->Type, Data->Data, Data->DataLength);
+    if (NT_SUCCESS(Status) && !SameName)
+    {
+        Status = NtDeleteValueKey(Key, &Name);
+    }
+    Mem_Free(Data);
+    NtClose(Key);
     return Status;
 }
 
@@ -912,104 +1024,101 @@ ZpRegistry_Execute(
     ZP_REGISTRY_VALUE_REQUEST_VIEW ValueRequest;
     ZP_REGISTRY_SET_VALUE_VIEW SetValue;
     ZP_REGISTRY_KEY_REQUEST_VIEW KeyRequest;
-    PZP_REGISTRY_KEY_ENTRY KeyEntries = NULL;
-    PZP_REGISTRY_VALUE_ENTRY ValueEntries = NULL;
-    ULONG EntryCount = 0, Start;
+    ZP_REGISTRY_RENAME_REQUEST_VIEW RenameRequest;
+    PZP_REGISTRY_KEY_ENTRY KeyEntries;
+    PZP_REGISTRY_VALUE_ENTRY ValueEntries;
+    ULONG EntryCount, Start;
     NTSTATUS Status;
 
-    *Response = NULL;
-    *ResponseLength = 0;
     switch (OperationId)
     {
     case ZP_REGISTRY_OPERATION_ENUMERATE_KEYS_PAGE:
-        Status = ZpRegistry_DecodeEnumerateRequest(Payload,
-                                                   PayloadLength,
-                                                   &Enumerate);
-        if (NT_SUCCESS(Status))
+        Status = ZpRegistry_DecodeEnumerateRequest(Payload, PayloadLength, &Enumerate);
+        if (!NT_SUCCESS(Status))
         {
-            Status = ZpRegistry_EnumerateKeys(&Enumerate,
-                                              &KeyEntries,
-                                              &EntryCount);
+            return Status;
         }
-        if (NT_SUCCESS(Status))
+        Status = ZpRegistry_EnumerateKeys(&Enumerate, &KeyEntries, &EntryCount);
+        if (!NT_SUCCESS(Status))
         {
-            Start = ZpRegistry_FindKeyStart(KeyEntries,
-                                                  EntryCount,
-                                                  &Enumerate);
-            Status = ZpRegistry_EncodeKeyPageResponse(KeyEntries,
-                                                       EntryCount,
-                                                       Start,
-                                                       Enumerate.MaxEntries,
-                                                       Response,
-                                                       ResponseLength);
+            return Status;
         }
+        Start = ZpRegistry_FindKeyStart(KeyEntries, EntryCount, &Enumerate);
+        Status = ZpRegistry_EncodeKeyPageResponse(
+            KeyEntries, EntryCount, Start, Enumerate.MaxEntries, Response, ResponseLength);
         ZpRegistry_FreeKeyEntries(KeyEntries, EntryCount);
         return Status;
 
     case ZP_REGISTRY_OPERATION_ENUMERATE_VALUES_PAGE:
-        Status = ZpRegistry_DecodeEnumerateRequest(Payload,
-                                                   PayloadLength,
-                                                   &Enumerate);
-        if (NT_SUCCESS(Status))
+        Status = ZpRegistry_DecodeEnumerateRequest(Payload, PayloadLength, &Enumerate);
+        if (!NT_SUCCESS(Status))
         {
-            Status = ZpRegistry_EnumerateValues(&Enumerate,
-                                                &ValueEntries,
-                                                &EntryCount);
+            return Status;
         }
-        if (NT_SUCCESS(Status))
+        Status = ZpRegistry_EnumerateValues(&Enumerate, &ValueEntries, &EntryCount);
+        if (!NT_SUCCESS(Status))
         {
-            Start = ZpRegistry_FindValueStart(ValueEntries,
-                                                    EntryCount,
-                                                    &Enumerate);
-            Status = ZpRegistry_EncodeValuePageResponse(ValueEntries,
-                                                         EntryCount,
-                                                         Start,
-                                                         Enumerate.MaxEntries,
-                                                         Response,
-                                                         ResponseLength);
+            return Status;
         }
+        Start = ZpRegistry_FindValueStart(ValueEntries, EntryCount, &Enumerate);
+        Status = ZpRegistry_EncodeValuePageResponse(
+            ValueEntries, EntryCount, Start, Enumerate.MaxEntries, Response, ResponseLength);
         ZpRegistry_FreeValueEntries(ValueEntries, EntryCount);
         return Status;
 
     case ZP_REGISTRY_OPERATION_QUERY_VALUE:
-        Status = ZpRegistry_DecodeValueRequest(Payload,
-                                               PayloadLength,
-                                               &ValueRequest);
-        return NT_SUCCESS(Status) ?
-                   ZpRegistry_QueryValue(&ValueRequest,
-                                               Response,
-                                               ResponseLength) :
-                   Status;
+        Status = ZpRegistry_DecodeValueRequest(Payload, PayloadLength, &ValueRequest);
+        return NT_SUCCESS(Status) ? ZpRegistry_QueryValue(&ValueRequest, Response, ResponseLength) : Status;
 
     case ZP_REGISTRY_OPERATION_SET_VALUE:
-        Status = ZpRegistry_DecodeSetValueRequest(Payload,
-                                                  PayloadLength,
-                                                  &SetValue);
-        return NT_SUCCESS(Status) ?
-                   ZpRegistry_SetValue(&SetValue) : Status;
+        Status = ZpRegistry_DecodeSetValueRequest(Payload, PayloadLength, &SetValue);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpRegistry_SetValue(&SetValue);
+        }
+        break;
 
     case ZP_REGISTRY_OPERATION_DELETE_VALUE:
-        Status = ZpRegistry_DecodeValueRequest(Payload,
-                                               PayloadLength,
-                                               &ValueRequest);
-        return NT_SUCCESS(Status) ?
-                   ZpRegistry_DeleteValue(&ValueRequest) : Status;
+        Status = ZpRegistry_DecodeValueRequest(Payload, PayloadLength, &ValueRequest);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpRegistry_DeleteValue(&ValueRequest);
+        }
+        break;
 
     case ZP_REGISTRY_OPERATION_CREATE_KEY:
-        Status = ZpRegistry_DecodeKeyRequest(Payload,
-                                             PayloadLength,
-                                             &KeyRequest);
-        return NT_SUCCESS(Status) ?
-                   ZpRegistry_CreateKey(&KeyRequest) : Status;
+        Status = ZpRegistry_DecodeKeyRequest(Payload, PayloadLength, &KeyRequest);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpRegistry_CreateKey(&KeyRequest);
+        }
+        break;
 
     case ZP_REGISTRY_OPERATION_DELETE_KEY:
-        Status = ZpRegistry_DecodeKeyRequest(Payload,
-                                             PayloadLength,
-                                             &KeyRequest);
-        return NT_SUCCESS(Status) ?
-                   ZpRegistry_DeleteKey(&KeyRequest) : Status;
+        Status = ZpRegistry_DecodeKeyRequest(Payload, PayloadLength, &KeyRequest);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpRegistry_DeleteKey(&KeyRequest);
+        }
+        break;
+
+    case ZP_REGISTRY_OPERATION_RENAME_KEY:
+    case ZP_REGISTRY_OPERATION_RENAME_VALUE:
+        Status = ZpRegistry_DecodeRenameRequest(Payload, PayloadLength, &RenameRequest);
+        if (NT_SUCCESS(Status))
+        {
+            Status = OperationId == ZP_REGISTRY_OPERATION_RENAME_KEY ? ZpRegistry_RenameKey(&RenameRequest) :
+                                                                      ZpRegistry_RenameValue(&RenameRequest);
+        }
+        break;
 
     default:
         return STATUS_NOT_SUPPORTED;
     }
+    if (NT_SUCCESS(Status))
+    {
+        *Response = NULL;
+        *ResponseLength = 0;
+    }
+    return Status;
 }
