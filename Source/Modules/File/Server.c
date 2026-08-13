@@ -9,6 +9,7 @@ typedef union _ZP_SERVER_FILE_CALLBACK
     ZP_FILE_ENUMERATE_CALLBACK Enumerate;
     ZP_FILE_ENUMERATE_PAGE_CALLBACK Page;
     ZP_FILE_HASH_CALLBACK Hash;
+    ZP_REQUEST_STATUS_CALLBACK Status;
 } ZP_SERVER_FILE_CALLBACK;
 
 typedef struct _ZP_SERVER_FILE_CONTEXT
@@ -16,6 +17,25 @@ typedef struct _ZP_SERVER_FILE_CONTEXT
     ZP_SERVER_FILE_CALLBACK Callback;
     PVOID Context;
 } ZP_SERVER_FILE_CONTEXT, *PZP_SERVER_FILE_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpServerFile_StatusComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_SERVER_FILE_CONTEXT FileContext = Context;
+
+    if (ZpStatus_IsSuccess(Status) && Payload->Length != 0)
+    {
+        Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
+    }
+    FileContext->Callback.Status(Request, Status, FileContext->Context);
+    Mem_Free(FileContext);
+}
 
 typedef struct _ZP_SERVER_FILE_OPEN_READ_CONTEXT
 {
@@ -421,6 +441,109 @@ ZpServer_HashFile(
                                    Payload,
                                    PayloadLength,
                                    ZpServerFile_HashComplete,
+                                   FileContext,
+                                   Request);
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_DeleteFile(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_SERVER_FILE_CONTEXT FileContext;
+    PBYTE Payload;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpServerFile_EncodePath(Path, PathLength, &Payload, &PayloadLength);
+    FileContext = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*FileContext)) : NULL;
+    if (NT_SUCCESS(Status) && FileContext == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        FileContext->Callback.Status = Callback;
+        FileContext->Context = Context;
+        Status = ZpServerFile_Send(Connection,
+                                   ZP_FILE_OPERATION_DELETE,
+                                   TimeoutMilliseconds,
+                                   Payload,
+                                   PayloadLength,
+                                   ZpServerFile_StatusComplete,
+                                   FileContext,
+                                   Request);
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_RenameFile(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(NewPathLength) PCWCH NewPath,
+    _In_ ULONG NewPathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_SERVER_FILE_CONTEXT FileContext;
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpFile_EncodeRenameRequest(Path, PathLength, NewPath, NewPathLength, NULL, 0, &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodeRenameRequest(Path,
+                                            PathLength,
+                                            NewPath,
+                                            NewPathLength,
+                                            Payload,
+                                            PayloadLength,
+                                            &PayloadLength);
+    }
+    FileContext = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*FileContext)) : NULL;
+    if (NT_SUCCESS(Status) && FileContext == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        FileContext->Callback.Status = Callback;
+        FileContext->Context = Context;
+        Status = ZpServerFile_Send(Connection,
+                                   ZP_FILE_OPERATION_RENAME,
+                                   TimeoutMilliseconds,
+                                   Payload,
+                                   PayloadLength,
+                                   ZpServerFile_StatusComplete,
                                    FileContext,
                                    Request);
     }

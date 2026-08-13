@@ -160,13 +160,14 @@ NTAPI
 ZpServer_QueryProcess(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_PROCESS_QUERY_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
     ZP_PROCESS_CALLBACK ProcessCallback;
-    BYTE Payload[sizeof(ProcessId)];
+    BYTE Payload[sizeof(ProcessId) + sizeof(CreateTime)];
     ULONG PayloadLength;
     NTSTATUS Status;
 
@@ -176,6 +177,7 @@ ZpServer_QueryProcess(
     }
     ProcessCallback.Query = Callback;
     Status = ZpProcess_EncodeQuery(ProcessId,
+                                   CreateTime,
                                    Payload,
                                    sizeof(Payload),
                                    &PayloadLength);
@@ -197,6 +199,7 @@ NTAPI
 ZpServer_TerminateProcess(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
     _In_ ULONG ExitCode,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
@@ -204,7 +207,7 @@ ZpServer_TerminateProcess(
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
     ZP_PROCESS_CALLBACK ProcessCallback;
-    BYTE Payload[2 * sizeof(ULONG)];
+    BYTE Payload[2 * sizeof(ULONG) + sizeof(ULONGLONG)];
     ULONG PayloadLength;
     NTSTATUS Status;
 
@@ -214,6 +217,7 @@ ZpServer_TerminateProcess(
     }
     ProcessCallback.Status = Callback;
     Status = ZpProcess_EncodeTerminate(ProcessId,
+                                       CreateTime,
                                        ExitCode,
                                        Payload,
                                        sizeof(Payload),

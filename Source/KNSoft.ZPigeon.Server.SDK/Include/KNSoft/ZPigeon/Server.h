@@ -150,6 +150,30 @@ ZpServer_HashFile(
 
 NTSTATUS
 NTAPI
+ZpServer_DeleteFile(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_RenameFile(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(NewPathLength) PCWCH NewPath,
+    _In_ ULONG NewPathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_OpenFileRead(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_reads_(PathLength) PCWCH Path,
@@ -279,6 +303,7 @@ NTAPI
 ZpServer_QueryProcess(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_PROCESS_QUERY_CALLBACK Callback,
     _In_opt_ PVOID Context,
@@ -289,6 +314,7 @@ NTAPI
 ZpServer_TerminateProcess(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
     _In_ ULONG ExitCode,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,

@@ -846,6 +846,116 @@ ZpFile_Query(
 }
 
 static
+NTSTATUS
+ZpFile_OpenForControl(
+    _In_ PCZP_STRING_VIEW Path,
+    _Out_ PHANDLE File)
+{
+    PUNICODE_STRING String;
+    OBJECT_ATTRIBUTES Object;
+    UNICODE_STRING NativePath;
+    IO_STATUS_BLOCK IoStatusBlock;
+    NTSTATUS Status;
+
+    String = ZpFile_CopyPath(Path);
+    if (String == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    Status = NT_InitWin32PathObject(&Object, String->Buffer, NULL, &NativePath);
+    NT_FreeStringW(String);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    Status = NtOpenFile(File,
+                        DELETE | SYNCHRONIZE,
+                        &Object,
+                        &IoStatusBlock,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        FILE_SYNCHRONOUS_IO_NONALERT);
+    NT_FreeNtPath(&NativePath);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpFile_Delete(
+    _In_ PCZP_STRING_VIEW Path)
+{
+    FILE_DISPOSITION_INFORMATION Disposition = { TRUE };
+    IO_STATUS_BLOCK IoStatusBlock;
+    HANDLE File;
+    NTSTATUS Status;
+
+    Status = ZpFile_OpenForControl(Path, &File);
+    if (NT_SUCCESS(Status))
+    {
+        Status = NtSetInformationFile(File,
+                                      &IoStatusBlock,
+                                      &Disposition,
+                                      sizeof(Disposition),
+                                      FileDispositionInformation);
+        NtClose(File);
+    }
+    return Status;
+}
+
+static
+NTSTATUS
+ZpFile_Rename(
+    _In_ PCZP_STRING_VIEW Path,
+    _In_ PCZP_STRING_VIEW NewPath)
+{
+    PUNICODE_STRING NewPathString;
+    PFILE_RENAME_INFORMATION_EX Rename;
+    UNICODE_STRING NativePath;
+    IO_STATUS_BLOCK IoStatusBlock;
+    HANDLE File;
+    SIZE_T RenameSize;
+    NTSTATUS Status;
+
+    Status = ZpFile_OpenForControl(Path, &File);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    NewPathString = ZpFile_CopyPath(NewPath);
+    if (NewPathString == NULL)
+    {
+        NtClose(File);
+        return STATUS_NO_MEMORY;
+    }
+    Status = NT_Win32PathToNtPath(NewPathString->Buffer, NULL, &NativePath);
+    NT_FreeStringW(NewPathString);
+    if (NT_SUCCESS(Status))
+    {
+        RenameSize = UFIELD_OFFSET(FILE_RENAME_INFORMATION_EX, FileName) + NativePath.Length;
+        Rename = Mem_Alloc(RenameSize);
+        if (Rename == NULL)
+        {
+            Status = STATUS_NO_MEMORY;
+        }
+        else
+        {
+            Rename->Flags = 0;
+            Rename->RootDirectory = NULL;
+            Rename->FileNameLength = NativePath.Length;
+            RtlCopyMemory(Rename->FileName, NativePath.Buffer, NativePath.Length);
+            Status = NtSetInformationFile(File,
+                                          &IoStatusBlock,
+                                          Rename,
+                                          (ULONG)RenameSize,
+                                          FileRenameInformationEx);
+            Mem_Free(Rename);
+        }
+        NT_FreeNtPath(&NativePath);
+    }
+    NtClose(File);
+    return Status;
+}
+
+static
 int
 __cdecl
 ZpFile_CompareEntries(
@@ -1326,7 +1436,7 @@ ZpFile_Execute(
     _Out_ PULONG ResponseLength,
     _Outptr_result_maybenull_ PZP_CLIENT_FILE_CHANNEL* Channel)
 {
-    ZP_STRING_VIEW Path, Cursor;
+    ZP_STRING_VIEW Path, Cursor, NewPath;
     ZP_FILE_HASH_ALGORITHM Algorithm;
     PZP_CLIENT_FILE_CHANNEL FileChannel = NULL;
     ULONGLONG FileSize, Offset;
@@ -1382,6 +1492,14 @@ ZpFile_Execute(
                                Response,
                                ResponseLength) :
                    Status;
+
+    case ZP_FILE_OPERATION_DELETE:
+        Status = ZpFile_DecodePath(Request, RequestLength, &Path);
+        return NT_SUCCESS(Status) ? ZpFile_Delete(&Path) : Status;
+
+    case ZP_FILE_OPERATION_RENAME:
+        Status = ZpFile_DecodeRenameRequest(Request, RequestLength, &Path, &NewPath);
+        return NT_SUCCESS(Status) ? ZpFile_Rename(&Path, &NewPath) : Status;
 
     case ZP_FILE_OPERATION_OPEN_READ:
         if (Client == NULL)

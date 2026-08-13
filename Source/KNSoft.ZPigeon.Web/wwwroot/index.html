@@ -16,13 +16,15 @@
     .terminals{position:relative;min-height:0;background:#0b0f15}.terminal-panel{position:absolute;inset:0;padding:10px;display:none}.terminal-panel.active{display:block}.terminal-host{width:100%;height:100%}.empty{height:100%;display:grid;place-content:center;text-align:center;color:var(--muted);gap:12px}.empty b{color:var(--text);font-size:18px}.empty button{justify-self:center}
     dialog{width:min(780px,calc(100% - 30px));max-height:80vh;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px}dialog::backdrop{background:#0009}dialog label{display:block;color:var(--muted);margin:12px 0 5px}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.dialog-input{width:100%}.clipboard-preview{max-height:280px;white-space:pre-wrap;word-break:break-word}.context-menu{position:fixed;z-index:10;display:grid;min-width:150px;padding:5px;background:#1a2230;border:1px solid #3a465c;border-radius:7px;box-shadow:0 10px 30px #0008}.context-menu button{text-align:left;background:transparent;border:0;border-radius:4px}.context-menu button:hover{background:#2a3547}.toast{position:fixed;right:16px;bottom:16px;z-index:20;max-width:min(480px,calc(100% - 32px));padding:10px 13px;background:#30202a;border:1px solid #713b4e;border-radius:7px}.tools{display:grid;gap:16px}.card{border:1px solid var(--line);border-radius:8px;padding:14px}.card h2{font-size:15px;margin:0 0 10px}.card label{display:block;color:var(--muted);margin:8px 0 4px}.card input{width:min(100%,420px)}pre{white-space:pre-wrap;word-break:break-word;background:#090d13;padding:12px;border-radius:7px;max-height:260px;overflow:auto}.xterm{height:100%;padding:2px}.xterm-viewport{border-radius:5px}
     #registryView{display:block;height:calc(100% - 54px)}.registry-editor{height:100%;display:grid;grid-template-rows:auto 1fr;min-height:0}.registry-toolbar{display:flex;gap:8px;align-items:center;padding:9px 12px;background:var(--panel);border-bottom:1px solid var(--line)}.registry-address{display:flex;align-items:center;flex:1;min-width:80px;min-height:34px;padding:7px 11px;background:#0c1119;border:1px solid #344056;border-radius:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.registry-body{display:grid;grid-template-columns:minmax(260px,32%) 1fr;min-height:0}.registry-tree,.registry-list{min-width:0;overflow:auto;background:#0d121a}.registry-tree{border-right:1px solid var(--line);padding:8px 4px}.registry-tree ul{list-style:none;margin:0;padding-left:18px}.registry-tree>ul{padding-left:0}.registry-node-row{display:flex;align-items:center;border-radius:4px}.registry-node-row:hover,.registry-node-row.selected,.registry-list tr.selected{background:#24334a}.registry-arrow,.registry-node-label{border:0;background:transparent;padding:4px}.registry-arrow{width:24px}.registry-arrow:disabled{opacity:1}.registry-node-label{flex:1;text-align:left;white-space:nowrap}.registry-list{position:relative}.registry-list table{width:100%;border-collapse:collapse;table-layout:fixed}.registry-list th{position:sticky;top:0;z-index:1;background:#17202c;text-align:left;color:var(--muted);font-weight:500}.registry-list th,.registry-list td{height:30px;padding:5px 10px;border-bottom:1px solid #202937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.registry-list th:nth-child(1){width:30%}.registry-list th:nth-child(2){width:24%}.registry-list tr:hover{background:#192331}.registry-empty{position:absolute;inset:31px 0 0;display:grid;place-content:center;color:var(--muted);pointer-events:none}.registry-more,.registry-more-node{margin:8px}.registry-value-data{width:100%;min-height:180px;resize:vertical;color:var(--text);background:#0c1119;border:1px solid #344056;border-radius:6px;padding:9px;font:14px "Cascadia Mono",Consolas,monospace}
+    .manager-view{display:block;height:calc(100% - 54px)}.manager{height:100%;display:grid;grid-template-rows:auto 1fr;min-height:0}.manager-toolbar{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--panel);border-bottom:1px solid var(--line)}.manager-toolbar input{min-width:240px;flex:0 1 560px}.manager-table{position:relative;overflow:auto;background:#0d121a}.manager-table table{width:100%;border-collapse:collapse;table-layout:fixed}.manager-table th{position:sticky;top:0;z-index:1;text-align:left;color:var(--muted);font-weight:500;background:#17202c}.manager-table th,.manager-table td{height:32px;padding:5px 10px;border-bottom:1px solid #202937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.manager-table tr:hover{background:#192331}.manager-table tr.selected{background:#24334a}.manager-empty{position:absolute;inset:33px 0 0;display:grid;place-content:center;color:var(--muted);pointer-events:none}.manager-table>[data-action=more]{margin:9px}
+    .details-grid{display:grid;grid-template-columns:max-content 1fr;gap:8px 16px}.details-grid dt{color:var(--muted)}.details-grid dd{margin:0;min-width:0;overflow-wrap:anywhere;font-family:"Cascadia Mono",Consolas,monospace}
     @media(max-width:760px){.status{display:none}.registry-body{grid-template-columns:minmax(180px,42%) 1fr}}
   </style>
 </head>
 <body>
   <header>
     <strong>KNSoft ZPigeon</strong>
-    <nav class="app-nav"><button class="active" data-view="terminal">远程终端</button><button data-view="registry">注册表</button></nav>
+    <nav class="app-nav"><button class="active" data-view="terminal">远程终端</button><button data-view="files">文件</button><button data-view="processes">进程</button><button data-view="services">服务</button><button data-view="registry">注册表</button></nav>
     <div class="status"><span id="serverDot" class="dot"></span>Server <span id="server">读取中</span><span id="clientDot" class="dot"></span>Client <span id="client">读取中</span></div>
   </header>
   <main id="terminalView">
@@ -42,12 +44,14 @@
   </main>
 
   <main id="registryView" hidden><section id="registryEditor" class="registry-editor"></section></main>
+  <main id="filesView" class="manager-view" hidden><section id="fileManager" class="manager"></section></main>
+  <main id="processesView" class="manager-view" hidden><section id="processManager" class="manager"></section></main>
+  <main id="servicesView" class="manager-view" hidden><section id="serviceManager" class="manager"></section></main>
 
   <dialog id="toolsDialog">
     <div class="toolbar"><strong>其他控制</strong><span class="spacer"></span><button id="closeTools">关闭</button></div>
     <div class="tools">
       <div class="card"><h2>系统信息</h2><button id="systemInfo">读取</button></div>
-      <div class="card"><h2>进程控制</h2><label for="pid">进程 ID</label><input id="pid" type="number" min="1"><br><button id="terminateProcess">终止进程</button></div>
       <div class="card">
         <h2>事件日志频道</h2><label for="channel">频道路径</label><input id="channel" value="System">
         <label for="query">XPath 查询（可空）</label><input id="query"><label for="maxEvents">每页条数</label><input id="maxEvents" type="number" min="1" max="256" value="10"><br>
@@ -88,18 +92,21 @@
     import {FitAddon} from './vendor/xterm/addon-fit.mjs';
     import {bindTerminalInteractions,exportTerminal,pasteTerminal} from './terminal-interactions.mjs';
     import {RegistryEditor} from './registry-editor.mjs';
+    import {FileManager,ProcessManager,ServiceManager} from './management.mjs';
 
     const $=id=>document.getElementById(id),encoder=new TextEncoder(),sessions=new Map(),shellCounters=new Map();
     const shellSelect=$('shellSelect'),newShell=$('newShell'),emptyNew=$('emptyNew'),tabs=$('tabs'),terminals=$('terminals'),empty=$('empty'),closeShell=$('closeShell'),tabMenu=$('tabMenu'),renameDialog=$('renameDialog'),pasteDialog=$('pasteDialog');
     let active=null,serial=0,eventBookmark='',selectedShell=null,clientConnected=false,shellsLoaded=false,shellsLoading=false,currentView='terminal',fitFrame=0,contextSession=null,renameSession=null,pendingPaste=null,toastTimer=0;
     const registry=new RegistryEditor($('registryEditor'),{call,notify});
+    const files=new FileManager($('fileManager'),{call,notify}),processes=new ProcessManager($('processManager'),{call,notify,isConnected:()=>clientConnected}),services=new ServiceManager($('serviceManager'),{call,notify});
+    files.disconnect();processes.disconnect();services.disconnect();
 
     async function refresh(){
       try{
         const state=await fetch('/api/status').then(r=>r.json()),connected=state.clientConnected,disconnected=clientConnected&&!connected;clientConnected=connected;
         $('server').textContent=state.state===2?'运行中':`状态 ${state.state}`;$('client').textContent=connected?'已连接':'未连接';
         $('serverDot').className=`dot ${state.state===2?'ok':'off'}`;$('clientDot').className=`dot ${connected?'ok':'off'}`;
-        if(disconnected){selectedShell=null;shellsLoaded=false;shellSelect.replaceChildren(new Option('Client 未连接'))}
+        if(disconnected){selectedShell=null;shellsLoaded=false;shellSelect.replaceChildren(new Option('Client 未连接'));files.disconnect();processes.disconnect();services.disconnect()}
         shellSelect.disabled=newShell.disabled=emptyNew.disabled=!connected||selectedShell===null;
         return connected;
       }catch{$('server').textContent='不可用';return false}
@@ -194,7 +201,7 @@
 
     function closeActive(){closeSession(active)}
 
-    function showView(name){currentView=name;$('terminalView').hidden=name!=='terminal';$('registryView').hidden=name!=='registry';for(const button of document.querySelectorAll('.app-nav button'))button.classList.toggle('active',button.dataset.view===name);if(name==='terminal'){scheduleFit();loadShells()}}
+    function showView(name){currentView=name;for(const view of ['terminal','registry','files','processes','services'])$(`${view}View`).hidden=name!==view;for(const button of document.querySelectorAll('.app-nav button'))button.classList.toggle('active',button.dataset.view===name);processes.setActive(name==='processes');if(name==='terminal'){scheduleFit();loadShells()}else if(name==='files')files.activate(clientConnected);else if(name==='services')services.activate(clientConnected)}
 
     async function call(url,body){const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:body?JSON.stringify(body):null}),text=await response.text();if(!response.ok){let error;try{error=JSON.parse(text)}catch{}throw new Error(error?.message||text||`HTTP ${response.status}`)}return text?JSON.parse(text):'操作成功'}
     async function run(action){try{$('result').textContent=JSON.stringify(await action(),null,2)}catch(error){$('result').textContent=error}}
@@ -206,10 +213,10 @@
     pasteDialog.onclose=()=>{const paste=pendingPaste;pendingPaste=null;const session=paste&&sessions.get(paste.id);if(pasteDialog.returnValue==='paste'&&session&&!session.ended&&session.socket.readyState===WebSocket.OPEN)pasteTerminal(session.terminal,paste.text);else if(session)session.terminal.focus()};
     document.addEventListener('pointerdown',event=>{if(!tabMenu.hidden&&!tabMenu.contains(event.target))hideTabMenu()});document.addEventListener('keydown',event=>{if(event.key==='Escape')hideTabMenu()});addEventListener('resize',hideTabMenu);tabs.addEventListener('scroll',hideTabMenu);
     for(const button of document.querySelectorAll('.app-nav button'))button.onclick=()=>showView(button.dataset.view);
-    $('systemInfo').onclick=()=>run(()=>call('/api/system'));$('terminateProcess').onclick=()=>run(()=>call('/api/process/terminate',{processId:Number($('pid').value)}));
+    $('systemInfo').onclick=()=>run(()=>call('/api/system'));
     $('queryEvents').onclick=()=>queryEvents(false);$('nextEvents').onclick=()=>queryEvents(true);function queryEvents(next){if(!next)eventBookmark='';run(async()=>{const page=await call('/api/eventlog/query',{channelPath:$('channel').value,query:$('query').value||null,bookmark:eventBookmark||null,maxEvents:Number($('maxEvents').value)});eventBookmark=page.nextBookmark;return page})}
     $('enableChannel').onclick=()=>setChannel(true);$('disableChannel').onclick=()=>setChannel(false);function setChannel(enabled){run(()=>call('/api/eventlog/channel',{channelPath:$('channel').value,enabled}))}$('clearChannel').onclick=()=>{if(confirm('确定清除此频道的全部事件？'))run(()=>call('/api/eventlog/clear',{channelPath:$('channel').value}))};
-    new ResizeObserver(scheduleFit).observe(terminals);if(await refresh())await loadShells();setInterval(async()=>{const wasConnected=clientConnected,connected=await refresh();if(connected&&!wasConnected&&currentView==='terminal')loadShells()},1000);
+    new ResizeObserver(scheduleFit).observe(terminals);if(await refresh())await loadShells();setInterval(async()=>{const wasConnected=clientConnected,connected=await refresh();if(connected&&!wasConnected){if(currentView==='terminal')loadShells();else if(currentView==='processes')processes.update(true);else if(currentView==='files')files.activate(true);else if(currentView==='services')services.activate(true)}},1000);
   </script>
 </body>
 </html>

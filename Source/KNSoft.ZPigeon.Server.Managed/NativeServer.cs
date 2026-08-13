@@ -39,9 +39,9 @@ public sealed partial class NativeServer(string directory) : IDisposable
         return completion.Task;
     }
 
-    public Task TerminateProcessAsync(uint processId) =>
+    public Task TerminateProcessAsync(uint processId, ulong createTime) =>
         RunStatusAsync((callback, context) =>
-            NativeMethods.TerminateProcess(processId, callback, context));
+            NativeMethods.TerminateProcess(processId, createTime, callback, context));
 
     public Task<EventLogPage> QueryEventLogPageAsync(
         string channelPath,
@@ -379,6 +379,7 @@ internal static partial class NativeMethods
 
     [LibraryImport(Library, EntryPoint = "ZpNative_TerminateProcess")]
     internal static partial int TerminateProcess(uint processId,
+                                                  ulong createTime,
                                                   StatusCallback callback,
                                                   nint context);
 

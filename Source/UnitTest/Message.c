@@ -54,8 +54,8 @@ TEST_FUNC(ProtocolMessage)
     };
     ZP_SYSTEM_INFO_VIEW SystemInfoView;
     ZP_PROCESS_RECORD Processes[] = {
-        { 0, 0, L"", 0 },
-        { 1234, 1, L"example.exe", 11 }
+        { 0, 0, 0, 4, 0, 10, 20, 30, 40, 50, L"", 0 },
+        { 1234, 1000, 1, 8, 64, 100, 200, 300, 400, 500, L"example.exe", 11 }
     };
     ZP_PROCESS_LIST_VIEW ProcessList;
     ZP_PROCESS_RECORD_VIEW ProcessRecord;
@@ -71,7 +71,13 @@ TEST_FUNC(ProtocolMessage)
         400,
         500,
         L"example.exe",
-        11
+        11,
+        STATUS_SUCCESS,
+        L"C:\\example.exe",
+        14,
+        STATUS_SUCCESS,
+        L"example.exe -test",
+        17
     };
     ZP_PROCESS_INFO_VIEW ProcessInfoView;
     ZP_SERVICE_RECORD Services[] = {
@@ -325,7 +331,7 @@ TEST_FUNC(ProtocolMessage)
                                            Buffer,
                                            sizeof(Buffer),
                                            &Length)) &&
-            Length == 50 &&
+            Length == 154 &&
             NT_SUCCESS(ZpProcess_DecodeList(Buffer, Length, &ProcessList)) &&
             ProcessList.Count == ARRAYSIZE(Processes) &&
             NT_SUCCESS(ZpProcess_GetRecord(&ProcessList, 0, &ProcessRecord)) &&
@@ -333,7 +339,15 @@ TEST_FUNC(ProtocolMessage)
             ProcessRecord.ImageName.Length == 0 &&
             NT_SUCCESS(ZpProcess_GetRecord(&ProcessList, 1, &ProcessRecord)) &&
             ProcessRecord.ProcessId == Processes[1].ProcessId &&
+            ProcessRecord.ParentProcessId == Processes[1].ParentProcessId &&
             ProcessRecord.SessionId == Processes[1].SessionId &&
+            ProcessRecord.ThreadCount == Processes[1].ThreadCount &&
+            ProcessRecord.HandleCount == Processes[1].HandleCount &&
+            ProcessRecord.CreateTime == Processes[1].CreateTime &&
+            ProcessRecord.UserTime == Processes[1].UserTime &&
+            ProcessRecord.KernelTime == Processes[1].KernelTime &&
+            ProcessRecord.WorkingSetBytes == Processes[1].WorkingSetBytes &&
+            ProcessRecord.PrivateBytes == Processes[1].PrivateBytes &&
             ProcessRecord.ImageName.Length == Processes[1].ImageNameLength &&
             RtlCompareMemory(ProcessRecord.ImageName.Buffer,
                              Processes[1].ImageName,
@@ -343,36 +357,46 @@ TEST_FUNC(ProtocolMessage)
                                 ProcessList.Count,
                                 &ProcessRecord) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpProcess_EncodeQuery(ProcessInfo.ProcessId,
+                                             ProcessInfo.CreateTime,
                                              Buffer,
                                              sizeof(Buffer),
                                              &Length)) &&
-            NT_SUCCESS(ZpProcess_DecodeQuery(Buffer, Length, &Index)) &&
-            Index == ProcessInfo.ProcessId);
+            NT_SUCCESS(ZpProcess_DecodeQuery(Buffer, Length, &Index, &Value)) &&
+            Index == ProcessInfo.ProcessId &&
+            Value == ProcessInfo.CreateTime);
     TEST_OK(NT_SUCCESS(ZpProcess_EncodeInfo(&ProcessInfo,
                                             Buffer,
                                             sizeof(Buffer),
                                             &Length)) &&
-            Length == 86 &&
+            Length == 164 &&
             NT_SUCCESS(ZpProcess_DecodeInfo(Buffer, Length, &ProcessInfoView)) &&
             ProcessInfoView.ProcessId == ProcessInfo.ProcessId &&
             ProcessInfoView.ParentProcessId == ProcessInfo.ParentProcessId &&
             ProcessInfoView.ThreadCount == ProcessInfo.ThreadCount &&
             ProcessInfoView.WorkingSetBytes == ProcessInfo.WorkingSetBytes &&
             ProcessInfoView.PrivateBytes == ProcessInfo.PrivateBytes &&
-            ProcessInfoView.ImageName.Length == ProcessInfo.ImageNameLength);
+            ProcessInfoView.ImageName.Length == ProcessInfo.ImageNameLength &&
+            ProcessInfoView.ImagePathStatus == STATUS_SUCCESS &&
+            ProcessInfoView.ImagePath.Length == ProcessInfo.ImagePathLength &&
+            ProcessInfoView.CommandLineStatus == STATUS_SUCCESS &&
+            ProcessInfoView.CommandLine.Length == ProcessInfo.CommandLineLength);
     TEST_OK(NT_SUCCESS(ZpProcess_EncodeTerminate(ProcessInfo.ProcessId,
+                                                 ProcessInfo.CreateTime,
                                                  0x10203040,
                                                  Buffer,
                                                  sizeof(Buffer),
                                                  &Length)) &&
-            Length == 2 * sizeof(ULONG) &&
+            Length == 2 * sizeof(ULONG) + sizeof(ULONGLONG) &&
             NT_SUCCESS(ZpProcess_DecodeTerminate(Buffer,
                                                  Length,
                                                  &Index,
+                                                 &Value,
                                                  &ExitCode)) &&
             Index == ProcessInfo.ProcessId &&
+            Value == ProcessInfo.CreateTime &&
             ExitCode == 0x10203040);
     TEST_OK(ZpProcess_EncodeTerminate(0,
+                                      ProcessInfo.CreateTime,
                                       0,
                                       NULL,
                                       0,
@@ -426,6 +450,30 @@ TEST_FUNC(ProtocolMessage)
                                          &Length)) &&
             NT_SUCCESS(ZpFile_DecodePath(Buffer, Length, &FilePathView)) &&
             FilePathView.Length == 11);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeRenameRequest(L"C:\\Test.bin",
+                                                  11,
+                                                  L"C:\\Renamed.bin",
+                                                  14,
+                                                  Buffer,
+                                                  sizeof(Buffer),
+                                                  &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeRenameRequest(Buffer,
+                                                  Length,
+                                                  &FilePathView,
+                                                  &FilePage.NextCursor)) &&
+            FilePathView.Length == 11 &&
+            FilePage.NextCursor.Length == 14);
+    TEST_OK(ZpFile_EncodeRenameRequest(NULL,
+                                       0,
+                                       L"C:\\Renamed.bin",
+                                       14,
+                                       Buffer,
+                                       sizeof(Buffer),
+                                       &Length) == STATUS_INVALID_PARAMETER &&
+            ZpFile_DecodeRenameRequest(Buffer,
+                                       Length - 1,
+                                       &FilePathView,
+                                       &FilePage.NextCursor) == STATUS_DATA_ERROR);
     TEST_OK(NT_SUCCESS(ZpFile_EncodeEnumeratePageRequest(L"C:\\Test",
                                                          7,
                                                          NULL,

@@ -12,7 +12,39 @@ ZpProcess_ReadRecord(
     Status = ZpCodec_ReadUInt32(Reader, &LocalRecord.ProcessId);
     if (NT_SUCCESS(Status))
     {
+        Status = ZpCodec_ReadUInt32(Reader, &LocalRecord.ParentProcessId);
+    }
+    if (NT_SUCCESS(Status))
+    {
         Status = ZpCodec_ReadUInt32(Reader, &LocalRecord.SessionId);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt32(Reader, &LocalRecord.ThreadCount);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt32(Reader, &LocalRecord.HandleCount);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt64(Reader, &LocalRecord.CreateTime);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt64(Reader, &LocalRecord.UserTime);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt64(Reader, &LocalRecord.KernelTime);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt64(Reader, &LocalRecord.WorkingSetBytes);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt64(Reader, &LocalRecord.PrivateBytes);
     }
     if (NT_SUCCESS(Status))
     {
@@ -51,7 +83,7 @@ ZpProcess_EncodeList(
         {
             return STATUS_INVALID_PARAMETER;
         }
-        RequiredSize += 3 * sizeof(ULONG) +
+        RequiredSize += 6 * sizeof(ULONG) + 5 * sizeof(ULONGLONG) +
                         (ULONGLONG)Processes[Index].ImageNameLength * sizeof(WCHAR);
         if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
         {
@@ -75,7 +107,39 @@ ZpProcess_EncodeList(
         Status = ZpCodec_WriteUInt32(&Writer, Processes[Index].ProcessId);
         if (NT_SUCCESS(Status))
         {
+            Status = ZpCodec_WriteUInt32(&Writer, Processes[Index].ParentProcessId);
+        }
+        if (NT_SUCCESS(Status))
+        {
             Status = ZpCodec_WriteUInt32(&Writer, Processes[Index].SessionId);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteUInt32(&Writer, Processes[Index].ThreadCount);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteUInt32(&Writer, Processes[Index].HandleCount);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteUInt64(&Writer, Processes[Index].CreateTime);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteUInt64(&Writer, Processes[Index].UserTime);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteUInt64(&Writer, Processes[Index].KernelTime);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteUInt64(&Writer, Processes[Index].WorkingSetBytes);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteUInt64(&Writer, Processes[Index].PrivateBytes);
         }
         if (NT_SUCCESS(Status))
         {
@@ -141,39 +205,53 @@ ZpProcess_GetRecord(
 NTSTATUS
 ZpProcess_EncodeQuery(
     _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
     ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
 
-    *BytesWritten = sizeof(ProcessId);
+    if (ProcessId == 0 || CreateTime == 0)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *BytesWritten = sizeof(ProcessId) + sizeof(CreateTime);
     if (Buffer == NULL)
     {
         return STATUS_SUCCESS;
     }
-    if (BufferSize < sizeof(ProcessId))
+    if (BufferSize < *BytesWritten)
     {
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    return ZpCodec_WriteUInt32(&Writer, ProcessId);
+    Status = ZpCodec_WriteUInt32(&Writer, ProcessId);
+    return NT_SUCCESS(Status) ? ZpCodec_WriteUInt64(&Writer, CreateTime) : Status;
 }
 
 NTSTATUS
 ZpProcess_DecodeQuery(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONG ProcessId)
+    _Out_ PULONG ProcessId,
+    _Out_ PULONGLONG CreateTime)
 {
     ZP_CODEC_READER Reader;
+    NTSTATUS Status;
 
-    if (PayloadLength != sizeof(*ProcessId))
+    if (PayloadLength != sizeof(*ProcessId) + sizeof(*CreateTime))
     {
         return STATUS_DATA_ERROR;
     }
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    return ZpCodec_ReadUInt32(&Reader, ProcessId);
+    Status = ZpCodec_ReadUInt32(&Reader, ProcessId);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt64(&Reader, CreateTime);
+    }
+    return NT_SUCCESS(Status) && (*ProcessId == 0 || *CreateTime == 0) ? STATUS_DATA_ERROR : Status;
 }
 
 NTSTATUS
@@ -188,14 +266,18 @@ ZpProcess_EncodeInfo(
     NTSTATUS Status;
 
     if (Info->ImageNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
-        (Info->ImageNameLength != 0 && Info->ImageName == NULL))
+        Info->ImagePathLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Info->CommandLineLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        (Info->ImageNameLength != 0 && Info->ImageName == NULL) ||
+        (Info->ImagePathLength != 0 && Info->ImagePath == NULL) ||
+        (Info->CommandLineLength != 0 && Info->CommandLine == NULL))
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 5 * sizeof(ULONG) +
+    RequiredSize = 10 * sizeof(ULONG) +
                    5 * sizeof(ULONGLONG) +
-                   sizeof(ULONG) +
-                   (ULONGLONG)Info->ImageNameLength * sizeof(WCHAR);
+                   ((ULONGLONG)Info->ImageNameLength + Info->ImagePathLength + Info->CommandLineLength) *
+                       sizeof(WCHAR);
     if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
     {
         return STATUS_BUFFER_OVERFLOW;
@@ -254,6 +336,26 @@ ZpProcess_EncodeInfo(
                                      Info->ImageName,
                                      Info->ImageNameLength);
     }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->ImagePathStatus);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer,
+                                     Info->ImagePath,
+                                     Info->ImagePathLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->CommandLineStatus);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer,
+                                     Info->CommandLine,
+                                     Info->CommandLineLength);
+    }
     return Status;
 }
 
@@ -266,9 +368,7 @@ ZpProcess_DecodeInfo(
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
-    if (PayloadLength < 5 * sizeof(ULONG) +
-                        5 * sizeof(ULONGLONG) +
-                        sizeof(ULONG))
+    if (PayloadLength < 10 * sizeof(ULONG) + 5 * sizeof(ULONGLONG))
     {
         return STATUS_DATA_ERROR;
     }
@@ -314,6 +414,22 @@ ZpProcess_DecodeInfo(
     {
         Status = ZpCodec_ReadString(&Reader, &View->ImageName);
     }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt32(&Reader, (PULONG)&View->ImagePathStatus);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(&Reader, &View->ImagePath);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadUInt32(&Reader, (PULONG)&View->CommandLineStatus);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(&Reader, &View->CommandLine);
+    }
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
@@ -324,6 +440,7 @@ ZpProcess_DecodeInfo(
 NTSTATUS
 ZpProcess_EncodeTerminate(
     _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
     _In_ ULONG ExitCode,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
@@ -332,11 +449,11 @@ ZpProcess_EncodeTerminate(
     ZP_CODEC_WRITER Writer;
     NTSTATUS Status;
 
-    if (ProcessId == 0)
+    if (ProcessId == 0 || CreateTime == 0)
     {
         return STATUS_INVALID_PARAMETER;
     }
-    *BytesWritten = 2 * sizeof(ULONG);
+    *BytesWritten = 2 * sizeof(ULONG) + sizeof(ULONGLONG);
     if (Buffer == NULL)
     {
         return STATUS_SUCCESS;
@@ -349,6 +466,10 @@ ZpProcess_EncodeTerminate(
     Status = ZpCodec_WriteUInt32(&Writer, ProcessId);
     if (NT_SUCCESS(Status))
     {
+        Status = ZpCodec_WriteUInt64(&Writer, CreateTime);
+    }
+    if (NT_SUCCESS(Status))
+    {
         Status = ZpCodec_WriteUInt32(&Writer, ExitCode);
     }
     return Status;
@@ -359,12 +480,13 @@ ZpProcess_DecodeTerminate(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PULONG ProcessId,
+    _Out_ PULONGLONG CreateTime,
     _Out_ PULONG ExitCode)
 {
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
-    if (PayloadLength != 2 * sizeof(ULONG))
+    if (PayloadLength != 2 * sizeof(ULONG) + sizeof(ULONGLONG))
     {
         return STATUS_DATA_ERROR;
     }
@@ -372,9 +494,13 @@ ZpProcess_DecodeTerminate(
     Status = ZpCodec_ReadUInt32(&Reader, ProcessId);
     if (NT_SUCCESS(Status))
     {
+        Status = ZpCodec_ReadUInt64(&Reader, CreateTime);
+    }
+    if (NT_SUCCESS(Status))
+    {
         Status = ZpCodec_ReadUInt32(&Reader, ExitCode);
     }
-    if (NT_SUCCESS(Status) && *ProcessId == 0)
+    if (NT_SUCCESS(Status) && (*ProcessId == 0 || *CreateTime == 0))
     {
         return STATUS_DATA_ERROR;
     }

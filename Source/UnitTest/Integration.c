@@ -236,6 +236,7 @@ SDKIntegration_ProcessListCallback(
             if (Process.ProcessId == GetCurrentProcessId())
             {
                 TestContext->FoundCurrentProcess = TRUE;
+                TestContext->ProcessInfoCreateTime = Process.CreateTime;
             }
         }
     }
@@ -1337,6 +1338,7 @@ TEST_FUNC(SDKQuicIntegration)
     PCCERT_CONTEXT Certificate = NULL;
     STARTUPINFOW StartupInfo = { sizeof(StartupInfo) };
     PROCESS_INFORMATION TemporaryProcess = { 0 };
+    FILETIME TemporaryCreateTime, TemporaryExitTime, TemporaryKernelTime, TemporaryUserTime;
     WCHAR TemporaryCommand[] = L"ping.exe -n 30 127.0.0.1";
     WCHAR ModulePath[MAX_PATH];
     WCHAR UploadPath[MAX_PATH] = { 0 };
@@ -1638,6 +1640,7 @@ TEST_FUNC(SDKQuicIntegration)
 
     Status = ZpServer_QueryProcess(TestContext.Connection,
                                    GetCurrentProcessId(),
+                                   TestContext.ProcessInfoCreateTime,
                                    SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
                                    SDKIntegration_ProcessInfoCallback,
                                    &TestContext,
@@ -1716,8 +1719,18 @@ TEST_FUNC(SDKQuicIntegration)
     {
         goto Cleanup;
     }
+    if (!GetProcessTimes(TemporaryProcess.hProcess,
+                         &TemporaryCreateTime,
+                         &TemporaryExitTime,
+                         &TemporaryKernelTime,
+                         &TemporaryUserTime))
+    {
+        goto Cleanup;
+    }
     Status = ZpServer_TerminateProcess(TestContext.Connection,
                                        TemporaryProcess.dwProcessId,
+                                       ((ULONGLONG)TemporaryCreateTime.dwHighDateTime << 32) |
+                                           TemporaryCreateTime.dwLowDateTime,
                                        0x10203040,
                                        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
                                        SDKIntegration_ProcessTerminateCallback,

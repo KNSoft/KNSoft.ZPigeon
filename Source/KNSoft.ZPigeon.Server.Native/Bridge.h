@@ -25,6 +25,139 @@ VOID
     _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context);
 
+typedef struct _ZP_NATIVE_FILE_RECORD
+{
+    ULONG Attributes;
+    ULONGLONG Size;
+    ULONGLONG CreationTime;
+    ULONGLONG LastAccessTime;
+    ULONGLONG LastWriteTime;
+    PCWCH Name;
+    ULONG NameLength;
+} ZP_NATIVE_FILE_RECORD, *PZP_NATIVE_FILE_RECORD;
+
+typedef const ZP_NATIVE_FILE_RECORD* PCZP_NATIVE_FILE_RECORD;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_FILE_PAGE_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(NextCursorLength) PCWCH NextCursor,
+    _In_ ULONG NextCursorLength,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_FILE_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_FILE_INFO_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_ ULONG Attributes,
+    _In_ ULONGLONG Size,
+    _In_ ULONGLONG CreationTime,
+    _In_ ULONGLONG LastAccessTime,
+    _In_ ULONGLONG LastWriteTime,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_FILE_HASH_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_ ULONGLONG FileSize,
+    _In_reads_bytes_opt_(DigestLength) const VOID* Digest,
+    _In_ ULONG DigestLength,
+    _In_opt_ PVOID Context);
+
+typedef struct _ZP_NATIVE_FILE_TRANSFER* ZP_NATIVE_FILE_TRANSFER_HANDLE;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_FILE_OPEN_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_NATIVE_FILE_TRANSFER_HANDLE Transfer,
+    _In_ ULONGLONG FileSize,
+    _In_opt_ PVOID Context);
+
+typedef
+LOGICAL
+(NTAPI *ZP_NATIVE_FILE_DATA_CALLBACK)(
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_FILE_WRITABLE_CALLBACK)(
+    _In_ ULONG CreditBytes,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_FILE_CLOSE_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_opt_ PVOID Context);
+
+typedef struct _ZP_NATIVE_PROCESS_RECORD
+{
+    ULONG ProcessId;
+    ULONG ParentProcessId;
+    ULONG SessionId;
+    ULONG ThreadCount;
+    ULONG HandleCount;
+    ULONGLONG CreateTime;
+    ULONGLONG UserTime;
+    ULONGLONG KernelTime;
+    ULONGLONG WorkingSetBytes;
+    ULONGLONG PrivateBytes;
+    PCWCH ImageName;
+    ULONG ImageNameLength;
+} ZP_NATIVE_PROCESS_RECORD, *PZP_NATIVE_PROCESS_RECORD;
+
+typedef const ZP_NATIVE_PROCESS_RECORD* PCZP_NATIVE_PROCESS_RECORD;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_PROCESS_LIST_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_PROCESS_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_PROCESS_INFO_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_opt_ const ZP_PROCESS_INFO_VIEW* Info,
+    _In_opt_ PVOID Context);
+
+typedef struct _ZP_NATIVE_SERVICE_RECORD
+{
+    ULONG ServiceType;
+    ULONG CurrentState;
+    ULONG ProcessId;
+    PCWCH ServiceName;
+    ULONG ServiceNameLength;
+    PCWCH DisplayName;
+    ULONG DisplayNameLength;
+} ZP_NATIVE_SERVICE_RECORD, *PZP_NATIVE_SERVICE_RECORD;
+
+typedef const ZP_NATIVE_SERVICE_RECORD* PCZP_NATIVE_SERVICE_RECORD;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_SERVICE_LIST_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_SERVICE_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_SERVICE_INFO_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_opt_ const ZP_SERVICE_INFO_VIEW* Info,
+    _In_opt_ PVOID Context);
+
 typedef
 VOID
 (NTAPI *ZP_NATIVE_EVENT_LOG_CALLBACK)(
@@ -159,8 +292,139 @@ ZpNative_GetSystemInfo(
 __declspec(dllexport)
 NTSTATUS
 NTAPI
+ZpNative_EnumerateFilesPage(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(CursorLength) PCWCH Cursor,
+    _In_ ULONG CursorLength,
+    _In_ ULONG MaxEntries,
+    _In_ ZP_NATIVE_FILE_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_QueryFile(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_NATIVE_FILE_INFO_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_HashFile(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_NATIVE_FILE_HASH_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_DeleteFile(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_RenameFile(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(NewPathLength) PCWCH NewPath,
+    _In_ ULONG NewPathLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_OpenFileRead(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_NATIVE_FILE_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_FILE_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_FILE_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_OpenFileWrite(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG FileSize,
+    _In_ LOGICAL Overwrite,
+    _In_ ZP_NATIVE_FILE_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_FILE_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_NATIVE_FILE_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_FileSend(
+    _In_ ZP_NATIVE_FILE_TRANSFER_HANDLE Transfer,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_CloseFileTransfer(
+    _In_ ZP_NATIVE_FILE_TRANSFER_HANDLE Transfer);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateProcesses(
+    _In_ ZP_NATIVE_PROCESS_LIST_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_QueryProcess(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ZP_NATIVE_PROCESS_INFO_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
 ZpNative_TerminateProcess(
     _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateServices(
+    _In_ ZP_NATIVE_SERVICE_LIST_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_QueryService(
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ZP_NATIVE_SERVICE_INFO_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_ControlService(
+    _In_ BOOLEAN Start,
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 

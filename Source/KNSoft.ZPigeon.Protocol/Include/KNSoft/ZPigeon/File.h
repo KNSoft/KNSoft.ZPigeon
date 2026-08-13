@@ -12,6 +12,8 @@ EXTERN_C_START
 #define ZP_FILE_OPERATION_HASH 4
 #define ZP_FILE_OPERATION_OPEN_WRITE 5
 #define ZP_FILE_OPERATION_ENUMERATE_PAGE 6
+#define ZP_FILE_OPERATION_DELETE 7
+#define ZP_FILE_OPERATION_RENAME 8
 #define ZP_FILE_SHA256_SIZE 32
 #define ZP_FILE_PAGE_MAX_COUNT 4096
 
@@ -91,6 +93,23 @@ ZpFile_DecodePath(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_STRING_VIEW Path);
+
+NTSTATUS
+ZpFile_EncodeRenameRequest(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(NewPathLength) PCWCH NewPath,
+    _In_ ULONG NewPathLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeRenameRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW Path,
+    _Out_ PZP_STRING_VIEW NewPath);
 
 NTSTATUS
 ZpFile_EncodeEnumeratePageRequest(

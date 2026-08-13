@@ -13,7 +13,15 @@ EXTERN_C_START
 typedef struct _ZP_PROCESS_RECORD
 {
     ULONG ProcessId;
+    ULONG ParentProcessId;
     ULONG SessionId;
+    ULONG ThreadCount;
+    ULONG HandleCount;
+    ULONGLONG CreateTime;
+    ULONGLONG UserTime;
+    ULONGLONG KernelTime;
+    ULONGLONG WorkingSetBytes;
+    ULONGLONG PrivateBytes;
     PCWCH ImageName;
     ULONG ImageNameLength;
 } ZP_PROCESS_RECORD, *PZP_PROCESS_RECORD;
@@ -23,7 +31,15 @@ typedef const ZP_PROCESS_RECORD* PCZP_PROCESS_RECORD;
 typedef struct _ZP_PROCESS_RECORD_VIEW
 {
     ULONG ProcessId;
+    ULONG ParentProcessId;
     ULONG SessionId;
+    ULONG ThreadCount;
+    ULONG HandleCount;
+    ULONGLONG CreateTime;
+    ULONGLONG UserTime;
+    ULONGLONG KernelTime;
+    ULONGLONG WorkingSetBytes;
+    ULONGLONG PrivateBytes;
     ZP_STRING_VIEW ImageName;
 } ZP_PROCESS_RECORD_VIEW, *PZP_PROCESS_RECORD_VIEW;
 
@@ -50,6 +66,12 @@ typedef struct _ZP_PROCESS_INFO
     ULONGLONG PrivateBytes;
     PCWCH ImageName;
     ULONG ImageNameLength;
+    NTSTATUS ImagePathStatus;
+    PCWCH ImagePath;
+    ULONG ImagePathLength;
+    NTSTATUS CommandLineStatus;
+    PCWCH CommandLine;
+    ULONG CommandLineLength;
 } ZP_PROCESS_INFO, *PZP_PROCESS_INFO;
 
 typedef const ZP_PROCESS_INFO* PCZP_PROCESS_INFO;
@@ -67,6 +89,10 @@ typedef struct _ZP_PROCESS_INFO_VIEW
     ULONGLONG WorkingSetBytes;
     ULONGLONG PrivateBytes;
     ZP_STRING_VIEW ImageName;
+    NTSTATUS ImagePathStatus;
+    ZP_STRING_VIEW ImagePath;
+    NTSTATUS CommandLineStatus;
+    ZP_STRING_VIEW CommandLine;
 } ZP_PROCESS_INFO_VIEW, *PZP_PROCESS_INFO_VIEW;
 
 NTSTATUS
@@ -92,6 +118,7 @@ ZpProcess_GetRecord(
 NTSTATUS
 ZpProcess_EncodeQuery(
     _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);
@@ -100,7 +127,8 @@ NTSTATUS
 ZpProcess_DecodeQuery(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONG ProcessId);
+    _Out_ PULONG ProcessId,
+    _Out_ PULONGLONG CreateTime);
 
 NTSTATUS
 ZpProcess_EncodeInfo(
@@ -118,6 +146,7 @@ ZpProcess_DecodeInfo(
 NTSTATUS
 ZpProcess_EncodeTerminate(
     _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
     _In_ ULONG ExitCode,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
@@ -128,6 +157,7 @@ ZpProcess_DecodeTerminate(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PULONG ProcessId,
+    _Out_ PULONGLONG CreateTime,
     _Out_ PULONG ExitCode);
 
 EXTERN_C_END

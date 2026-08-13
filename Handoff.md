@@ -1,6 +1,6 @@
 # KNSoft.ZPigeon 项目交接
 
-更新时间：2026-08-12
+更新时间：2026-08-14
 
 ## 当前结论
 
@@ -42,6 +42,8 @@ Source/
 
 Transport 不解析模块 Payload，不调用 Registry、SCM、进程、文件、ConPTY 或 Event Log API。模块不包含 `HQUIC`，也不直接驱动 Transport。
 
+Managed SDK 已把文件传输、文件/进程/服务查询及控制封装为与 Web 无关的可复用 API；Web 层只负责 HTTP、WebSocket 和页面交互。文件下载以 Channel 逐块写入响应，上传逐块写入远端 Channel，不在 Web 层复制模块协议实现。
+
 ## 协议与对象规则
 
 - Request 只由 Server 创建；Client 只执行并返回 Response。
@@ -58,8 +60,9 @@ Transport 不解析模块 Payload，不调用 Registry、SCM、进程、文件�
 ## 已验证内容
 
 - Visual Studio 2026 下 x64 Debug/Release 全 Solution Rebuild 均为零警告、零错误，直接产出三个静态库、Client EXE、Server Native DLL、Managed SDK 与 C# Web；x86 配置已删除，ARM64 后续按需加入；
-- 四配置 UnitTest 均为 325/325 通过，包含真实 localhost QUIC 集成；ConsumerTest 均通过；
+- x64 Debug UnitTest 为 332/332、Release 为 331/331 通过，均包含真实 localhost QUIC 集成；Debug 比 Release 多一项仅验证 Debug 5 秒重连间隔的断言，两个配置的 ConsumerTest 均通过；
 - Web/Managed/Native/QUIC/Client 本地回环已实际跑通，System.Info、EventLog、三种本机 Shell 探测、cmd/PowerShell 交互、多会话切换与主动关闭已验证；QUIC 已启用 KeepAlive，Web 保留并显示 ProcessExit、NTSTATUS、Win32、Winsock、HRESULT、Security、QUIC 或 WebSocket 分类及原始码；
+- Web 文件、进程和服务页已实际跑通：文件分页、属性、SHA-256、流式上传/下载、重命名和删除；进程 CPU/内存/线程/句柄/会话实时列表、映像路径/命令行详情与结束进程；服务枚举、详情、启动/停止入口和 Win32 错误域透传。进程刷新只在该页前台可见且窗口有焦点时运行，离开或隐藏后停止；详情和结束操作以 PID 与创建时间核对进程身份，避免 PID 复用竞态；
 - Registry 默认值空名称分页已修正；Terminal 已改为两个 NT 异步单向管道和专用输出线程，已验证大于 100 KiB 输出、退出码 7、Resize、Cancel 和 ConPTY 最终输出排空。
 
 ## 后续开发入口

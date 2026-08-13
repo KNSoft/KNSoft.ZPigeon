@@ -51,8 +51,6 @@ app.MapGet("/api/status", () => new
     server.ClientConnected
 });
 app.MapPost("/api/system", async () => await server.GetSystemInfoAsync());
-app.MapPost("/api/process/terminate", async (ProcessRequest request) =>
-    await server.TerminateProcessAsync(request.ProcessId));
 app.MapPost("/api/eventlog/query", async (EventLogQueryRequest request) =>
     await server.QueryEventLogPageAsync(request.ChannelPath,
                                         request.Query,
@@ -68,11 +66,11 @@ app.MapGet("/api/terminal/shells", async () =>
 app.Map("/api/terminal", context =>
     TerminalWebSocket.RunAsync(context, server));
 app.MapRegistryApi(server);
+app.MapManagementApi(server);
 app.Lifetime.ApplicationStopping.Register(server.Dispose);
 server.Start();
 app.Run();
 
-internal sealed record ProcessRequest(uint ProcessId);
 internal sealed record EventLogRequest(string ChannelPath);
 internal sealed record EventLogChannelRequest(string ChannelPath, bool Enabled);
 internal sealed record EventLogQueryRequest(
