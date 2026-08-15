@@ -182,6 +182,89 @@ ZpService_SendName(
     return Status;
 }
 
+static
+NTSTATUS
+ZpService_EncodeConfiguration(
+    _In_ USHORT OperationId,
+    _In_ const VOID* Config,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    switch (OperationId)
+    {
+        case ZP_SERVICE_OPERATION_CONFIGURE_GENERAL:
+            return ZpService_EncodeConfig(Config, Buffer, BufferSize, BytesWritten);
+
+        case ZP_SERVICE_OPERATION_CONFIGURE_RECOVERY:
+            return ZpService_EncodeRecoveryConfig(Config, Buffer, BufferSize, BytesWritten);
+
+        case ZP_SERVICE_OPERATION_CONFIGURE_ACCOUNT:
+            return ZpService_EncodeAccountConfig(Config, Buffer, BufferSize, BytesWritten);
+
+        default:
+            return STATUS_INVALID_PARAMETER;
+    }
+}
+
+static
+NTSTATUS
+ZpService_SendConfiguration(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT OperationId,
+    _In_ const VOID* Config,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PBYTE Payload;
+    ULONG PayloadLength;
+    ZP_SERVICE_CALLBACK ServiceCallback;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    ServiceCallback.Status = Callback;
+    Status = ZpService_EncodeConfiguration(OperationId, Config, NULL, 0, &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpService_EncodeConfiguration(OperationId,
+                                                Config,
+                                                Payload,
+                                                PayloadLength,
+                                                &PayloadLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpService_Send(Connection,
+                                OperationId,
+                                TimeoutMilliseconds,
+                                Payload,
+                                PayloadLength,
+                                ZpService_StatusComplete,
+                                ServiceCallback,
+                                Context,
+                                Request);
+    }
+    if (Payload != NULL)
+    {
+        if (OperationId == ZP_SERVICE_OPERATION_CONFIGURE_ACCOUNT)
+        {
+            RtlSecureZeroMemory(Payload, PayloadLength);
+        }
+        Mem_Free(Payload);
+    }
+    return Status;
+}
+
 NTSTATUS
 NTAPI
 ZpServer_EnumerateServices(
@@ -238,74 +321,123 @@ ZpServer_QueryService(
                               Request);
 }
 
-static
 NTSTATUS
-ZpService_SendControl(
+NTAPI
+ZpServer_ControlService(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ ULONG Control,
     _In_reads_(ServiceNameLength) PCWCH ServiceName,
     _In_ ULONG ServiceNameLength,
+    _In_reads_opt_(ArgumentLength) PCWCH Argument,
+    _In_ ULONG ArgumentLength,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
+    PBYTE Payload;
+    ULONG PayloadLength;
     ZP_SERVICE_CALLBACK ServiceCallback;
+    NTSTATUS Status;
 
     if (Callback == NULL)
     {
         return STATUS_INVALID_PARAMETER;
     }
     ServiceCallback.Status = Callback;
-    return ZpService_SendName(Connection,
-                              OperationId,
-                              ServiceName,
-                              ServiceNameLength,
-                              TimeoutMilliseconds,
-                              ZpService_StatusComplete,
-                              ServiceCallback,
-                              Context,
-                              Request);
+    Status = ZpService_EncodeControl(Control,
+                                     ServiceName,
+                                     ServiceNameLength,
+                                     Argument,
+                                     ArgumentLength,
+                                     NULL,
+                                     0,
+                                     &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpService_EncodeControl(Control,
+                                         ServiceName,
+                                         ServiceNameLength,
+                                         Argument,
+                                         ArgumentLength,
+                                         Payload,
+                                         PayloadLength,
+                                         &PayloadLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpService_Send(Connection,
+                                ZP_SERVICE_OPERATION_CONTROL,
+                                TimeoutMilliseconds,
+                                Payload,
+                                PayloadLength,
+                                ZpService_StatusComplete,
+                                ServiceCallback,
+                                Context,
+                                Request);
+    }
+    Mem_Free(Payload);
+    return Status;
 }
 
 NTSTATUS
 NTAPI
-ZpServer_StartService(
+ZpServer_ConfigureService(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_reads_(ServiceNameLength) PCWCH ServiceName,
-    _In_ ULONG ServiceNameLength,
+    _In_ PCZP_SERVICE_CONFIG Config,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
-    return ZpService_SendControl(Connection,
-                                 ZP_SERVICE_OPERATION_START,
-                                 ServiceName,
-                                 ServiceNameLength,
-                                 TimeoutMilliseconds,
-                                 Callback,
-                                 Context,
-                                 Request);
+    return ZpService_SendConfiguration(Connection,
+                                        ZP_SERVICE_OPERATION_CONFIGURE_GENERAL,
+                                        Config,
+                                        TimeoutMilliseconds,
+                                        Callback,
+                                        Context,
+                                        Request);
 }
 
 NTSTATUS
 NTAPI
-ZpServer_StopService(
+ZpServer_ConfigureServiceRecovery(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_reads_(ServiceNameLength) PCWCH ServiceName,
-    _In_ ULONG ServiceNameLength,
+    _In_ PCZP_SERVICE_RECOVERY_CONFIG Config,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
-    return ZpService_SendControl(Connection,
-                                 ZP_SERVICE_OPERATION_STOP,
-                                 ServiceName,
-                                 ServiceNameLength,
-                                 TimeoutMilliseconds,
-                                 Callback,
-                                 Context,
-                                 Request);
+    return ZpService_SendConfiguration(Connection,
+                                        ZP_SERVICE_OPERATION_CONFIGURE_RECOVERY,
+                                        Config,
+                                        TimeoutMilliseconds,
+                                        Callback,
+                                        Context,
+                                        Request);
+}
+
+NTSTATUS
+NTAPI
+ZpServer_ConfigureServiceAccount(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ PCZP_SERVICE_ACCOUNT_CONFIG Config,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    return ZpService_SendConfiguration(Connection,
+                                        ZP_SERVICE_OPERATION_CONFIGURE_ACCOUNT,
+                                        Config,
+                                        TimeoutMilliseconds,
+                                        Callback,
+                                        Context,
+                                        Request);
 }

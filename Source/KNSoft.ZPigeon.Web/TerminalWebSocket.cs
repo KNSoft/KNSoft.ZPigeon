@@ -12,27 +12,28 @@ internal static class TerminalWebSocket
 
     internal static async Task RunAsync(
         HttpContext context,
-        NativeServer server)
+        TerminalWebSessionManager sessions)
     {
         if (!context.WebSockets.IsWebSocketRequest ||
-            !uint.TryParse(context.Request.Query["shell"], out var shellValue) ||
+            !uint.TryParse(context.Request.Query["session"], out var sessionId) ||
             !ushort.TryParse(context.Request.Query["columns"], out var columns) ||
             !ushort.TryParse(context.Request.Query["rows"], out var rows) ||
             columns == 0 || rows == 0 ||
-            !Enum.IsDefined((TerminalShell)shellValue))
+            !sessions.TryGet(sessionId, out var session))
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             return;
         }
-        await using var terminal = await server.CreateShellAsync(
-            (TerminalShell)shellValue,
-            columns,
-            rows);
+        using var attachment = session!.Attach();
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(
             context.RequestAborted);
-        var send = SendAsync(socket, terminal, cancellation.Token);
-        var receive = ReceiveAsync(socket, terminal, cancellation.Token);
+        if (!session.TryGetCompletion(out _))
+        {
+            await session.ResizeAsync(columns, rows);
+        }
+        var send = SendAsync(socket, session, attachment, cancellation.Token);
+        var receive = ReceiveAsync(socket, session, cancellation.Token);
         var completed = await Task.WhenAny(send, receive);
         if (completed == send && send.IsCompletedSuccessfully &&
             socket.State == WebSocketState.Open)
@@ -77,19 +78,26 @@ internal static class TerminalWebSocket
 
     private static async Task SendAsync(
         WebSocket socket,
-        TerminalSession terminal,
+        TerminalWebSession session,
+        TerminalWebAttachment attachment,
         CancellationToken cancellationToken)
     {
-        await foreach (var data in terminal.Output.ReadAllAsync(
-                           cancellationToken))
+        foreach (var data in attachment.Snapshot)
         {
             await socket.SendAsync(data,
                                    WebSocketMessageType.Binary,
                                    true,
                                    cancellationToken);
         }
-        var completion = await terminal.Completion;
-        if (socket.State == WebSocketState.Open)
+        await foreach (var data in attachment.Live.ReadAllAsync(cancellationToken))
+        {
+            await socket.SendAsync(data,
+                                   WebSocketMessageType.Binary,
+                                   true,
+                                   cancellationToken);
+        }
+        if (socket.State == WebSocketState.Open &&
+            session.TryGetCompletion(out var completion))
         {
             await socket.SendAsync(
                 JsonSerializer.SerializeToUtf8Bytes(
@@ -102,7 +110,7 @@ internal static class TerminalWebSocket
 
     private static async Task ReceiveAsync(
         WebSocket socket,
-        TerminalSession terminal,
+        TerminalWebSession session,
         CancellationToken cancellationToken)
     {
         var buffer = new byte[BufferSize];
@@ -117,7 +125,7 @@ internal static class TerminalWebSocket
             {
                 if (result.Count != 0)
                 {
-                    await terminal.WriteAsync(
+                    await session.WriteAsync(
                         buffer.AsMemory(0, result.Count),
                         cancellationToken);
                 }
@@ -142,7 +150,7 @@ internal static class TerminalWebSocket
                     cancellationToken);
                 return;
             }
-            await terminal.ResizeAsync(resize.Columns, resize.Rows);
+            await session.ResizeAsync(resize.Columns, resize.Rows);
         }
     }
 

@@ -1751,13 +1751,16 @@ TEST_FUNC(SDKQuicIntegration)
         goto Cleanup;
     }
 
-    Status = ZpServer_StartService(TestContext.Connection,
-                                   MissingServiceName,
-                                   ARRAYSIZE(MissingServiceName) - 1,
-                                   SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
-                                   SDKIntegration_ServiceControlCallback,
-                                   &TestContext,
-                                   &Request);
+    Status = ZpServer_ControlService(TestContext.Connection,
+                                     ZP_SERVICE_CONTROL_START,
+                                     MissingServiceName,
+                                     ARRAYSIZE(MissingServiceName) - 1,
+                                     NULL,
+                                     0,
+                                     SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                     SDKIntegration_ServiceControlCallback,
+                                     &TestContext,
+                                     &Request);
     if (NT_SUCCESS(Status))
     {
         ZpRequest_Close(Request);

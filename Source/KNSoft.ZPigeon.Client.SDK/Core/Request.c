@@ -29,6 +29,11 @@ ZpClientInbound_ReleaseRequest(
 {
     if (InterlockedDecrement(&Request->ReferenceCount) == 0)
     {
+        if (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
+            Request->OperationId == ZP_SERVICE_OPERATION_CONFIGURE_ACCOUNT)
+        {
+            RtlSecureZeroMemory(Request->Payload, Request->PayloadLength);
+        }
         Mem_Free(Request);
     }
 }

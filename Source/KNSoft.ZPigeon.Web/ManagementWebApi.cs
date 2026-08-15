@@ -73,7 +73,29 @@ internal static class ManagementWebApi
         app.MapPost("/api/service/info", async (ServiceRequest request) =>
             await server.QueryServiceAsync(request.ServiceName));
         app.MapPost("/api/service/control", async (ServiceControlRequest request) =>
-            await server.SetServiceRunningAsync(request.ServiceName, request.Running));
+        {
+            if (!Enum.IsDefined(request.Control))
+            {
+                return Results.BadRequest();
+            }
+            await server.ControlServiceAsync(request.ServiceName, request.Control, request.Argument);
+            return Results.NoContent();
+        });
+        app.MapPost("/api/service/configure", async (ServiceConfig request) =>
+        {
+            await server.ConfigureServiceAsync(request);
+            return Results.NoContent();
+        });
+        app.MapPost("/api/service/configure-recovery", async (ServiceRecoveryConfig request) =>
+        {
+            await server.ConfigureServiceRecoveryAsync(request);
+            return Results.NoContent();
+        });
+        app.MapPost("/api/service/configure-account", async (ServiceAccountConfig request) =>
+        {
+            await server.ConfigureServiceAccountAsync(request);
+            return Results.NoContent();
+        });
     }
 }
 
@@ -81,7 +103,7 @@ internal sealed record PathRequest(string Path);
 internal sealed record FilePageRequest(string Path, string? Cursor, uint MaxEntries);
 internal sealed record FileRenameRequest(string Path, string NewPath);
 internal sealed record ServiceRequest(string ServiceName);
-internal sealed record ServiceControlRequest(string ServiceName, bool Running);
+internal sealed record ServiceControlRequest(string ServiceName, ServiceControl Control, string? Argument);
 internal sealed record ProcessIdentityRequest(uint ProcessId, string CreateTime);
 internal sealed record ProcessWebRecord(
     uint ProcessId,

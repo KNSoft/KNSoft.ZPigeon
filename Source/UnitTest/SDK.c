@@ -1592,16 +1592,19 @@ TEST_FUNC(SDKContract)
             STATUS_PROTOCOL_UNREACHABLE);
     ZpRequest_Close(Request);
     TestContext.RequestStatusCount = 0;
-    TEST_OK(NT_SUCCESS(ZpServer_StopService(
+    TEST_OK(NT_SUCCESS(ZpServer_ControlService(
                            (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
+                           ZP_SERVICE_CONTROL_STOP,
                            L"Test",
                            4,
+                           NULL,
+                           0,
                            1000,
                            SDKTest_RequestStatusCallback,
                            &TestContext,
                            &Request)) &&
             TestContext.SendModuleId == ZP_SERVICE_MODULE_ID &&
-            TestContext.SendOperationId == ZP_SERVICE_OPERATION_STOP);
+            TestContext.SendOperationId == ZP_SERVICE_OPERATION_CONTROL);
     Response.RequestId = TestContext.SendRequestId;
     Response.Status = ZpStatus_FromNtStatus(STATUS_SUCCESS);
     TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveResponse(

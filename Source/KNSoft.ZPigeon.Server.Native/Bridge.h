@@ -134,11 +134,17 @@ typedef struct _ZP_NATIVE_SERVICE_RECORD
 {
     ULONG ServiceType;
     ULONG CurrentState;
+    ULONG ControlsAccepted;
     ULONG ProcessId;
+    ULONG StartType;
     PCWCH ServiceName;
     ULONG ServiceNameLength;
     PCWCH DisplayName;
     ULONG DisplayNameLength;
+    PCWCH Description;
+    ULONG DescriptionLength;
+    PCWCH StartName;
+    ULONG StartNameLength;
 } ZP_NATIVE_SERVICE_RECORD, *PZP_NATIVE_SERVICE_RECORD;
 
 typedef const ZP_NATIVE_SERVICE_RECORD* PCZP_NATIVE_SERVICE_RECORD;
@@ -422,9 +428,66 @@ __declspec(dllexport)
 NTSTATUS
 NTAPI
 ZpNative_ControlService(
-    _In_ BOOLEAN Start,
+    _In_ ULONG Control,
     _In_reads_(ServiceNameLength) PCWCH ServiceName,
     _In_ ULONG ServiceNameLength,
+    _In_reads_opt_(ArgumentLength) PCWCH Argument,
+    _In_ ULONG ArgumentLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_ConfigureService(
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG StartType,
+    _In_ BOOLEAN DelayedAutoStart,
+    _In_reads_(DisplayNameLength) PCWCH DisplayName,
+    _In_ ULONG DisplayNameLength,
+    _In_reads_opt_(DescriptionLength) PCWCH Description,
+    _In_ ULONG DescriptionLength,
+    _In_reads_(BinaryPathNameLength) PCWCH BinaryPathName,
+    _In_ ULONG BinaryPathNameLength,
+    _In_reads_opt_(LoadOrderGroupLength) PCWCH LoadOrderGroup,
+    _In_ ULONG LoadOrderGroupLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_ConfigureServiceRecovery(
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG ErrorControl,
+    _In_ BOOLEAN FailureActionsOnNonCrashFailures,
+    _In_ ULONG ResetPeriodSeconds,
+    _In_ ULONG RestartDelayMilliseconds,
+    _In_ ULONG RebootDelayMilliseconds,
+    _In_ ULONG FirstFailureAction,
+    _In_ ULONG SecondFailureAction,
+    _In_ ULONG ThirdFailureAction,
+    _In_ ULONG SubsequentFailureAction,
+    _In_reads_opt_(RebootMessageLength) PCWCH RebootMessage,
+    _In_ ULONG RebootMessageLength,
+    _In_reads_opt_(CommandLength) PCWCH Command,
+    _In_ ULONG CommandLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_ConfigureServiceAccount(
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_reads_(StartNameLength) PCWCH StartName,
+    _In_ ULONG StartNameLength,
+    _In_reads_opt_(PasswordLength) PCWCH Password,
+    _In_ ULONG PasswordLength,
+    _In_ BOOLEAN PasswordPresent,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 

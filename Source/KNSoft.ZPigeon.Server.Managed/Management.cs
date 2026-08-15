@@ -69,11 +69,62 @@ public sealed partial class NativeServer
             ServiceInfoCallback,
             context));
 
-    public Task SetServiceRunningAsync(string serviceName, bool running) =>
+    public Task ControlServiceAsync(string serviceName, ServiceControl control, string? argument = null) =>
         RunStatusAsync((callback, context) => NativeMethods.ControlService(
-            running,
+            (uint)control,
             serviceName,
             (uint)serviceName.Length,
+            argument,
+            (uint)(argument?.Length ?? 0),
+            callback,
+            context));
+
+    public Task ConfigureServiceAsync(ServiceConfig config) =>
+        RunStatusAsync((callback, context) => NativeMethods.ConfigureService(
+            config.ServiceName,
+            (uint)config.ServiceName.Length,
+            config.StartType,
+            config.DelayedAutoStart,
+            config.DisplayName,
+            (uint)config.DisplayName.Length,
+            config.Description,
+            (uint)config.Description.Length,
+            config.BinaryPathName,
+            (uint)config.BinaryPathName.Length,
+            config.LoadOrderGroup,
+            (uint)config.LoadOrderGroup.Length,
+            callback,
+            context));
+
+    public Task ConfigureServiceRecoveryAsync(ServiceRecoveryConfig config) =>
+        RunStatusAsync((callback, context) => NativeMethods.ConfigureServiceRecovery(
+            config.ServiceName,
+            (uint)config.ServiceName.Length,
+            config.ErrorControl,
+            config.FailureActionsOnNonCrashFailures,
+            config.ResetPeriodSeconds,
+            config.RestartDelayMilliseconds,
+            config.RebootDelayMilliseconds,
+            config.FirstFailureAction,
+            config.SecondFailureAction,
+            config.ThirdFailureAction,
+            config.SubsequentFailureAction,
+            config.RebootMessage,
+            (uint)config.RebootMessage.Length,
+            config.Command,
+            (uint)config.Command.Length,
+            callback,
+            context));
+
+    public Task ConfigureServiceAccountAsync(ServiceAccountConfig config) =>
+        RunStatusAsync((callback, context) => NativeMethods.ConfigureServiceAccount(
+            config.ServiceName,
+            (uint)config.ServiceName.Length,
+            config.StartName,
+            (uint)config.StartName.Length,
+            config.Password,
+            (uint)(config.Password?.Length ?? 0),
+            config.Password is not null,
             callback,
             context));
 
@@ -250,9 +301,13 @@ public sealed partial class NativeServer
             result[index] = new ServiceRecord(
                 record.ServiceType,
                 record.CurrentState,
+                record.ControlsAccepted,
                 record.ProcessId,
+                record.StartType,
                 Marshal.PtrToStringUni(record.ServiceName, (int)record.ServiceNameLength) ?? string.Empty,
-                Marshal.PtrToStringUni(record.DisplayName, (int)record.DisplayNameLength) ?? string.Empty);
+                Marshal.PtrToStringUni(record.DisplayName, (int)record.DisplayNameLength) ?? string.Empty,
+                Marshal.PtrToStringUni(record.Description, (int)record.DescriptionLength) ?? string.Empty,
+                Marshal.PtrToStringUni(record.StartName, (int)record.StartNameLength) ?? string.Empty);
         }
         completion.SetResult(result);
     }
@@ -269,19 +324,42 @@ public sealed partial class NativeServer
         completion.SetResult(new ServiceInfo(
             value.ServiceType,
             value.CurrentState,
+            value.ControlsAccepted,
             value.ProcessId,
             value.StartType,
             value.ErrorControl,
+            value.DelayedAutoStart != 0,
+            value.ServiceFlags,
+            value.RecoverySupported != 0,
+            value.FailureActionsOnNonCrashFailures != 0,
+            value.RecoveryActionCount,
+            value.ResetPeriodSeconds,
+            value.RestartDelayMilliseconds,
+            value.RebootDelayMilliseconds,
+            value.FirstFailureAction,
+            value.SecondFailureAction,
+            value.ThirdFailureAction,
+            value.SubsequentFailureAction,
             String(value.ServiceName),
             String(value.DisplayName),
+            String(value.Description),
             String(value.BinaryPathName),
-            String(value.StartName)));
+            String(value.StartName),
+            String(value.LoadOrderGroup),
+            Strings(value.Dependencies),
+            Strings(value.Dependents),
+            String(value.ServiceDll),
+            String(value.RebootMessage),
+            String(value.RecoveryCommand)));
     }
 
     private static DateTime FileTime(ulong value) => DateTime.FromFileTimeUtc((long)value);
 
     private static string String(NativeMethods.StringView value) =>
         Marshal.PtrToStringUni(value.Buffer, (int)value.Length) ?? string.Empty;
+
+    private static string[] Strings(NativeMethods.StringView value) =>
+        String(value).Split('\0', StringSplitOptions.RemoveEmptyEntries);
 }
 
 public sealed record FileRecord(
@@ -330,19 +408,73 @@ public sealed record ProcessInfo(
 public sealed record ServiceRecord(
     uint ServiceType,
     uint CurrentState,
+    uint ControlsAccepted,
     uint ProcessId,
+    uint StartType,
     string ServiceName,
-    string DisplayName);
+    string DisplayName,
+    string Description,
+    string StartName);
 public sealed record ServiceInfo(
     uint ServiceType,
     uint CurrentState,
+    uint ControlsAccepted,
     uint ProcessId,
     uint StartType,
     uint ErrorControl,
+    bool DelayedAutoStart,
+    uint ServiceFlags,
+    bool RecoverySupported,
+    bool FailureActionsOnNonCrashFailures,
+    uint RecoveryActionCount,
+    uint ResetPeriodSeconds,
+    uint RestartDelayMilliseconds,
+    uint RebootDelayMilliseconds,
+    uint FirstFailureAction,
+    uint SecondFailureAction,
+    uint ThirdFailureAction,
+    uint SubsequentFailureAction,
     string ServiceName,
     string DisplayName,
+    string Description,
     string BinaryPathName,
-    string StartName);
+    string StartName,
+    string LoadOrderGroup,
+    string[] Dependencies,
+    string[] Dependents,
+    string ServiceDll,
+    string RebootMessage,
+    string RecoveryCommand);
+public sealed record ServiceConfig(
+    string ServiceName,
+    uint StartType,
+    bool DelayedAutoStart,
+    string DisplayName,
+    string Description,
+    string BinaryPathName,
+    string LoadOrderGroup);
+public sealed record ServiceRecoveryConfig(
+    string ServiceName,
+    uint ErrorControl,
+    bool FailureActionsOnNonCrashFailures,
+    uint ResetPeriodSeconds,
+    uint RestartDelayMilliseconds,
+    uint RebootDelayMilliseconds,
+    uint FirstFailureAction,
+    uint SecondFailureAction,
+    uint ThirdFailureAction,
+    uint SubsequentFailureAction,
+    string RebootMessage,
+    string Command);
+public sealed record ServiceAccountConfig(string ServiceName, string StartName, string? Password);
+public enum ServiceControl
+{
+    Start = 1,
+    Stop,
+    Pause,
+    Continue,
+    Restart
+}
 
 internal static partial class NativeMethods
 {
@@ -446,11 +578,17 @@ internal static partial class NativeMethods
     {
         internal readonly uint ServiceType;
         internal readonly uint CurrentState;
+        internal readonly uint ControlsAccepted;
         internal readonly uint ProcessId;
+        internal readonly uint StartType;
         internal readonly nint ServiceName;
         internal readonly uint ServiceNameLength;
         internal readonly nint DisplayName;
         internal readonly uint DisplayNameLength;
+        internal readonly nint Description;
+        internal readonly uint DescriptionLength;
+        internal readonly nint StartName;
+        internal readonly uint StartNameLength;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -458,13 +596,33 @@ internal static partial class NativeMethods
     {
         internal readonly uint ServiceType;
         internal readonly uint CurrentState;
+        internal readonly uint ControlsAccepted;
         internal readonly uint ProcessId;
         internal readonly uint StartType;
         internal readonly uint ErrorControl;
+        internal readonly uint DelayedAutoStart;
+        internal readonly uint ServiceFlags;
+        internal readonly uint RecoverySupported;
+        internal readonly uint FailureActionsOnNonCrashFailures;
+        internal readonly uint RecoveryActionCount;
+        internal readonly uint ResetPeriodSeconds;
+        internal readonly uint RestartDelayMilliseconds;
+        internal readonly uint RebootDelayMilliseconds;
+        internal readonly uint FirstFailureAction;
+        internal readonly uint SecondFailureAction;
+        internal readonly uint ThirdFailureAction;
+        internal readonly uint SubsequentFailureAction;
         internal readonly StringView ServiceName;
         internal readonly StringView DisplayName;
+        internal readonly StringView Description;
         internal readonly StringView BinaryPathName;
         internal readonly StringView StartName;
+        internal readonly StringView LoadOrderGroup;
+        internal readonly StringView Dependencies;
+        internal readonly StringView Dependents;
+        internal readonly StringView ServiceDll;
+        internal readonly StringView RebootMessage;
+        internal readonly StringView RecoveryCommand;
     }
 
     [LibraryImport(Library,
@@ -531,9 +689,66 @@ internal static partial class NativeMethods
         EntryPoint = "ZpNative_ControlService",
         StringMarshalling = StringMarshalling.Utf16)]
     internal static partial int ControlService(
-        [MarshalAs(UnmanagedType.U1)] bool start,
+        uint control,
         string serviceName,
         uint serviceNameLength,
+        string? argument,
+        uint argumentLength,
+        StatusCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_ConfigureService",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int ConfigureService(
+        string serviceName,
+        uint serviceNameLength,
+        uint startType,
+        [MarshalAs(UnmanagedType.U1)] bool delayedAutoStart,
+        string displayName,
+        uint displayNameLength,
+        string description,
+        uint descriptionLength,
+        string binaryPathName,
+        uint binaryPathNameLength,
+        string loadOrderGroup,
+        uint loadOrderGroupLength,
+        StatusCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_ConfigureServiceRecovery",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int ConfigureServiceRecovery(
+        string serviceName,
+        uint serviceNameLength,
+        uint errorControl,
+        [MarshalAs(UnmanagedType.U1)] bool failureActionsOnNonCrashFailures,
+        uint resetPeriodSeconds,
+        uint restartDelayMilliseconds,
+        uint rebootDelayMilliseconds,
+        uint firstFailureAction,
+        uint secondFailureAction,
+        uint thirdFailureAction,
+        uint subsequentFailureAction,
+        string rebootMessage,
+        uint rebootMessageLength,
+        string command,
+        uint commandLength,
+        StatusCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_ConfigureServiceAccount",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int ConfigureServiceAccount(
+        string serviceName,
+        uint serviceNameLength,
+        string startName,
+        uint startNameLength,
+        string? password,
+        uint passwordLength,
+        [MarshalAs(UnmanagedType.U1)] bool passwordPresent,
         StatusCallback callback,
         nint context);
 }

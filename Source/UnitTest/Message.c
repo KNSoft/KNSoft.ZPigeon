@@ -24,7 +24,7 @@ TEST_FUNC(ProtocolMessage)
         { 3, 2 }
     };
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE] = { 0x04 };
-    BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE], Signature[ZP_CLIENT_SIGNATURE_SIZE], Buffer[256];
+    BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE], Signature[ZP_CLIENT_SIGNATURE_SIZE], Buffer[512];
     ZP_CLIENT_HELLO ClientHello = { ZP_CORE_VERSION, Modules, ARRAYSIZE(Modules), PublicKey };
     ZP_CLIENT_HELLO_VIEW ClientHelloView;
     ZP_READY Ready = { Modules, ARRAYSIZE(Modules) };
@@ -81,26 +81,69 @@ TEST_FUNC(ProtocolMessage)
     };
     ZP_PROCESS_INFO_VIEW ProcessInfoView;
     ZP_SERVICE_RECORD Services[] = {
-        { 0x10, 4, 4321, L"SvcA", 4, L"Service A", 9 }
+        { 0x10, 4, 3, 4321, 2, L"SvcA", 4, L"Service A", 9, L"Description", 11, L"LocalSystem", 11 }
     };
     ZP_SERVICE_LIST_VIEW ServiceList;
     ZP_SERVICE_RECORD_VIEW ServiceRecord;
     ZP_SERVICE_INFO ServiceInfo = {
         0x10,
         4,
+        3,
         4321,
         2,
         1,
+        1,
+        0,
+        1,
+        1,
+        4,
+        86400,
+        60000,
+        120000,
+        SC_ACTION_RESTART,
+        SC_ACTION_REBOOT,
+        SC_ACTION_RUN_COMMAND,
+        SC_ACTION_OWN_RESTART,
         L"SvcA",
         4,
         L"Service A",
         9,
+        L"Description",
+        11,
         L"C:\\SvcA.exe",
         11,
         L"LocalSystem",
-        11
+        11,
+        L"Group",
+        5,
+        L"RpcSs\0EventLog\0",
+        15,
+        L"Dependent\0",
+        10,
+        L"%SystemRoot%\\System32\\SvcA.dll",
+        30,
+        L"Restarting",
+        10,
+        L"notify.exe",
+        10
     };
     ZP_SERVICE_INFO_VIEW ServiceInfoView;
+    ZP_SERVICE_CONFIG ServiceConfig = {
+        2, 1, L"SvcA", 4, L"Service A", 9, L"Description", 11,
+        L"C:\\SvcA.exe", 11, L"Group", 5
+    };
+    ZP_SERVICE_CONFIG_VIEW ServiceConfigView;
+    ZP_SERVICE_RECOVERY_CONFIG ServiceRecoveryConfig = {
+        1, 1, 86400, 60000, 120000, 1, 2, 3, 4,
+        L"SvcA", 4, L"Restarting", 10, L"notify.exe", 10
+    };
+    ZP_SERVICE_RECOVERY_CONFIG_VIEW ServiceRecoveryConfigView;
+    ZP_SERVICE_ACCOUNT_CONFIG ServiceAccountConfig = {
+        1, L"SvcA", 4, L"domain\\user", 11, L"secret", 6
+    };
+    ZP_SERVICE_ACCOUNT_CONFIG_VIEW ServiceAccountConfigView;
+    ZP_STRING_VIEW ServiceArgument;
+    ULONG ServiceControl;
     ZP_FILE_INFO FileInfo = {
         FILE_ATTRIBUTE_ARCHIVE,
         123456789,
@@ -406,15 +449,19 @@ TEST_FUNC(ProtocolMessage)
                                            Buffer,
                                            sizeof(Buffer),
                                            &Length)) &&
-            Length == 50 &&
+            Length == 110 &&
             NT_SUCCESS(ZpService_DecodeList(Buffer, Length, &ServiceList)) &&
             ServiceList.Count == ARRAYSIZE(Services) &&
             NT_SUCCESS(ZpService_GetRecord(&ServiceList, 0, &ServiceRecord)) &&
             ServiceRecord.ServiceType == Services[0].ServiceType &&
             ServiceRecord.CurrentState == Services[0].CurrentState &&
+            ServiceRecord.ControlsAccepted == Services[0].ControlsAccepted &&
             ServiceRecord.ProcessId == Services[0].ProcessId &&
+            ServiceRecord.StartType == Services[0].StartType &&
             ServiceRecord.ServiceName.Length == Services[0].ServiceNameLength &&
-            ServiceRecord.DisplayName.Length == Services[0].DisplayNameLength);
+            ServiceRecord.DisplayName.Length == Services[0].DisplayNameLength &&
+            ServiceRecord.Description.Length == Services[0].DescriptionLength &&
+            ServiceRecord.StartName.Length == Services[0].StartNameLength);
     TEST_OK(ZpService_GetRecord(&ServiceList,
                                 ServiceList.Count,
                                 &ServiceRecord) == STATUS_INVALID_PARAMETER);
@@ -436,13 +483,66 @@ TEST_FUNC(ProtocolMessage)
                                             &ServiceInfoView)) &&
             ServiceInfoView.ServiceType == ServiceInfo.ServiceType &&
             ServiceInfoView.CurrentState == ServiceInfo.CurrentState &&
+            ServiceInfoView.ControlsAccepted == ServiceInfo.ControlsAccepted &&
             ServiceInfoView.ProcessId == ServiceInfo.ProcessId &&
             ServiceInfoView.StartType == ServiceInfo.StartType &&
             ServiceInfoView.ErrorControl == ServiceInfo.ErrorControl &&
+            ServiceInfoView.DelayedAutoStart == ServiceInfo.DelayedAutoStart &&
+            ServiceInfoView.ServiceFlags == ServiceInfo.ServiceFlags &&
+            ServiceInfoView.RecoverySupported == ServiceInfo.RecoverySupported &&
+            ServiceInfoView.FirstFailureAction == ServiceInfo.FirstFailureAction &&
             ServiceInfoView.ServiceName.Length == ServiceInfo.ServiceNameLength &&
             ServiceInfoView.DisplayName.Length == ServiceInfo.DisplayNameLength &&
+            ServiceInfoView.Description.Length == ServiceInfo.DescriptionLength &&
             ServiceInfoView.BinaryPathName.Length == ServiceInfo.BinaryPathNameLength &&
-            ServiceInfoView.StartName.Length == ServiceInfo.StartNameLength);
+            ServiceInfoView.StartName.Length == ServiceInfo.StartNameLength &&
+            ServiceInfoView.LoadOrderGroup.Length == ServiceInfo.LoadOrderGroupLength &&
+            ServiceInfoView.Dependencies.Length == ServiceInfo.DependenciesLength &&
+            ServiceInfoView.Dependents.Length == ServiceInfo.DependentsLength &&
+            ServiceInfoView.ServiceDll.Length == ServiceInfo.ServiceDllLength &&
+            ServiceInfoView.RebootMessage.Length == ServiceInfo.RebootMessageLength &&
+            ServiceInfoView.RecoveryCommand.Length == ServiceInfo.RecoveryCommandLength);
+    TEST_OK(NT_SUCCESS(ZpService_EncodeControl(ZP_SERVICE_CONTROL_START,
+                                               ServiceInfo.ServiceName,
+                                               ServiceInfo.ServiceNameLength,
+                                               L"safe",
+                                               4,
+                                               Buffer,
+                                               sizeof(Buffer),
+                                               &Length)) &&
+            NT_SUCCESS(ZpService_DecodeControl(Buffer,
+                                               Length,
+                                               &ServiceControl,
+                                               &ServiceInfoView.ServiceName,
+                                               &ServiceArgument)) &&
+            ServiceControl == ZP_SERVICE_CONTROL_START &&
+            ServiceArgument.Length == 4);
+    TEST_OK(NT_SUCCESS(ZpService_EncodeConfig(&ServiceConfig,
+                                              Buffer,
+                                              sizeof(Buffer),
+                                              &Length)) &&
+            NT_SUCCESS(ZpService_DecodeConfig(Buffer, Length, &ServiceConfigView)) &&
+            ServiceConfigView.StartType == ServiceConfig.StartType &&
+            ServiceConfigView.ServiceName.Length == ServiceConfig.ServiceNameLength);
+    TEST_OK(NT_SUCCESS(ZpService_EncodeRecoveryConfig(&ServiceRecoveryConfig,
+                                                      Buffer,
+                                                      sizeof(Buffer),
+                                                      &Length)) &&
+            NT_SUCCESS(ZpService_DecodeRecoveryConfig(Buffer,
+                                                      Length,
+                                                      &ServiceRecoveryConfigView)) &&
+            ServiceRecoveryConfigView.FirstFailureAction ==
+                ServiceRecoveryConfig.FirstFailureAction &&
+            ServiceRecoveryConfigView.Command.Length == ServiceRecoveryConfig.CommandLength);
+    TEST_OK(NT_SUCCESS(ZpService_EncodeAccountConfig(&ServiceAccountConfig,
+                                                     Buffer,
+                                                     sizeof(Buffer),
+                                                     &Length)) &&
+            NT_SUCCESS(ZpService_DecodeAccountConfig(Buffer,
+                                                     Length,
+                                                     &ServiceAccountConfigView)) &&
+            ServiceAccountConfigView.PasswordPresent &&
+            ServiceAccountConfigView.Password.Length == ServiceAccountConfig.PasswordLength);
     TEST_OK(NT_SUCCESS(ZpFile_EncodePath(L"C:\\Test.bin",
                                          11,
                                          Buffer,

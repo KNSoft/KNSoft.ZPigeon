@@ -343,10 +343,13 @@ ZpServer_QueryService(
 
 NTSTATUS
 NTAPI
-ZpServer_StartService(
+ZpServer_ControlService(
     _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG Control,
     _In_reads_(ServiceNameLength) PCWCH ServiceName,
     _In_ ULONG ServiceNameLength,
+    _In_reads_opt_(ArgumentLength) PCWCH Argument,
+    _In_ ULONG ArgumentLength,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
@@ -354,10 +357,29 @@ ZpServer_StartService(
 
 NTSTATUS
 NTAPI
-ZpServer_StopService(
+ZpServer_ConfigureService(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_reads_(ServiceNameLength) PCWCH ServiceName,
-    _In_ ULONG ServiceNameLength,
+    _In_ PCZP_SERVICE_CONFIG Config,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ConfigureServiceRecovery(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ PCZP_SERVICE_RECOVERY_CONFIG Config,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ConfigureServiceAccount(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ PCZP_SERVICE_ACCOUNT_CONFIG Config,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,

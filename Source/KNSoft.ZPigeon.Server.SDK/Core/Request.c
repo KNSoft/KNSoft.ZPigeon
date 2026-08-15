@@ -317,6 +317,11 @@ ZpServer_SendRequest(
                                         BodyLength);
     }
     RtlLeaveCriticalSection(&ConnectionObject->RequestSendLock);
+    if (ModuleId == ZP_SERVICE_MODULE_ID &&
+        OperationId == ZP_SERVICE_OPERATION_CONFIGURE_ACCOUNT)
+    {
+        RtlSecureZeroMemory(Body, BodyLength);
+    }
     Mem_Free(Body);
     if (!NT_SUCCESS(Status))
     {

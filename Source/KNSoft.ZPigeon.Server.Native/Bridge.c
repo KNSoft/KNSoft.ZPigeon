@@ -3,6 +3,7 @@
 #include <KNSoft/MakeLifeEasier/Memory/Core.h>
 
 #define ZP_NATIVE_TIMEOUT_MILLISECONDS 10000
+#define ZP_NATIVE_SERVICE_CONTROL_TIMEOUT_MILLISECONDS 35000
 
 typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
 {
@@ -378,11 +379,17 @@ ZpNative_ServiceListCallback(
         }
         Records[Index].ServiceType = Record.ServiceType;
         Records[Index].CurrentState = Record.CurrentState;
+        Records[Index].ControlsAccepted = Record.ControlsAccepted;
         Records[Index].ProcessId = Record.ProcessId;
+        Records[Index].StartType = Record.StartType;
         Records[Index].ServiceName = (PCWCH)Record.ServiceName.Buffer;
         Records[Index].ServiceNameLength = Record.ServiceName.Length;
         Records[Index].DisplayName = (PCWCH)Record.DisplayName.Buffer;
         Records[Index].DisplayNameLength = Record.DisplayName.Length;
+        Records[Index].Description = (PCWCH)Record.Description.Buffer;
+        Records[Index].DescriptionLength = Record.Description.Length;
+        Records[Index].StartName = (PCWCH)Record.StartName.Buffer;
+        Records[Index].StartNameLength = Record.StartName.Length;
     }
     CallbackContext->Callback.ServiceList(
         Status,
@@ -1604,16 +1611,17 @@ ZpNative_QueryService(
 NTSTATUS
 NTAPI
 ZpNative_ControlService(
-    _In_ BOOLEAN Start,
+    _In_ ULONG Control,
     _In_reads_(ServiceNameLength) PCWCH ServiceName,
     _In_ ULONG ServiceNameLength,
+    _In_reads_opt_(ArgumentLength) PCWCH Argument,
+    _In_ ULONG ArgumentLength,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context)
 {
     ZP_CONNECTION_HANDLE Connection;
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
     ZP_REQUEST_HANDLE Request;
-    NTSTATUS Status;
 
     if (Callback == NULL)
     {
@@ -1631,22 +1639,197 @@ ZpNative_ControlService(
         return STATUS_NO_MEMORY;
     }
     CallbackContext->Callback.Status = Callback;
-    Status = Start ?
-                 ZpServer_StartService(Connection,
-                                       ServiceName,
-                                       ServiceNameLength,
-                                       ZP_NATIVE_TIMEOUT_MILLISECONDS,
-                                       ZpNative_StatusCallback,
-                                       CallbackContext,
-                                       &Request) :
-                 ZpServer_StopService(Connection,
-                                      ServiceName,
-                                      ServiceNameLength,
-                                      ZP_NATIVE_TIMEOUT_MILLISECONDS,
-                                      ZpNative_StatusCallback,
-                                      CallbackContext,
-                                      &Request);
-    return ZpNative_SendStatusRequest(CallbackContext, Status);
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_ControlService(Connection,
+                                Control,
+                                ServiceName,
+                                ServiceNameLength,
+                                Argument,
+                                ArgumentLength,
+                                ZP_NATIVE_SERVICE_CONTROL_TIMEOUT_MILLISECONDS,
+                                ZpNative_StatusCallback,
+                                CallbackContext,
+                                &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_ConfigureService(
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG StartType,
+    _In_ BOOLEAN DelayedAutoStart,
+    _In_reads_(DisplayNameLength) PCWCH DisplayName,
+    _In_ ULONG DisplayNameLength,
+    _In_reads_opt_(DescriptionLength) PCWCH Description,
+    _In_ ULONG DescriptionLength,
+    _In_reads_(BinaryPathNameLength) PCWCH BinaryPathName,
+    _In_ ULONG BinaryPathNameLength,
+    _In_reads_opt_(LoadOrderGroupLength) PCWCH LoadOrderGroup,
+    _In_ ULONG LoadOrderGroupLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+    ZP_SERVICE_CONFIG Config;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL)
+    {
+        return STATUS_DEVICE_NOT_CONNECTED;
+    }
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    Config.StartType = StartType;
+    Config.DelayedAutoStart = DelayedAutoStart;
+    Config.ServiceName = ServiceName;
+    Config.ServiceNameLength = ServiceNameLength;
+    Config.DisplayName = DisplayName;
+    Config.DisplayNameLength = DisplayNameLength;
+    Config.Description = Description;
+    Config.DescriptionLength = DescriptionLength;
+    Config.BinaryPathName = BinaryPathName;
+    Config.BinaryPathNameLength = BinaryPathNameLength;
+    Config.LoadOrderGroup = LoadOrderGroup;
+    Config.LoadOrderGroupLength = LoadOrderGroupLength;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_ConfigureService(Connection,
+                                  &Config,
+                                  ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                  ZpNative_StatusCallback,
+                                  CallbackContext,
+                                  &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_ConfigureServiceRecovery(
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_ ULONG ErrorControl,
+    _In_ BOOLEAN FailureActionsOnNonCrashFailures,
+    _In_ ULONG ResetPeriodSeconds,
+    _In_ ULONG RestartDelayMilliseconds,
+    _In_ ULONG RebootDelayMilliseconds,
+    _In_ ULONG FirstFailureAction,
+    _In_ ULONG SecondFailureAction,
+    _In_ ULONG ThirdFailureAction,
+    _In_ ULONG SubsequentFailureAction,
+    _In_reads_opt_(RebootMessageLength) PCWCH RebootMessage,
+    _In_ ULONG RebootMessageLength,
+    _In_reads_opt_(CommandLength) PCWCH Command,
+    _In_ ULONG CommandLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+    ZP_SERVICE_RECOVERY_CONFIG Config;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL)
+    {
+        return STATUS_DEVICE_NOT_CONNECTED;
+    }
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    Config.ErrorControl = ErrorControl;
+    Config.FailureActionsOnNonCrashFailures = FailureActionsOnNonCrashFailures;
+    Config.ResetPeriodSeconds = ResetPeriodSeconds;
+    Config.RestartDelayMilliseconds = RestartDelayMilliseconds;
+    Config.RebootDelayMilliseconds = RebootDelayMilliseconds;
+    Config.FirstFailureAction = FirstFailureAction;
+    Config.SecondFailureAction = SecondFailureAction;
+    Config.ThirdFailureAction = ThirdFailureAction;
+    Config.SubsequentFailureAction = SubsequentFailureAction;
+    Config.ServiceName = ServiceName;
+    Config.ServiceNameLength = ServiceNameLength;
+    Config.RebootMessage = RebootMessage;
+    Config.RebootMessageLength = RebootMessageLength;
+    Config.Command = Command;
+    Config.CommandLength = CommandLength;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_ConfigureServiceRecovery(Connection,
+                                          &Config,
+                                          ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                          ZpNative_StatusCallback,
+                                          CallbackContext,
+                                          &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_ConfigureServiceAccount(
+    _In_reads_(ServiceNameLength) PCWCH ServiceName,
+    _In_ ULONG ServiceNameLength,
+    _In_reads_(StartNameLength) PCWCH StartName,
+    _In_ ULONG StartNameLength,
+    _In_reads_opt_(PasswordLength) PCWCH Password,
+    _In_ ULONG PasswordLength,
+    _In_ BOOLEAN PasswordPresent,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+    ZP_SERVICE_ACCOUNT_CONFIG Config;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL)
+    {
+        return STATUS_DEVICE_NOT_CONNECTED;
+    }
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    Config.PasswordPresent = PasswordPresent;
+    Config.ServiceName = ServiceName;
+    Config.ServiceNameLength = ServiceNameLength;
+    Config.StartName = StartName;
+    Config.StartNameLength = StartNameLength;
+    Config.Password = Password;
+    Config.PasswordLength = PasswordLength;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_ConfigureServiceAccount(Connection,
+                                         &Config,
+                                         ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                         ZpNative_StatusCallback,
+                                         CallbackContext,
+                                         &Request));
 }
 
 NTSTATUS
