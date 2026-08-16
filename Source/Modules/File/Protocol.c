@@ -118,12 +118,69 @@ ZpFile_DecodeRenameRequest(
 }
 
 NTSTATUS
-ZpFile_EncodeEnumeratePageRequest(
+ZpFile_EncodeSetAttributesRequest(
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
-    _In_reads_opt_(CursorLength) PCWCH Cursor,
-    _In_ ULONG CursorLength,
-    _In_ ULONG MaxEntries,
+    _In_ ULONG Attributes,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONG PathSize;
+    NTSTATUS Status;
+
+    Status = ZpFile_EncodePath(Path, PathLength, NULL, 0, &PathSize);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    *BytesWritten = sizeof(ULONG) + PathSize;
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < *BytesWritten)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt32(&Writer, Attributes);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer, Path, PathLength);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpFile_DecodeSetAttributesRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW Path,
+    _Out_ PULONG Attributes)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt32(&Reader, Attributes);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadString(&Reader, Path);
+    }
+    if (!NT_SUCCESS(Status) || Path->Length == 0 || Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpFile_EncodeEnumeratePageRequest(
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG EnumerationId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
@@ -132,18 +189,14 @@ ZpFile_EncodeEnumeratePageRequest(
     ULONGLONG RequiredSize;
     NTSTATUS Status;
 
-    if (PathLength == 0 ||
-        PathLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
-        Path == NULL ||
-        CursorLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
-        (CursorLength != 0 && Cursor == NULL) ||
-        MaxEntries == 0 ||
-        MaxEntries > ZP_FILE_PAGE_MAX_COUNT)
+    if (PathLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        (EnumerationId == 0) != (PathLength != 0) ||
+        (PathLength != 0 && Path == NULL))
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 3 * sizeof(ULONG) +
-                   ((ULONGLONG)PathLength + CursorLength) * sizeof(WCHAR);
+    RequiredSize = sizeof(ULONGLONG) + sizeof(ULONG) +
+                   (ULONGLONG)PathLength * sizeof(WCHAR);
     if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
     {
         return STATUS_BUFFER_OVERFLOW;
@@ -158,14 +211,10 @@ ZpFile_EncodeEnumeratePageRequest(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt32(&Writer, MaxEntries);
+    Status = ZpCodec_WriteUInt64(&Writer, EnumerationId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_WriteString(&Writer, Path, PathLength);
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteString(&Writer, Cursor, CursorLength);
     }
     return Status;
 }
@@ -175,26 +224,19 @@ ZpFile_DecodeEnumeratePageRequest(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_STRING_VIEW Path,
-    _Out_ PZP_STRING_VIEW Cursor,
-    _Out_ PULONG MaxEntries)
+    _Out_ PULONGLONG EnumerationId)
 {
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadUInt32(&Reader, MaxEntries);
+    Status = ZpCodec_ReadUInt64(&Reader, EnumerationId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadString(&Reader, Path);
     }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_ReadString(&Reader, Cursor);
-    }
     if (!NT_SUCCESS(Status) ||
-        *MaxEntries == 0 ||
-        *MaxEntries > ZP_FILE_PAGE_MAX_COUNT ||
-        Path->Length == 0 ||
+        (*EnumerationId == 0) != (Path->Length != 0) ||
         Reader.Offset != PayloadLength)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
@@ -489,7 +531,19 @@ ULONG
 ZpFile_GetDigestLength(
     _In_ ZP_FILE_HASH_ALGORITHM Algorithm)
 {
-    return Algorithm == ZpFileHashSha256 ? ZP_FILE_SHA256_SIZE : 0;
+    switch (Algorithm)
+    {
+    case ZpFileHashCrc32:
+        return ZP_FILE_CRC32_SIZE;
+    case ZpFileHashMd5:
+        return ZP_FILE_MD5_SIZE;
+    case ZpFileHashSha1:
+        return ZP_FILE_SHA1_SIZE;
+    case ZpFileHashSha256:
+        return ZP_FILE_SHA256_SIZE;
+    default:
+        return 0;
+    }
 }
 
 NTSTATUS
@@ -649,7 +703,7 @@ ZpFile_EncodeInfo(
     ZP_CODEC_WRITER Writer;
     NTSTATUS Status;
 
-    *BytesWritten = sizeof(ULONG) + 4 * sizeof(ULONGLONG);
+    *BytesWritten = sizeof(ULONG) + 4 * sizeof(ULONGLONG) + sizeof(BYTE);
     if (Buffer == NULL)
     {
         return STATUS_SUCCESS;
@@ -676,6 +730,10 @@ ZpFile_EncodeInfo(
     {
         Status = ZpCodec_WriteUInt64(&Writer, Info->LastWriteTime);
     }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteBoolean(&Writer, Info->HasChildren);
+    }
     return Status;
 }
 
@@ -688,7 +746,7 @@ ZpFile_DecodeInfo(
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
-    if (PayloadLength != sizeof(ULONG) + 4 * sizeof(ULONGLONG))
+    if (PayloadLength != sizeof(ULONG) + 4 * sizeof(ULONGLONG) + sizeof(BYTE))
     {
         return STATUS_DATA_ERROR;
     }
@@ -709,6 +767,10 @@ ZpFile_DecodeInfo(
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadUInt64(&Reader, &Info->LastWriteTime);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadBoolean(&Reader, &Info->HasChildren);
     }
     return Status;
 }
@@ -738,6 +800,10 @@ ZpFile_ReadRecord(
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadUInt64(Reader, &LocalRecord.Info.LastWriteTime);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadBoolean(Reader, &LocalRecord.Info.HasChildren);
     }
     if (NT_SUCCESS(Status))
     {
@@ -776,8 +842,8 @@ ZpFile_EncodeList(
         {
             return STATUS_INVALID_PARAMETER;
         }
-        RequiredSize += 2 * sizeof(ULONG) +
-                        4 * sizeof(ULONGLONG) +
+        RequiredSize += 2 * sizeof(ULONG) + sizeof(BYTE) +
+                         4 * sizeof(ULONGLONG) +
                         (ULONGLONG)Files[Index].NameLength * sizeof(WCHAR);
         if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
         {
@@ -814,6 +880,11 @@ ZpFile_EncodeList(
         if (NT_SUCCESS(Status))
         {
             Status = ZpCodec_WriteUInt64(&Writer, Files[Index].Info.LastWriteTime);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteBoolean(&Writer,
+                                          Files[Index].Info.HasChildren);
         }
         if (NT_SUCCESS(Status))
         {
@@ -855,8 +926,7 @@ NTSTATUS
 ZpFile_EncodePage(
     _In_reads_opt_(FileCount) PCZP_FILE_RECORD Files,
     _In_ ULONG FileCount,
-    _In_reads_opt_(NextCursorLength) PCWCH NextCursor,
-    _In_ ULONG NextCursorLength,
+    _In_ ULONGLONG EnumerationId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
@@ -866,30 +936,17 @@ ZpFile_EncodePage(
     ULONGLONG RequiredSize;
     NTSTATUS Status;
 
-    if (NextCursorLength > ZP_CODEC_MAX_ELEMENT_COUNT)
+    if (FileCount > ZP_FILE_PAGE_COUNT ||
+        (EnumerationId != 0 && FileCount != ZP_FILE_PAGE_COUNT))
     {
         return STATUS_INVALID_PARAMETER;
-    }
-    if (NextCursorLength != 0)
-    {
-        if (NextCursor == NULL || Files == NULL || FileCount == 0 ||
-            Files[FileCount - 1].NameLength != NextCursorLength ||
-            RtlCompareMemory(Files[FileCount - 1].Name,
-                             NextCursor,
-                             (SIZE_T)NextCursorLength * sizeof(WCHAR)) !=
-                (SIZE_T)NextCursorLength * sizeof(WCHAR))
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
     }
     Status = ZpFile_EncodeList(Files, FileCount, NULL, 0, &ListLength);
     if (!NT_SUCCESS(Status))
     {
         return Status;
     }
-    RequiredSize = sizeof(ULONG) +
-                   (ULONGLONG)NextCursorLength * sizeof(WCHAR) +
-                   ListLength;
+    RequiredSize = sizeof(ULONGLONG) + ListLength;
     if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
     {
         return STATUS_BUFFER_OVERFLOW;
@@ -904,7 +961,7 @@ ZpFile_EncodePage(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteString(&Writer, NextCursor, NextCursorLength);
+    Status = ZpCodec_WriteUInt64(&Writer, EnumerationId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpFile_EncodeList(Files,
@@ -923,33 +980,22 @@ ZpFile_DecodePage(
     _Out_ PZP_FILE_PAGE_VIEW View)
 {
     ZP_CODEC_READER Reader;
-    ZP_FILE_RECORD_VIEW LastRecord;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadString(&Reader, &View->NextCursor);
+    Status = ZpCodec_ReadUInt64(&Reader, &View->EnumerationId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpFile_DecodeList(Add2Ptr(Payload, Reader.Offset),
                                    PayloadLength - Reader.Offset,
                                    &View->Files);
     }
-    if (NT_SUCCESS(Status) && View->NextCursor.Length != 0)
+    if (NT_SUCCESS(Status) &&
+        (View->Files.Count > ZP_FILE_PAGE_COUNT ||
+         (View->EnumerationId != 0 &&
+          View->Files.Count != ZP_FILE_PAGE_COUNT)))
     {
-        Status = View->Files.Count != 0 ?
-                     ZpFile_GetRecord(&View->Files,
-                                      View->Files.Count - 1,
-                                      &LastRecord) :
-                     STATUS_DATA_ERROR;
-        if (NT_SUCCESS(Status) &&
-            (LastRecord.Name.Length != View->NextCursor.Length ||
-             RtlCompareMemory(LastRecord.Name.Buffer,
-                              View->NextCursor.Buffer,
-                              (SIZE_T)View->NextCursor.Length * sizeof(WCHAR)) !=
-                 (SIZE_T)View->NextCursor.Length * sizeof(WCHAR)))
-        {
-            Status = STATUS_DATA_ERROR;
-        }
+        Status = STATUS_DATA_ERROR;
     }
     return Status;
 }

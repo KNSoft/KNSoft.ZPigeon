@@ -113,24 +113,11 @@ ZpServer_QueryFile(
 
 NTSTATUS
 NTAPI
-ZpServer_EnumerateFiles(
-    _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_reads_(PathLength) PCWCH Path,
-    _In_ ULONG PathLength,
-    _In_ ULONG TimeoutMilliseconds,
-    _In_ ZP_FILE_ENUMERATE_CALLBACK Callback,
-    _In_opt_ PVOID Context,
-    _Out_ ZP_REQUEST_HANDLE* Request);
-
-NTSTATUS
-NTAPI
 ZpServer_EnumerateFilesPage(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_reads_(PathLength) PCWCH Path,
+    _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
-    _In_reads_opt_(CursorLength) PCWCH Cursor,
-    _In_ ULONG CursorLength,
-    _In_ ULONG MaxEntries,
+    _In_ ULONGLONG EnumerationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_FILE_ENUMERATE_PAGE_CALLBACK Callback,
     _In_opt_ PVOID Context,
@@ -167,6 +154,18 @@ ZpServer_RenameFile(
     _In_ ULONG PathLength,
     _In_reads_(NewPathLength) PCWCH NewPath,
     _In_ ULONG NewPathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_SetFileAttributes(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG Attributes,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
@@ -316,6 +315,40 @@ ZpServer_TerminateProcess(
     _In_ ULONG ProcessId,
     _In_ ULONGLONG CreateTime,
     _In_ ULONG ExitCode,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateWindows(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WINDOW_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryWindow(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WINDOW_QUERY_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ControlWindow(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ZP_WINDOW_CONTROL Control,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,

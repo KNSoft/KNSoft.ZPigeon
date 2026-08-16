@@ -9,6 +9,7 @@
     <Filter Include="Modules"><UniqueIdentifier>{3144764a-a2d8-45b1-aa42-b074b04da16e}</UniqueIdentifier></Filter>
     <Filter Include="Modules\EventLog"><UniqueIdentifier>{e6b4b6cf-b1eb-4136-9169-343e3677543e}</UniqueIdentifier></Filter>
     <Filter Include="Modules\File"><UniqueIdentifier>{69b20314-060a-48a4-8ef2-02cb0535658e}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Window"><UniqueIdentifier>{f245609c-669f-4fa1-83cb-99a6f47153f4}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Process"><UniqueIdentifier>{224c3836-049a-4297-810c-ecb4f2274c88}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Registry"><UniqueIdentifier>{9a3914e4-eecd-4e7f-8201-c9df17e1b7f1}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Service"><UniqueIdentifier>{180a08ed-a7ca-4ff1-bb7a-75b9f79ca4c4}</UniqueIdentifier></Filter>
@@ -26,6 +27,7 @@
     <ClCompile Include="Transport\Quic.c"><Filter>Transport</Filter></ClCompile>
     <ClCompile Include="..\Modules\EventLog\Server.c"><Filter>Modules\EventLog</Filter></ClCompile>
     <ClCompile Include="..\Modules\File\Server.c"><Filter>Modules\File</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Window\Server.c"><Filter>Modules\Window</Filter></ClCompile>
     <ClCompile Include="..\Modules\Process\Server.c"><Filter>Modules\Process</Filter></ClCompile>
     <ClCompile Include="..\Modules\Registry\Server.c"><Filter>Modules\Registry</Filter></ClCompile>
     <ClCompile Include="..\Modules\Service\Server.c"><Filter>Modules\Service</Filter></ClCompile>

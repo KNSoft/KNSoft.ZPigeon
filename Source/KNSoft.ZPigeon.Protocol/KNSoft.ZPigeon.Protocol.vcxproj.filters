@@ -6,6 +6,7 @@
     <Filter Include="Modules"><UniqueIdentifier>{4521f4cc-d091-4692-812a-ca01269a2364}</UniqueIdentifier></Filter>
     <Filter Include="Modules\EventLog"><UniqueIdentifier>{61d81070-e511-48b0-8d67-e6757942af7a}</UniqueIdentifier></Filter>
     <Filter Include="Modules\File"><UniqueIdentifier>{a9d8f5eb-dc51-4c41-8f6d-48955099eda4}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Window"><UniqueIdentifier>{f65306f4-ccea-47a2-98a7-44c3522943ba}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Process"><UniqueIdentifier>{78abef0f-31c4-4880-a284-9855fd4dc9a0}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Registry"><UniqueIdentifier>{c6da7759-0063-4490-ad26-c0d109725584}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Service"><UniqueIdentifier>{9c82bcb9-5346-4f6c-85a5-81498ce7ba06}</UniqueIdentifier></Filter>
@@ -18,6 +19,7 @@
     <ClCompile Include="Core\Message.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="..\Modules\EventLog\Protocol.c"><Filter>Modules\EventLog</Filter></ClCompile>
     <ClCompile Include="..\Modules\File\Protocol.c"><Filter>Modules\File</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Window\Protocol.c"><Filter>Modules\Window</Filter></ClCompile>
     <ClCompile Include="..\Modules\Process\Protocol.c"><Filter>Modules\Process</Filter></ClCompile>
     <ClCompile Include="..\Modules\Registry\Protocol.c"><Filter>Modules\Registry</Filter></ClCompile>
     <ClCompile Include="..\Modules\Service\Protocol.c"><Filter>Modules\Service</Filter></ClCompile>
@@ -28,6 +30,7 @@
     <ClInclude Include="Core\Protocol.inl"><Filter>Core</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\EventLog.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\File.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Window.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Process.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Protocol.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Registry.h"><Filter>Include</Filter></ClInclude>

@@ -49,8 +49,7 @@ typedef struct _SDK_TEST_CONTEXT
     ULONG FilePageCount;
     ZP_STATUS FilePageStatus;
     ULONG FilePageFileCount;
-    WCHAR FilePageCursor[32];
-    ULONG FilePageCursorLength;
+    ULONGLONG FilePageEnumerationId;
     ULONG RegistryPageCount;
     ZP_STATUS RegistryPageStatus;
     ULONG RegistryRecordCount;
@@ -95,6 +94,7 @@ typedef struct _SDK_TEST_CONTEXT
 typedef struct _SDK_SYSTEM_LOOPBACK
 {
     ZP_CONNECTION_OBJECT Connection;
+    ZP_CLIENT_OBJECT Client;
     ULONG SendCount;
     ULONG CallbackCount;
     ULONG DestroyCount;
@@ -113,6 +113,8 @@ typedef struct _SDK_SYSTEM_LOOPBACK
     ULONG FilePageCount;
     ULONG FileHashCallbackCount;
     ZP_STATUS FileHashStatus;
+    ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
+    ULONG FileHashDigestLength;
     ULONGLONG FileHashSize;
 } SDK_SYSTEM_LOOPBACK, *PSDK_SYSTEM_LOOPBACK;
 
@@ -434,7 +436,7 @@ SDKTest_SystemConnectionSend(
     }
     else if (Request.ModuleId == ZP_FILE_MODULE_ID)
     {
-        Status = ZpFile_Execute(NULL,
+        Status = ZpFile_Execute(&Loopback->Client,
                                 Request.OperationId,
                                 Request.Payload.Buffer,
                                 Request.Payload.Length,
@@ -633,6 +635,20 @@ SDKTest_FilePageLoopbackCallback(
 static
 VOID
 NTAPI
+SDKTest_FileStatusLoopbackCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PSDK_SYSTEM_LOOPBACK Loopback = Context;
+
+    Loopback->FileStatus = Status;
+    ZpRequest_Close(Request);
+}
+
+static
+VOID
+NTAPI
 SDKTest_FileHashLoopbackCallback(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
@@ -645,6 +661,8 @@ SDKTest_FileHashLoopbackCallback(
     Loopback->FileHashStatus = Status;
     if (Hash != NULL)
     {
+        Loopback->FileHashAlgorithm = Hash->Algorithm;
+        Loopback->FileHashDigestLength = Hash->Digest.Length;
         Loopback->FileHashSize = Hash->FileSize;
     }
     ZpRequest_Close(Request);
@@ -790,13 +808,7 @@ SDKTest_FilePageCallback(
     if (ZpStatus_IsSuccess(Status))
     {
         TestContext->FilePageFileCount = Page->Files.Count;
-        TestContext->FilePageCursorLength = Page->NextCursor.Length;
-        if (Page->NextCursor.Length != 0)
-        {
-            RtlCopyMemory(TestContext->FilePageCursor,
-                          Page->NextCursor.Buffer,
-                          (SIZE_T)Page->NextCursor.Length * sizeof(WCHAR));
-        }
+        TestContext->FilePageEnumerationId = Page->EnumerationId;
     }
 }
 
@@ -1115,6 +1127,7 @@ TEST_FUNC(SDKContract)
     WCHAR EventBookmark[] = L"<Bookmark>1</Bookmark>";
     WCHAR EventXml[] = L"<Event/>";
     WCHAR FileLoopbackPath[MAX_PATH];
+    WCHAR FileAttributePath[MAX_PATH], TempPath[MAX_PATH];
     BYTE RootCertificate[] = { 0x30, 0x01, 0x00 };
     ZP_MODULE_RECORD Modules[] = { { 1, 1 }, { 2, 1 } };
     ZP_ENDPOINT Endpoint = { ZpTransportQuic, Host, 443, ServerName, NULL };
@@ -1173,7 +1186,7 @@ TEST_FUNC(SDKContract)
     BYTE FileWriteTooLongData[17] = { 0 };
     ZP_FILE_RECORD FilePageRecords[] = {
         {
-            { FILE_ATTRIBUTE_ARCHIVE, 16, 1, 2, 3 },
+            { FILE_ATTRIBUTE_ARCHIVE, 16, 1, 2, 3, FALSE },
             L"Upload.bin",
             10
         }
@@ -1199,7 +1212,7 @@ TEST_FUNC(SDKContract)
     };
     BYTE EventPageResponse[256];
     ULONG EventPageResponseLength;
-    DWORD FileLoopbackPathLength;
+    DWORD FileLoopbackPathLength, TempPathLength;
     ULONG FileLoopbackDirectoryLength;
     BYTE TerminalCreateResponse[sizeof(ULONGLONG) + sizeof(ULONG)];
     ULONG TerminalCreateResponseLength;
@@ -1213,6 +1226,7 @@ TEST_FUNC(SDKContract)
     SDK_TEST_CONTEXT QuicContext = { { ZpStatusNone, 0 } };
     SDK_SYSTEM_LOOPBACK SystemLoopback = { 0 };
     SDK_REQUEST_CONNECTION RegistryConnection = { 0 };
+    LOGICAL TempFileCreated;
     ULONGLONG CanceledRequestId;
     ZP_MODULE_RECORD LoopbackModules[] = {
         { ZP_SYSTEM_MODULE_ID, ZP_SYSTEM_MODULE_VERSION },
@@ -1268,6 +1282,9 @@ TEST_FUNC(SDKContract)
             !ZpStatus_IsValid(ZpStatus_Make(ZpStatusQuic, 0)));
     TEST_OK(SDKTest_AuthenticationRoundTrip());
     TEST_OK(SDKTest_OrderedConcurrentRequests());
+    RtlInitializeSRWLock(&SystemLoopback.Client.FileEnumerationLock);
+    SystemLoopback.Client.NextFileEnumerationId = 1;
+    SystemLoopback.Client.State = ZpClientStateReady;
     TEST_OK(NT_SUCCESS(ZpServerConnection_Initialize(
                            &SystemLoopback.Connection,
                            1,
@@ -1354,22 +1371,125 @@ TEST_FUNC(SDKContract)
                 &Request)) &&
             SystemLoopback.FileHashCallbackCount == 1 &&
             ZpStatus_IsSuccess(SystemLoopback.FileHashStatus) &&
+            SystemLoopback.FileHashAlgorithm == ZpFileHashSha256 &&
+            SystemLoopback.FileHashDigestLength == ZP_FILE_SHA256_SIZE &&
             SystemLoopback.FileHashSize == SystemLoopback.FileSize);
+    TEST_OK(NT_SUCCESS(ZpServer_HashFile(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                FileLoopbackPath,
+                FileLoopbackPathLength,
+                ZpFileHashCrc32,
+                0,
+                SDKTest_FileHashLoopbackCallback,
+                &SystemLoopback,
+                &Request)) &&
+            SystemLoopback.FileHashCallbackCount == 2 &&
+            ZpStatus_IsSuccess(SystemLoopback.FileHashStatus) &&
+            SystemLoopback.FileHashAlgorithm == ZpFileHashCrc32 &&
+            SystemLoopback.FileHashDigestLength == ZP_FILE_CRC32_SIZE);
+    TEST_OK(NT_SUCCESS(ZpServer_HashFile(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                FileLoopbackPath,
+                FileLoopbackPathLength,
+                ZpFileHashMd5,
+                0,
+                SDKTest_FileHashLoopbackCallback,
+                &SystemLoopback,
+                &Request)) &&
+            SystemLoopback.FileHashCallbackCount == 3 &&
+            ZpStatus_IsSuccess(SystemLoopback.FileHashStatus) &&
+            SystemLoopback.FileHashAlgorithm == ZpFileHashMd5 &&
+            SystemLoopback.FileHashDigestLength == ZP_FILE_MD5_SIZE);
+    TEST_OK(NT_SUCCESS(ZpServer_HashFile(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                FileLoopbackPath,
+                FileLoopbackPathLength,
+                ZpFileHashSha1,
+                0,
+                SDKTest_FileHashLoopbackCallback,
+                &SystemLoopback,
+                &Request)) &&
+            SystemLoopback.FileHashCallbackCount == 4 &&
+            ZpStatus_IsSuccess(SystemLoopback.FileHashStatus) &&
+            SystemLoopback.FileHashAlgorithm == ZpFileHashSha1 &&
+            SystemLoopback.FileHashDigestLength == ZP_FILE_SHA1_SIZE);
+    TempPathLength = GetTempPathW(ARRAYSIZE(TempPath), TempPath);
+    TempFileCreated = TempPathLength != 0 &&
+                      TempPathLength < ARRAYSIZE(TempPath) &&
+                      GetTempFileNameW(TempPath,
+                                       L"ZPF",
+                                       0,
+                                       FileAttributePath) != 0;
+    TEST_OK(TempFileCreated);
+    if (TempFileCreated)
+    {
+        TEST_OK(NT_SUCCESS(ZpServer_SetFileAttributes(
+                    (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                    FileAttributePath,
+                    (ULONG)wcslen(FileAttributePath),
+                    FILE_ATTRIBUTE_HIDDEN,
+                    0,
+                    SDKTest_FileStatusLoopbackCallback,
+                    &SystemLoopback,
+                    &Request)) &&
+                ZpStatus_IsSuccess(SystemLoopback.FileStatus) &&
+                FlagOn(GetFileAttributesW(FileAttributePath),
+                       FILE_ATTRIBUTE_HIDDEN));
+        TEST_OK(NT_SUCCESS(ZpServer_SetFileAttributes(
+                    (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                    FileAttributePath,
+                    (ULONG)wcslen(FileAttributePath),
+                    0,
+                    0,
+                    SDKTest_FileStatusLoopbackCallback,
+                    &SystemLoopback,
+                    &Request)) &&
+                ZpStatus_IsSuccess(SystemLoopback.FileStatus) &&
+                !FlagOn(GetFileAttributesW(FileAttributePath),
+                        FILE_ATTRIBUTE_HIDDEN));
+        DeleteFileW(FileAttributePath);
+    }
     FileLoopbackDirectoryLength = (ULONG)(wcsrchr(FileLoopbackPath, L'\\') -
                                            FileLoopbackPath);
     TEST_OK(NT_SUCCESS(ZpServer_EnumerateFilesPage(
                 (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
-                FileLoopbackPath,
-                FileLoopbackDirectoryLength,
-                NULL,
-                0,
-                16,
-                0,
+                 FileLoopbackPath,
+                 FileLoopbackDirectoryLength,
+                 0,
+                 0,
                 SDKTest_FilePageLoopbackCallback,
                 &SystemLoopback,
                 &Request)) &&
             ZpStatus_IsSuccess(SystemLoopback.FileStatus) &&
             SystemLoopback.FilePageCount != 0);
+    FileLoopbackPathLength = GetSystemDirectoryW(FileLoopbackPath,
+                                                 ARRAYSIZE(FileLoopbackPath));
+    TEST_OK(FileLoopbackPathLength != 0 &&
+            FileLoopbackPathLength < ARRAYSIZE(FileLoopbackPath) &&
+            NT_SUCCESS(ZpServer_EnumerateFilesPage(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                FileLoopbackPath,
+                FileLoopbackPathLength,
+                0,
+                0,
+                SDKTest_FilePageLoopbackCallback,
+                &SystemLoopback,
+                &Request)) &&
+            ZpStatus_IsSuccess(SystemLoopback.FileStatus) &&
+            SystemLoopback.Client.FileEnumeration != NULL);
+    TEST_OK(NT_SUCCESS(ZpServer_EnumerateFilesPage(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                L"C:\\ZPigeon.Does.Not.Exist",
+                ARRAYSIZE(L"C:\\ZPigeon.Does.Not.Exist") - 1,
+                0,
+                0,
+                SDKTest_FilePageLoopbackCallback,
+                &SystemLoopback,
+                &Request)) &&
+            SDK_STATUS_IS(SystemLoopback.FileStatus,
+                          STATUS_OBJECT_NAME_NOT_FOUND) &&
+            SystemLoopback.Client.FileEnumeration == NULL);
+    ZpFile_ResetEnumeration(&SystemLoopback.Client);
     ZpServerConnection_Close(&SystemLoopback.Connection,
                               ZpStatus_FromNtStatus(
                                   STATUS_CONNECTION_DISCONNECTED));
@@ -1616,12 +1736,10 @@ TEST_FUNC(SDKContract)
     TestContext.RequestStatusCount = 0;
     TEST_OK(NT_SUCCESS(ZpServer_EnumerateFilesPage(
                                                    (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,
-                                                   L"C:\\Test",
-                                                   7,
-                                                   NULL,
-                                                   0,
-                                                   1,
-                                                   1000,
+                                                    L"C:\\Test",
+                                                    7,
+                                                    0,
+                                                    1000,
                                                    SDKTest_FilePageCallback,
                                                    &TestContext,
                                                    &Request)) &&
@@ -1630,8 +1748,7 @@ TEST_FUNC(SDKContract)
                 ZP_FILE_OPERATION_ENUMERATE_PAGE);
     TEST_OK(NT_SUCCESS(ZpFile_EncodePage(FilePageRecords,
                                          ARRAYSIZE(FilePageRecords),
-                                         FilePageRecords[0].Name,
-                                         FilePageRecords[0].NameLength,
+                                         0,
                                          FilePageResponse,
                                          sizeof(FilePageResponse),
                                          &FilePageResponseLength)));
@@ -1645,12 +1762,7 @@ TEST_FUNC(SDKContract)
             TestContext.FilePageCount == 1 &&
             SDK_STATUS_IS(TestContext.FilePageStatus, STATUS_SUCCESS) &&
             TestContext.FilePageFileCount == 1 &&
-            TestContext.FilePageCursorLength ==
-                FilePageRecords[0].NameLength &&
-            RtlCompareMemory(TestContext.FilePageCursor,
-                             FilePageRecords[0].Name,
-                             FilePageRecords[0].NameLength * sizeof(WCHAR)) ==
-                FilePageRecords[0].NameLength * sizeof(WCHAR));
+            TestContext.FilePageEnumerationId == 0);
     ZpRequest_Close(Request);
     TEST_OK(NT_SUCCESS(ZpServer_HashFile(
                                          (ZP_CONNECTION_HANDLE)&RegistryConnection.Connection,

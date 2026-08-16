@@ -9,16 +9,16 @@ public sealed partial class NativeServer
     private static readonly NativeMethods.FileHashCallback FileHashCallback = CompleteFileHash;
     private static readonly NativeMethods.ProcessListCallback ProcessListCallback = CompleteProcessList;
     private static readonly NativeMethods.ProcessInfoCallback ProcessInfoCallback = CompleteProcessInfo;
+    private static readonly NativeMethods.WindowListCallback WindowListCallback = CompleteWindowList;
+    private static readonly NativeMethods.WindowInfoCallback WindowInfoCallback = CompleteWindowInfo;
     private static readonly NativeMethods.ServiceListCallback ServiceListCallback = CompleteServiceList;
     private static readonly NativeMethods.ServiceInfoCallback ServiceInfoCallback = CompleteServiceInfo;
 
-    public Task<FilePage> EnumerateFilesPageAsync(string path, string? cursor, uint maxEntries) =>
+    public Task<FilePage> EnumerateFilesPageAsync(string? path, ulong enumerationId) =>
         RunManagementAsync<FilePage>((context) => NativeMethods.EnumerateFilesPage(
             path,
-            (uint)path.Length,
-            cursor,
-            (uint)(cursor?.Length ?? 0),
-            maxEntries,
+            (uint)(path?.Length ?? 0),
+            enumerationId,
             FilePageCallback,
             context));
 
@@ -29,10 +29,11 @@ public sealed partial class NativeServer
             FileInfoCallback,
             context));
 
-    public Task<FileHash> HashFileAsync(string path) =>
+    public Task<FileHash> HashFileAsync(string path, FileHashAlgorithm algorithm) =>
         RunManagementAsync<FileHash>((context) => NativeMethods.HashFile(
             path,
             (uint)path.Length,
+            algorithm,
             FileHashCallback,
             context));
 
@@ -52,12 +53,37 @@ public sealed partial class NativeServer
             callback,
             context));
 
+    public Task SetFileAttributesAsync(string path, uint attributes) =>
+        RunStatusAsync((callback, context) => NativeMethods.SetFileAttributes(
+            path,
+            (uint)path.Length,
+            attributes,
+            callback,
+            context));
+
     public Task<ProcessRecord[]> EnumerateProcessesAsync() =>
-        RunManagementAsync<ProcessRecord[]>((context) => NativeMethods.EnumerateProcesses(ProcessListCallback, context));
+        RunManagementAsync<ProcessRecord[]>((context) =>
+            NativeMethods.EnumerateProcesses(ProcessListCallback, context));
 
     public Task<ProcessInfo> QueryProcessAsync(uint processId, ulong createTime) =>
         RunManagementAsync<ProcessInfo>((context) =>
             NativeMethods.QueryProcess(processId, createTime, ProcessInfoCallback, context));
+
+    public Task<WindowRecord[]> EnumerateWindowsAsync() =>
+        RunManagementAsync<WindowRecord[]>((context) =>
+            NativeMethods.EnumerateWindows(WindowListCallback, context));
+
+    public Task<WindowInfo> QueryWindowAsync(ulong handle, uint processId, uint threadId) =>
+        RunManagementAsync<WindowInfo>((context) =>
+            NativeMethods.QueryWindow(handle, processId, threadId, WindowInfoCallback, context));
+
+    public Task ControlWindowAsync(
+        ulong handle,
+        uint processId,
+        uint threadId,
+        WindowControl control) =>
+        RunStatusAsync((callback, context) =>
+            NativeMethods.ControlWindow(handle, processId, threadId, control, callback, context));
 
     public Task<ServiceRecord[]> EnumerateServicesAsync() =>
         RunManagementAsync<ServiceRecord[]>((context) => NativeMethods.EnumerateServices(ServiceListCallback, context));
@@ -151,8 +177,7 @@ public sealed partial class NativeServer
 
     private static void CompleteFilePage(
         ZpStatus status,
-        nint nextCursor,
-        uint nextCursorLength,
+        ulong enumerationId,
         nint records,
         uint recordCount,
         nint context)
@@ -174,10 +199,11 @@ public sealed partial class NativeServer
                 record.Size,
                 FileTime(record.CreationTime),
                 FileTime(record.LastAccessTime),
-                FileTime(record.LastWriteTime));
+                FileTime(record.LastWriteTime),
+                record.HasChildren);
         }
         completion.SetResult(new FilePage(
-            Marshal.PtrToStringUni(nextCursor, (int)nextCursorLength),
+            enumerationId == 0 ? null : enumerationId.ToString(),
             result));
     }
 
@@ -281,6 +307,72 @@ public sealed partial class NativeServer
             String(value.CommandLine)));
     }
 
+    private static void CompleteWindowList(
+        ZpStatus status,
+        nint records,
+        uint recordCount,
+        nint context)
+    {
+        var completion = GetCompletion<WindowRecord[]>(context);
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        var result = new WindowRecord[recordCount];
+        var size = Marshal.SizeOf<NativeMethods.WindowRecord>();
+        for (var index = 0; index < result.Length; index++)
+        {
+            var record = Marshal.PtrToStructure<NativeMethods.WindowRecord>(records + index * size);
+            result[index] = new WindowRecord(
+                record.Handle.ToString(),
+                record.ParentHandle.ToString(),
+                record.ProcessId,
+                record.ThreadId,
+                record.Style,
+                record.ExStyle,
+                record.Flags,
+                Marshal.PtrToStringUni(record.Caption, (int)record.CaptionLength) ?? string.Empty,
+                Marshal.PtrToStringUni(record.ClassName, (int)record.ClassNameLength) ?? string.Empty);
+        }
+        completion.SetResult(result);
+    }
+
+    private static void CompleteWindowInfo(ZpStatus status, nint info, nint context)
+    {
+        var completion = GetCompletion<WindowInfo>(context);
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        var value = Marshal.PtrToStructure<NativeMethods.WindowInfo>(info);
+        completion.SetResult(new WindowInfo(
+            value.Handle.ToString(),
+            value.ParentHandle.ToString(),
+            value.OwnerHandle.ToString(),
+            value.ProcessId,
+            value.ThreadId,
+            value.Style,
+            value.ExStyle,
+            value.Flags,
+            String(value.Caption),
+            String(value.ClassName),
+            value.WindowLeft,
+            value.WindowTop,
+            value.WindowRight,
+            value.WindowBottom,
+            value.ClientLeft,
+            value.ClientTop,
+            value.ClientRight,
+            value.ClientBottom,
+            value.WindowStatus,
+            value.BorderWidth,
+            value.BorderHeight,
+            value.ClassAtom,
+            value.CreatorVersion));
+    }
+
     private static void CompleteServiceList(
         ZpStatus status,
         nint records,
@@ -368,15 +460,23 @@ public sealed record FileRecord(
     ulong Size,
     DateTime CreationTime,
     DateTime LastAccessTime,
-    DateTime LastWriteTime);
-public sealed record FilePage(string? NextCursor, FileRecord[] Records);
+    DateTime LastWriteTime,
+    bool HasChildren);
+public sealed record FilePage(string? EnumerationId, FileRecord[] Records);
 public sealed record FileInfo(
     uint Attributes,
     ulong Size,
     DateTime CreationTime,
     DateTime LastAccessTime,
     DateTime LastWriteTime);
-public sealed record FileHash(ulong FileSize, string Sha256);
+public sealed record FileHash(ulong FileSize, string Value);
+public enum FileHashAlgorithm
+{
+    Crc32 = 1,
+    Md5 = 2,
+    Sha1 = 3,
+    Sha256 = 4
+}
 public sealed record ProcessRecord(
     uint ProcessId,
     uint ParentProcessId,
@@ -405,6 +505,50 @@ public sealed record ProcessInfo(
     string ImagePath,
     int CommandLineStatus,
     string CommandLine);
+public sealed record WindowRecord(
+    string Handle,
+    string ParentHandle,
+    uint ProcessId,
+    uint ThreadId,
+    uint Style,
+    uint ExStyle,
+    uint Flags,
+    string Caption,
+    string ClassName);
+public sealed record WindowInfo(
+    string Handle,
+    string ParentHandle,
+    string OwnerHandle,
+    uint ProcessId,
+    uint ThreadId,
+    uint Style,
+    uint ExStyle,
+    uint Flags,
+    string Caption,
+    string ClassName,
+    int WindowLeft,
+    int WindowTop,
+    int WindowRight,
+    int WindowBottom,
+    int ClientLeft,
+    int ClientTop,
+    int ClientRight,
+    int ClientBottom,
+    uint WindowStatus,
+    uint BorderWidth,
+    uint BorderHeight,
+    ushort ClassAtom,
+    ushort CreatorVersion);
+public enum WindowControl : ushort
+{
+    Show = 1,
+    Hide = 2,
+    Minimize = 3,
+    Maximize = 4,
+    Restore = 5,
+    Foreground = 6,
+    Close = 7
+}
 public sealed record ServiceRecord(
     uint ServiceType,
     uint CurrentState,
@@ -481,8 +625,7 @@ internal static partial class NativeMethods
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void FilePageCallback(
         ZpStatus status,
-        nint nextCursor,
-        uint nextCursorLength,
+        ulong enumerationId,
         nint records,
         uint recordCount,
         nint context);
@@ -512,6 +655,12 @@ internal static partial class NativeMethods
     internal delegate void ProcessInfoCallback(ZpStatus status, nint info, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void WindowListCallback(ZpStatus status, nint records, uint recordCount, nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void WindowInfoCallback(ZpStatus status, nint info, nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void ServiceListCallback(ZpStatus status, nint records, uint recordCount, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
@@ -534,6 +683,8 @@ internal static partial class NativeMethods
         internal readonly ulong LastWriteTime;
         internal readonly nint Name;
         internal readonly uint NameLength;
+        [MarshalAs(UnmanagedType.U1)]
+        internal readonly bool HasChildren;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -571,6 +722,50 @@ internal static partial class NativeMethods
         internal readonly StringView ImagePath;
         internal readonly int CommandLineStatus;
         internal readonly StringView CommandLine;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct WindowRecord
+    {
+        internal readonly ulong Handle;
+        internal readonly ulong ParentHandle;
+        internal readonly uint ProcessId;
+        internal readonly uint ThreadId;
+        internal readonly uint Style;
+        internal readonly uint ExStyle;
+        internal readonly uint Flags;
+        internal readonly nint Caption;
+        internal readonly uint CaptionLength;
+        internal readonly nint ClassName;
+        internal readonly uint ClassNameLength;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct WindowInfo
+    {
+        internal readonly ulong Handle;
+        internal readonly ulong ParentHandle;
+        internal readonly uint ProcessId;
+        internal readonly uint ThreadId;
+        internal readonly uint Style;
+        internal readonly uint ExStyle;
+        internal readonly uint Flags;
+        internal readonly StringView Caption;
+        internal readonly StringView ClassName;
+        internal readonly ulong OwnerHandle;
+        internal readonly int WindowLeft;
+        internal readonly int WindowTop;
+        internal readonly int WindowRight;
+        internal readonly int WindowBottom;
+        internal readonly int ClientLeft;
+        internal readonly int ClientTop;
+        internal readonly int ClientRight;
+        internal readonly int ClientBottom;
+        internal readonly uint WindowStatus;
+        internal readonly uint BorderWidth;
+        internal readonly uint BorderHeight;
+        internal readonly ushort ClassAtom;
+        internal readonly ushort CreatorVersion;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -629,11 +824,9 @@ internal static partial class NativeMethods
         EntryPoint = "ZpNative_EnumerateFilesPage",
         StringMarshalling = StringMarshalling.Utf16)]
     internal static partial int EnumerateFilesPage(
-        string path,
+        string? path,
         uint pathLength,
-        string? cursor,
-        uint cursorLength,
-        uint maxEntries,
+        ulong enumerationId,
         FilePageCallback callback,
         nint context);
 
@@ -645,7 +838,12 @@ internal static partial class NativeMethods
     [LibraryImport(Library,
         EntryPoint = "ZpNative_HashFile",
         StringMarshalling = StringMarshalling.Utf16)]
-    internal static partial int HashFile(string path, uint pathLength, FileHashCallback callback, nint context);
+    internal static partial int HashFile(
+        string path,
+        uint pathLength,
+        FileHashAlgorithm algorithm,
+        FileHashCallback callback,
+        nint context);
 
     [LibraryImport(Library,
         EntryPoint = "ZpNative_DeleteFile",
@@ -663,6 +861,16 @@ internal static partial class NativeMethods
         StatusCallback callback,
         nint context);
 
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_SetFileAttributes",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int SetFileAttributes(
+        string path,
+        uint pathLength,
+        uint attributes,
+        StatusCallback callback,
+        nint context);
+
     [LibraryImport(Library, EntryPoint = "ZpNative_EnumerateProcesses")]
     internal static partial int EnumerateProcesses(ProcessListCallback callback, nint context);
 
@@ -671,6 +879,26 @@ internal static partial class NativeMethods
         uint processId,
         ulong createTime,
         ProcessInfoCallback callback,
+        nint context);
+
+    [LibraryImport(Library, EntryPoint = "ZpNative_EnumerateWindows")]
+    internal static partial int EnumerateWindows(WindowListCallback callback, nint context);
+
+    [LibraryImport(Library, EntryPoint = "ZpNative_QueryWindow")]
+    internal static partial int QueryWindow(
+        ulong handle,
+        uint processId,
+        uint threadId,
+        WindowInfoCallback callback,
+        nint context);
+
+    [LibraryImport(Library, EntryPoint = "ZpNative_ControlWindow")]
+    internal static partial int ControlWindow(
+        ulong handle,
+        uint processId,
+        uint threadId,
+        WindowControl control,
+        StatusCallback callback,
         nint context);
 
     [LibraryImport(Library, EntryPoint = "ZpNative_EnumerateServices")]

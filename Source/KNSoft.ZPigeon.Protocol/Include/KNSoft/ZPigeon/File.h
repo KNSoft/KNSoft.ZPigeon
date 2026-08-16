@@ -6,16 +6,19 @@ EXTERN_C_START
 
 #define ZP_FILE_MODULE_ID 4
 #define ZP_FILE_MODULE_VERSION 1
-#define ZP_FILE_OPERATION_ENUMERATE 1
-#define ZP_FILE_OPERATION_QUERY 2
-#define ZP_FILE_OPERATION_OPEN_READ 3
-#define ZP_FILE_OPERATION_HASH 4
-#define ZP_FILE_OPERATION_OPEN_WRITE 5
-#define ZP_FILE_OPERATION_ENUMERATE_PAGE 6
-#define ZP_FILE_OPERATION_DELETE 7
-#define ZP_FILE_OPERATION_RENAME 8
+#define ZP_FILE_OPERATION_QUERY 1
+#define ZP_FILE_OPERATION_OPEN_READ 2
+#define ZP_FILE_OPERATION_HASH 3
+#define ZP_FILE_OPERATION_OPEN_WRITE 4
+#define ZP_FILE_OPERATION_ENUMERATE_PAGE 5
+#define ZP_FILE_OPERATION_DELETE 6
+#define ZP_FILE_OPERATION_RENAME 7
+#define ZP_FILE_OPERATION_SET_ATTRIBUTES 8
+#define ZP_FILE_CRC32_SIZE 4
+#define ZP_FILE_MD5_SIZE 16
+#define ZP_FILE_SHA1_SIZE 20
 #define ZP_FILE_SHA256_SIZE 32
-#define ZP_FILE_PAGE_MAX_COUNT 4096
+#define ZP_FILE_PAGE_COUNT 100
 
 typedef enum _ZP_FILE_CREATE_DISPOSITION
 {
@@ -25,7 +28,10 @@ typedef enum _ZP_FILE_CREATE_DISPOSITION
 
 typedef enum _ZP_FILE_HASH_ALGORITHM
 {
-    ZpFileHashSha256 = 1
+    ZpFileHashCrc32 = 1,
+    ZpFileHashMd5 = 2,
+    ZpFileHashSha1 = 3,
+    ZpFileHashSha256 = 4
 } ZP_FILE_HASH_ALGORITHM, *PZP_FILE_HASH_ALGORITHM;
 
 typedef struct _ZP_FILE_HASH_VIEW
@@ -44,6 +50,7 @@ typedef struct _ZP_FILE_INFO
     ULONGLONG CreationTime;
     ULONGLONG LastAccessTime;
     ULONGLONG LastWriteTime;
+    BOOLEAN HasChildren;
 } ZP_FILE_INFO, *PZP_FILE_INFO;
 
 typedef const ZP_FILE_INFO* PCZP_FILE_INFO;
@@ -74,7 +81,7 @@ typedef const ZP_FILE_LIST_VIEW* PCZP_FILE_LIST_VIEW;
 
 typedef struct _ZP_FILE_PAGE_VIEW
 {
-    ZP_STRING_VIEW NextCursor;
+    ULONGLONG EnumerationId;
     ZP_FILE_LIST_VIEW Files;
 } ZP_FILE_PAGE_VIEW, *PZP_FILE_PAGE_VIEW;
 
@@ -112,12 +119,26 @@ ZpFile_DecodeRenameRequest(
     _Out_ PZP_STRING_VIEW NewPath);
 
 NTSTATUS
-ZpFile_EncodeEnumeratePageRequest(
+ZpFile_EncodeSetAttributesRequest(
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
-    _In_reads_opt_(CursorLength) PCWCH Cursor,
-    _In_ ULONG CursorLength,
-    _In_ ULONG MaxEntries,
+    _In_ ULONG Attributes,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeSetAttributesRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW Path,
+    _Out_ PULONG Attributes);
+
+NTSTATUS
+ZpFile_EncodeEnumeratePageRequest(
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG EnumerationId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);
@@ -127,15 +148,13 @@ ZpFile_DecodeEnumeratePageRequest(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_STRING_VIEW Path,
-    _Out_ PZP_STRING_VIEW Cursor,
-    _Out_ PULONG MaxEntries);
+    _Out_ PULONGLONG EnumerationId);
 
 NTSTATUS
 ZpFile_EncodePage(
     _In_reads_opt_(FileCount) PCZP_FILE_RECORD Files,
     _In_ ULONG FileCount,
-    _In_reads_opt_(NextCursorLength) PCWCH NextCursor,
-    _In_ ULONG NextCursorLength,
+    _In_ ULONGLONG EnumerationId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);

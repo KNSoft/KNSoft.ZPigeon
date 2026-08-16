@@ -34,7 +34,6 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     HANDLE ProcessTerminateEvent;
     HANDLE ServiceControlEvent;
     HANDLE FileInfoEvent;
-    HANDLE FileListEvent;
     HANDLE FilePageEvent;
     HANDLE EventLogPageEvent;
     HANDLE FileHashEvent;
@@ -85,15 +84,9 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONG FileAttributes;
     ULONGLONG FileSize;
     ULONGLONG FileLastWriteTime;
-    ZP_STATUS FileListStatus;
-    ULONG FileCount;
-    WCHAR ExpectedFileName[MAX_PATH];
-    ULONG ExpectedFileNameLength;
-    LOGICAL FoundExpectedFile;
     ZP_STATUS FilePageStatus;
     ULONG FilePageCount;
-    WCHAR FilePageCursor[MAX_PATH];
-    ULONG FilePageCursorLength;
+    ULONGLONG FilePageEnumerationId;
     WCHAR FilePageName[MAX_PATH];
     ULONG FilePageNameLength;
     ZP_STATUS EventLogPageStatus;
@@ -399,45 +392,6 @@ SDKIntegration_FileInfoCallback(
 static
 VOID
 NTAPI
-SDKIntegration_FileListCallback(
-    _In_ ZP_REQUEST_HANDLE Request,
-    _In_ ZP_STATUS Status,
-    _In_opt_ PCZP_FILE_LIST_VIEW Files,
-    _In_opt_ PVOID Context)
-{
-    PSDK_INTEGRATION_CONTEXT TestContext = Context;
-    ZP_FILE_RECORD_VIEW File;
-    ULONG Index;
-
-    UNREFERENCED_PARAMETER(Request);
-    if (ZpStatus_IsSuccess(Status))
-    {
-        TestContext->FileCount = Files->Count;
-        for (Index = 0; Index < Files->Count; Index++)
-        {
-            Status = ZpStatus_FromNtStatus(
-                ZpFile_GetRecord(Files, Index, &File));
-            if (!ZpStatus_IsSuccess(Status))
-            {
-                break;
-            }
-            if (File.Name.Length == TestContext->ExpectedFileNameLength &&
-                RtlCompareMemory(File.Name.Buffer,
-                                 TestContext->ExpectedFileName,
-                                 (SIZE_T)File.Name.Length * sizeof(WCHAR)) ==
-                    (SIZE_T)File.Name.Length * sizeof(WCHAR))
-            {
-                TestContext->FoundExpectedFile = TRUE;
-            }
-        }
-    }
-    TestContext->FileListStatus = Status;
-    SetEvent(TestContext->FileListEvent);
-}
-
-static
-VOID
-NTAPI
 SDKIntegration_FilePageCallback(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
@@ -451,17 +405,7 @@ SDKIntegration_FilePageCallback(
     if (ZpStatus_IsSuccess(Status))
     {
         TestContext->FilePageCount = Page->Files.Count;
-        TestContext->FilePageCursorLength = Page->NextCursor.Length;
-        if (Page->NextCursor.Length >= ARRAYSIZE(TestContext->FilePageCursor))
-        {
-            Status = ZpStatus_FromNtStatus(STATUS_NAME_TOO_LONG);
-        }
-        else if (Page->NextCursor.Length != 0)
-        {
-            RtlCopyMemory(TestContext->FilePageCursor,
-                          Page->NextCursor.Buffer,
-                          (SIZE_T)Page->NextCursor.Length * sizeof(WCHAR));
-        }
+        TestContext->FilePageEnumerationId = Page->EnumerationId;
     }
     if (ZpStatus_IsSuccess(Status) && Page->Files.Count != 0)
     {
@@ -1349,8 +1293,6 @@ TEST_FUNC(SDKQuicIntegration)
     static const ULONG RegistryDefaultData = 17;
     static const ULONG RegistryNamedData = 42;
     BYTE RegistryOversizedData[8192] = { 0 };
-    WCHAR FirstPageName[MAX_PATH];
-    ULONG FirstPageNameLength;
     WCHAR FirstEventBookmark[4096];
     ULONG FirstEventBookmarkLength;
     BYTE FileWriteData[0x20000 + 17];
@@ -1366,7 +1308,6 @@ TEST_FUNC(SDKQuicIntegration)
     BYTE ExpectedFileDigest[ZP_FILE_SHA256_SIZE];
     LOGICAL Result = FALSE;
     HANDLE Events[] = {
-        CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
         CreateEventW(NULL, TRUE, FALSE, NULL),
@@ -1417,18 +1358,17 @@ TEST_FUNC(SDKQuicIntegration)
     TestContext.ProcessTerminateEvent = Events[12];
     TestContext.ServiceControlEvent = Events[13];
     TestContext.FileInfoEvent = Events[14];
-    TestContext.FileListEvent = Events[15];
-    TestContext.FilePageEvent = Events[16];
-    TestContext.EventLogPageEvent = Events[17];
-    TestContext.FileHashEvent = Events[18];
-    TestContext.FileReadEvent = Events[19];
-    TestContext.FileWriteEvent = Events[20];
-    TestContext.TerminalWritableEvent = Events[21];
-    TestContext.TerminalResizeEvent = Events[22];
-    TestContext.TerminalCloseEvent = Events[23];
-    TestContext.RegistryPageEvent = Events[24];
-    TestContext.RegistryValueEvent = Events[25];
-    TestContext.RegistryStatusEvent = Events[26];
+    TestContext.FilePageEvent = Events[15];
+    TestContext.EventLogPageEvent = Events[16];
+    TestContext.FileHashEvent = Events[17];
+    TestContext.FileReadEvent = Events[18];
+    TestContext.FileWriteEvent = Events[19];
+    TestContext.TerminalWritableEvent = Events[20];
+    TestContext.TerminalResizeEvent = Events[21];
+    TestContext.TerminalCloseEvent = Events[22];
+    TestContext.RegistryPageEvent = Events[23];
+    TestContext.RegistryValueEvent = Events[24];
+    TestContext.RegistryStatusEvent = Events[25];
     if (NCryptOpenStorageProvider(&IdentityProvider,
                                   MS_KEY_STORAGE_PROVIDER,
                                   0) != ERROR_SUCCESS ||
@@ -1877,48 +1817,16 @@ TEST_FUNC(SDKQuicIntegration)
             break;
         }
     }
-    if (Index <= 1 ||
-        ARRAYSIZE(ModulePath) - Index >=
-            ARRAYSIZE(TestContext.ExpectedFileName))
+    if (Index <= 1)
     {
         goto Cleanup;
     }
-    TestContext.ExpectedFileNameLength =
-        (ULONG)wcslen(&ModulePath[Index]);
-    RtlCopyMemory(TestContext.ExpectedFileName,
-                  &ModulePath[Index],
-                  ((SIZE_T)TestContext.ExpectedFileNameLength + 1) *
-                      sizeof(WCHAR));
     ModulePath[Index - 1] = UNICODE_NULL;
-    Status = ZpServer_EnumerateFiles(TestContext.Connection,
-                                     ModulePath,
-                                     Index - 1,
-                                     SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
-                                     SDKIntegration_FileListCallback,
-                                     &TestContext,
-                                     &Request);
-    if (NT_SUCCESS(Status))
-    {
-        ZpRequest_Close(Request);
-        Request = NULL;
-    }
-    if (!NT_SUCCESS(Status) ||
-        WaitForSingleObject(TestContext.FileListEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !ZpStatus_IsSuccess(TestContext.FileListStatus) ||
-        TestContext.FileCount == 0 ||
-        !TestContext.FoundExpectedFile)
-    {
-        goto Cleanup;
-    }
-
     Status = ZpServer_EnumerateFilesPage(
         TestContext.Connection,
         ModulePath,
         (ULONG)wcslen(ModulePath),
-        NULL,
         0,
-        1,
         SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
         SDKIntegration_FilePageCallback,
         &TestContext,
@@ -1932,48 +1840,36 @@ TEST_FUNC(SDKQuicIntegration)
         WaitForSingleObject(TestContext.FilePageEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         !ZpStatus_IsSuccess(TestContext.FilePageStatus) ||
-        TestContext.FilePageCount != 1 ||
-        TestContext.FilePageCursorLength == 0 ||
-        TestContext.FilePageCursorLength != TestContext.FilePageNameLength)
+        TestContext.FilePageCount == 0 ||
+        TestContext.FilePageCount > ZP_FILE_PAGE_COUNT)
     {
         goto Cleanup;
     }
-    FirstPageNameLength = TestContext.FilePageNameLength;
-    RtlCopyMemory(FirstPageName,
-                  TestContext.FilePageName,
-                  (SIZE_T)FirstPageNameLength * sizeof(WCHAR));
-    ResetEvent(TestContext.FilePageEvent);
-    TestContext.FilePageStatus = ZpStatus_FromNtStatus(STATUS_PENDING);
-    TestContext.FilePageCount = 0;
-    TestContext.FilePageNameLength = 0;
-    Status = ZpServer_EnumerateFilesPage(
-        TestContext.Connection,
-        ModulePath,
-        (ULONG)wcslen(ModulePath),
-        TestContext.FilePageCursor,
-        TestContext.FilePageCursorLength,
-        1,
-        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
-        SDKIntegration_FilePageCallback,
-        &TestContext,
-        &Request);
-    if (NT_SUCCESS(Status))
+    if (TestContext.FilePageEnumerationId != 0)
     {
-        ZpRequest_Close(Request);
-        Request = NULL;
-    }
-    if (!NT_SUCCESS(Status) ||
-        WaitForSingleObject(TestContext.FilePageEvent,
-                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
-        !ZpStatus_IsSuccess(TestContext.FilePageStatus) ||
-        TestContext.FilePageCount != 1 ||
-        CompareStringOrdinal(FirstPageName,
-                             FirstPageNameLength,
-                             TestContext.FilePageName,
-                             TestContext.FilePageNameLength,
-                             TRUE) != CSTR_LESS_THAN)
-    {
-        goto Cleanup;
+        ResetEvent(TestContext.FilePageEvent);
+        Status = ZpServer_EnumerateFilesPage(
+            TestContext.Connection,
+            NULL,
+            0,
+            TestContext.FilePageEnumerationId,
+            SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+            SDKIntegration_FilePageCallback,
+            &TestContext,
+            &Request);
+        if (NT_SUCCESS(Status))
+        {
+            ZpRequest_Close(Request);
+            Request = NULL;
+        }
+        if (!NT_SUCCESS(Status) ||
+            WaitForSingleObject(TestContext.FilePageEvent,
+                                SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+            !ZpStatus_IsSuccess(TestContext.FilePageStatus) ||
+            TestContext.FilePageCount == 0)
+        {
+            goto Cleanup;
+        }
     }
 
     if (swprintf_s(UploadPath,

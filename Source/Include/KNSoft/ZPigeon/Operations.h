@@ -7,6 +7,7 @@
 #include <KNSoft/ZPigeon/Registry.h>
 #include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
+#include <KNSoft/ZPigeon/Window.h>
 
 EXTERN_C_START
 
@@ -108,14 +109,6 @@ VOID
 
 typedef
 VOID
-(NTAPI *ZP_FILE_ENUMERATE_CALLBACK)(
-    _In_ ZP_REQUEST_HANDLE Request,
-    _In_ ZP_STATUS Status,
-    _In_opt_ PCZP_FILE_LIST_VIEW Files,
-    _In_opt_ PVOID Context);
-
-typedef
-VOID
 (NTAPI *ZP_FILE_ENUMERATE_PAGE_CALLBACK)(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
@@ -203,6 +196,22 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
     _In_opt_ const ZP_SYSTEM_INFO_VIEW* Info,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_WINDOW_ENUMERATE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_WINDOW_LIST_VIEW Windows,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_WINDOW_QUERY_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ const ZP_WINDOW_INFO_VIEW* Info,
     _In_opt_ PVOID Context);
 
 EXTERN_C_END

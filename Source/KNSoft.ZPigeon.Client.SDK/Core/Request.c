@@ -6,6 +6,7 @@
 #include "../../Modules/Service/Client.h"
 #include "../../Modules/System/Client.h"
 #include "../../Modules/Terminal/Client.h"
+#include "../../Modules/Window/Client.h"
 
 typedef struct _ZP_CLIENT_INBOUND_REQUEST
 {
@@ -204,6 +205,15 @@ ZpClientInbound_RequestCallback(
                                     &AllocatedResponse,
                                     &PayloadLength,
                                     &TerminalChannel);
+        Response = AllocatedResponse;
+    }
+    else if (Request->ModuleId == ZP_WINDOW_MODULE_ID)
+    {
+        Status = ZpWindow_Execute(Request->OperationId,
+                                  Request->Payload,
+                                  Request->PayloadLength,
+                                  &AllocatedResponse,
+                                  &PayloadLength);
         Response = AllocatedResponse;
     }
     else

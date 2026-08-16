@@ -9,12 +9,15 @@
 typedef struct _ZP_CLIENT_OBJECT
 {
     RTL_SRWLOCK Lock;
+    RTL_SRWLOCK FileEnumerationLock;
     ZP_CLIENT_STATE State;
     ULONG CallbackCount;
     LIST_ENTRY InboundRequests;
     LIST_ENTRY LocalChannels;
+    PVOID FileEnumeration;
     ULONGLONG HighestInboundRequestId;
     ULONGLONG NextLocalChannelId;
+    ULONGLONG NextFileEnumerationId;
     ULONG InboundRequestCount;
     ULONGLONG InboundRequestPayloadBytes;
     ULONG LocalChannelCount;

@@ -6,7 +6,6 @@
 typedef union _ZP_SERVER_FILE_CALLBACK
 {
     ZP_FILE_QUERY_CALLBACK Query;
-    ZP_FILE_ENUMERATE_CALLBACK Enumerate;
     ZP_FILE_ENUMERATE_PAGE_CALLBACK Page;
     ZP_FILE_HASH_CALLBACK Hash;
     ZP_REQUEST_STATUS_CALLBACK Status;
@@ -80,32 +79,6 @@ ZpServerFile_QueryComplete(
                                 Status,
                                 ZpStatus_IsSuccess(Status) ? &Info : NULL,
                                 FileContext->Context);
-    Mem_Free(FileContext);
-}
-
-static
-VOID
-NTAPI
-ZpServerFile_EnumerateComplete(
-    _In_ ZP_REQUEST_HANDLE Request,
-    _In_ ZP_STATUS Status,
-    _In_ PCZP_BUFFER_VIEW Payload,
-    _In_opt_ PVOID Context)
-{
-    PZP_SERVER_FILE_CONTEXT FileContext = Context;
-    ZP_FILE_LIST_VIEW Files;
-
-    if (ZpStatus_IsSuccess(Status))
-    {
-        Status = ZpStatus_FromNtStatus(
-            ZpFile_DecodeList(Payload->Buffer,
-                              Payload->Length,
-                              &Files));
-    }
-    FileContext->Callback.Enumerate(Request,
-                                    Status,
-                                    ZpStatus_IsSuccess(Status) ? &Files : NULL,
-                                    FileContext->Context);
     Mem_Free(FileContext);
 }
 
@@ -269,60 +242,11 @@ ZpServer_QueryFile(
 
 NTSTATUS
 NTAPI
-ZpServer_EnumerateFiles(
-    _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_reads_(PathLength) PCWCH Path,
-    _In_ ULONG PathLength,
-    _In_ ULONG TimeoutMilliseconds,
-    _In_ ZP_FILE_ENUMERATE_CALLBACK Callback,
-    _In_opt_ PVOID Context,
-    _Out_ ZP_REQUEST_HANDLE* Request)
-{
-    PZP_SERVER_FILE_CONTEXT FileContext;
-    PBYTE Payload;
-    ULONG PayloadLength;
-    NTSTATUS Status;
-
-    if (Callback == NULL)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-    Status = ZpServerFile_EncodePath(Path,
-                                     PathLength,
-                                     &Payload,
-                                     &PayloadLength);
-    FileContext = NT_SUCCESS(Status) ?
-                      Mem_Alloc(sizeof(*FileContext)) : NULL;
-    if (NT_SUCCESS(Status) && FileContext == NULL)
-    {
-        Status = STATUS_NO_MEMORY;
-    }
-    if (NT_SUCCESS(Status))
-    {
-        FileContext->Callback.Enumerate = Callback;
-        FileContext->Context = Context;
-        Status = ZpServerFile_Send(Connection,
-                                   ZP_FILE_OPERATION_ENUMERATE,
-                                   TimeoutMilliseconds,
-                                   Payload,
-                                   PayloadLength,
-                                   ZpServerFile_EnumerateComplete,
-                                   FileContext,
-                                   Request);
-    }
-    Mem_Free(Payload);
-    return Status;
-}
-
-NTSTATUS
-NTAPI
 ZpServer_EnumerateFilesPage(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_reads_(PathLength) PCWCH Path,
+    _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
-    _In_reads_opt_(CursorLength) PCWCH Cursor,
-    _In_ ULONG CursorLength,
-    _In_ ULONG MaxEntries,
+    _In_ ULONGLONG EnumerationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_FILE_ENUMERATE_PAGE_CALLBACK Callback,
     _In_opt_ PVOID Context,
@@ -339,9 +263,7 @@ ZpServer_EnumerateFilesPage(
     }
     Status = ZpFile_EncodeEnumeratePageRequest(Path,
                                                PathLength,
-                                               Cursor,
-                                               CursorLength,
-                                               MaxEntries,
+                                               EnumerationId,
                                                NULL,
                                                0,
                                                &PayloadLength);
@@ -354,9 +276,7 @@ ZpServer_EnumerateFilesPage(
     {
         Status = ZpFile_EncodeEnumeratePageRequest(Path,
                                                    PathLength,
-                                                   Cursor,
-                                                   CursorLength,
-                                                   MaxEntries,
+                                                   EnumerationId,
                                                    Payload,
                                                    PayloadLength,
                                                    &PayloadLength);
@@ -540,6 +460,69 @@ ZpServer_RenameFile(
         FileContext->Context = Context;
         Status = ZpServerFile_Send(Connection,
                                    ZP_FILE_OPERATION_RENAME,
+                                   TimeoutMilliseconds,
+                                   Payload,
+                                   PayloadLength,
+                                   ZpServerFile_StatusComplete,
+                                   FileContext,
+                                   Request);
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_SetFileAttributes(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG Attributes,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_SERVER_FILE_CONTEXT FileContext;
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpFile_EncodeSetAttributesRequest(Path,
+                                               PathLength,
+                                               Attributes,
+                                               NULL,
+                                               0,
+                                               &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodeSetAttributesRequest(Path,
+                                                   PathLength,
+                                                   Attributes,
+                                                   Payload,
+                                                   PayloadLength,
+                                                   &PayloadLength);
+    }
+    FileContext = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*FileContext)) : NULL;
+    if (NT_SUCCESS(Status) && FileContext == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        FileContext->Callback.Status = Callback;
+        FileContext->Context = Context;
+        Status = ZpServerFile_Send(Connection,
+                                   ZP_FILE_OPERATION_SET_ATTRIBUTES,
                                    TimeoutMilliseconds,
                                    Payload,
                                    PayloadLength,

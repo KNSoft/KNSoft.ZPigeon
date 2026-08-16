@@ -149,17 +149,18 @@ TEST_FUNC(ProtocolMessage)
         123456789,
         100,
         200,
-        300
+        300,
+        FALSE
     };
     ZP_FILE_INFO FileInfoView;
-    ZP_STRING_VIEW FilePathView;
+    ZP_STRING_VIEW FilePathView, FileNewPathView;
     ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
     ZP_FILE_CREATE_DISPOSITION FileDisposition;
     ZP_FILE_HASH_VIEW FileHashView;
     BYTE FileDigest[ZP_FILE_SHA256_SIZE];
     ZP_FILE_RECORD FileRecords[] = {
         {
-            { FILE_ATTRIBUTE_ARCHIVE, 123456789, 100, 200, 300 },
+            { FILE_ATTRIBUTE_ARCHIVE, 123456789, 100, 200, 300, TRUE },
             L"Test.bin",
             8
         }
@@ -199,8 +200,8 @@ TEST_FUNC(ProtocolMessage)
     ZP_TERMINAL_CREATE_VIEW TerminalCreate;
     ZP_MODULE_RECORD Module;
     ZP_BUFFER_VIEW BufferView;
-    ULONGLONG Value, FileSize, FileOffset;
-    ULONG Length, Index, ExitCode, CreditBytes, ProcessId, MaxEntries, Shells;
+    ULONGLONG Value, FileSize, FileOffset, EnumerationId;
+    ULONG Length, Index, ExitCode, CreditBytes, ProcessId, Shells, FileAttributes;
     USHORT Columns, Rows;
 
     for (Index = 0; Index < ARRAYSIZE(Challenge); Index++)
@@ -558,11 +559,11 @@ TEST_FUNC(ProtocolMessage)
                                                   sizeof(Buffer),
                                                   &Length)) &&
             NT_SUCCESS(ZpFile_DecodeRenameRequest(Buffer,
-                                                  Length,
-                                                  &FilePathView,
-                                                  &FilePage.NextCursor)) &&
+                                                   Length,
+                                                   &FilePathView,
+                                                   &FileNewPathView)) &&
             FilePathView.Length == 11 &&
-            FilePage.NextCursor.Length == 14);
+            FileNewPathView.Length == 14);
     TEST_OK(ZpFile_EncodeRenameRequest(NULL,
                                        0,
                                        L"C:\\Renamed.bin",
@@ -573,31 +574,50 @@ TEST_FUNC(ProtocolMessage)
             ZpFile_DecodeRenameRequest(Buffer,
                                        Length - 1,
                                        &FilePathView,
-                                       &FilePage.NextCursor) == STATUS_DATA_ERROR);
+                                       &FileNewPathView) == STATUS_DATA_ERROR);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeSetAttributesRequest(
+                L"C:\\Test.bin",
+                11,
+                FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE,
+                Buffer,
+                sizeof(Buffer),
+                &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeSetAttributesRequest(Buffer,
+                                                         Length,
+                                                         &FilePathView,
+                                                         &FileAttributes)) &&
+            FilePathView.Length == 11 &&
+            FileAttributes == (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE));
     TEST_OK(NT_SUCCESS(ZpFile_EncodeEnumeratePageRequest(L"C:\\Test",
                                                          7,
-                                                         NULL,
                                                          0,
-                                                         128,
                                                          Buffer,
                                                          sizeof(Buffer),
                                                          &Length)) &&
             NT_SUCCESS(ZpFile_DecodeEnumeratePageRequest(Buffer,
                                                          Length,
                                                          &FilePathView,
-                                                         &FilePage.NextCursor,
-                                                         &MaxEntries)) &&
+                                                         &EnumerationId)) &&
             FilePathView.Length == 7 &&
-            FilePage.NextCursor.Length == 0 &&
-            MaxEntries == 128);
+            EnumerationId == 0 &&
+            NT_SUCCESS(ZpFile_EncodeEnumeratePageRequest(NULL,
+                                                         0,
+                                                         42,
+                                                         Buffer,
+                                                         sizeof(Buffer),
+                                                         &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeEnumeratePageRequest(Buffer,
+                                                         Length,
+                                                         &FilePathView,
+                                                         &EnumerationId)) &&
+            FilePathView.Length == 0 &&
+            EnumerationId == 42);
     TEST_OK(ZpFile_EncodeEnumeratePageRequest(L"C:\\Test",
-                                              7,
-                                              NULL,
-                                              0,
-                                              0,
-                                              Buffer,
-                                              sizeof(Buffer),
-                                              &Length) == STATUS_INVALID_PARAMETER);
+                                               7,
+                                               42,
+                                               Buffer,
+                                               sizeof(Buffer),
+                                               &Length) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpFile_EncodeOpenReadRequest(L"C:\\Test.bin",
                                                     11,
                                                     4096,
@@ -687,6 +707,39 @@ TEST_FUNC(ProtocolMessage)
                                                 &FilePathView)) &&
             FileHashAlgorithm == ZpFileHashSha256 &&
             FilePathView.Length == 11);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeHashRequest(ZpFileHashCrc32,
+                                                L"C:\\Test.bin",
+                                                11,
+                                                Buffer,
+                                                sizeof(Buffer),
+                                                &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeHashRequest(Buffer,
+                                                Length,
+                                                &FileHashAlgorithm,
+                                                &FilePathView)) &&
+            FileHashAlgorithm == ZpFileHashCrc32);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeHashRequest(ZpFileHashMd5,
+                                                L"C:\\Test.bin",
+                                                11,
+                                                Buffer,
+                                                sizeof(Buffer),
+                                                &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeHashRequest(Buffer,
+                                                Length,
+                                                &FileHashAlgorithm,
+                                                &FilePathView)) &&
+            FileHashAlgorithm == ZpFileHashMd5);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeHashRequest(ZpFileHashSha1,
+                                                L"C:\\Test.bin",
+                                                11,
+                                                Buffer,
+                                                sizeof(Buffer),
+                                                &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeHashRequest(Buffer,
+                                                Length,
+                                                &FileHashAlgorithm,
+                                                &FilePathView)) &&
+            FileHashAlgorithm == ZpFileHashSha1);
     TEST_OK(ZpFile_EncodeHashRequest((ZP_FILE_HASH_ALGORITHM)0,
                                      L"C:\\Test.bin",
                                      11,
@@ -723,13 +776,14 @@ TEST_FUNC(ProtocolMessage)
                                          Buffer,
                                          sizeof(Buffer),
                                          &Length)) &&
-            Length == sizeof(ULONG) + 4 * sizeof(ULONGLONG) &&
+            Length == sizeof(ULONG) + 4 * sizeof(ULONGLONG) + sizeof(BYTE) &&
             NT_SUCCESS(ZpFile_DecodeInfo(Buffer, Length, &FileInfoView)) &&
             FileInfoView.Attributes == FileInfo.Attributes &&
             FileInfoView.Size == FileInfo.Size &&
             FileInfoView.CreationTime == FileInfo.CreationTime &&
             FileInfoView.LastAccessTime == FileInfo.LastAccessTime &&
-            FileInfoView.LastWriteTime == FileInfo.LastWriteTime);
+            FileInfoView.LastWriteTime == FileInfo.LastWriteTime &&
+            FileInfoView.HasChildren == FileInfo.HasChildren);
     TEST_OK(NT_SUCCESS(ZpFile_EncodeList(FileRecords,
                                          ARRAYSIZE(FileRecords),
                                          Buffer,
@@ -740,32 +794,28 @@ TEST_FUNC(ProtocolMessage)
             NT_SUCCESS(ZpFile_GetRecord(&FileList, 0, &FileRecord)) &&
             FileRecord.Info.Attributes == FileRecords[0].Info.Attributes &&
             FileRecord.Info.Size == FileRecords[0].Info.Size &&
+            FileRecord.Info.HasChildren == FileRecords[0].Info.HasChildren &&
             FileRecord.Name.Length == FileRecords[0].NameLength);
     TEST_OK(ZpFile_GetRecord(&FileList,
                               FileList.Count,
                               &FileRecord) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpFile_EncodePage(FileRecords,
                                          ARRAYSIZE(FileRecords),
-                                         FileRecords[0].Name,
-                                         FileRecords[0].NameLength,
-                                         Buffer,
-                                         sizeof(Buffer),
-                                         &Length)) &&
-            NT_SUCCESS(ZpFile_DecodePage(Buffer, Length, &FilePage)) &&
-            FilePage.NextCursor.Length == FileRecords[0].NameLength &&
-            FilePage.Files.Count == ARRAYSIZE(FileRecords) &&
-            NT_SUCCESS(ZpFile_GetRecord(&FilePage.Files, 0, &FileRecord)) &&
-            FileRecord.Name.Length == FileRecords[0].NameLength);
-    TEST_OK(NT_SUCCESS(ZpFile_EncodePage(FileRecords,
-                                         ARRAYSIZE(FileRecords),
-                                         NULL,
                                          0,
                                          Buffer,
                                          sizeof(Buffer),
                                          &Length)) &&
             NT_SUCCESS(ZpFile_DecodePage(Buffer, Length, &FilePage)) &&
-            FilePage.NextCursor.Length == 0 &&
-            FilePage.Files.Count == ARRAYSIZE(FileRecords));
+            FilePage.EnumerationId == 0 &&
+            FilePage.Files.Count == ARRAYSIZE(FileRecords) &&
+            NT_SUCCESS(ZpFile_GetRecord(&FilePage.Files, 0, &FileRecord)) &&
+            FileRecord.Name.Length == FileRecords[0].NameLength);
+    TEST_OK(ZpFile_EncodePage(FileRecords,
+                              ARRAYSIZE(FileRecords),
+                              1,
+                              Buffer,
+                              sizeof(Buffer),
+                              &Length) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpEventLog_EncodeQueryPageRequest(
                            ZpEventLogStartOldest,
                            16,

@@ -4,23 +4,32 @@
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Channel.h"
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 #include <Bcrypt.h>
-#include <stdlib.h>
 
 #pragma comment(lib, "Bcrypt.lib")
 
 #define ZP_FILE_HASH_BUFFER_SIZE 0x00010000UL
 #define ZP_FILE_CHANNEL_CHUNK_SIZE 0x00010000UL
 #define ZP_FILE_WRITE_WINDOW_SIZE 0x00100000UL
-#define ZP_FILE_SNAPSHOT_MAX_BYTES 0x01000000UL
-#define ZP_FILE_SNAPSHOT_MAX_COUNT 65536
-
+#define ZP_FILE_SETTABLE_ATTRIBUTES \
+    (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | \
+     FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_TEMPORARY | FILE_ATTRIBUTE_OFFLINE | \
+     FILE_ATTRIBUTE_NOT_CONTENT_INDEXED)
 typedef struct _ZP_FILE_ENTRY
 {
-    LIST_ENTRY ListEntry;
     ZP_FILE_INFO Info;
     ULONG NameLength;
     WCHAR Name[ANYSIZE_ARRAY];
 } ZP_FILE_ENTRY, *PZP_FILE_ENTRY;
+
+typedef struct _ZP_FILE_ENUMERATION
+{
+    ULONGLONG Id;
+    HANDLE Directory;
+    FILE_FIND Find;
+    PFILE_DIRECTORY_INFORMATION Current;
+    ULONG Remaining;
+    LOGICAL FindInitialized;
+} ZP_FILE_ENUMERATION, *PZP_FILE_ENUMERATION;
 
 typedef enum _ZP_CLIENT_FILE_CHANNEL_TYPE
 {
@@ -791,16 +800,122 @@ ZpFile_ChannelClose(
 }
 
 static
+LOGICAL
+ZpFile_IsDotDirectory(_In_ PFILE_DIRECTORY_INFORMATION Data)
+{
+    return (Data->FileNameLength == sizeof(WCHAR) &&
+            Data->FileName[0] == L'.') ||
+           (Data->FileNameLength == 2 * sizeof(WCHAR) &&
+            Data->FileName[0] == L'.' &&
+            Data->FileName[1] == L'.');
+}
+
+static
+BOOLEAN
+ZpFile_HasChildDirectories(
+    _In_ HANDLE Parent,
+    _In_ PFILE_DIRECTORY_INFORMATION Data)
+{
+    FILE_FIND Find;
+    PFILE_DIRECTORY_INFORMATION Child;
+    OBJECT_ATTRIBUTES Object;
+    IO_STATUS_BLOCK IoStatusBlock;
+    UNICODE_STRING Name;
+    HANDLE Directory;
+    ULONG Remaining;
+    NTSTATUS Status;
+    BOOLEAN HasChildren = FALSE;
+    LOGICAL FindInitialized = FALSE;
+
+    if (!(Data->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+        Data->FileNameLength > MAXUSHORT)
+    {
+        return FALSE;
+    }
+    Name.Buffer = Data->FileName;
+    Name.Length = (USHORT)Data->FileNameLength;
+    Name.MaximumLength = Name.Length;
+    InitializeObjectAttributes(&Object,
+                               &Name,
+                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+                               Parent,
+                               NULL);
+    Status = NtOpenFile(&Directory,
+                        FILE_LIST_DIRECTORY | SYNCHRONIZE,
+                        &Object,
+                        &IoStatusBlock,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT);
+    if (!NT_SUCCESS(Status))
+    {
+        return FALSE;
+    }
+    Status = IO_BeginFindFile(&Find,
+                              Directory,
+                              NULL,
+                              FileDirectoryInformation);
+    FindInitialized = NT_SUCCESS(Status);
+    while (NT_SUCCESS(Status) && Find.HasData && !HasChildren)
+    {
+        Child = Find.Buffer;
+        Remaining = Find.Length;
+        for (;;)
+        {
+            if (Remaining < UFIELD_OFFSET(FILE_DIRECTORY_INFORMATION, FileName) ||
+                Child->FileNameLength >
+                    Remaining - UFIELD_OFFSET(FILE_DIRECTORY_INFORMATION, FileName) ||
+                (Child->FileNameLength & (sizeof(WCHAR) - 1)) != 0)
+            {
+                Status = STATUS_DATA_ERROR;
+                break;
+            }
+            if (!ZpFile_IsDotDirectory(Child) &&
+                (Child->FileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+            {
+                HasChildren = TRUE;
+                break;
+            }
+            if (Child->NextEntryOffset == 0)
+            {
+                break;
+            }
+            if (Child->NextEntryOffset > Remaining ||
+                Child->NextEntryOffset <
+                    UFIELD_OFFSET(FILE_DIRECTORY_INFORMATION, FileName))
+            {
+                Status = STATUS_DATA_ERROR;
+                break;
+            }
+            Remaining -= Child->NextEntryOffset;
+            Child = Add2Ptr(Child, Child->NextEntryOffset);
+        }
+        if (NT_SUCCESS(Status) && !HasChildren)
+        {
+            Status = IO_ContinueFindFileFind(&Find);
+        }
+    }
+    if (FindInitialized)
+    {
+        IO_EndFindFile(&Find);
+    }
+    NtClose(Directory);
+    return HasChildren;
+}
+
+static
 VOID
 ZpFile_SetInfo(
+    _In_ HANDLE Parent,
     _In_ PFILE_DIRECTORY_INFORMATION Data,
     _Out_ PZP_FILE_INFO Info)
 {
     Info->Attributes = Data->FileAttributes;
+    // The directory enumeration already returned the size; do not reopen the file.
     Info->Size = Data->EndOfFile.QuadPart;
     Info->CreationTime = Data->CreationTime.QuadPart;
     Info->LastAccessTime = Data->LastAccessTime.QuadPart;
     Info->LastWriteTime = Data->LastWriteTime.QuadPart;
+    Info->HasChildren = ZpFile_HasChildDirectories(Parent, Data);
 }
 
 static
@@ -831,6 +946,7 @@ ZpFile_Query(
     Info.CreationTime = Data.CreationTime.QuadPart;
     Info.LastAccessTime = Data.LastAccessTime.QuadPart;
     Info.LastWriteTime = Data.LastWriteTime.QuadPart;
+    Info.HasChildren = FALSE;
     Status = ZpFile_EncodeInfo(&Info, NULL, 0, ResponseLength);
     *Response = NT_SUCCESS(Status) ? Mem_Alloc(*ResponseLength) : NULL;
     if (NT_SUCCESS(Status) && *Response == NULL)
@@ -849,6 +965,7 @@ static
 NTSTATUS
 ZpFile_OpenForControl(
     _In_ PCZP_STRING_VIEW Path,
+    _In_ ACCESS_MASK DesiredAccess,
     _Out_ PHANDLE File)
 {
     PUNICODE_STRING String;
@@ -869,7 +986,7 @@ ZpFile_OpenForControl(
         return Status;
     }
     Status = NtOpenFile(File,
-                        DELETE | SYNCHRONIZE,
+                        DesiredAccess | SYNCHRONIZE,
                         &Object,
                         &IoStatusBlock,
                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -888,7 +1005,7 @@ ZpFile_Delete(
     HANDLE File;
     NTSTATUS Status;
 
-    Status = ZpFile_OpenForControl(Path, &File);
+    Status = ZpFile_OpenForControl(Path, DELETE, &File);
     if (NT_SUCCESS(Status))
     {
         Status = NtSetInformationFile(File,
@@ -915,7 +1032,7 @@ ZpFile_Rename(
     SIZE_T RenameSize;
     NTSTATUS Status;
 
-    Status = ZpFile_OpenForControl(Path, &File);
+    Status = ZpFile_OpenForControl(Path, DELETE, &File);
     if (!NT_SUCCESS(Status))
     {
         return Status;
@@ -956,70 +1073,168 @@ ZpFile_Rename(
 }
 
 static
-int
-__cdecl
-ZpFile_CompareEntries(
-    _In_ const VOID* Left,
-    _In_ const VOID* Right)
+NTSTATUS
+ZpFile_SetAttributes(
+    _In_ PCZP_STRING_VIEW Path,
+    _In_ ULONG Attributes)
 {
-    const PZP_FILE_ENTRY* LeftEntry = Left;
-    const PZP_FILE_ENTRY* RightEntry = Right;
-    int Result;
+    FILE_BASIC_INFORMATION Basic;
+    IO_STATUS_BLOCK IoStatusBlock;
+    HANDLE File;
+    ULONG Mask;
+    NTSTATUS Status;
 
-    Result = CompareStringOrdinal((*LeftEntry)->Name,
-                                  (*LeftEntry)->NameLength,
-                                  (*RightEntry)->Name,
-                                  (*RightEntry)->NameLength,
-                                  TRUE);
-    if (Result == CSTR_EQUAL)
+    Status = ZpFile_OpenForControl(Path,
+                                   FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+                                   &File);
+    if (!NT_SUCCESS(Status))
     {
-        Result = CompareStringOrdinal((*LeftEntry)->Name,
-                                      (*LeftEntry)->NameLength,
-                                      (*RightEntry)->Name,
-                                      (*RightEntry)->NameLength,
-                                      FALSE);
+        return Status;
     }
-    return Result == CSTR_LESS_THAN ? -1 :
-           Result == CSTR_GREATER_THAN ? 1 : 0;
+    Status = NtQueryInformationFile(File,
+                                    &IoStatusBlock,
+                                    &Basic,
+                                    sizeof(Basic),
+                                    FileBasicInformation);
+    if (NT_SUCCESS(Status))
+    {
+        Mask = FlagOn(Basic.FileAttributes, FILE_ATTRIBUTE_DIRECTORY) ?
+                   FILE_ATTRIBUTE_HIDDEN : ZP_FILE_SETTABLE_ATTRIBUTES;
+        if (FlagOn(Attributes, ~Mask))
+        {
+            Status = STATUS_INVALID_PARAMETER;
+        }
+        else
+        {
+            Basic.FileAttributes &= ~(Mask | FILE_ATTRIBUTE_NORMAL);
+            Basic.FileAttributes |= Attributes;
+            if (Basic.FileAttributes == 0)
+            {
+                Basic.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+            }
+            Status = NtSetInformationFile(File,
+                                          &IoStatusBlock,
+                                          &Basic,
+                                          sizeof(Basic),
+                                          FileBasicInformation);
+        }
+    }
+    NtClose(File);
+    return Status;
 }
 
 static
 VOID
-ZpFile_FreeEntries(
-    _Inout_ PLIST_ENTRY Entries)
+ZpFile_DestroyEnumeration(
+    _In_ PZP_FILE_ENUMERATION Enumeration)
 {
-    PZP_FILE_ENTRY Entry;
-
-    while (!IsListEmpty(Entries))
+    if (Enumeration->FindInitialized)
     {
-        Entry = CONTAINING_RECORD(RemoveHeadList(Entries),
-                                  ZP_FILE_ENTRY,
-                                  ListEntry);
-        Mem_Free(Entry);
+        IO_EndFindFile(&Enumeration->Find);
+    }
+    if (Enumeration->Directory != NULL)
+    {
+        NtClose(Enumeration->Directory);
+    }
+    Mem_Free(Enumeration);
+}
+
+VOID
+ZpFile_ResetEnumeration(
+    _Inout_ PZP_CLIENT_OBJECT Client)
+{
+    PZP_FILE_ENUMERATION Enumeration;
+
+    RtlAcquireSRWLockExclusive(&Client->FileEnumerationLock);
+    Enumeration = Client->FileEnumeration;
+    Client->FileEnumeration = NULL;
+    RtlReleaseSRWLockExclusive(&Client->FileEnumerationLock);
+    if (Enumeration != NULL)
+    {
+        ZpFile_DestroyEnumeration(Enumeration);
     }
 }
 
 static
 NTSTATUS
-ZpFile_SnapshotDirectory(
-    _In_ PCZP_STRING_VIEW Path,
-    _Outptr_result_buffer_(*Count) PZP_FILE_ENTRY** Entries,
-    _Out_ PULONG Count)
+ZpFile_ValidateEnumerationEntry(
+    _In_ PZP_FILE_ENUMERATION Enumeration)
 {
-    LIST_ENTRY List;
-    FILE_FIND Find;
-    PFILE_DIRECTORY_INFORMATION Data;
-    PZP_FILE_ENTRY Entry;
-    PZP_FILE_ENTRY* Result = NULL;
-    PUNICODE_STRING PathString;
-    UNICODE_STRING NativePath;
-    HANDLE Directory = NULL;
-    SIZE_T AllocationSize, SnapshotSize = 0;
-    ULONG EntryCount = 0, Index, Remaining;
-    NTSTATUS Status;
-    LOGICAL FindInitialized = FALSE;
+    PFILE_DIRECTORY_INFORMATION Data = Enumeration->Current;
 
-    InitializeListHead(&List);
+    return Enumeration->Remaining >=
+               UFIELD_OFFSET(FILE_DIRECTORY_INFORMATION, FileName) &&
+           Data->FileNameLength <=
+               Enumeration->Remaining -
+                   UFIELD_OFFSET(FILE_DIRECTORY_INFORMATION, FileName) &&
+           (Data->FileNameLength & (sizeof(WCHAR) - 1)) == 0 ?
+               STATUS_SUCCESS : STATUS_DATA_ERROR;
+}
+
+static
+NTSTATUS
+ZpFile_MoveEnumeration(
+    _Inout_ PZP_FILE_ENUMERATION Enumeration)
+{
+    PFILE_DIRECTORY_INFORMATION Data = Enumeration->Current;
+    NTSTATUS Status;
+
+    if (Data->NextEntryOffset != 0)
+    {
+        if (Data->NextEntryOffset > Enumeration->Remaining ||
+            Data->NextEntryOffset <
+                UFIELD_OFFSET(FILE_DIRECTORY_INFORMATION, FileName) +
+                    Data->FileNameLength)
+        {
+            return STATUS_DATA_ERROR;
+        }
+        Enumeration->Remaining -= Data->NextEntryOffset;
+        Enumeration->Current = Add2Ptr(Data, Data->NextEntryOffset);
+        return STATUS_SUCCESS;
+    }
+    Status = IO_ContinueFindFileFind(&Enumeration->Find);
+    Enumeration->Current = NT_SUCCESS(Status) && Enumeration->Find.HasData ?
+                               Enumeration->Find.Buffer : NULL;
+    Enumeration->Remaining = Enumeration->Find.Length;
+    return Status;
+}
+
+static
+NTSTATUS
+ZpFile_SkipDotDirectories(
+    _Inout_ PZP_FILE_ENUMERATION Enumeration)
+{
+    NTSTATUS Status;
+
+    while (Enumeration->Current != NULL)
+    {
+        Status = ZpFile_ValidateEnumerationEntry(Enumeration);
+        if (!NT_SUCCESS(Status) ||
+            !ZpFile_IsDotDirectory(Enumeration->Current))
+        {
+            return Status;
+        }
+        Status = ZpFile_MoveEnumeration(Enumeration);
+        if (!NT_SUCCESS(Status))
+        {
+            return Status;
+        }
+    }
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpFile_CreateEnumeration(
+    _In_ PCZP_STRING_VIEW Path,
+    _In_ ULONGLONG Id,
+    _Outptr_ PZP_FILE_ENUMERATION* Result)
+{
+    PZP_FILE_ENUMERATION Enumeration;
+    PUNICODE_STRING PathString;
+    UNICODE_STRING NativePath = { 0 };
+    NTSTATUS Status;
+
     PathString = ZpFile_CopyPath(Path);
     if (PathString == NULL)
     {
@@ -1027,268 +1242,202 @@ ZpFile_SnapshotDirectory(
     }
     Status = NT_Win32PathToNtPath(PathString->Buffer, NULL, &NativePath);
     NT_FreeStringW(PathString);
-    if (NT_SUCCESS(Status))
-    {
-        Status = IO_OpenDirectory(&Directory,
-                                  &NativePath,
-                                  FILE_LIST_DIRECTORY | SYNCHRONIZE,
-                                  FILE_SHARE_READ | FILE_SHARE_WRITE |
-                                      FILE_SHARE_DELETE);
-        NT_FreeNtPath(&NativePath);
-    }
-    if (!NT_SUCCESS(Status))
-    {
-        return Status;
-    }
-    Status = IO_BeginFindFile(&Find,
-                              Directory,
-                              NULL,
-                              FileDirectoryInformation);
-    FindInitialized = NT_SUCCESS(Status);
-    while (NT_SUCCESS(Status) && Find.HasData)
-    {
-        Data = Find.Buffer;
-        Remaining = Find.Length;
-        for (;;)
-        {
-            if (Remaining < UFIELD_OFFSET(FILE_DIRECTORY_INFORMATION, FileName) ||
-                Data->FileNameLength >
-                    Remaining - UFIELD_OFFSET(FILE_DIRECTORY_INFORMATION, FileName) ||
-                (Data->FileNameLength & (sizeof(WCHAR) - 1)) != 0)
-            {
-                Status = STATUS_DATA_ERROR;
-                break;
-            }
-            if (!((Data->FileNameLength == sizeof(WCHAR) &&
-                   Data->FileName[0] == L'.') ||
-                  (Data->FileNameLength == 2 * sizeof(WCHAR) &&
-                   Data->FileName[0] == L'.' &&
-                   Data->FileName[1] == L'.')))
-            {
-                AllocationSize = UFIELD_OFFSET(ZP_FILE_ENTRY, Name) +
-                                 Data->FileNameLength;
-                if (AllocationSize >
-                        ZP_FILE_SNAPSHOT_MAX_BYTES - sizeof(Entry) ||
-                    EntryCount == ZP_FILE_SNAPSHOT_MAX_COUNT ||
-                    SnapshotSize > ZP_FILE_SNAPSHOT_MAX_BYTES -
-                                       AllocationSize - sizeof(Entry))
-                {
-                    Status = STATUS_QUOTA_EXCEEDED;
-                    break;
-                }
-                Entry = Mem_Alloc(AllocationSize);
-                if (Entry == NULL)
-                {
-                    Status = STATUS_NO_MEMORY;
-                    break;
-                }
-                ZpFile_SetInfo(Data, &Entry->Info);
-                Entry->NameLength = Data->FileNameLength / sizeof(WCHAR);
-                RtlCopyMemory(Entry->Name,
-                              Data->FileName,
-                              Data->FileNameLength);
-                InsertTailList(&List, &Entry->ListEntry);
-                SnapshotSize += AllocationSize + sizeof(Entry);
-                EntryCount++;
-            }
-            if (Data->NextEntryOffset == 0)
-            {
-                break;
-            }
-            if (Data->NextEntryOffset > Remaining ||
-                Data->NextEntryOffset <
-                    UFIELD_OFFSET(FILE_DIRECTORY_INFORMATION, FileName))
-            {
-                Status = STATUS_DATA_ERROR;
-                break;
-            }
-            Remaining -= Data->NextEntryOffset;
-            Data = Add2Ptr(Data, Data->NextEntryOffset);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = IO_ContinueFindFileFind(&Find);
-        }
-    }
-    if (FindInitialized)
-    {
-        IO_EndFindFile(&Find);
-    }
-    NtClose(Directory);
-    if (!NT_SUCCESS(Status))
-    {
-        ZpFile_FreeEntries(&List);
-        return Status;
-    }
-    Result = EntryCount != 0 ?
-                 Mem_Alloc((SIZE_T)EntryCount * sizeof(*Result)) :
-                 NULL;
-    if (EntryCount != 0 && Result == NULL)
-    {
-        ZpFile_FreeEntries(&List);
-        return STATUS_NO_MEMORY;
-    }
-    for (Index = 0; Index < EntryCount; Index++)
-    {
-        Result[Index] = CONTAINING_RECORD(List.Flink,
-                                          ZP_FILE_ENTRY,
-                                          ListEntry);
-        RemoveEntryList(&Result[Index]->ListEntry);
-    }
-    qsort(Result, EntryCount, sizeof(*Result), ZpFile_CompareEntries);
-    *Entries = Result;
-    *Count = EntryCount;
-    return STATUS_SUCCESS;
-}
-
-static
-VOID
-ZpFile_FreeSnapshot(
-    _In_reads_(Count) PZP_FILE_ENTRY* Entries,
-    _In_ ULONG Count)
-{
-    ULONG Index;
-
-    for (Index = 0; Index < Count; Index++)
-    {
-        Mem_Free(Entries[Index]);
-    }
-    Mem_Free(Entries);
-}
-
-static
-NTSTATUS
-ZpFile_EncodeSnapshot(
-    _In_reads_(Count) PZP_FILE_ENTRY* Entries,
-    _In_ ULONG Count,
-    _In_opt_ PCZP_STRING_VIEW Cursor,
-    _In_ ULONG MaxEntries,
-    _In_ LOGICAL Paged,
-    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
-    _Out_ PULONG ResponseLength)
-{
-    PZP_FILE_RECORD Records;
-    ULONG Start = 0, PageCount, Index;
-    int Compare;
-    LOGICAL HasMore;
-    NTSTATUS Status;
-
-    if (Paged && Cursor->Length != 0)
-    {
-        while (Start < Count)
-        {
-            Compare = CompareStringOrdinal(Entries[Start]->Name,
-                                           Entries[Start]->NameLength,
-                                           (PCWCH)Cursor->Buffer,
-                                           Cursor->Length,
-                                           TRUE);
-            if (Compare == CSTR_EQUAL)
-            {
-                Compare = CompareStringOrdinal(Entries[Start]->Name,
-                                               Entries[Start]->NameLength,
-                                               (PCWCH)Cursor->Buffer,
-                                               Cursor->Length,
-                                               FALSE);
-            }
-            if (Compare == CSTR_GREATER_THAN)
-            {
-                break;
-            }
-            Start++;
-        }
-    }
-    PageCount = Paged ? min(MaxEntries, Count - Start) : Count;
-    Records = PageCount != 0 ?
-                  Mem_Alloc((SIZE_T)PageCount * sizeof(*Records)) :
-                  NULL;
-    if (PageCount != 0 && Records == NULL)
-    {
-        return STATUS_NO_MEMORY;
-    }
-    for (Index = 0; Index < PageCount; Index++)
-    {
-        Records[Index].Info = Entries[Start + Index]->Info;
-        Records[Index].Name = Entries[Start + Index]->Name;
-        Records[Index].NameLength = Entries[Start + Index]->NameLength;
-    }
-    do
-    {
-        HasMore = Paged && Start + PageCount < Count;
-        Status = Paged ?
-                     ZpFile_EncodePage(
-                         Records,
-                         PageCount,
-                         HasMore ? Records[PageCount - 1].Name : NULL,
-                         HasMore ? Records[PageCount - 1].NameLength : 0,
-                         NULL,
-                         0,
-                         ResponseLength) :
-                     ZpFile_EncodeList(Records,
-                                       PageCount,
-                                       NULL,
-                                       0,
-                                       ResponseLength);
-        if (Status == STATUS_BUFFER_OVERFLOW && Paged && PageCount > 1)
-        {
-            PageCount /= 2;
-        }
-        else
-        {
-            break;
-        }
-    } while (TRUE);
-    *Response = NT_SUCCESS(Status) ? Mem_Alloc(*ResponseLength) : NULL;
-    if (NT_SUCCESS(Status) && *Response == NULL)
+    Enumeration = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*Enumeration)) : NULL;
+    if (NT_SUCCESS(Status) && Enumeration == NULL)
     {
         Status = STATUS_NO_MEMORY;
     }
     if (NT_SUCCESS(Status))
     {
-        Status = Paged ?
-                     ZpFile_EncodePage(
-                         Records,
-                         PageCount,
-                         HasMore ? Records[PageCount - 1].Name : NULL,
-                         HasMore ? Records[PageCount - 1].NameLength : 0,
-                         *Response,
-                         *ResponseLength,
-                         ResponseLength) :
-                     ZpFile_EncodeList(Records,
-                                       PageCount,
+        RtlZeroMemory(Enumeration, sizeof(*Enumeration));
+        Enumeration->Id = Id;
+        Status = IO_OpenDirectory(&Enumeration->Directory,
+                                  &NativePath,
+                                  FILE_LIST_DIRECTORY | SYNCHRONIZE,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE |
+                                      FILE_SHARE_DELETE);
+    }
+    if (NativePath.Buffer != NULL)
+    {
+        NT_FreeNtPath(&NativePath);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = IO_BeginFindFile(&Enumeration->Find,
+                                  Enumeration->Directory,
+                                  NULL,
+                                  FileDirectoryInformation);
+        Enumeration->FindInitialized = NT_SUCCESS(Status);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Enumeration->Current = Enumeration->Find.HasData ?
+                                   Enumeration->Find.Buffer : NULL;
+        Enumeration->Remaining = Enumeration->Find.Length;
+        Status = ZpFile_SkipDotDirectories(Enumeration);
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        if (Enumeration != NULL)
+        {
+            ZpFile_DestroyEnumeration(Enumeration);
+            Enumeration = NULL;
+        }
+        Enumeration = NULL;
+        return Status;
+    }
+    *Result = Enumeration;
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpFile_ReadEnumerationPage(
+    _Inout_ PZP_FILE_ENUMERATION Enumeration,
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    PZP_FILE_ENTRY Entries[ZP_FILE_PAGE_COUNT];
+    ZP_FILE_RECORD Records[ZP_FILE_PAGE_COUNT];
+    PZP_FILE_ENTRY Entry;
+    SIZE_T AllocationSize;
+    ULONG Count = 0, Index;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    while (Enumeration->Current != NULL && Count < ZP_FILE_PAGE_COUNT)
+    {
+        AllocationSize = UFIELD_OFFSET(ZP_FILE_ENTRY, Name) +
+                         Enumeration->Current->FileNameLength;
+        Entry = Mem_Alloc(AllocationSize);
+        if (Entry == NULL)
+        {
+            Status = STATUS_NO_MEMORY;
+            break;
+        }
+        ZpFile_SetInfo(Enumeration->Directory,
+                       Enumeration->Current,
+                       &Entry->Info);
+        Entry->NameLength =
+            Enumeration->Current->FileNameLength / sizeof(WCHAR);
+        RtlCopyMemory(Entry->Name,
+                      Enumeration->Current->FileName,
+                      Enumeration->Current->FileNameLength);
+        Entries[Count] = Entry;
+        Records[Count].Info = Entry->Info;
+        Records[Count].Name = Entry->Name;
+        Records[Count].NameLength = Entry->NameLength;
+        Count++;
+        Status = ZpFile_MoveEnumeration(Enumeration);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpFile_SkipDotDirectories(Enumeration);
+        }
+        if (!NT_SUCCESS(Status))
+        {
+            break;
+        }
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodePage(Records,
+                                   Count,
+                                   Enumeration->Current != NULL ?
+                                       Enumeration->Id : 0,
+                                   NULL,
+                                   0,
+                                   ResponseLength);
+        *Response = NT_SUCCESS(Status) ? Mem_Alloc(*ResponseLength) : NULL;
+        if (NT_SUCCESS(Status) && *Response == NULL)
+        {
+            Status = STATUS_NO_MEMORY;
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpFile_EncodePage(Records,
+                                       Count,
+                                       Enumeration->Current != NULL ?
+                                           Enumeration->Id : 0,
                                        *Response,
                                        *ResponseLength,
                                        ResponseLength);
+        }
     }
-    Mem_Free(Records);
+    for (Index = 0; Index < Count; Index++)
+    {
+        Mem_Free(Entries[Index]);
+    }
     return Status;
 }
 
 static
 NTSTATUS
-ZpFile_Enumerate(
+ZpFile_EnumeratePage(
+    _Inout_ PZP_CLIENT_OBJECT Client,
     _In_ PCZP_STRING_VIEW Path,
-    _In_opt_ PCZP_STRING_VIEW Cursor,
-    _In_ ULONG MaxEntries,
-    _In_ LOGICAL Paged,
+    _In_ ULONGLONG EnumerationId,
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
 {
-    PZP_FILE_ENTRY* Entries;
-    ULONG Count;
+    PZP_FILE_ENUMERATION Enumeration;
     NTSTATUS Status;
 
-    Status = ZpFile_SnapshotDirectory(Path, &Entries, &Count);
+    RtlAcquireSRWLockShared(&Client->Lock);
+    if (Client->State != ZpClientStateReady)
+    {
+        RtlReleaseSRWLockShared(&Client->Lock);
+        return STATUS_CONNECTION_DISCONNECTED;
+    }
+    RtlAcquireSRWLockExclusive(&Client->FileEnumerationLock);
+    RtlReleaseSRWLockShared(&Client->Lock);
+    Enumeration = Client->FileEnumeration;
+    if (EnumerationId == 0)
+    {
+        Client->FileEnumeration = NULL;
+        if (Enumeration != NULL)
+        {
+            ZpFile_DestroyEnumeration(Enumeration);
+            Enumeration = NULL;
+        }
+        EnumerationId = Client->NextFileEnumerationId++;
+        if (Client->NextFileEnumerationId == 0)
+        {
+            Client->NextFileEnumerationId = 1;
+        }
+        Status = ZpFile_CreateEnumeration(Path,
+                                          EnumerationId,
+                                          &Enumeration);
+        if (NT_SUCCESS(Status))
+        {
+            Client->FileEnumeration = Enumeration;
+        }
+    }
+    else
+    {
+        if (Enumeration == NULL || Enumeration->Id != EnumerationId)
+        {
+            RtlReleaseSRWLockExclusive(&Client->FileEnumerationLock);
+            return STATUS_INVALID_HANDLE;
+        }
+        Status = STATUS_SUCCESS;
+    }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpFile_EncodeSnapshot(Entries,
-                                       Count,
-                                       Cursor,
-                                       MaxEntries,
-                                       Paged,
-                                       Response,
-                                       ResponseLength);
-        ZpFile_FreeSnapshot(Entries, Count);
+        Status = ZpFile_ReadEnumerationPage(Enumeration,
+                                            Response,
+                                            ResponseLength);
     }
+    if (!NT_SUCCESS(Status) || Enumeration->Current == NULL)
+    {
+        if (Client->FileEnumeration == Enumeration)
+        {
+            Client->FileEnumeration = NULL;
+        }
+        if (Enumeration != NULL)
+        {
+            ZpFile_DestroyEnumeration(Enumeration);
+        }
+    }
+    RtlReleaseSRWLockExclusive(&Client->FileEnumerationLock);
     return Status;
 }
 
@@ -1303,16 +1452,34 @@ ZpFile_Hash(
 {
     BCRYPT_ALG_HANDLE AlgorithmHandle = NULL;
     BCRYPT_HASH_HANDLE HashHandle = NULL;
+    PCWSTR AlgorithmName;
     PUNICODE_STRING PathString;
     HANDLE File = NULL;
     PBYTE Buffer = NULL;
     BYTE Digest[ZP_FILE_SHA256_SIZE];
     ULONGLONG FileSize;
-    ULONG BytesRead;
+    ULONG BytesRead, Crc32 = 0, DigestLength;
     NTSTATUS Status;
 
-    if (Algorithm != ZpFileHashSha256)
+    switch (Algorithm)
     {
+    case ZpFileHashCrc32:
+        AlgorithmName = NULL;
+        DigestLength = ZP_FILE_CRC32_SIZE;
+        break;
+    case ZpFileHashMd5:
+        AlgorithmName = BCRYPT_MD5_ALGORITHM;
+        DigestLength = ZP_FILE_MD5_SIZE;
+        break;
+    case ZpFileHashSha1:
+        AlgorithmName = BCRYPT_SHA1_ALGORITHM;
+        DigestLength = ZP_FILE_SHA1_SIZE;
+        break;
+    case ZpFileHashSha256:
+        AlgorithmName = BCRYPT_SHA256_ALGORITHM;
+        DigestLength = ZP_FILE_SHA256_SIZE;
+        break;
+    default:
         return STATUS_NOT_SUPPORTED;
     }
     PathString = ZpFile_CopyPath(Path);
@@ -1332,14 +1499,14 @@ ZpFile_Hash(
     {
         Status = IO_GetFileSize(File, &FileSize);
     }
-    if (NT_SUCCESS(Status))
+    if (NT_SUCCESS(Status) && AlgorithmName != NULL)
     {
         Status = BCryptOpenAlgorithmProvider(&AlgorithmHandle,
-                                             BCRYPT_SHA256_ALGORITHM,
+                                             AlgorithmName,
                                              NULL,
                                              0);
     }
-    if (NT_SUCCESS(Status))
+    if (NT_SUCCESS(Status) && AlgorithmName != NULL)
     {
         Status = BCryptCreateHash(AlgorithmHandle,
                                   &HashHandle,
@@ -1375,21 +1542,35 @@ ZpFile_Hash(
         {
             break;
         }
-        Status = BCryptHashData(HashHandle, Buffer, BytesRead, 0);
+        if (HashHandle != NULL)
+        {
+            Status = BCryptHashData(HashHandle, Buffer, BytesRead, 0);
+        }
+        else
+        {
+            Crc32 = RtlComputeCrc32(Crc32, Buffer, BytesRead);
+        }
     }
-    if (NT_SUCCESS(Status))
+    if (NT_SUCCESS(Status) && HashHandle != NULL)
     {
         Status = BCryptFinishHash(HashHandle,
                                   Digest,
-                                  sizeof(Digest),
+                                  DigestLength,
                                   0);
+    }
+    else if (NT_SUCCESS(Status))
+    {
+        Digest[0] = (BYTE)(Crc32 >> 24);
+        Digest[1] = (BYTE)(Crc32 >> 16);
+        Digest[2] = (BYTE)(Crc32 >> 8);
+        Digest[3] = (BYTE)Crc32;
     }
     if (NT_SUCCESS(Status))
     {
         Status = ZpFile_EncodeHashResponse(Algorithm,
                                            FileSize,
                                            Digest,
-                                           sizeof(Digest),
+                                           DigestLength,
                                            NULL,
                                            0,
                                            ResponseLength);
@@ -1404,7 +1585,7 @@ ZpFile_Hash(
         Status = ZpFile_EncodeHashResponse(Algorithm,
                                            FileSize,
                                            Digest,
-                                           sizeof(Digest),
+                                           DigestLength,
                                            *Response,
                                            *ResponseLength,
                                            ResponseLength);
@@ -1436,12 +1617,12 @@ ZpFile_Execute(
     _Out_ PULONG ResponseLength,
     _Outptr_result_maybenull_ PZP_CLIENT_FILE_CHANNEL* Channel)
 {
-    ZP_STRING_VIEW Path, Cursor, NewPath;
+    ZP_STRING_VIEW Path, NewPath;
     ZP_FILE_HASH_ALGORITHM Algorithm;
     PZP_CLIENT_FILE_CHANNEL FileChannel = NULL;
-    ULONGLONG FileSize, Offset;
+    ULONGLONG FileSize, Offset, EnumerationId;
+    ULONG Attributes;
     ZP_FILE_CREATE_DISPOSITION Disposition;
-    ULONG MaxEntries;
     NTSTATUS Status;
 
     *Response = NULL;
@@ -1454,31 +1635,22 @@ ZpFile_Execute(
         return NT_SUCCESS(Status) ?
                    ZpFile_Query(&Path, Response, ResponseLength) : Status;
 
-    case ZP_FILE_OPERATION_ENUMERATE:
-        Status = ZpFile_DecodePath(Request, RequestLength, &Path);
-        return NT_SUCCESS(Status) ?
-                   ZpFile_Enumerate(&Path,
-                                    NULL,
-                                    MAXULONG,
-                                    FALSE,
-                                    Response,
-                                    ResponseLength) :
-                   Status;
-
     case ZP_FILE_OPERATION_ENUMERATE_PAGE:
+        if (Client == NULL)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
         Status = ZpFile_DecodeEnumeratePageRequest(Request,
                                                    RequestLength,
                                                    &Path,
-                                                   &Cursor,
-                                                   &MaxEntries);
+                                                   &EnumerationId);
         return NT_SUCCESS(Status) ?
-                   ZpFile_Enumerate(&Path,
-                                    &Cursor,
-                                    MaxEntries,
-                                    TRUE,
-                                    Response,
-                                    ResponseLength) :
-                   Status;
+                    ZpFile_EnumeratePage(Client,
+                                         &Path,
+                                         EnumerationId,
+                                         Response,
+                                         ResponseLength) :
+                    Status;
 
     case ZP_FILE_OPERATION_HASH:
         Status = ZpFile_DecodeHashRequest(Request,
@@ -1500,6 +1672,14 @@ ZpFile_Execute(
     case ZP_FILE_OPERATION_RENAME:
         Status = ZpFile_DecodeRenameRequest(Request, RequestLength, &Path, &NewPath);
         return NT_SUCCESS(Status) ? ZpFile_Rename(&Path, &NewPath) : Status;
+
+    case ZP_FILE_OPERATION_SET_ATTRIBUTES:
+        Status = ZpFile_DecodeSetAttributesRequest(Request,
+                                                   RequestLength,
+                                                   &Path,
+                                                   &Attributes);
+        return NT_SUCCESS(Status) ?
+                   ZpFile_SetAttributes(&Path, Attributes) : Status;
 
     case ZP_FILE_OPERATION_OPEN_READ:
         if (Client == NULL)

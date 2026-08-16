@@ -8,15 +8,25 @@ internal static class ManagementWebApi
     internal static void MapManagementApi(this WebApplication app, NativeServer server)
     {
         app.MapPost("/api/files", async (FilePageRequest request) =>
-            await server.EnumerateFilesPageAsync(request.Path, request.Cursor, request.MaxEntries));
+        {
+            var enumerationId = 0UL;
+            if (request.EnumerationId is not null &&
+                !ulong.TryParse(request.EnumerationId, out enumerationId))
+            {
+                return Results.BadRequest();
+            }
+            return Results.Ok(await server.EnumerateFilesPageAsync(request.Path, enumerationId));
+        });
         app.MapPost("/api/file/info", async (PathRequest request) =>
             await server.QueryFileAsync(request.Path));
-        app.MapPost("/api/file/hash", async (PathRequest request) =>
-            await server.HashFileAsync(request.Path));
+        app.MapPost("/api/file/hash", async (FileHashRequest request) =>
+            await server.HashFileAsync(request.Path, request.Algorithm));
         app.MapPost("/api/file/delete", async (PathRequest request) =>
             await server.DeleteFileAsync(request.Path));
         app.MapPost("/api/file/rename", async (FileRenameRequest request) =>
             await server.RenameFileAsync(request.Path, request.NewPath));
+        app.MapPost("/api/file/attributes", async (FileAttributesRequest request) =>
+            await server.SetFileAttributesAsync(request.Path, request.Attributes));
         app.MapGet("/api/file/download", async (HttpContext context, string path) =>
         {
             await using var transfer = await server.OpenFileReadAsync(path);
@@ -69,6 +79,22 @@ internal static class ManagementWebApi
                 await server.QueryProcessAsync(request.ProcessId, ulong.Parse(request.CreateTime))));
         app.MapPost("/api/process/terminate", async (ProcessIdentityRequest request) =>
             await server.TerminateProcessAsync(request.ProcessId, ulong.Parse(request.CreateTime)));
+        app.MapPost("/api/windows", async () => await server.EnumerateWindowsAsync());
+        app.MapPost("/api/window/info", async (WindowIdentityRequest request) =>
+            await server.QueryWindowAsync(ulong.Parse(request.Handle), request.ProcessId, request.ThreadId));
+        app.MapPost("/api/window/control", async (WindowControlRequest request) =>
+        {
+            if (!Enum.IsDefined(request.Control))
+            {
+                return Results.BadRequest();
+            }
+            await server.ControlWindowAsync(
+                ulong.Parse(request.Handle),
+                request.ProcessId,
+                request.ThreadId,
+                request.Control);
+            return Results.NoContent();
+        });
         app.MapPost("/api/services", async () => await server.EnumerateServicesAsync());
         app.MapPost("/api/service/info", async (ServiceRequest request) =>
             await server.QueryServiceAsync(request.ServiceName));
@@ -100,11 +126,19 @@ internal static class ManagementWebApi
 }
 
 internal sealed record PathRequest(string Path);
-internal sealed record FilePageRequest(string Path, string? Cursor, uint MaxEntries);
+internal sealed record FilePageRequest(string? Path, string? EnumerationId);
 internal sealed record FileRenameRequest(string Path, string NewPath);
+internal sealed record FileHashRequest(string Path, FileHashAlgorithm Algorithm);
+internal sealed record FileAttributesRequest(string Path, uint Attributes);
 internal sealed record ServiceRequest(string ServiceName);
 internal sealed record ServiceControlRequest(string ServiceName, ServiceControl Control, string? Argument);
 internal sealed record ProcessIdentityRequest(uint ProcessId, string CreateTime);
+internal sealed record WindowIdentityRequest(string Handle, uint ProcessId, uint ThreadId);
+internal sealed record WindowControlRequest(
+    string Handle,
+    uint ProcessId,
+    uint ThreadId,
+    WindowControl Control);
 internal sealed record ProcessWebRecord(
     uint ProcessId,
     uint ParentProcessId,

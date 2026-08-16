@@ -7,6 +7,7 @@
 #include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
 #include <KNSoft/ZPigeon/Terminal.h>
+#include <KNSoft/ZPigeon/Window.h>
 
 #include <stdio.h>
 
@@ -66,6 +67,7 @@ ZpClient_GetModuleLogName(
         case ZP_TERMINAL_MODULE_ID: return L"terminal.log";
         case ZP_EVENT_LOG_MODULE_ID: return L"eventlog.log";
         case ZP_REGISTRY_MODULE_ID: return L"registry.log";
+        case ZP_WINDOW_MODULE_ID: return L"window.log";
         default: return L"modules.log";
     }
 }
@@ -322,7 +324,8 @@ wmain(VOID)
         { ZP_FILE_MODULE_ID, ZP_FILE_MODULE_VERSION },
         { ZP_TERMINAL_MODULE_ID, ZP_TERMINAL_MODULE_VERSION },
         { ZP_EVENT_LOG_MODULE_ID, ZP_EVENT_LOG_MODULE_VERSION },
-        { ZP_REGISTRY_MODULE_ID, ZP_REGISTRY_MODULE_VERSION }
+        { ZP_REGISTRY_MODULE_ID, ZP_REGISTRY_MODULE_VERSION },
+        { ZP_WINDOW_MODULE_ID, ZP_WINDOW_MODULE_VERSION }
     };
     static const ZP_ENDPOINT Endpoint = {
         ZpTransportQuic,

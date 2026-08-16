@@ -1,0 +1,218 @@
+﻿#include <KNSoft/ZPigeon/Server.h>
+
+#include <KNSoft/MakeLifeEasier/Memory/Core.h>
+
+typedef union _ZP_WINDOW_CALLBACK
+{
+    ZP_WINDOW_ENUMERATE_CALLBACK Enumerate;
+    ZP_WINDOW_QUERY_CALLBACK Query;
+    ZP_REQUEST_STATUS_CALLBACK Status;
+} ZP_WINDOW_CALLBACK;
+
+typedef struct _ZP_WINDOW_CONTEXT
+{
+    ZP_WINDOW_CALLBACK Callback;
+    PVOID Context;
+} ZP_WINDOW_CONTEXT, *PZP_WINDOW_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpWindow_EnumerateComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_WINDOW_CONTEXT WindowContext = Context;
+    ZP_WINDOW_LIST_VIEW Windows;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(
+            ZpWindow_DecodeList(Payload->Buffer, Payload->Length, &Windows));
+    }
+    WindowContext->Callback.Enumerate(Request,
+                                      Status,
+                                      ZpStatus_IsSuccess(Status) ? &Windows : NULL,
+                                      WindowContext->Context);
+    Mem_Free(WindowContext);
+}
+
+static
+VOID
+NTAPI
+ZpWindow_QueryComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_WINDOW_CONTEXT WindowContext = Context;
+    ZP_WINDOW_INFO_VIEW Info;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(
+            ZpWindow_DecodeInfo(Payload->Buffer, Payload->Length, &Info));
+    }
+    WindowContext->Callback.Query(Request,
+                                  Status,
+                                  ZpStatus_IsSuccess(Status) ? &Info : NULL,
+                                  WindowContext->Context);
+    Mem_Free(WindowContext);
+}
+
+static
+VOID
+NTAPI
+ZpWindow_StatusComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_WINDOW_CONTEXT WindowContext = Context;
+
+    if (ZpStatus_IsSuccess(Status) && Payload->Length != 0)
+    {
+        Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
+    }
+    WindowContext->Callback.Status(Request, Status, WindowContext->Context);
+    Mem_Free(WindowContext);
+}
+
+static
+NTSTATUS
+ZpWindow_Send(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT OperationId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _In_ ZP_REQUEST_COMPLETE_CALLBACK Complete,
+    _In_ ZP_WINDOW_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_WINDOW_CONTEXT WindowContext;
+    NTSTATUS Status;
+
+    WindowContext = Mem_Alloc(sizeof(*WindowContext));
+    if (WindowContext == NULL) return STATUS_NO_MEMORY;
+    WindowContext->Callback = Callback;
+    WindowContext->Context = Context;
+    Status = ZpServer_SendRequest(Connection,
+                                  ZP_WINDOW_MODULE_ID,
+                                  OperationId,
+                                  TimeoutMilliseconds,
+                                  Payload,
+                                  PayloadLength,
+                                  Complete,
+                                  WindowContext,
+                                  Request);
+    if (!NT_SUCCESS(Status)) Mem_Free(WindowContext);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateWindows(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WINDOW_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_WINDOW_CALLBACK WindowCallback;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    WindowCallback.Enumerate = Callback;
+    return ZpWindow_Send(Connection,
+                         ZP_WINDOW_OPERATION_ENUMERATE,
+                         TimeoutMilliseconds,
+                         NULL,
+                         0,
+                         ZpWindow_EnumerateComplete,
+                         WindowCallback,
+                         Context,
+                         Request);
+}
+
+NTSTATUS
+NTAPI
+ZpServer_QueryWindow(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WINDOW_QUERY_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_WINDOW_CALLBACK WindowCallback;
+    BYTE Payload[sizeof(ULONGLONG) + 2 * sizeof(ULONG)];
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    WindowCallback.Query = Callback;
+    Status = ZpWindow_EncodeIdentity(Handle,
+                                     ProcessId,
+                                     ThreadId,
+                                     Payload,
+                                     sizeof(Payload),
+                                     &PayloadLength);
+    return NT_SUCCESS(Status) ?
+               ZpWindow_Send(Connection,
+                             ZP_WINDOW_OPERATION_QUERY,
+                             TimeoutMilliseconds,
+                             Payload,
+                             PayloadLength,
+                             ZpWindow_QueryComplete,
+                             WindowCallback,
+                             Context,
+                             Request) :
+               Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_ControlWindow(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ZP_WINDOW_CONTROL Control,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_WINDOW_CALLBACK WindowCallback;
+    BYTE Payload[sizeof(ULONGLONG) + 2 * sizeof(ULONG) + sizeof(USHORT)];
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    WindowCallback.Status = Callback;
+    Status = ZpWindow_EncodeControl(Handle,
+                                    ProcessId,
+                                    ThreadId,
+                                    Control,
+                                    Payload,
+                                    sizeof(Payload),
+                                    &PayloadLength);
+    return NT_SUCCESS(Status) ?
+               ZpWindow_Send(Connection,
+                             ZP_WINDOW_OPERATION_CONTROL,
+                             TimeoutMilliseconds,
+                             Payload,
+                             PayloadLength,
+                             ZpWindow_StatusComplete,
+                             WindowCallback,
+                             Context,
+                             Request) :
+               Status;
+}

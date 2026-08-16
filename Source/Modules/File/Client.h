@@ -5,6 +5,10 @@
 typedef struct _ZP_CLIENT_FILE_CHANNEL ZP_CLIENT_FILE_CHANNEL,
   *PZP_CLIENT_FILE_CHANNEL;
 
+VOID
+ZpFile_ResetEnumeration(
+    _Inout_ struct _ZP_CLIENT_OBJECT* Client);
+
 NTSTATUS
 ZpFile_Execute(
     _Inout_opt_ struct _ZP_CLIENT_OBJECT* Client,

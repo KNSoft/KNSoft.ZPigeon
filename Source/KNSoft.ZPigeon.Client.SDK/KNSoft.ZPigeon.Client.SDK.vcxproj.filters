@@ -8,6 +8,7 @@
     <Filter Include="Modules"><UniqueIdentifier>{9839cb5f-b2b4-4528-a237-948543bc124a}</UniqueIdentifier></Filter>
     <Filter Include="Modules\EventLog"><UniqueIdentifier>{7656ca23-7a73-4df8-bcbe-e8497e34e953}</UniqueIdentifier></Filter>
     <Filter Include="Modules\File"><UniqueIdentifier>{84b00e40-ae0e-447e-9811-f19bb2929dfe}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Window"><UniqueIdentifier>{df69eb8d-79d4-4a1e-9b36-d84686667351}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Process"><UniqueIdentifier>{e10eefb5-132e-4aac-9f46-2f19e88bbd85}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Registry"><UniqueIdentifier>{5715349f-e762-49a0-b11a-9ae027702182}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Service"><UniqueIdentifier>{b32c7d66-fda3-473b-880a-b4e564578aa9}</UniqueIdentifier></Filter>
@@ -22,6 +23,7 @@
     <ClCompile Include="Transport\Quic.c"><Filter>Transport</Filter></ClCompile>
     <ClCompile Include="..\Modules\EventLog\Client.c"><Filter>Modules\EventLog</Filter></ClCompile>
     <ClCompile Include="..\Modules\File\Client.c"><Filter>Modules\File</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Window\Client.c"><Filter>Modules\Window</Filter></ClCompile>
     <ClCompile Include="..\Modules\Process\Client.c"><Filter>Modules\Process</Filter></ClCompile>
     <ClCompile Include="..\Modules\Registry\Client.c"><Filter>Modules\Registry</Filter></ClCompile>
     <ClCompile Include="..\Modules\Service\Client.c"><Filter>Modules\Service</Filter></ClCompile>
@@ -41,6 +43,7 @@
     <ClInclude Include="Include\KNSoft\ZPigeon\Client.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="..\Modules\EventLog\Client.h"><Filter>Modules\EventLog</Filter></ClInclude>
     <ClInclude Include="..\Modules\File\Client.h"><Filter>Modules\File</Filter></ClInclude>
+    <ClInclude Include="..\Modules\Window\Client.h"><Filter>Modules\Window</Filter></ClInclude>
     <ClInclude Include="..\Modules\Process\Client.h"><Filter>Modules\Process</Filter></ClInclude>
     <ClInclude Include="..\Modules\Registry\Client.h"><Filter>Modules\Registry</Filter></ClInclude>
     <ClInclude Include="..\Modules\Service\Client.h"><Filter>Modules\Service</Filter></ClInclude>

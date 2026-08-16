@@ -1,0 +1,180 @@
+﻿#pragma once
+
+#include <KNSoft/ZPigeon/Protocol.h>
+
+EXTERN_C_START
+
+#define ZP_WINDOW_MODULE_ID 8
+#define ZP_WINDOW_MODULE_VERSION 1
+#define ZP_WINDOW_OPERATION_ENUMERATE 1
+#define ZP_WINDOW_OPERATION_QUERY 2
+#define ZP_WINDOW_OPERATION_CONTROL 3
+
+typedef USHORT ZP_WINDOW_CONTROL, *PZP_WINDOW_CONTROL;
+
+#define ZpWindowControlShow ((ZP_WINDOW_CONTROL)1)
+#define ZpWindowControlHide ((ZP_WINDOW_CONTROL)2)
+#define ZpWindowControlMinimize ((ZP_WINDOW_CONTROL)3)
+#define ZpWindowControlMaximize ((ZP_WINDOW_CONTROL)4)
+#define ZpWindowControlRestore ((ZP_WINDOW_CONTROL)5)
+#define ZpWindowControlForeground ((ZP_WINDOW_CONTROL)6)
+#define ZpWindowControlClose ((ZP_WINDOW_CONTROL)7)
+
+#define ZP_WINDOW_FLAG_VISIBLE 0x00000001UL
+#define ZP_WINDOW_FLAG_ENABLED 0x00000002UL
+#define ZP_WINDOW_FLAG_UNICODE 0x00000004UL
+#define ZP_WINDOW_FLAG_MINIMIZED 0x00000008UL
+#define ZP_WINDOW_FLAG_MAXIMIZED 0x00000010UL
+#define ZP_WINDOW_FLAG_TOP_LEVEL 0x00000020UL
+#define ZP_WINDOW_FLAG_HUNG 0x00000040UL
+#define ZP_WINDOW_FLAG_TOPMOST 0x00000080UL
+
+typedef struct _ZP_WINDOW_RECORD
+{
+    ULONGLONG Handle;
+    ULONGLONG ParentHandle;
+    ULONG ProcessId;
+    ULONG ThreadId;
+    ULONG Style;
+    ULONG ExStyle;
+    ULONG Flags;
+    PCWCH Caption;
+    ULONG CaptionLength;
+    PCWCH ClassName;
+    ULONG ClassNameLength;
+} ZP_WINDOW_RECORD, *PZP_WINDOW_RECORD;
+
+typedef const ZP_WINDOW_RECORD* PCZP_WINDOW_RECORD;
+
+typedef struct _ZP_WINDOW_RECORD_VIEW
+{
+    ULONGLONG Handle;
+    ULONGLONG ParentHandle;
+    ULONG ProcessId;
+    ULONG ThreadId;
+    ULONG Style;
+    ULONG ExStyle;
+    ULONG Flags;
+    ZP_STRING_VIEW Caption;
+    ZP_STRING_VIEW ClassName;
+} ZP_WINDOW_RECORD_VIEW, *PZP_WINDOW_RECORD_VIEW;
+
+typedef struct _ZP_WINDOW_LIST_VIEW
+{
+    const BYTE* Buffer;
+    ULONG Length;
+    ULONG Count;
+} ZP_WINDOW_LIST_VIEW, *PZP_WINDOW_LIST_VIEW;
+
+typedef const ZP_WINDOW_LIST_VIEW* PCZP_WINDOW_LIST_VIEW;
+
+typedef struct _ZP_WINDOW_INFO
+{
+    ZP_WINDOW_RECORD Record;
+    ULONGLONG OwnerHandle;
+    LONG WindowLeft;
+    LONG WindowTop;
+    LONG WindowRight;
+    LONG WindowBottom;
+    LONG ClientLeft;
+    LONG ClientTop;
+    LONG ClientRight;
+    LONG ClientBottom;
+    ULONG WindowStatus;
+    ULONG BorderWidth;
+    ULONG BorderHeight;
+    USHORT ClassAtom;
+    USHORT CreatorVersion;
+} ZP_WINDOW_INFO, *PZP_WINDOW_INFO;
+
+typedef const ZP_WINDOW_INFO* PCZP_WINDOW_INFO;
+
+typedef struct _ZP_WINDOW_INFO_VIEW
+{
+    ZP_WINDOW_RECORD_VIEW Record;
+    ULONGLONG OwnerHandle;
+    LONG WindowLeft;
+    LONG WindowTop;
+    LONG WindowRight;
+    LONG WindowBottom;
+    LONG ClientLeft;
+    LONG ClientTop;
+    LONG ClientRight;
+    LONG ClientBottom;
+    ULONG WindowStatus;
+    ULONG BorderWidth;
+    ULONG BorderHeight;
+    USHORT ClassAtom;
+    USHORT CreatorVersion;
+} ZP_WINDOW_INFO_VIEW, *PZP_WINDOW_INFO_VIEW;
+
+NTSTATUS
+ZpWindow_EncodeList(
+    _In_reads_opt_(WindowCount) PCZP_WINDOW_RECORD Windows,
+    _In_ ULONG WindowCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpWindow_DecodeList(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_WINDOW_LIST_VIEW View);
+
+NTSTATUS
+ZpWindow_GetRecord(
+    _In_ PCZP_WINDOW_LIST_VIEW List,
+    _In_ ULONG Index,
+    _Out_ PZP_WINDOW_RECORD_VIEW Record);
+
+NTSTATUS
+ZpWindow_EncodeIdentity(
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpWindow_DecodeIdentity(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONGLONG Handle,
+    _Out_ PULONG ProcessId,
+    _Out_ PULONG ThreadId);
+
+NTSTATUS
+ZpWindow_EncodeControl(
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ZP_WINDOW_CONTROL Control,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpWindow_DecodeControl(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONGLONG Handle,
+    _Out_ PULONG ProcessId,
+    _Out_ PULONG ThreadId,
+    _Out_ PZP_WINDOW_CONTROL Control);
+
+NTSTATUS
+ZpWindow_EncodeInfo(
+    _In_ PCZP_WINDOW_INFO Info,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpWindow_DecodeInfo(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_WINDOW_INFO_VIEW View);
+
+EXTERN_C_END

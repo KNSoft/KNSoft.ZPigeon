@@ -118,9 +118,11 @@ ZpClient_Create(
     }
     RtlZeroMemory(Object, sizeof(*Object));
     RtlInitializeSRWLock(&Object->Lock);
+    RtlInitializeSRWLock(&Object->FileEnumerationLock);
     InitializeListHead(&Object->InboundRequests);
     InitializeListHead(&Object->LocalChannels);
     Object->NextLocalChannelId = 1;
+    Object->NextFileEnumerationId = 1;
     Object->State = ZpClientStateStopped;
     Object->Config = *Config;
     Object->Config.ConnectTimeoutMilliseconds = Config->ConnectTimeoutMilliseconds != 0 ?
@@ -674,6 +676,7 @@ ZpClient_TransportShutdown(
     RtlReleaseSRWLockExclusive(&Object->Lock);
 
     ZpClient_CloseInboundRequests(Client);
+    ZpFile_ResetEnumeration(Object);
     ZpClientLocalChannel_CloseAll(Object, Status);
     if (State == ZpClientStateStopping)
     {
