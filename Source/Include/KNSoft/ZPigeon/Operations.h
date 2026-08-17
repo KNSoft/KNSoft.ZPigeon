@@ -1,15 +1,26 @@
 ﻿#pragma once
 
 #include <KNSoft/ZPigeon/SDK.h>
+#include <KNSoft/ZPigeon/Administration.h>
 #include <KNSoft/ZPigeon/EventLog.h>
+#include <KNSoft/ZPigeon/Execution.h>
 #include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/Registry.h>
 #include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
+#include <KNSoft/ZPigeon/Tunnel.h>
 #include <KNSoft/ZPigeon/Window.h>
 
 EXTERN_C_START
+
+typedef
+VOID
+(NTAPI *ZP_TUNNEL_OPEN_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_opt_ PVOID Context);
 
 NTSTATUS
 NTAPI
@@ -44,6 +55,46 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
     _In_opt_ const ZP_EVENT_LOG_PAGE_VIEW* Page,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_EVENT_LOG_CHANNELS_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_EVENT_LOG_CHANNEL_LIST_VIEW Channels,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_EVENT_LOG_CHANNEL_INFO_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ const ZP_EVENT_LOG_CHANNEL_INFO_VIEW* Info,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_EXECUTION_SESSIONS_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_EXECUTION_SESSION_LIST_VIEW Sessions,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_EXECUTION_JOBS_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_EXECUTION_JOB_LIST_VIEW Jobs,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_EXECUTION_STAGING_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_STRING_VIEW Path,
     _In_opt_ PVOID Context);
 
 typedef
@@ -109,6 +160,14 @@ VOID
 
 typedef
 VOID
+(NTAPI *ZP_FILE_VOLUME_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ const ZP_FILE_VOLUME_INFO_VIEW* Info,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
 (NTAPI *ZP_FILE_ENUMERATE_PAGE_CALLBACK)(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
@@ -156,6 +215,14 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
     _In_opt_ const ZP_PROCESS_INFO_VIEW* Info,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_PROCESS_DUMP_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_STRING_VIEW Path,
     _In_opt_ PVOID Context);
 
 typedef
@@ -212,6 +279,14 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
     _In_opt_ const ZP_WINDOW_INFO_VIEW* Info,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_ADMINISTRATION_ENUMERATE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_ADMINISTRATION_LIST_VIEW Records,
     _In_opt_ PVOID Context);
 
 EXTERN_C_END

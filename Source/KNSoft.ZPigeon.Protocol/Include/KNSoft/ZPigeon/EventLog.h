@@ -9,14 +9,26 @@ EXTERN_C_START
 #define ZP_EVENT_LOG_OPERATION_QUERY_PAGE 1
 #define ZP_EVENT_LOG_OPERATION_SET_CHANNEL_ENABLED 2
 #define ZP_EVENT_LOG_OPERATION_CLEAR 3
+#define ZP_EVENT_LOG_OPERATION_ENUMERATE_CHANNELS 4
+#define ZP_EVENT_LOG_OPERATION_QUERY_CHANNEL_INFO 5
+#define ZP_EVENT_LOG_OPERATION_CONFIGURE_CHANNEL 6
 #define ZP_EVENT_LOG_PAGE_MAX_COUNT 256
+#define ZP_EVENT_LOG_CHANNEL_MAX_COUNT 4096
 #define ZP_EVENT_LOG_BOOKMARK_MAX_LENGTH 0x00010000UL
 #define ZP_EVENT_LOG_XML_MAX_LENGTH 0x00100000UL
+
+typedef USHORT ZP_EVENT_LOG_RETENTION_MODE, *PZP_EVENT_LOG_RETENTION_MODE;
+
+#define ZpEventLogRetentionOverwrite ((ZP_EVENT_LOG_RETENTION_MODE)0)
+#define ZpEventLogRetentionArchive ((ZP_EVENT_LOG_RETENTION_MODE)1)
+#define ZpEventLogRetentionManual ((ZP_EVENT_LOG_RETENTION_MODE)2)
 
 typedef enum _ZP_EVENT_LOG_START_MODE
 {
     ZpEventLogStartOldest = 1,
-    ZpEventLogStartAfterBookmark = 2
+    ZpEventLogStartAfterBookmark = 2,
+    ZpEventLogStartAfterBookmarkForward = 3,
+    ZpEventLogStartForward = 4
 } ZP_EVENT_LOG_START_MODE, *PZP_EVENT_LOG_START_MODE;
 
 typedef struct _ZP_EVENT_LOG_QUERY_VIEW
@@ -59,6 +71,44 @@ typedef struct _ZP_EVENT_LOG_PAGE_VIEW
     ZP_STRING_VIEW NextBookmark;
     ZP_EVENT_LOG_LIST_VIEW Records;
 } ZP_EVENT_LOG_PAGE_VIEW, *PZP_EVENT_LOG_PAGE_VIEW;
+
+typedef struct _ZP_EVENT_LOG_CHANNEL_LIST_VIEW
+{
+    const BYTE* Buffer;
+    ULONG Length;
+    ULONG Count;
+} ZP_EVENT_LOG_CHANNEL_LIST_VIEW, *PZP_EVENT_LOG_CHANNEL_LIST_VIEW;
+
+typedef const ZP_EVENT_LOG_CHANNEL_LIST_VIEW* PCZP_EVENT_LOG_CHANNEL_LIST_VIEW;
+
+typedef struct _ZP_EVENT_LOG_CHANNEL_INFO
+{
+    BOOLEAN Enabled;
+    ULONG Type;
+    ZP_EVENT_LOG_RETENTION_MODE RetentionMode;
+    ULONGLONG MaximumSize;
+    ULONGLONG FileSize;
+    ULONGLONG CreationTime;
+    ULONGLONG LastAccessTime;
+    ULONGLONG LastWriteTime;
+    PCWCH LogFilePath;
+    ULONG LogFilePathLength;
+} ZP_EVENT_LOG_CHANNEL_INFO, *PZP_EVENT_LOG_CHANNEL_INFO;
+
+typedef const ZP_EVENT_LOG_CHANNEL_INFO* PCZP_EVENT_LOG_CHANNEL_INFO;
+
+typedef struct _ZP_EVENT_LOG_CHANNEL_INFO_VIEW
+{
+    BOOLEAN Enabled;
+    ULONG Type;
+    ZP_EVENT_LOG_RETENTION_MODE RetentionMode;
+    ULONGLONG MaximumSize;
+    ULONGLONG FileSize;
+    ULONGLONG CreationTime;
+    ULONGLONG LastAccessTime;
+    ULONGLONG LastWriteTime;
+    ZP_STRING_VIEW LogFilePath;
+} ZP_EVENT_LOG_CHANNEL_INFO_VIEW, *PZP_EVENT_LOG_CHANNEL_INFO_VIEW;
 
 NTSTATUS
 ZpEventLog_EncodeQueryPageRequest(
@@ -132,5 +182,58 @@ ZpEventLog_DecodeClearRequest(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_STRING_VIEW ChannelPath);
+
+NTSTATUS
+ZpEventLog_EncodeChannels(
+    _In_reads_opt_(ChannelCount) const ZP_STRING_VIEW* Channels,
+    _In_ ULONG ChannelCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpEventLog_DecodeChannels(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_EVENT_LOG_CHANNEL_LIST_VIEW View);
+
+NTSTATUS
+ZpEventLog_GetChannel(
+    _In_ PCZP_EVENT_LOG_CHANNEL_LIST_VIEW List,
+    _In_ ULONG Index,
+    _Out_ PZP_STRING_VIEW Channel);
+
+NTSTATUS
+ZpEventLog_EncodeChannelInfo(
+    _In_ PCZP_EVENT_LOG_CHANNEL_INFO Info,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpEventLog_DecodeChannelInfo(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_EVENT_LOG_CHANNEL_INFO_VIEW Info);
+
+NTSTATUS
+ZpEventLog_EncodeConfigureChannelRequest(
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_ BOOLEAN Enabled,
+    _In_ ZP_EVENT_LOG_RETENTION_MODE RetentionMode,
+    _In_ ULONGLONG MaximumSize,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpEventLog_DecodeConfigureChannelRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW ChannelPath,
+    _Out_ PBOOLEAN Enabled,
+    _Out_ PZP_EVENT_LOG_RETENTION_MODE RetentionMode,
+    _Out_ PULONGLONG MaximumSize);
 
 EXTERN_C_END

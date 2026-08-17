@@ -1,4 +1,5 @@
 ﻿#include <KNSoft/ZPigeon/Client.h>
+#include <KNSoft/ZPigeon/Administration.h>
 #include <KNSoft/ZPigeon/EventLog.h>
 #include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Operations.h>

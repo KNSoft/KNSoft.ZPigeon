@@ -6,6 +6,7 @@ typedef union _ZP_PROCESS_CALLBACK
 {
     ZP_PROCESS_ENUMERATE_CALLBACK Enumerate;
     ZP_PROCESS_QUERY_CALLBACK Query;
+    ZP_PROCESS_DUMP_CALLBACK Dump;
     ZP_REQUEST_STATUS_CALLBACK Status;
 } ZP_PROCESS_CALLBACK;
 
@@ -86,6 +87,29 @@ ZpProcess_StatusComplete(
     ProcessContext->Callback.Status(Request,
                                     Status,
                                     ProcessContext->Context);
+    Mem_Free(ProcessContext);
+}
+
+static
+VOID
+NTAPI
+ZpProcess_DumpComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_PROCESS_CONTEXT ProcessContext = Context;
+    ZP_STRING_VIEW Path;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(ZpProcess_DecodeDumpPath(Payload->Buffer, Payload->Length, &Path));
+    }
+    ProcessContext->Callback.Dump(Request,
+                                  Status,
+                                  ZpStatus_IsSuccess(Status) ? &Path : NULL,
+                                  ProcessContext->Context);
     Mem_Free(ProcessContext);
 }
 
@@ -196,18 +220,19 @@ ZpServer_QueryProcess(
 
 NTSTATUS
 NTAPI
-ZpServer_TerminateProcess(
+ZpServer_ControlProcess(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ULONG ProcessId,
     _In_ ULONGLONG CreateTime,
-    _In_ ULONG ExitCode,
+    _In_ ZP_PROCESS_CONTROL Control,
+    _In_ ULONG Value,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
     ZP_PROCESS_CALLBACK ProcessCallback;
-    BYTE Payload[2 * sizeof(ULONG) + sizeof(ULONGLONG)];
+    BYTE Payload[2 * sizeof(ULONG) + sizeof(ULONGLONG) + sizeof(USHORT)];
     ULONG PayloadLength;
     NTSTATUS Status;
 
@@ -216,19 +241,58 @@ ZpServer_TerminateProcess(
         return STATUS_INVALID_PARAMETER;
     }
     ProcessCallback.Status = Callback;
-    Status = ZpProcess_EncodeTerminate(ProcessId,
-                                       CreateTime,
-                                       ExitCode,
-                                       Payload,
-                                       sizeof(Payload),
-                                       &PayloadLength);
+    Status = ZpProcess_EncodeControl(ProcessId,
+                                     CreateTime,
+                                     Control,
+                                     Value,
+                                     Payload,
+                                     sizeof(Payload),
+                                     &PayloadLength);
     return NT_SUCCESS(Status) ?
                ZpProcess_Send(Connection,
-                              ZP_PROCESS_OPERATION_TERMINATE,
+                              ZP_PROCESS_OPERATION_CONTROL,
                               TimeoutMilliseconds,
                               Payload,
                               PayloadLength,
                               ZpProcess_StatusComplete,
+                              ProcessCallback,
+                              Context,
+                              Request) :
+               Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_CreateProcessDump(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONG DumpType,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PROCESS_DUMP_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_PROCESS_CALLBACK ProcessCallback;
+    BYTE Payload[2 * sizeof(ULONG) + sizeof(ULONGLONG)];
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    ProcessCallback.Dump = Callback;
+    Status = ZpProcess_EncodeDump(ProcessId,
+                                  CreateTime,
+                                  DumpType,
+                                  Payload,
+                                  sizeof(Payload),
+                                  &PayloadLength);
+    return NT_SUCCESS(Status) ?
+               ZpProcess_Send(Connection,
+                              ZP_PROCESS_OPERATION_DUMP,
+                              TimeoutMilliseconds,
+                              Payload,
+                              PayloadLength,
+                              ZpProcess_DumpComplete,
                               ProcessCallback,
                               Context,
                               Request) :

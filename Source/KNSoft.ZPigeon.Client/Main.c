@@ -1,12 +1,15 @@
 ﻿#include <KNSoft/MakeLifeEasier/IO/File.h>
 #include <KNSoft/ZPigeon/Client.h>
+#include <KNSoft/ZPigeon/Administration.h>
 #include <KNSoft/ZPigeon/EventLog.h>
+#include <KNSoft/ZPigeon/Execution.h>
 #include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/Registry.h>
 #include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
 #include <KNSoft/ZPigeon/Terminal.h>
+#include <KNSoft/ZPigeon/Tunnel.h>
 #include <KNSoft/ZPigeon/Window.h>
 
 #include <stdio.h>
@@ -49,6 +52,7 @@ ZpClient_GetStatusTypeName(
         case ZpStatusSecurity: return "Security";
         case ZpStatusQuic: return "QUIC";
         case ZpStatusProcessExit: return "ProcessExit";
+        case ZpStatusConfigurationManager: return "ConfigurationManager";
         default: return "Unknown";
     }
 }
@@ -56,8 +60,14 @@ ZpClient_GetStatusTypeName(
 static
 PCWSTR
 ZpClient_GetModuleLogName(
-    _In_ USHORT ModuleId)
+    _In_ USHORT ModuleId,
+    _In_ USHORT OperationId)
 {
+    static PCWSTR const AdministrationLogs[] = {
+        L"user.log", L"software.log", L"hardware.log", L"update.log", L"task.log",
+        L"firewall.log", L"power.log", L"software.log", L"system.log", L"wlan.log"
+    };
+
     switch (ModuleId)
     {
         case ZP_SYSTEM_MODULE_ID: return L"system.log";
@@ -66,8 +76,14 @@ ZpClient_GetModuleLogName(
         case ZP_FILE_MODULE_ID: return L"file.log";
         case ZP_TERMINAL_MODULE_ID: return L"terminal.log";
         case ZP_EVENT_LOG_MODULE_ID: return L"eventlog.log";
+        case ZP_EXECUTION_MODULE_ID: return L"execution.log";
+        case ZP_TUNNEL_MODULE_ID: return L"tunnel.log";
         case ZP_REGISTRY_MODULE_ID: return L"registry.log";
         case ZP_WINDOW_MODULE_ID: return L"window.log";
+        case ZP_ADMINISTRATION_MODULE_ID:
+            return OperationId >= ZP_ADMINISTRATION_OPERATION_ENUMERATE_USERS &&
+                   OperationId <= ZP_ADMINISTRATION_OPERATION_CONTROL_WLAN ?
+                       AdministrationLogs[(OperationId - 1) / 2] : L"administration.log";
         default: return L"modules.log";
     }
 }
@@ -189,7 +205,7 @@ ZpClient_OperationCallback(
               "operation module=%hu id=%hu",
               ModuleId,
               OperationId);
-    ZpClient_WriteLog(ZpClient_GetModuleLogName(ModuleId),
+    ZpClient_WriteLog(ZpClient_GetModuleLogName(ModuleId, OperationId),
                       Event,
                       Status);
 }
@@ -325,7 +341,10 @@ wmain(VOID)
         { ZP_TERMINAL_MODULE_ID, ZP_TERMINAL_MODULE_VERSION },
         { ZP_EVENT_LOG_MODULE_ID, ZP_EVENT_LOG_MODULE_VERSION },
         { ZP_REGISTRY_MODULE_ID, ZP_REGISTRY_MODULE_VERSION },
-        { ZP_WINDOW_MODULE_ID, ZP_WINDOW_MODULE_VERSION }
+        { ZP_WINDOW_MODULE_ID, ZP_WINDOW_MODULE_VERSION },
+        { ZP_ADMINISTRATION_MODULE_ID, ZP_ADMINISTRATION_MODULE_VERSION },
+        { ZP_EXECUTION_MODULE_ID, ZP_EXECUTION_MODULE_VERSION },
+        { ZP_TUNNEL_MODULE_ID, ZP_TUNNEL_MODULE_VERSION }
     };
     static const ZP_ENDPOINT Endpoint = {
         ZpTransportQuic,

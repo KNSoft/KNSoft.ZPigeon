@@ -1,5 +1,7 @@
 ﻿#include "Client.h"
 
+#include "../../KNSoft.ZPigeon.Client.SDK/Core/Account.h"
+
 #include <KNSoft/MakeLifeEasier/Memory/Core.h>
 #include <KNSoft/MakeLifeEasier/Process/Environment.h>
 #include <KNSoft/MakeLifeEasier/Process/Token.h>
@@ -8,19 +10,7 @@
 #include <Shlwapi.h>
 #include <Winsvc.h>
 
-#pragma comment(lib, "KNSoft.NDK.WinAPI.lib")
 #pragma comment(lib, "Shlwapi.lib")
-
-DECLSPEC_IMPORT
-BOOL
-WINAPI
-LookupAccountSidLocalW(
-    _In_ PSID Sid,
-    _Out_writes_to_opt_(*NameLength, *NameLength) PWSTR Name,
-    _Inout_ PULONG NameLength,
-    _Out_writes_to_opt_(*DomainNameLength, *DomainNameLength) PWSTR DomainName,
-    _Inout_ PULONG DomainNameLength,
-    _Out_ PSID_NAME_USE Use);
 
 typedef struct _ZP_SERVICE_RECORD_ALLOCATION
 {
@@ -108,79 +98,16 @@ PUNICODE_STRING
 ZpService_QueryUserContextAccount(
     _In_ ULONGLONG Context)
 {
-    PTOKEN_USER User;
     PUNICODE_STRING AccountName = NULL;
     HANDLE Token;
-    NTSTATUS Status;
     HRESULT Result;
-    SID_NAME_USE Use;
-    ULONG NameLength = 0, DomainNameLength = 0, AccountNameLength;
-    PWCHAR Name, DomainName;
 
     Result = UMgrQueryUserToken(Context, &Token);
-    if (FAILED(Result))
+    if (SUCCEEDED(Result))
     {
-        return NULL;
+        ZpAccount_QueryTokenName(Token, &AccountName);
+        NtClose(Token);
     }
-    Status = PS_GetTokenInfo(Token, TokenUser, (PVOID*)&User);
-    NtClose(Token);
-    if (!NT_SUCCESS(Status))
-    {
-        return NULL;
-    }
-    if (LookupAccountSidLocalW(User->User.Sid,
-                               NULL,
-                               &NameLength,
-                               NULL,
-                               &DomainNameLength,
-                               &Use) ||
-        GetLastError() != ERROR_INSUFFICIENT_BUFFER || NameLength == 0)
-    {
-        goto Cleanup;
-    }
-    AccountNameLength = NameLength - 1;
-    if (DomainNameLength > 1)
-    {
-        AccountNameLength += DomainNameLength;
-    }
-    if (AccountNameLength > (MAXUSHORT - sizeof(WCHAR)) / sizeof(WCHAR))
-    {
-        goto Cleanup;
-    }
-    AccountName = NT_AllocStringW((USHORT)AccountNameLength);
-    if (AccountName == NULL)
-    {
-        goto Cleanup;
-    }
-    if (DomainNameLength > 1)
-    {
-        DomainName = AccountName->Buffer;
-        Name = DomainName + DomainNameLength;
-    }
-    else
-    {
-        DomainName = NULL;
-        Name = AccountName->Buffer;
-        DomainNameLength = 0;
-    }
-    if (!LookupAccountSidLocalW(User->User.Sid,
-                                Name,
-                                &NameLength,
-                                DomainName,
-                                &DomainNameLength,
-                                &Use))
-    {
-        Mem_Free(AccountName);
-        AccountName = NULL;
-        goto Cleanup;
-    }
-    if (DomainName != NULL)
-    {
-        Name[-1] = L'\\';
-    }
-
-Cleanup:
-    Mem_Free(User);
     return AccountName;
 }
 

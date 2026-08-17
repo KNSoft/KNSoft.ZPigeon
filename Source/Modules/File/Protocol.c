@@ -190,7 +190,7 @@ ZpFile_EncodeEnumeratePageRequest(
     NTSTATUS Status;
 
     if (PathLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
-        (EnumerationId == 0) != (PathLength != 0) ||
+        (EnumerationId != 0 && PathLength != 0) ||
         (PathLength != 0 && Path == NULL))
     {
         return STATUS_INVALID_PARAMETER;
@@ -236,7 +236,7 @@ ZpFile_DecodeEnumeratePageRequest(
         Status = ZpCodec_ReadString(&Reader, Path);
     }
     if (!NT_SUCCESS(Status) ||
-        (*EnumerationId == 0) != (Path->Length != 0) ||
+        (*EnumerationId != 0 && Path->Length != 0) ||
         Reader.Offset != PayloadLength)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
@@ -1023,4 +1023,59 @@ ZpFile_GetRecord(
                                    CurrentIndex == Index ? Record : NULL);
     }
     return Status;
+}
+
+NTSTATUS
+ZpFile_EncodeVolumeInfo(
+    _In_ PCZP_FILE_VOLUME_INFO Info,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize;
+    NTSTATUS Status;
+
+    if ((Info->LabelLength != 0 && Info->Label == NULL) ||
+        (Info->FileSystemLength != 0 && Info->FileSystem == NULL) ||
+        Info->LabelLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Info->FileSystemLength > ZP_CODEC_MAX_ELEMENT_COUNT)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = 9 * sizeof(ULONG) +
+                   ((ULONGLONG)Info->LabelLength + Info->FileSystemLength) * sizeof(WCHAR);
+    if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12) return STATUS_BUFFER_OVERFLOW;
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt64(&Writer, Info->TotalBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->FreeBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Info->SerialNumber);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Info->MaximumComponentLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Info->FileSystemFlags);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Info->Label, Info->LabelLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Info->FileSystem, Info->FileSystemLength);
+    return Status;
+}
+
+NTSTATUS
+ZpFile_DecodeVolumeInfo(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_VOLUME_INFO_VIEW Info)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt64(&Reader, &Info->TotalBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &Info->FreeBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Info->SerialNumber);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Info->MaximumComponentLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Info->FileSystemFlags);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Info->Label);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Info->FileSystem);
+    return NT_SUCCESS(Status) && Reader.Offset != PayloadLength ? STATUS_DATA_ERROR : Status;
 }

@@ -35,13 +35,13 @@ export class RegistryEditor{
   }
 
   resetTree(){
-    this.tree.replaceChildren();this.selected=null;this.values=[];this.valueRequest++;this.body.replaceChildren();this.empty.hidden=false;this.address.textContent='';
-    for(const [root,name] of ROOTS){const node={root,name,path:'',parent:null,hasChildren:true,loaded:false,loading:false,expanded:false};node.element=this.renderNode(node);this.tree.append(node.element)}
+    this.tree.replaceChildren();this.roots=new Map();this.selected=null;this.values=[];this.valueRequest++;this.body.replaceChildren();this.empty.hidden=false;this.address.textContent='';
+    for(const [root,name] of ROOTS){const node={root,name,path:'',parent:null,hasChildren:true,loaded:false,loading:false,expanded:false};node.element=this.renderNode(node);this.roots.set(root,node);this.tree.append(node.element)}
   }
 
   renderNode(node){
     const li=document.createElement('li'),row=document.createElement('div'),arrow=document.createElement('button'),label=document.createElement('button'),children=document.createElement('ul');
-    li.className='registry-node';row.className='registry-node-row';arrow.className='registry-arrow';arrow.textContent=node.hasChildren?'▸':'';arrow.disabled=!node.hasChildren;arrow.tabIndex=-1;label.className='registry-node-label';label.textContent=node.name;children.hidden=true;
+    li.className='registry-node';li.node=node;row.className='registry-node-row';arrow.className='registry-arrow';arrow.textContent=node.hasChildren?'▸':'';arrow.disabled=!node.hasChildren;arrow.tabIndex=-1;label.className='registry-node-label';label.textContent=node.name;children.hidden=true;
     row.append(arrow,label);li.append(row,children);node.row=row;node.arrow=arrow;node.label=label;node.children=children;
     arrow.onclick=event=>{event.stopPropagation();this.toggle(node)};label.onclick=event=>{if(event.detail>1)return;this.select(node);this.toggle(node)};row.oncontextmenu=event=>{event.preventDefault();this.select(node);this.openMenu(this.keyMenu,event);this.action('key-rename').disabled=this.action('key-delete').disabled=node.parent===null};
     return li;
@@ -64,6 +64,10 @@ export class RegistryEditor{
 
   select(node){
     this.selected?.row.classList.remove('selected');this.selected=node;node.row.classList.add('selected');this.address.textContent=`${ROOTS.find(root=>root[0]===node.root)[1]}${node.path?`\\${node.path}`:''}`;this.values=[];this.body.replaceChildren();this.more.hidden=true;this.empty.textContent='正在读取…';this.empty.hidden=false;this.loadValues();
+  }
+
+  async reveal(root,path){
+    let node=this.roots.get(root);if(!node)return;for(const name of path.split('\\').filter(Boolean)){if(!node.loaded)await this.loadChildren(node);let child=[...node.children.children].map(item=>item.node).find(item=>item?.name.toLocaleLowerCase()===name.toLocaleLowerCase());while(!child&&node.cursor){await this.loadChildren(node,true);child=[...node.children.children].map(item=>item.node).find(item=>item?.name.toLocaleLowerCase()===name.toLocaleLowerCase())}if(!child){this.notify(`未找到注册表项 ${path}`);return}node=child}this.select(node);node.element.scrollIntoView({block:'center'})
   }
 
   async loadValues(append=false){

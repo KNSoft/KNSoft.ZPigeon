@@ -448,12 +448,11 @@ SDKTest_SystemConnectionSend(
     }
     else if (Request.ModuleId == ZP_PROCESS_MODULE_ID)
     {
-        Status = ZpProcess_Execute(Request.OperationId,
-                                   Request.Payload.Buffer,
-                                   Request.Payload.Length,
-                                   &AllocatedPayload,
-                                   &PayloadLength);
-        ResultStatus = ZpStatus_FromNtStatus(Status);
+        ResultStatus = ZpProcess_Execute(Request.OperationId,
+                                         Request.Payload.Buffer,
+                                         Request.Payload.Length,
+                                         &AllocatedPayload,
+                                         &PayloadLength);
     }
     else if (Request.ModuleId == ZP_SERVICE_MODULE_ID)
     {

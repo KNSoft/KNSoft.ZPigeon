@@ -73,6 +73,24 @@ public sealed partial class NativeServer
                                    descriptor.Info);
     }
 
+    public Task<TerminalSession> CreateScriptTerminalAsync(
+        TerminalShell shell,
+        string path,
+        ushort columns,
+        ushort rows)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        var descriptor = GetTerminalShell(shell);
+        var commandLine = shell switch
+        {
+            TerminalShell.CommandPrompt => $"cmd.exe /D /Q /C call \"{path}\"",
+            TerminalShell.WindowsPowerShell => $"powershell.exe -File \"{path}\"",
+            TerminalShell.PowerShell => $"pwsh.exe -File \"{path}\"",
+            _ => throw new ArgumentOutOfRangeException(nameof(shell))
+        };
+        return CreateTerminalAsync(commandLine, columns, rows, null, descriptor.Info);
+    }
+
     public Task<TerminalSession> CreateTerminalAsync(
         string commandLine,
         ushort columns,

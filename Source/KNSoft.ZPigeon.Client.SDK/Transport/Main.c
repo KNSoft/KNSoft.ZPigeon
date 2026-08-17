@@ -1,5 +1,6 @@
 ﻿#include "../Client.inl"
 #include "../Core/Channel.h"
+#include "../../Modules/Execution/Client.h"
 #include "../../Modules/File/Client.h"
 #include "../../Network/Config.inl"
 #include "Retry.inl"
@@ -119,10 +120,13 @@ ZpClient_Create(
     RtlZeroMemory(Object, sizeof(*Object));
     RtlInitializeSRWLock(&Object->Lock);
     RtlInitializeSRWLock(&Object->FileEnumerationLock);
+    RtlInitializeSRWLock(&Object->ExecutionLock);
     InitializeListHead(&Object->InboundRequests);
     InitializeListHead(&Object->LocalChannels);
+    InitializeListHead(&Object->ExecutionJobs);
     Object->NextLocalChannelId = 1;
     Object->NextFileEnumerationId = 1;
+    Object->NextExecutionJobId = 1;
     Object->State = ZpClientStateStopped;
     Object->Config = *Config;
     Object->Config.ConnectTimeoutMilliseconds = Config->ConnectTimeoutMilliseconds != 0 ?
@@ -717,6 +721,7 @@ ZpClient_Close(
         Object->RetryTimer = NULL;
     }
     ZpClientQuic_Uninitialize(&Object->QuicTransport);
+    ZpExecution_Cleanup(Object);
     Mem_Free(Object);
     return STATUS_SUCCESS;
 }

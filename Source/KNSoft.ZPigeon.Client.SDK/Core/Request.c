@@ -1,11 +1,14 @@
 ﻿#include "../Client.inl"
+#include "../../Modules/Administration/Client.h"
 #include "../../Modules/EventLog/Client.h"
+#include "../../Modules/Execution/Client.h"
 #include "../../Modules/File/Client.h"
 #include "../../Modules/Process/Client.h"
 #include "../../Modules/Registry/Client.h"
 #include "../../Modules/Service/Client.h"
 #include "../../Modules/System/Client.h"
 #include "../../Modules/Terminal/Client.h"
+#include "../../Modules/Tunnel/Client.h"
 #include "../../Modules/Window/Client.h"
 
 typedef struct _ZP_CLIENT_INBOUND_REQUEST
@@ -30,8 +33,12 @@ ZpClientInbound_ReleaseRequest(
 {
     if (InterlockedDecrement(&Request->ReferenceCount) == 0)
     {
-        if (Request->ModuleId == ZP_SERVICE_MODULE_ID &&
-            Request->OperationId == ZP_SERVICE_OPERATION_CONFIGURE_ACCOUNT)
+        if ((Request->ModuleId == ZP_SERVICE_MODULE_ID &&
+             Request->OperationId == ZP_SERVICE_OPERATION_CONFIGURE_ACCOUNT) ||
+            (Request->ModuleId == ZP_ADMINISTRATION_MODULE_ID &&
+             Request->OperationId == ZP_ADMINISTRATION_OPERATION_CONTROL_USER) ||
+            (Request->ModuleId == ZP_EXECUTION_MODULE_ID &&
+             Request->OperationId == ZP_EXECUTION_OPERATION_START))
         {
             RtlSecureZeroMemory(Request->Payload, Request->PayloadLength);
         }
@@ -124,6 +131,7 @@ ZpClientInbound_RequestCallback(
     PBYTE AllocatedResponse = NULL;
     PZP_CLIENT_FILE_CHANNEL FileChannel = NULL;
     PZP_CLIENT_TERMINAL_CHANNEL TerminalChannel = NULL;
+    PZP_CLIENT_TUNNEL_CHANNEL TunnelChannel = NULL;
     ULONG PayloadLength = 0;
     NTSTATUS ModuleStatus, SendStatus = STATUS_CANCELLED;
     ZP_STATUS Status;
@@ -159,12 +167,11 @@ ZpClientInbound_RequestCallback(
     }
     else if (Request->ModuleId == ZP_PROCESS_MODULE_ID)
     {
-        ModuleStatus = ZpProcess_Execute(Request->OperationId,
-                                         Request->Payload,
-                                         Request->PayloadLength,
-                                         &AllocatedResponse,
-                                         &PayloadLength);
-        Status = ZpStatus_FromNtStatus(ModuleStatus);
+        Status = ZpProcess_Execute(Request->OperationId,
+                                   Request->Payload,
+                                   Request->PayloadLength,
+                                   &AllocatedResponse,
+                                   &PayloadLength);
         Response = AllocatedResponse;
     }
     else if (Request->ModuleId == ZP_SERVICE_MODULE_ID)
@@ -196,6 +203,16 @@ ZpClientInbound_RequestCallback(
                                     &PayloadLength);
         Response = AllocatedResponse;
     }
+    else if (Request->ModuleId == ZP_EXECUTION_MODULE_ID)
+    {
+        Status = ZpExecution_Execute(Object,
+                                     Request->OperationId,
+                                     Request->Payload,
+                                     Request->PayloadLength,
+                                     &AllocatedResponse,
+                                     &PayloadLength);
+        Response = AllocatedResponse;
+    }
     else if (Request->ModuleId == ZP_TERMINAL_MODULE_ID)
     {
         Status = ZpTerminal_Execute(Object,
@@ -214,6 +231,26 @@ ZpClientInbound_RequestCallback(
                                   Request->PayloadLength,
                                   &AllocatedResponse,
                                   &PayloadLength);
+        Response = AllocatedResponse;
+    }
+    else if (Request->ModuleId == ZP_TUNNEL_MODULE_ID)
+    {
+        Status = ZpTunnel_Execute(Object,
+                                  Request->OperationId,
+                                  Request->Payload,
+                                  Request->PayloadLength,
+                                  &AllocatedResponse,
+                                  &PayloadLength,
+                                  &TunnelChannel);
+        Response = AllocatedResponse;
+    }
+    else if (Request->ModuleId == ZP_ADMINISTRATION_MODULE_ID)
+    {
+        Status = ZpAdministration_Execute(Request->OperationId,
+                                          Request->Payload,
+                                          Request->PayloadLength,
+                                          &AllocatedResponse,
+                                          &PayloadLength);
         Response = AllocatedResponse;
     }
     else
@@ -258,6 +295,11 @@ ZpClientInbound_RequestCallback(
     {
         ZpTerminal_CommitChannel(TerminalChannel,
                                  Respond && NT_SUCCESS(SendStatus));
+    }
+    if (TunnelChannel != NULL)
+    {
+        ZpTunnel_CommitChannel(TunnelChannel,
+                               Respond && NT_SUCCESS(SendStatus));
     }
     if (AllocatedResponse != NULL)
     {

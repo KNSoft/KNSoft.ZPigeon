@@ -89,6 +89,19 @@ ZpServer_Close(
 
 NTSTATUS
 NTAPI
+ZpServer_OpenTunnel(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT Port,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_TUNNEL_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_SendRequest(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ USHORT ModuleId,
@@ -219,6 +232,26 @@ ZpServer_QueryEventLogPage(
 
 NTSTATUS
 NTAPI
+ZpServer_EnumerateEventLogChannels(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_EVENT_LOG_CHANNELS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryEventLogChannelInfo(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_EVENT_LOG_CHANNEL_INFO_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_SetEventLogChannelEnabled(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_reads_(ChannelPathLength) PCWCH ChannelPath,
@@ -235,6 +268,20 @@ ZpServer_ClearEventLog(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_reads_(ChannelPathLength) PCWCH ChannelPath,
     _In_ ULONG ChannelPathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ConfigureEventLogChannel(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_ BOOLEAN Enabled,
+    _In_ ZP_EVENT_LOG_RETENTION_MODE RetentionMode,
+    _In_ ULONGLONG MaximumSize,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
@@ -310,13 +357,26 @@ ZpServer_QueryProcess(
 
 NTSTATUS
 NTAPI
-ZpServer_TerminateProcess(
+ZpServer_ControlProcess(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ULONG ProcessId,
     _In_ ULONGLONG CreateTime,
-    _In_ ULONG ExitCode,
+    _In_ ZP_PROCESS_CONTROL Control,
+    _In_ ULONG Value,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_CreateProcessDump(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONG DumpType,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PROCESS_DUMP_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 
@@ -356,10 +416,110 @@ ZpServer_ControlWindow(
 
 NTSTATUS
 NTAPI
+ZpServer_EnumerateAdministration(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT OperationId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_ADMINISTRATION_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ControlAdministration(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT OperationId,
+    _In_ ZP_ADMINISTRATION_ACTION Action,
+    _In_reads_opt_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
+    _In_reads_opt_(ArgumentLength) PCWCH Argument,
+    _In_ ULONG ArgumentLength,
+    _In_reads_opt_(SecretLength) PCWCH Secret,
+    _In_ ULONG SecretLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_EnumerateServices(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_SERVICE_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryFileVolume(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_VOLUME_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_SetFileVolumeLabel(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(LabelLength) PCWCH Label,
+    _In_ ULONG LabelLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateExecutionSessions(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_EXECUTION_SESSIONS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_StartExecution(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ PCZP_EXECUTION_START Start,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_EXECUTION_JOBS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateExecutionJobs(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_EXECUTION_JOBS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_TerminateExecution(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONGLONG JobId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_CreateExecutionStaging(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_EXECUTION_STAGING_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 

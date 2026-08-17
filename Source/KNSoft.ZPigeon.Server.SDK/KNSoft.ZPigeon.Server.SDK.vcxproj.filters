@@ -7,7 +7,9 @@
     <Filter Include="SDK"><UniqueIdentifier>{b4adb6ba-981a-4317-93bb-1de76cd73b41}</UniqueIdentifier></Filter>
     <Filter Include="Transport"><UniqueIdentifier>{80927879-e53a-453e-b207-3f31cc2baafc}</UniqueIdentifier></Filter>
     <Filter Include="Modules"><UniqueIdentifier>{3144764a-a2d8-45b1-aa42-b074b04da16e}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Administration"><UniqueIdentifier>{56aef99d-930d-4b8f-9287-5f3106632ebd}</UniqueIdentifier></Filter>
     <Filter Include="Modules\EventLog"><UniqueIdentifier>{e6b4b6cf-b1eb-4136-9169-343e3677543e}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Execution"><UniqueIdentifier>{e31de256-d0ef-4c27-b72b-c6dd5e76b490}</UniqueIdentifier></Filter>
     <Filter Include="Modules\File"><UniqueIdentifier>{69b20314-060a-48a4-8ef2-02cb0535658e}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Window"><UniqueIdentifier>{f245609c-669f-4fa1-83cb-99a6f47153f4}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Process"><UniqueIdentifier>{224c3836-049a-4297-810c-ecb4f2274c88}</UniqueIdentifier></Filter>
@@ -15,8 +17,10 @@
     <Filter Include="Modules\Service"><UniqueIdentifier>{180a08ed-a7ca-4ff1-bb7a-75b9f79ca4c4}</UniqueIdentifier></Filter>
     <Filter Include="Modules\System"><UniqueIdentifier>{f07c758e-39bb-4f04-a06b-f886c991da15}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Terminal"><UniqueIdentifier>{fac428f7-a48c-4bbd-aa49-ef4acd2fa7a4}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Tunnel"><UniqueIdentifier>{ea599d7c-dbcd-45b1-bfac-0bb50a31ca27}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\Modules\Administration\Server.c"><Filter>Modules\Administration</Filter></ClCompile>
     <ClCompile Include="Core\Channel.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="Core\Connection.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="Core\Request.c"><Filter>Core</Filter></ClCompile>
@@ -26,6 +30,7 @@
     <ClCompile Include="Transport\Main.c"><Filter>Transport</Filter></ClCompile>
     <ClCompile Include="Transport\Quic.c"><Filter>Transport</Filter></ClCompile>
     <ClCompile Include="..\Modules\EventLog\Server.c"><Filter>Modules\EventLog</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Execution\Server.c"><Filter>Modules\Execution</Filter></ClCompile>
     <ClCompile Include="..\Modules\File\Server.c"><Filter>Modules\File</Filter></ClCompile>
     <ClCompile Include="..\Modules\Window\Server.c"><Filter>Modules\Window</Filter></ClCompile>
     <ClCompile Include="..\Modules\Process\Server.c"><Filter>Modules\Process</Filter></ClCompile>
@@ -33,6 +38,7 @@
     <ClCompile Include="..\Modules\Service\Server.c"><Filter>Modules\Service</Filter></ClCompile>
     <ClCompile Include="..\Modules\System\Server.c"><Filter>Modules\System</Filter></ClCompile>
     <ClCompile Include="..\Modules\Terminal\Server.c"><Filter>Modules\Terminal</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Tunnel\Server.c"><Filter>Modules\Tunnel</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Core\Channel.h"><Filter>Core</Filter></ClInclude>

@@ -38,9 +38,11 @@ Source\OutDir\x64\Debug\UnitTest.exe -Run
 2. 运行同目录的 `KNSoft.ZPigeon.Client.exe`。
 3. 打开 `http://127.0.0.1:5080`。Web 和 Server 仅监听本地回环；Client 连接 `127.0.0.1:4433`。
 
-当前页面可探测远端主机上的 `cmd`、Windows PowerShell 和 PowerShell，新建/关闭多个 Shell、切换标签并进行完整 ConPTY 命令交互；也提供文件、进程、服务和注册表可视化管理。文件页支持分页浏览、可修改属性、CRC32/MD5/SHA-1/SHA-256、流式上传/下载、重命名和删除；进程页支持实时 CPU/内存等信息、映像路径和命令行详情及结束进程，并在页面不活跃时停止刷新；服务页支持属性、启动和停止。EventLog 支持 Bookmark 分页查询、频道启停和清除，不包含实时订阅。
+当前页面可探测远端主机上的 `cmd`、Windows PowerShell 和 PowerShell，新建/关闭多个 Shell、切换标签并进行完整 ConPTY 命令交互；也提供文件、进程、服务和注册表可视化管理。文件页支持分页浏览、可修改属性、CRC32/MD5/SHA-1/SHA-256、流式上传/下载、重命名和删除；进程页支持实时 CPU/内存等信息、映像路径和命令行详情及结束进程，并在页面不活跃时停止刷新；服务页支持属性、启动和停止。EventLog 支持 Bookmark 分页查询、频道启停、清除和按视图增量流式下载，不建立实时事件订阅。
 
 Client 的 `network.log` 与各业务模块日志位于同目录 `logs`。试用 EXE 使用当前用户范围的持久 CNG 身份密钥；SDK 默认仍使用机器范围，服务化部署不改变原安全边界。
+
+Web 固定监听本机回环。对外访问必须经过本机反向代理并由代理完成鉴权；代理应移除外部请求携带的转发头，写入原始地址和已认证用户。默认用户头为 `X-Forwarded-User`，可用 `ReverseProxy__UserHeader` 修改。RDP/CDP 临时入口只允许该原始地址连接，且目标系统身份验证仍由 RDP NLA 或浏览器调试会话负责。
 
 ## 最小 Server 生命周期
 

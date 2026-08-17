@@ -10,17 +10,21 @@ typedef struct _ZP_CLIENT_OBJECT
 {
     RTL_SRWLOCK Lock;
     RTL_SRWLOCK FileEnumerationLock;
+    RTL_SRWLOCK ExecutionLock;
     ZP_CLIENT_STATE State;
     ULONG CallbackCount;
     LIST_ENTRY InboundRequests;
     LIST_ENTRY LocalChannels;
+    LIST_ENTRY ExecutionJobs;
     PVOID FileEnumeration;
     ULONGLONG HighestInboundRequestId;
     ULONGLONG NextLocalChannelId;
     ULONGLONG NextFileEnumerationId;
+    ULONGLONG NextExecutionJobId;
     ULONG InboundRequestCount;
     ULONGLONG InboundRequestPayloadBytes;
     ULONG LocalChannelCount;
+    ULONG ExecutionJobCount;
     ZP_CLIENT_CONFIG Config;
     PCZP_TRANSPORT_OPERATIONS TransportOperations[ZpTransportWss + 1];
     PVOID TransportContexts[ZpTransportWss + 1];

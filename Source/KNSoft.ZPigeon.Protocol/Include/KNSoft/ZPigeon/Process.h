@@ -8,7 +8,22 @@ EXTERN_C_START
 #define ZP_PROCESS_MODULE_VERSION 1
 #define ZP_PROCESS_OPERATION_ENUMERATE 1
 #define ZP_PROCESS_OPERATION_QUERY 2
-#define ZP_PROCESS_OPERATION_TERMINATE 3
+#define ZP_PROCESS_OPERATION_CONTROL 3
+#define ZP_PROCESS_OPERATION_DUMP 4
+
+typedef USHORT ZP_PROCESS_CONTROL;
+#define ZpProcessControlTerminate ((ZP_PROCESS_CONTROL)1)
+#define ZpProcessControlTerminateTree ((ZP_PROCESS_CONTROL)2)
+#define ZpProcessControlSuspend ((ZP_PROCESS_CONTROL)3)
+#define ZpProcessControlResume ((ZP_PROCESS_CONTROL)4)
+#define ZpProcessControlEfficiencyMode ((ZP_PROCESS_CONTROL)5)
+#define ZpProcessControlPriority ((ZP_PROCESS_CONTROL)6)
+#define ZpProcessControlUacVirtualization ((ZP_PROCESS_CONTROL)7)
+
+#define ZP_PROCESS_FLAG_SUSPENDED 0x00000001UL
+#define ZP_PROCESS_FLAG_EFFICIENCY_MODE 0x00000002UL
+#define ZP_PROCESS_FLAG_VIRTUALIZATION_ALLOWED 0x00000004UL
+#define ZP_PROCESS_FLAG_VIRTUALIZATION_ENABLED 0x00000008UL
 
 typedef struct _ZP_PROCESS_RECORD
 {
@@ -17,6 +32,9 @@ typedef struct _ZP_PROCESS_RECORD
     ULONG SessionId;
     ULONG ThreadCount;
     ULONG HandleCount;
+    ULONG Flags;
+    USHORT MachineType;
+    USHORT PriorityClass;
     ULONGLONG CreateTime;
     ULONGLONG UserTime;
     ULONGLONG KernelTime;
@@ -24,6 +42,12 @@ typedef struct _ZP_PROCESS_RECORD
     ULONGLONG PrivateBytes;
     PCWCH ImageName;
     ULONG ImageNameLength;
+    PCWCH UserName;
+    ULONG UserNameLength;
+    PCWCH ImagePath;
+    ULONG ImagePathLength;
+    PCWCH ServiceNames;
+    ULONG ServiceNamesLength;
 } ZP_PROCESS_RECORD, *PZP_PROCESS_RECORD;
 
 typedef const ZP_PROCESS_RECORD* PCZP_PROCESS_RECORD;
@@ -35,12 +59,18 @@ typedef struct _ZP_PROCESS_RECORD_VIEW
     ULONG SessionId;
     ULONG ThreadCount;
     ULONG HandleCount;
+    ULONG Flags;
+    USHORT MachineType;
+    USHORT PriorityClass;
     ULONGLONG CreateTime;
     ULONGLONG UserTime;
     ULONGLONG KernelTime;
     ULONGLONG WorkingSetBytes;
     ULONGLONG PrivateBytes;
     ZP_STRING_VIEW ImageName;
+    ZP_STRING_VIEW UserName;
+    ZP_STRING_VIEW ImagePath;
+    ZP_STRING_VIEW ServiceNames;
 } ZP_PROCESS_RECORD_VIEW, *PZP_PROCESS_RECORD_VIEW;
 
 typedef struct _ZP_PROCESS_LIST_VIEW
@@ -59,6 +89,9 @@ typedef struct _ZP_PROCESS_INFO
     ULONG SessionId;
     ULONG ThreadCount;
     ULONG HandleCount;
+    ULONG Flags;
+    USHORT MachineType;
+    USHORT PriorityClass;
     ULONGLONG CreateTime;
     ULONGLONG UserTime;
     ULONGLONG KernelTime;
@@ -66,6 +99,8 @@ typedef struct _ZP_PROCESS_INFO
     ULONGLONG PrivateBytes;
     PCWCH ImageName;
     ULONG ImageNameLength;
+    PCWCH UserName;
+    ULONG UserNameLength;
     NTSTATUS ImagePathStatus;
     PCWCH ImagePath;
     ULONG ImagePathLength;
@@ -83,12 +118,16 @@ typedef struct _ZP_PROCESS_INFO_VIEW
     ULONG SessionId;
     ULONG ThreadCount;
     ULONG HandleCount;
+    ULONG Flags;
+    USHORT MachineType;
+    USHORT PriorityClass;
     ULONGLONG CreateTime;
     ULONGLONG UserTime;
     ULONGLONG KernelTime;
     ULONGLONG WorkingSetBytes;
     ULONGLONG PrivateBytes;
     ZP_STRING_VIEW ImageName;
+    ZP_STRING_VIEW UserName;
     NTSTATUS ImagePathStatus;
     ZP_STRING_VIEW ImagePath;
     NTSTATUS CommandLineStatus;
@@ -144,20 +183,53 @@ ZpProcess_DecodeInfo(
     _Out_ PZP_PROCESS_INFO_VIEW View);
 
 NTSTATUS
-ZpProcess_EncodeTerminate(
+ZpProcess_EncodeControl(
     _In_ ULONG ProcessId,
     _In_ ULONGLONG CreateTime,
-    _In_ ULONG ExitCode,
+    _In_ ZP_PROCESS_CONTROL Control,
+    _In_ ULONG Value,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);
 
 NTSTATUS
-ZpProcess_DecodeTerminate(
+ZpProcess_DecodeControl(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PULONG ProcessId,
     _Out_ PULONGLONG CreateTime,
-    _Out_ PULONG ExitCode);
+    _Out_ ZP_PROCESS_CONTROL* Control,
+    _Out_ PULONG Value);
+
+NTSTATUS
+ZpProcess_EncodeDump(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONG DumpType,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpProcess_DecodeDump(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONG ProcessId,
+    _Out_ PULONGLONG CreateTime,
+    _Out_ PULONG DumpType);
+
+NTSTATUS
+ZpProcess_EncodeDumpPath(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpProcess_DecodeDumpPath(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW Path);
 
 EXTERN_C_END

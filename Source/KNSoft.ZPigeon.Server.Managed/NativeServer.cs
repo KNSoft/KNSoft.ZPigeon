@@ -13,6 +13,10 @@ public sealed partial class NativeServer(string directory) : IDisposable
         CompleteStatus;
     private static readonly NativeMethods.EventLogCallback EventLogCallback =
         CompleteEventLog;
+    private static readonly NativeMethods.EventLogChannelsCallback EventLogChannelsCallback =
+        CompleteEventLogChannels;
+    private static readonly NativeMethods.EventLogChannelInfoCallback EventLogChannelInfoCallback =
+        CompleteEventLogChannelInfo;
     private X509Certificate2? certificate;
 
     public int State => NativeMethods.GetState();
@@ -39,15 +43,12 @@ public sealed partial class NativeServer(string directory) : IDisposable
         return completion.Task;
     }
 
-    public Task TerminateProcessAsync(uint processId, ulong createTime) =>
-        RunStatusAsync((callback, context) =>
-            NativeMethods.TerminateProcess(processId, createTime, callback, context));
-
     public Task<EventLogPage> QueryEventLogPageAsync(
         string channelPath,
         string? query,
         string? bookmark,
-        uint maxEvents)
+        uint maxEvents,
+        bool forward = false)
     {
         var completion = new TaskCompletionSource<EventLogPage>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -59,9 +60,42 @@ public sealed partial class NativeServer(string directory) : IDisposable
             (uint)(query?.Length ?? 0),
             bookmark,
             (uint)(bookmark?.Length ?? 0),
+            forward,
             maxEvents,
             EventLogCallback,
             GCHandle.ToIntPtr(handle));
+        if (status < 0)
+        {
+            handle.Free();
+            ThrowIfFailed(status);
+        }
+        return completion.Task;
+    }
+
+    public Task<string[]> EnumerateEventLogChannelsAsync()
+    {
+        var completion = new TaskCompletionSource<string[]>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = GCHandle.Alloc(completion);
+        var status = NativeMethods.EnumerateEventLogChannels(EventLogChannelsCallback,
+                                                              GCHandle.ToIntPtr(handle));
+        if (status < 0)
+        {
+            handle.Free();
+            ThrowIfFailed(status);
+        }
+        return completion.Task;
+    }
+
+    public Task<EventLogChannelInfo> QueryEventLogChannelInfoAsync(string channelPath)
+    {
+        var completion = new TaskCompletionSource<EventLogChannelInfo>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = GCHandle.Alloc(completion);
+        var status = NativeMethods.QueryEventLogChannelInfo(channelPath,
+                                                             (uint)channelPath.Length,
+                                                             EventLogChannelInfoCallback,
+                                                             GCHandle.ToIntPtr(handle));
         if (status < 0)
         {
             handle.Free();
@@ -84,6 +118,20 @@ public sealed partial class NativeServer(string directory) : IDisposable
                                         (uint)channelPath.Length,
                                         callback,
                                         context));
+
+    public Task ConfigureEventLogChannelAsync(
+        string channelPath,
+        bool enabled,
+        EventLogRetentionMode retentionMode,
+        ulong maximumSize) =>
+        RunStatusAsync((callback, context) =>
+            NativeMethods.ConfigureEventLogChannel(channelPath,
+                                                     (uint)channelPath.Length,
+                                                     enabled,
+                                                     (ushort)retentionMode,
+                                                     maximumSize,
+                                                     callback,
+                                                     context));
 
     private static Task RunStatusAsync(
         Func<NativeMethods.StatusCallback, nint, int> start)
@@ -184,6 +232,64 @@ public sealed partial class NativeServer(string directory) : IDisposable
             result));
     }
 
+    private static void CompleteEventLogChannels(
+        ZpStatus status,
+        nint channels,
+        uint channelCount,
+        nint context)
+    {
+        var handle = GCHandle.FromIntPtr(context);
+        var completion = (TaskCompletionSource<string[]>)handle.Target!;
+        handle.Free();
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        var result = new string[channelCount];
+        var size = Marshal.SizeOf<NativeMethods.StringView>();
+        for (var index = 0; index < result.Length; index++)
+        {
+            var value = Marshal.PtrToStructure<NativeMethods.StringView>(channels + index * size);
+            result[index] = Marshal.PtrToStringUni(value.Buffer, (int)value.Length) ?? string.Empty;
+        }
+        completion.SetResult(result);
+    }
+
+    private static void CompleteEventLogChannelInfo(
+        ZpStatus status,
+        bool enabled,
+        uint type,
+        ushort retentionMode,
+        ulong maximumSize,
+        ulong fileSize,
+        ulong creationTime,
+        ulong lastAccessTime,
+        ulong lastWriteTime,
+        nint logFilePath,
+        uint logFilePathLength,
+        nint context)
+    {
+        var handle = GCHandle.FromIntPtr(context);
+        var completion = (TaskCompletionSource<EventLogChannelInfo>)handle.Target!;
+        handle.Free();
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        completion.SetResult(new EventLogChannelInfo(
+            enabled,
+            type,
+            (EventLogRetentionMode)retentionMode,
+            maximumSize.ToString(),
+            fileSize.ToString(),
+            creationTime.ToString(),
+            lastAccessTime.ToString(),
+            lastWriteTime.ToString(),
+            Marshal.PtrToStringUni(logFilePath, (int)logFilePathLength) ?? string.Empty));
+    }
+
     private static X509Certificate2 LoadCertificate(string directory)
     {
         var rootPath = Path.Combine(directory, "zpigeon-root.cer");
@@ -282,6 +388,22 @@ public sealed record EventLogPage(
     bool HasMore,
     string NextBookmark,
     EventLogRecord[] Records);
+public enum EventLogRetentionMode : ushort
+{
+    Overwrite,
+    Archive,
+    Manual
+}
+public sealed record EventLogChannelInfo(
+    bool Enabled,
+    uint Type,
+    EventLogRetentionMode RetentionMode,
+    string MaximumSize,
+    string FileSize,
+    string CreationTime,
+    string LastAccessTime,
+    string LastWriteTime,
+    string LogFilePath);
 
 public enum ZpStatusType : ushort
 {
@@ -292,7 +414,8 @@ public enum ZpStatusType : ushort
     HResult,
     Security,
     Quic,
-    ProcessExit
+    ProcessExit,
+    ConfigurationManager
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -305,7 +428,7 @@ public readonly record struct ZpStatus(ZpStatusType Type, uint Code)
         ZpStatusType.HResult or
         ZpStatusType.Security or
         ZpStatusType.Quic => unchecked((int)Code) >= 0,
-        ZpStatusType.Win32 or ZpStatusType.Winsock => Code == 0,
+        ZpStatusType.Win32 or ZpStatusType.Winsock or ZpStatusType.ConfigurationManager => Code == 0,
         ZpStatusType.ProcessExit => true,
         _ => false
     };
@@ -351,6 +474,28 @@ internal static partial class NativeMethods
         uint recordCount,
         nint context);
 
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void EventLogChannelsCallback(
+        ZpStatus status,
+        nint channels,
+        uint channelCount,
+        nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void EventLogChannelInfoCallback(
+        ZpStatus status,
+        [MarshalAs(UnmanagedType.U1)] bool enabled,
+        uint type,
+        ushort retentionMode,
+        ulong maximumSize,
+        ulong fileSize,
+        ulong creationTime,
+        ulong lastAccessTime,
+        ulong lastWriteTime,
+        nint logFilePath,
+        uint logFilePathLength,
+        nint context);
+
     [StructLayout(LayoutKind.Sequential)]
     internal readonly struct EventLogRecord
     {
@@ -377,12 +522,6 @@ internal static partial class NativeMethods
     internal static partial int GetSystemInfo(SystemInfoCallback callback,
                                                nint context);
 
-    [LibraryImport(Library, EntryPoint = "ZpNative_TerminateProcess")]
-    internal static partial int TerminateProcess(uint processId,
-                                                  ulong createTime,
-                                                  StatusCallback callback,
-                                                  nint context);
-
     [LibraryImport(Library,
         EntryPoint = "ZpNative_QueryEventLogPage",
         StringMarshalling = StringMarshalling.Utf16)]
@@ -393,8 +532,23 @@ internal static partial class NativeMethods
         uint queryLength,
         string? bookmark,
         uint bookmarkLength,
+        [MarshalAs(UnmanagedType.U1)] bool forward,
         uint maxEvents,
         EventLogCallback callback,
+        nint context);
+
+    [LibraryImport(Library, EntryPoint = "ZpNative_EnumerateEventLogChannels")]
+    internal static partial int EnumerateEventLogChannels(
+        EventLogChannelsCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_QueryEventLogChannelInfo",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int QueryEventLogChannelInfo(
+        string channelPath,
+        uint channelPathLength,
+        EventLogChannelInfoCallback callback,
         nint context);
 
     [LibraryImport(Library,
@@ -414,4 +568,16 @@ internal static partial class NativeMethods
                                                uint channelPathLength,
                                                StatusCallback callback,
                                                nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_ConfigureEventLogChannel",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int ConfigureEventLogChannel(
+        string channelPath,
+        uint channelPathLength,
+        [MarshalAs(UnmanagedType.U1)] bool enabled,
+        ushort retentionMode,
+        ulong maximumSize,
+        StatusCallback callback,
+        nint context);
 }

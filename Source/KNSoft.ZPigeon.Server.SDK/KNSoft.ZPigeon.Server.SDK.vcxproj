@@ -42,6 +42,7 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\Modules\Administration\Server.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
     <ClCompile Include="Core\Channel.c" />
     <ClCompile Include="Core\Connection.c" />
     <ClCompile Include="Core\Request.c" />
@@ -51,12 +52,14 @@
     <ClCompile Include="..\SDK\Channel.c"><ObjectFileName>$(IntDir)SDK\</ObjectFileName></ClCompile>
     <ClCompile Include="..\SDK\Request.c"><ObjectFileName>$(IntDir)SDK\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\EventLog\Server.c"><ObjectFileName>$(IntDir)Modules\EventLog\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Execution\Server.c"><ObjectFileName>$(IntDir)Modules\Execution\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\File\Server.c"><ObjectFileName>$(IntDir)Modules\File\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Process\Server.c"><ObjectFileName>$(IntDir)Modules\Process\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Registry\Server.c"><ObjectFileName>$(IntDir)Modules\Registry\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Service\Server.c"><ObjectFileName>$(IntDir)Modules\Service\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\System\Server.c"><ObjectFileName>$(IntDir)Modules\System\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Terminal\Server.c"><ObjectFileName>$(IntDir)Modules\Terminal\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Tunnel\Server.c"><ObjectFileName>$(IntDir)Modules\Tunnel\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Window\Server.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
     <ClCompile Include="Transport\Main.c" />
     <ClCompile Include="Transport\Quic.c" />

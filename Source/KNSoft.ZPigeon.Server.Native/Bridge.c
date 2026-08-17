@@ -4,6 +4,8 @@
 
 #define ZP_NATIVE_TIMEOUT_MILLISECONDS 10000
 #define ZP_NATIVE_SERVICE_CONTROL_TIMEOUT_MILLISECONDS 35000
+#define ZP_NATIVE_LONG_OPERATION_TIMEOUT_MILLISECONDS 300000
+#define ZP_NATIVE_PROCESS_DUMP_TIMEOUT_MILLISECONDS 600000
 
 typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
 {
@@ -15,13 +17,21 @@ typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
         ZP_NATIVE_FILE_PAGE_CALLBACK FilePage;
         ZP_NATIVE_FILE_INFO_CALLBACK FileInfo;
         ZP_NATIVE_FILE_HASH_CALLBACK FileHash;
+        ZP_NATIVE_FILE_VOLUME_CALLBACK FileVolume;
         ZP_NATIVE_PROCESS_LIST_CALLBACK ProcessList;
         ZP_NATIVE_PROCESS_INFO_CALLBACK ProcessInfo;
+        ZP_NATIVE_PROCESS_DUMP_CALLBACK ProcessDump;
+        ZP_NATIVE_EXECUTION_SESSIONS_CALLBACK ExecutionSessions;
+        ZP_NATIVE_EXECUTION_JOBS_CALLBACK ExecutionJobs;
+        ZP_NATIVE_EXECUTION_STAGING_CALLBACK ExecutionStaging;
         ZP_NATIVE_WINDOW_LIST_CALLBACK WindowList;
         ZP_NATIVE_WINDOW_INFO_CALLBACK WindowInfo;
         ZP_NATIVE_SERVICE_LIST_CALLBACK ServiceList;
         ZP_NATIVE_SERVICE_INFO_CALLBACK ServiceInfo;
+        ZP_NATIVE_ADMINISTRATION_CALLBACK Administration;
         ZP_NATIVE_EVENT_LOG_CALLBACK EventLog;
+        ZP_NATIVE_EVENT_LOG_CHANNELS_CALLBACK EventLogChannels;
+        ZP_NATIVE_EVENT_LOG_CHANNEL_INFO_CALLBACK EventLogChannelInfo;
         ZP_NATIVE_REGISTRY_KEY_PAGE_CALLBACK RegistryKeyPage;
         ZP_NATIVE_REGISTRY_VALUE_PAGE_CALLBACK RegistryValuePage;
         ZP_NATIVE_REGISTRY_VALUE_CALLBACK RegistryValue;
@@ -57,6 +67,20 @@ typedef struct _ZP_NATIVE_FILE_TRANSFER
     ZP_NATIVE_FILE_CLOSE_CALLBACK CloseCallback;
     PVOID Context;
 } ZP_NATIVE_FILE_TRANSFER, *PZP_NATIVE_FILE_TRANSFER;
+
+typedef struct _ZP_NATIVE_TUNNEL
+{
+    RTL_SRWLOCK Lock;
+    volatile LONG ReferenceCount;
+    volatile LONG CallerClosed;
+    ZP_CONNECTION_HANDLE Connection;
+    ZP_CHANNEL_HANDLE Channel;
+    ZP_NATIVE_TUNNEL_OPEN_CALLBACK OpenCallback;
+    ZP_NATIVE_TUNNEL_DATA_CALLBACK DataCallback;
+    ZP_NATIVE_TUNNEL_WRITABLE_CALLBACK WritableCallback;
+    ZP_NATIVE_TUNNEL_CLOSE_CALLBACK CloseCallback;
+    PVOID Context;
+} ZP_NATIVE_TUNNEL, *PZP_NATIVE_TUNNEL;
 
 static RTL_SRWLOCK ZpNativeLock = RTL_SRWLOCK_INIT;
 static ZP_SERVER_HANDLE ZpNativeServer;
@@ -310,6 +334,9 @@ ZpNative_ProcessListCallback(
         Records[Index].SessionId = Record.SessionId;
         Records[Index].ThreadCount = Record.ThreadCount;
         Records[Index].HandleCount = Record.HandleCount;
+        Records[Index].Flags = Record.Flags;
+        Records[Index].MachineType = Record.MachineType;
+        Records[Index].PriorityClass = Record.PriorityClass;
         Records[Index].CreateTime = Record.CreateTime;
         Records[Index].UserTime = Record.UserTime;
         Records[Index].KernelTime = Record.KernelTime;
@@ -317,6 +344,12 @@ ZpNative_ProcessListCallback(
         Records[Index].PrivateBytes = Record.PrivateBytes;
         Records[Index].ImageName = (PCWCH)Record.ImageName.Buffer;
         Records[Index].ImageNameLength = Record.ImageName.Length;
+        Records[Index].UserName = (PCWCH)Record.UserName.Buffer;
+        Records[Index].UserNameLength = Record.UserName.Length;
+        Records[Index].ImagePath = (PCWCH)Record.ImagePath.Buffer;
+        Records[Index].ImagePathLength = Record.ImagePath.Length;
+        Records[Index].ServiceNames = (PCWCH)Record.ServiceNames.Buffer;
+        Records[Index].ServiceNamesLength = Record.ServiceNames.Length;
     }
     CallbackContext->Callback.ProcessList(
         Status,
@@ -342,6 +375,169 @@ ZpNative_ProcessInfoCallback(
     CallbackContext->Callback.ProcessInfo(Status,
                                           ZpStatus_IsSuccess(Status) ? Info : NULL,
                                           CallbackContext->Context);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_ProcessDumpCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_STRING_VIEW Path,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+
+    CallbackContext->Callback.ProcessDump(Status,
+                                          ZpStatus_IsSuccess(Status) ? (PCWCH)Path->Buffer : NULL,
+                                          ZpStatus_IsSuccess(Status) ? Path->Length : 0,
+                                          CallbackContext->Context);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_FileVolumeCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ const ZP_FILE_VOLUME_INFO_VIEW* Info,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+
+    CallbackContext->Callback.FileVolume(
+        Status,
+        ZpStatus_IsSuccess(Status) ? Info->TotalBytes : 0,
+        ZpStatus_IsSuccess(Status) ? Info->FreeBytes : 0,
+        ZpStatus_IsSuccess(Status) ? Info->SerialNumber : 0,
+        ZpStatus_IsSuccess(Status) ? Info->MaximumComponentLength : 0,
+        ZpStatus_IsSuccess(Status) ? Info->FileSystemFlags : 0,
+        ZpStatus_IsSuccess(Status) ? (PCWCH)Info->Label.Buffer : NULL,
+        ZpStatus_IsSuccess(Status) ? Info->Label.Length : 0,
+        ZpStatus_IsSuccess(Status) ? (PCWCH)Info->FileSystem.Buffer : NULL,
+        ZpStatus_IsSuccess(Status) ? Info->FileSystem.Length : 0,
+        CallbackContext->Context);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_ExecutionSessionsCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_EXECUTION_SESSION_LIST_VIEW Sessions,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_EXECUTION_SESSION_RECORD Records = NULL;
+    ZP_EXECUTION_SESSION_RECORD_VIEW Record;
+    ULONG Index;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status) && Sessions->Count != 0)
+    {
+        Records = Mem_Alloc((SIZE_T)Sessions->Count * sizeof(*Records));
+        if (Records == NULL) Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Sessions->Count; Index++)
+    {
+        DecodeStatus = ZpExecution_GetSession(Sessions, Index, &Record);
+        if (!NT_SUCCESS(DecodeStatus))
+        {
+            Status = ZpStatus_FromNtStatus(DecodeStatus);
+            break;
+        }
+        Records[Index].SessionId = Record.SessionId;
+        Records[Index].State = Record.State;
+        Records[Index].Flags = Record.Flags;
+        Records[Index].StationName = (PCWCH)Record.StationName.Buffer;
+        Records[Index].StationNameLength = Record.StationName.Length;
+        Records[Index].UserName = (PCWCH)Record.UserName.Buffer;
+        Records[Index].UserNameLength = Record.UserName.Length;
+    }
+    CallbackContext->Callback.ExecutionSessions(
+        Status,
+        ZpStatus_IsSuccess(Status) ? Records : NULL,
+        ZpStatus_IsSuccess(Status) ? Sessions->Count : 0,
+        CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_ExecutionJobsCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_EXECUTION_JOB_LIST_VIEW Jobs,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_EXECUTION_JOB_RECORD Records = NULL;
+    ZP_EXECUTION_JOB_RECORD_VIEW Record;
+    ULONG Index;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status) && Jobs->Count != 0)
+    {
+        Records = Mem_Alloc((SIZE_T)Jobs->Count * sizeof(*Records));
+        if (Records == NULL) Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Jobs->Count; Index++)
+    {
+        DecodeStatus = ZpExecution_GetJob(Jobs, Index, &Record);
+        if (!NT_SUCCESS(DecodeStatus))
+        {
+            Status = ZpStatus_FromNtStatus(DecodeStatus);
+            break;
+        }
+        Records[Index].JobId = Record.JobId;
+        Records[Index].CreateTime = Record.CreateTime;
+        Records[Index].ExitTime = Record.ExitTime;
+        Records[Index].ProcessId = Record.ProcessId;
+        Records[Index].SessionId = Record.SessionId;
+        Records[Index].ExitCode = Record.ExitCode;
+        Records[Index].Flags = Record.Flags;
+        Records[Index].Engine = Record.Engine;
+        Records[Index].Identity = Record.Identity;
+        Records[Index].State = Record.State;
+        Records[Index].FileName = (PCWCH)Record.FileName.Buffer;
+        Records[Index].FileNameLength = Record.FileName.Length;
+    }
+    CallbackContext->Callback.ExecutionJobs(
+        Status,
+        ZpStatus_IsSuccess(Status) ? Records : NULL,
+        ZpStatus_IsSuccess(Status) ? Jobs->Count : 0,
+        CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_ExecutionStagingCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_STRING_VIEW Path,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+
+    CallbackContext->Callback.ExecutionStaging(
+        Status,
+        ZpStatus_IsSuccess(Status) ? (PCWCH)Path->Buffer : NULL,
+        ZpStatus_IsSuccess(Status) ? Path->Length : 0,
+        CallbackContext->Context);
     ZpRequest_Close(Request);
     ZpNative_FreeCallbackContext(CallbackContext);
 }
@@ -627,6 +823,56 @@ ZpNative_StatusCallback(
 static
 VOID
 NTAPI
+ZpNative_AdministrationCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_ADMINISTRATION_LIST_VIEW List,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_ADMINISTRATION_RECORD Records = NULL;
+    ZP_ADMINISTRATION_RECORD_VIEW Record;
+    ULONG Index;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status) && List->Count != 0)
+    {
+        Records = Mem_Alloc((SIZE_T)List->Count * sizeof(*Records));
+        if (Records == NULL) Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    for (Index = 0; ZpStatus_IsSuccess(Status) && Index < List->Count; Index++)
+    {
+        DecodeStatus = ZpAdministration_GetRecord(List, Index, &Record);
+        if (!NT_SUCCESS(DecodeStatus))
+        {
+            Status = ZpStatus_FromNtStatus(DecodeStatus);
+            break;
+        }
+        Records[Index].Kind = Record.Kind;
+        Records[Index].State = Record.State;
+        Records[Index].Flags = Record.Flags;
+        Records[Index].Value = Record.Value;
+#define ZP_NATIVE_ADMINISTRATION_STRING(Field) \
+        Records[Index].Field = (PCWCH)Record.Field.Buffer; \
+        Records[Index].Field##Length = Record.Field.Length
+        ZP_NATIVE_ADMINISTRATION_STRING(Identity);
+        ZP_NATIVE_ADMINISTRATION_STRING(Name);
+        ZP_NATIVE_ADMINISTRATION_STRING(Description);
+        ZP_NATIVE_ADMINISTRATION_STRING(Detail);
+#undef ZP_NATIVE_ADMINISTRATION_STRING
+    }
+    CallbackContext->Callback.Administration(Status,
+                                               ZpStatus_IsSuccess(Status) ? Records : NULL,
+                                               ZpStatus_IsSuccess(Status) ? List->Count : 0,
+                                               CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
 ZpNative_EventLogCallback(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
@@ -673,6 +919,67 @@ ZpNative_EventLogCallback(
         ZpStatus_IsSuccess(Status) ? Page->Records.Count : 0,
         CallbackContext->Context);
     Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_EventLogChannelsCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_EVENT_LOG_CHANNEL_LIST_VIEW Channels,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_STRING_VIEW Values = NULL;
+    ULONG Index;
+    NTSTATUS DecodeStatus = STATUS_SUCCESS;
+
+    if (ZpStatus_IsSuccess(Status) && Channels->Count != 0)
+    {
+        Values = Mem_Alloc((SIZE_T)Channels->Count * sizeof(*Values));
+        if (Values == NULL) Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Channels->Count; Index++)
+    {
+        DecodeStatus = ZpEventLog_GetChannel(Channels, Index, &Values[Index]);
+        if (!NT_SUCCESS(DecodeStatus)) Status = ZpStatus_FromNtStatus(DecodeStatus);
+    }
+    CallbackContext->Callback.EventLogChannels(Status,
+                                                ZpStatus_IsSuccess(Status) ? Values : NULL,
+                                                ZpStatus_IsSuccess(Status) ? Channels->Count : 0,
+                                                CallbackContext->Context);
+    Mem_Free(Values);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_EventLogChannelInfoCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ const ZP_EVENT_LOG_CHANNEL_INFO_VIEW* Info,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+
+    CallbackContext->Callback.EventLogChannelInfo(
+        Status,
+        ZpStatus_IsSuccess(Status) ? Info->Enabled : FALSE,
+        ZpStatus_IsSuccess(Status) ? Info->Type : 0,
+        ZpStatus_IsSuccess(Status) ? Info->RetentionMode : 0,
+        ZpStatus_IsSuccess(Status) ? Info->MaximumSize : 0,
+        ZpStatus_IsSuccess(Status) ? Info->FileSize : 0,
+        ZpStatus_IsSuccess(Status) ? Info->CreationTime : 0,
+        ZpStatus_IsSuccess(Status) ? Info->LastAccessTime : 0,
+        ZpStatus_IsSuccess(Status) ? Info->LastWriteTime : 0,
+        ZpStatus_IsSuccess(Status) ? (PCWCH)Info->LogFilePath.Buffer : NULL,
+        ZpStatus_IsSuccess(Status) ? Info->LogFilePath.Length : 0,
+        CallbackContext->Context);
     ZpRequest_Close(Request);
     ZpNative_FreeCallbackContext(CallbackContext);
 }
@@ -914,6 +1221,93 @@ ZpNative_TerminalCloseCallback(
 }
 
 static
+VOID
+ZpNative_ReleaseTunnel(
+    _Inout_ PZP_NATIVE_TUNNEL Tunnel)
+{
+    if (InterlockedDecrement(&Tunnel->ReferenceCount) == 0)
+    {
+        ZpConnection_Release(Tunnel->Connection);
+        Mem_Free(Tunnel);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_TunnelOpenCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_TUNNEL Tunnel = Context;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Tunnel->Channel = Channel;
+        Tunnel->ReferenceCount = 2;
+    }
+    Tunnel->OpenCallback(Status,
+                         ZpStatus_IsSuccess(Status) ? Tunnel : NULL,
+                         Tunnel->Context);
+    ZpRequest_Close(Request);
+    if (!ZpStatus_IsSuccess(Status))
+    {
+        ZpConnection_Release(Tunnel->Connection);
+        Mem_Free(Tunnel);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_TunnelDataCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ PCZP_BUFFER_VIEW Data,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_TUNNEL Tunnel = Context;
+
+    if (!Tunnel->DataCallback(Data->Buffer, Data->Length, Tunnel->Context))
+    {
+        ZpChannel_Cancel(Channel);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_TunnelWritableCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONG CreditBytes,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_TUNNEL Tunnel = Context;
+
+    UNREFERENCED_PARAMETER(Channel);
+    Tunnel->WritableCallback(CreditBytes, Tunnel->Context);
+}
+
+static
+VOID
+NTAPI
+ZpNative_TunnelCloseCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_TUNNEL Tunnel = Context;
+
+    RtlAcquireSRWLockExclusive(&Tunnel->Lock);
+    Tunnel->Channel = NULL;
+    RtlReleaseSRWLockExclusive(&Tunnel->Lock);
+    Tunnel->CloseCallback(Status, Tunnel->Context);
+    ZpChannel_Close(Channel);
+    ZpNative_ReleaseTunnel(Tunnel);
+}
+
+static
 PZP_NATIVE_CALLBACK_CONTEXT
 ZpNative_CreateCallbackContext(
     _In_ ZP_CONNECTION_HANDLE Connection,
@@ -944,7 +1338,10 @@ ZpNative_Start(
         { ZP_TERMINAL_MODULE_ID, ZP_TERMINAL_MODULE_VERSION },
         { ZP_EVENT_LOG_MODULE_ID, ZP_EVENT_LOG_MODULE_VERSION },
         { ZP_REGISTRY_MODULE_ID, ZP_REGISTRY_MODULE_VERSION },
-        { ZP_WINDOW_MODULE_ID, ZP_WINDOW_MODULE_VERSION }
+        { ZP_WINDOW_MODULE_ID, ZP_WINDOW_MODULE_VERSION },
+        { ZP_ADMINISTRATION_MODULE_ID, ZP_ADMINISTRATION_MODULE_VERSION },
+        { ZP_EXECUTION_MODULE_ID, ZP_EXECUTION_MODULE_VERSION },
+        { ZP_TUNNEL_MODULE_ID, ZP_TUNNEL_MODULE_VERSION }
     };
     ZP_LISTENER_ENDPOINT Listener = {
         ZpTransportQuic,
@@ -1193,6 +1590,76 @@ ZpNative_QueryFile(
                            ZpNative_FileInfoCallback,
                            CallbackContext,
                            &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_QueryFileVolume(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_NATIVE_FILE_VOLUME_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.FileVolume = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_QueryFileVolume(Connection,
+                                 Path,
+                                 PathLength,
+                                 ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                 ZpNative_FileVolumeCallback,
+                                 CallbackContext,
+                                 &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_SetFileVolumeLabel(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(LabelLength) PCWCH Label,
+    _In_ ULONG LabelLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_SetFileVolumeLabel(Connection,
+                                    Path,
+                                    PathLength,
+                                    Label,
+                                    LabelLength,
+                                    ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                    ZpNative_StatusCallback,
+                                    CallbackContext,
+                                    &Request));
 }
 
 NTSTATUS
@@ -1605,9 +2072,11 @@ ZpNative_SendStatusRequest(
 
 NTSTATUS
 NTAPI
-ZpNative_TerminateProcess(
+ZpNative_ControlProcess(
     _In_ ULONG ProcessId,
     _In_ ULONGLONG CreateTime,
+    _In_ ZP_PROCESS_CONTROL Control,
+    _In_ ULONG Value,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context)
 {
@@ -1633,14 +2102,236 @@ ZpNative_TerminateProcess(
     CallbackContext->Callback.Status = Callback;
     return ZpNative_SendStatusRequest(
         CallbackContext,
-        ZpServer_TerminateProcess(Connection,
-                                  ProcessId,
-                                  CreateTime,
-                                  0,
-                                  ZP_NATIVE_TIMEOUT_MILLISECONDS,
-                                  ZpNative_StatusCallback,
-                                  CallbackContext,
-                          &Request));
+        ZpServer_ControlProcess(Connection,
+                                ProcessId,
+                                CreateTime,
+                                Control,
+                                Value,
+                                ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                ZpNative_StatusCallback,
+                                CallbackContext,
+                                &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_CreateProcessDump(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONG DumpType,
+    _In_ ZP_NATIVE_PROCESS_DUMP_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.ProcessDump = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_CreateProcessDump(Connection,
+                                   ProcessId,
+                                   CreateTime,
+                                   DumpType,
+                                   ZP_NATIVE_PROCESS_DUMP_TIMEOUT_MILLISECONDS,
+                                   ZpNative_ProcessDumpCallback,
+                                   CallbackContext,
+                                   &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumerateExecutionSessions(
+    _In_ ZP_NATIVE_EXECUTION_SESSIONS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.ExecutionSessions = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_EnumerateExecutionSessions(Connection,
+                                            ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                            ZpNative_ExecutionSessionsCallback,
+                                            CallbackContext,
+                                            &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_StartExecution(
+    _In_ USHORT Engine,
+    _In_ USHORT Identity,
+    _In_ ULONG SessionId,
+    _In_ ULONG Flags,
+    _In_reads_(FileNameLength) PCWCH FileName,
+    _In_ ULONG FileNameLength,
+    _In_reads_opt_(ArgumentsLength) PCWCH Arguments,
+    _In_ ULONG ArgumentsLength,
+    _In_reads_opt_(WorkingDirectoryLength) PCWCH WorkingDirectory,
+    _In_ ULONG WorkingDirectoryLength,
+    _In_reads_opt_(VerbLength) PCWCH Verb,
+    _In_ ULONG VerbLength,
+    _In_reads_opt_(UserNameLength) PCWCH UserName,
+    _In_ ULONG UserNameLength,
+    _In_reads_opt_(PasswordLength) PCWCH Password,
+    _In_ ULONG PasswordLength,
+    _In_ ZP_NATIVE_EXECUTION_JOBS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_EXECUTION_START Start = {
+        Engine,
+        Identity,
+        SessionId,
+        Flags,
+        FileName,
+        FileNameLength,
+        Arguments,
+        ArgumentsLength,
+        WorkingDirectory,
+        WorkingDirectoryLength,
+        Verb,
+        VerbLength,
+        UserName,
+        UserNameLength,
+        Password,
+        PasswordLength
+    };
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.ExecutionJobs = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_StartExecution(Connection,
+                                &Start,
+                                ZP_NATIVE_LONG_OPERATION_TIMEOUT_MILLISECONDS,
+                                ZpNative_ExecutionJobsCallback,
+                                CallbackContext,
+                                &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumerateExecutionJobs(
+    _In_ ZP_NATIVE_EXECUTION_JOBS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.ExecutionJobs = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_EnumerateExecutionJobs(Connection,
+                                        ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                        ZpNative_ExecutionJobsCallback,
+                                        CallbackContext,
+                                        &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_TerminateExecution(
+    _In_ ULONGLONG JobId,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_TerminateExecution(Connection,
+                                    JobId,
+                                    ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                    ZpNative_StatusCallback,
+                                    CallbackContext,
+                                    &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_CreateExecutionStaging(
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ZP_NATIVE_EXECUTION_STAGING_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.ExecutionStaging = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_CreateExecutionStaging(Connection,
+                                        Name,
+                                        NameLength,
+                                        ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                        ZpNative_ExecutionStagingCallback,
+                                        CallbackContext,
+                                        &Request));
 }
 
 NTSTATUS
@@ -2044,6 +2735,88 @@ ZpNative_ConfigureServiceAccount(
 
 NTSTATUS
 NTAPI
+ZpNative_EnumerateAdministration(
+    _In_ USHORT OperationId,
+    _In_ ZP_NATIVE_ADMINISTRATION_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Administration = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_EnumerateAdministration(Connection,
+                                         OperationId,
+                                         (OperationId == ZP_ADMINISTRATION_OPERATION_ENUMERATE_UPDATES ||
+                                          OperationId == ZP_ADMINISTRATION_OPERATION_ENUMERATE_FEATURES) ?
+                                             ZP_NATIVE_LONG_OPERATION_TIMEOUT_MILLISECONDS :
+                                             ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                         ZpNative_AdministrationCallback,
+                                         CallbackContext,
+                                         &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_ControlAdministration(
+    _In_ USHORT OperationId,
+    _In_ USHORT Action,
+    _In_reads_opt_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
+    _In_reads_opt_(ArgumentLength) PCWCH Argument,
+    _In_ ULONG ArgumentLength,
+    _In_reads_opt_(SecretLength) PCWCH Secret,
+    _In_ ULONG SecretLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_ControlAdministration(Connection,
+                                       OperationId,
+                                       Action,
+                                       Identity,
+                                       IdentityLength,
+                                       Argument,
+                                       ArgumentLength,
+                                       Secret,
+                                       SecretLength,
+                                       (OperationId == ZP_ADMINISTRATION_OPERATION_CONTROL_UPDATE ||
+                                        OperationId == ZP_ADMINISTRATION_OPERATION_CONTROL_FEATURE) ?
+                                           ZP_NATIVE_LONG_OPERATION_TIMEOUT_MILLISECONDS :
+                                           ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                       ZpNative_StatusCallback,
+                                       CallbackContext,
+                                       &Request));
+}
+
+NTSTATUS
+NTAPI
 ZpNative_QueryTerminalShells(
     _In_ ZP_NATIVE_TERMINAL_SHELLS_CALLBACK Callback,
     _In_opt_ PVOID Context)
@@ -2235,6 +3008,169 @@ ZpNative_CloseTerminal(
 
 NTSTATUS
 NTAPI
+ZpNative_OpenTunnel(
+    _In_ USHORT Port,
+    _In_ ZP_NATIVE_TUNNEL_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_TUNNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_TUNNEL_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_NATIVE_TUNNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_TUNNEL Tunnel;
+    ZP_REQUEST_HANDLE Request;
+    NTSTATUS Status;
+
+    if (Port == 0 || OpenCallback == NULL || DataCallback == NULL ||
+        WritableCallback == NULL || CloseCallback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL)
+    {
+        return STATUS_DEVICE_NOT_CONNECTED;
+    }
+    Tunnel = Mem_Alloc(sizeof(*Tunnel));
+    if (Tunnel == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(Tunnel, sizeof(*Tunnel));
+    Tunnel->Connection = Connection;
+    Tunnel->OpenCallback = OpenCallback;
+    Tunnel->DataCallback = DataCallback;
+    Tunnel->WritableCallback = WritableCallback;
+    Tunnel->CloseCallback = CloseCallback;
+    Tunnel->Context = Context;
+    Status = ZpServer_OpenTunnel(Connection,
+                                 Port,
+                                 ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                 ZpNative_TunnelOpenCallback,
+                                 ZpNative_TunnelDataCallback,
+                                 ZpNative_TunnelWritableCallback,
+                                 ZpNative_TunnelCloseCallback,
+                                 Tunnel,
+                                 &Request);
+    if (!NT_SUCCESS(Status))
+    {
+        ZpConnection_Release(Connection);
+        Mem_Free(Tunnel);
+    }
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_TunnelSend(
+    _In_ ZP_NATIVE_TUNNEL_HANDLE Tunnel,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength)
+{
+    NTSTATUS Status;
+
+    if (Tunnel == NULL)
+    {
+        return STATUS_INVALID_HANDLE;
+    }
+    RtlAcquireSRWLockShared(&Tunnel->Lock);
+    Status = Tunnel->Channel != NULL ?
+                 ZpChannel_Send(Tunnel->Channel, Data, DataLength) :
+                 STATUS_INVALID_DEVICE_STATE;
+    RtlReleaseSRWLockShared(&Tunnel->Lock);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_CloseTunnel(
+    _In_ ZP_NATIVE_TUNNEL_HANDLE Tunnel)
+{
+    ZP_CHANNEL_HANDLE Channel;
+    NTSTATUS Status;
+
+    if (Tunnel == NULL)
+    {
+        return STATUS_INVALID_HANDLE;
+    }
+    if (InterlockedExchange(&Tunnel->CallerClosed, TRUE))
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    RtlAcquireSRWLockExclusive(&Tunnel->Lock);
+    Channel = Tunnel->Channel;
+    Tunnel->Channel = NULL;
+    RtlReleaseSRWLockExclusive(&Tunnel->Lock);
+    Status = Channel != NULL ? ZpChannel_Cancel(Channel) : STATUS_SUCCESS;
+    ZpNative_ReleaseTunnel(Tunnel);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumerateEventLogChannels(
+    _In_ ZP_NATIVE_EVENT_LOG_CHANNELS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.EventLogChannels = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_EnumerateEventLogChannels(Connection,
+                                            ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                            ZpNative_EventLogChannelsCallback,
+                                            CallbackContext,
+                                            &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_QueryEventLogChannelInfo(
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_ ZP_NATIVE_EVENT_LOG_CHANNEL_INFO_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.EventLogChannelInfo = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_QueryEventLogChannelInfo(Connection,
+                                           ChannelPath,
+                                           ChannelPathLength,
+                                           ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                           ZpNative_EventLogChannelInfoCallback,
+                                           CallbackContext,
+                                           &Request));
+}
+
+NTSTATUS
+NTAPI
 ZpNative_QueryEventLogPage(
     _In_reads_(ChannelPathLength) PCWCH ChannelPath,
     _In_ ULONG ChannelPathLength,
@@ -2242,6 +3178,7 @@ ZpNative_QueryEventLogPage(
     _In_ ULONG QueryLength,
     _In_reads_opt_(BookmarkLength) PCWCH Bookmark,
     _In_ ULONG BookmarkLength,
+    _In_ BOOLEAN Forward,
     _In_ ULONG MaxEvents,
     _In_ ZP_NATIVE_EVENT_LOG_CALLBACK Callback,
     _In_opt_ PVOID Context)
@@ -2270,8 +3207,11 @@ ZpNative_QueryEventLogPage(
         CallbackContext,
         ZpServer_QueryEventLogPage(
             Connection,
-            BookmarkLength == 0 ? ZpEventLogStartOldest :
-                                  ZpEventLogStartAfterBookmark,
+            Forward ?
+                (BookmarkLength == 0 ? ZpEventLogStartForward :
+                                       ZpEventLogStartAfterBookmarkForward) :
+                (BookmarkLength == 0 ? ZpEventLogStartOldest :
+                                       ZpEventLogStartAfterBookmark),
             MaxEvents,
             ChannelPath,
             ChannelPathLength,
@@ -2364,6 +3304,45 @@ ZpNative_ClearEventLog(
                                ZpNative_StatusCallback,
                                CallbackContext,
                                &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_ConfigureEventLogChannel(
+    _In_reads_(ChannelPathLength) PCWCH ChannelPath,
+    _In_ ULONG ChannelPathLength,
+    _In_ BOOLEAN Enabled,
+    _In_ ZP_EVENT_LOG_RETENTION_MODE RetentionMode,
+    _In_ ULONGLONG MaximumSize,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_ConfigureEventLogChannel(Connection,
+                                           ChannelPath,
+                                           ChannelPathLength,
+                                           Enabled,
+                                           RetentionMode,
+                                           MaximumSize,
+                                           ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                           ZpNative_StatusCallback,
+                                           CallbackContext,
+                                           &Request));
 }
 
 NTSTATUS

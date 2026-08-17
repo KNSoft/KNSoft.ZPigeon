@@ -24,6 +24,7 @@ typedef USHORT ZP_STATUS_TYPE, *PZP_STATUS_TYPE;
 #define ZpStatusSecurity ((ZP_STATUS_TYPE)5)
 #define ZpStatusQuic ((ZP_STATUS_TYPE)6)
 #define ZpStatusProcessExit ((ZP_STATUS_TYPE)7)
+#define ZpStatusConfigurationManager ((ZP_STATUS_TYPE)8)
 
 #define ZP_STATUS_WIRE_SIZE (sizeof(USHORT) + sizeof(ULONG))
 
@@ -89,6 +90,7 @@ ZpStatus_IsSuccess(
 
         case ZpStatusWin32:
         case ZpStatusWinsock:
+        case ZpStatusConfigurationManager:
             return Status.Code == ERROR_SUCCESS;
 
         case ZpStatusHResult:
@@ -107,7 +109,7 @@ LOGICAL
 ZpStatus_IsValid(
     _In_ ZP_STATUS Status)
 {
-    return Status.Type <= ZpStatusProcessExit &&
+    return Status.Type <= ZpStatusConfigurationManager &&
            ((Status.Type == ZpStatusNone && Status.Code == 0) ||
             (Status.Type != ZpStatusNone &&
              (Status.Code != 0 || Status.Type == ZpStatusProcessExit)));

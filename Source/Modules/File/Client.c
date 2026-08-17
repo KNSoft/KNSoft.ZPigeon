@@ -31,6 +31,12 @@ typedef struct _ZP_FILE_ENUMERATION
     LOGICAL FindInitialized;
 } ZP_FILE_ENUMERATION, *PZP_FILE_ENUMERATION;
 
+typedef union _ZP_FILE_DIRECTORY_BUFFER
+{
+    ULONG_PTR Alignment;
+    BYTE Buffer[4096];
+} ZP_FILE_DIRECTORY_BUFFER, *PZP_FILE_DIRECTORY_BUFFER;
+
 typedef enum _ZP_CLIENT_FILE_CHANNEL_TYPE
 {
     ZpClientFileChannelRead,
@@ -1124,6 +1130,101 @@ ZpFile_SetAttributes(
 }
 
 static
+NTSTATUS
+ZpFile_QueryVolume(
+    _In_ PCZP_STRING_VIEW Path,
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    BYTE VolumeBuffer[FIELD_OFFSET(FILE_FS_VOLUME_INFORMATION, VolumeLabel) +
+                      (MAX_PATH + 1) * sizeof(WCHAR)];
+    BYTE AttributeBuffer[FIELD_OFFSET(FILE_FS_ATTRIBUTE_INFORMATION, FileSystemName) +
+                         (MAX_PATH + 1) * sizeof(WCHAR)];
+    PFILE_FS_VOLUME_INFORMATION Volume = (PFILE_FS_VOLUME_INFORMATION)VolumeBuffer;
+    PFILE_FS_ATTRIBUTE_INFORMATION Attribute = (PFILE_FS_ATTRIBUTE_INFORMATION)AttributeBuffer;
+    FILE_FS_SIZE_INFORMATION Size;
+    ZP_FILE_VOLUME_INFO Info;
+    IO_STATUS_BLOCK IoStatusBlock;
+    HANDLE File;
+    ULONG Length;
+    NTSTATUS Status;
+
+    if (Path->Length != 3 || Path->Buffer[1] != L':' || Path->Buffer[2] != L'\\') return STATUS_INVALID_PARAMETER;
+    Status = ZpFile_OpenForControl(Path, FILE_READ_ATTRIBUTES, &File);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = NtQueryVolumeInformationFile(File,
+                                          &IoStatusBlock,
+                                          Volume,
+                                          sizeof(VolumeBuffer),
+                                          FileFsVolumeInformation);
+    if (NT_SUCCESS(Status)) Status = NtQueryVolumeInformationFile(File,
+                                                                  &IoStatusBlock,
+                                                                  Attribute,
+                                                                  sizeof(AttributeBuffer),
+                                                                  FileFsAttributeInformation);
+    if (NT_SUCCESS(Status)) Status = NtQueryVolumeInformationFile(File,
+                                                                  &IoStatusBlock,
+                                                                  &Size,
+                                                                  sizeof(Size),
+                                                                  FileFsSizeInformation);
+    NtClose(File);
+    if (!NT_SUCCESS(Status)) return Status;
+    Info.TotalBytes = (ULONGLONG)Size.TotalAllocationUnits.QuadPart *
+                      Size.SectorsPerAllocationUnit * Size.BytesPerSector;
+    Info.FreeBytes = (ULONGLONG)Size.AvailableAllocationUnits.QuadPart *
+                     Size.SectorsPerAllocationUnit * Size.BytesPerSector;
+    Info.SerialNumber = Volume->VolumeSerialNumber;
+    Info.MaximumComponentLength = Attribute->MaximumComponentNameLength;
+    Info.FileSystemFlags = Attribute->FileSystemAttributes;
+    Info.Label = Volume->VolumeLabel;
+    Info.LabelLength = Volume->VolumeLabelLength / sizeof(WCHAR);
+    Info.FileSystem = Attribute->FileSystemName;
+    Info.FileSystemLength = Attribute->FileSystemNameLength / sizeof(WCHAR);
+    Status = ZpFile_EncodeVolumeInfo(&Info, NULL, 0, &Length);
+    *Response = NT_SUCCESS(Status) ? Mem_Alloc(Length) : NULL;
+    if (NT_SUCCESS(Status) && *Response == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status)) Status = ZpFile_EncodeVolumeInfo(&Info, *Response, Length, ResponseLength);
+    if (!NT_SUCCESS(Status)) Mem_Free(*Response);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpFile_SetVolumeLabel(
+    _In_ PCZP_STRING_VIEW Path,
+    _In_ PCZP_STRING_VIEW Label)
+{
+    PFILE_FS_LABEL_INFORMATION Information;
+    IO_STATUS_BLOCK IoStatusBlock;
+    SIZE_T Size;
+    HANDLE File;
+    NTSTATUS Status;
+
+    if (Path->Length != 3 || Path->Buffer[1] != L':' || Path->Buffer[2] != L'\\') return STATUS_INVALID_PARAMETER;
+    if (Label->Length > MAXUSHORT / sizeof(WCHAR)) return STATUS_NAME_TOO_LONG;
+    Size = FIELD_OFFSET(FILE_FS_LABEL_INFORMATION, VolumeLabel) +
+           (SIZE_T)Label->Length * sizeof(WCHAR);
+    Information = Mem_Alloc(Size);
+    if (Information == NULL) return STATUS_NO_MEMORY;
+    Information->VolumeLabelLength = Label->Length * sizeof(WCHAR);
+    RtlCopyMemory(Information->VolumeLabel,
+                  Label->Buffer,
+                  Information->VolumeLabelLength);
+    Status = ZpFile_OpenForControl(Path, FILE_WRITE_DATA, &File);
+    if (NT_SUCCESS(Status))
+    {
+        Status = NtSetVolumeInformationFile(File,
+                                            &IoStatusBlock,
+                                            Information,
+                                            (ULONG)Size,
+                                            FileFsLabelInformation);
+        NtClose(File);
+    }
+    Mem_Free(Information);
+    return Status;
+}
+
+static
 VOID
 ZpFile_DestroyEnumeration(
     _In_ PZP_FILE_ENUMERATION Enumeration)
@@ -1371,6 +1472,113 @@ ZpFile_ReadEnumerationPage(
 
 static
 NTSTATUS
+ZpFile_EnumerateDrives(
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    static UNICODE_STRING DirectoryName = RTL_CONSTANT_STRING(L"\\GLOBAL??");
+    static UNICODE_STRING SymbolicLinkName = RTL_CONSTANT_STRING(L"SymbolicLink");
+    ZP_FILE_DIRECTORY_BUFFER Buffer;
+    ZP_FILE_RECORD Records[26];
+    WCHAR Names[26][3];
+    BOOLEAN Drives[26] = { 0 };
+    OBJECT_ATTRIBUTES ObjectAttributes;
+    POBJECT_DIRECTORY_INFORMATION Information;
+    HANDLE Directory;
+    ULONG Context = 0, Count = 0, Index;
+    NTSTATUS Status;
+
+    InitializeObjectAttributes(&ObjectAttributes,
+                               &DirectoryName,
+                               OBJ_CASE_INSENSITIVE,
+                               NULL,
+                               NULL);
+    Status = NtOpenDirectoryObject(&Directory,
+                                   DIRECTORY_QUERY,
+                                   &ObjectAttributes);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    for (;;)
+    {
+        Status = NtQueryDirectoryObject(Directory,
+                                        Buffer.Buffer,
+                                        sizeof(Buffer.Buffer),
+                                        TRUE,
+                                        Context == 0,
+                                        &Context,
+                                        NULL);
+        if (Status == STATUS_NO_MORE_ENTRIES)
+        {
+            Status = STATUS_SUCCESS;
+            break;
+        }
+        if (!NT_SUCCESS(Status))
+        {
+            break;
+        }
+        Information = (POBJECT_DIRECTORY_INFORMATION)Buffer.Buffer;
+        if (Information->Name.Length == 2 * sizeof(WCHAR) &&
+            Information->Name.Buffer[1] == L':' &&
+            RtlEqualUnicodeString(&Information->TypeName,
+                                  &SymbolicLinkName,
+                                  FALSE))
+        {
+            WCHAR Letter = RtlUpcaseUnicodeChar(Information->Name.Buffer[0]);
+
+            if (Letter >= L'A' && Letter <= L'Z')
+            {
+                Drives[Letter - L'A'] = TRUE;
+            }
+        }
+    }
+    NtClose(Directory);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    for (Index = 0; Index < ARRAYSIZE(Drives); Index++)
+    {
+        if (!Drives[Index])
+        {
+            continue;
+        }
+        Names[Count][0] = (WCHAR)(L'A' + Index);
+        Names[Count][1] = L':';
+        Names[Count][2] = L'\\';
+        RtlZeroMemory(&Records[Count].Info, sizeof(Records[Count].Info));
+        Records[Count].Info.Attributes = FILE_ATTRIBUTE_DIRECTORY;
+        Records[Count].Info.HasChildren = TRUE;
+        Records[Count].Name = Names[Count];
+        Records[Count].NameLength = ARRAYSIZE(Names[Count]);
+        Count++;
+    }
+    Status = ZpFile_EncodePage(Records,
+                               Count,
+                               0,
+                               NULL,
+                               0,
+                               ResponseLength);
+    *Response = NT_SUCCESS(Status) ? Mem_Alloc(*ResponseLength) : NULL;
+    if (NT_SUCCESS(Status) && *Response == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodePage(Records,
+                                   Count,
+                                   0,
+                                   *Response,
+                                   *ResponseLength,
+                                   ResponseLength);
+    }
+    return Status;
+}
+
+static
+NTSTATUS
 ZpFile_EnumeratePage(
     _Inout_ PZP_CLIENT_OBJECT Client,
     _In_ PCZP_STRING_VIEW Path,
@@ -1390,6 +1598,17 @@ ZpFile_EnumeratePage(
     RtlAcquireSRWLockExclusive(&Client->FileEnumerationLock);
     RtlReleaseSRWLockShared(&Client->Lock);
     Enumeration = Client->FileEnumeration;
+    if (EnumerationId == 0 && Path->Length == 0)
+    {
+        Client->FileEnumeration = NULL;
+        if (Enumeration != NULL)
+        {
+            ZpFile_DestroyEnumeration(Enumeration);
+        }
+        Status = ZpFile_EnumerateDrives(Response, ResponseLength);
+        RtlReleaseSRWLockExclusive(&Client->FileEnumerationLock);
+        return Status;
+    }
     if (EnumerationId == 0)
     {
         Client->FileEnumeration = NULL;
@@ -1680,6 +1899,14 @@ ZpFile_Execute(
                                                    &Attributes);
         return NT_SUCCESS(Status) ?
                    ZpFile_SetAttributes(&Path, Attributes) : Status;
+
+    case ZP_FILE_OPERATION_QUERY_VOLUME:
+        Status = ZpFile_DecodePath(Request, RequestLength, &Path);
+        return NT_SUCCESS(Status) ? ZpFile_QueryVolume(&Path, Response, ResponseLength) : Status;
+
+    case ZP_FILE_OPERATION_SET_VOLUME_LABEL:
+        Status = ZpFile_DecodeRenameRequest(Request, RequestLength, &Path, &NewPath);
+        return NT_SUCCESS(Status) ? ZpFile_SetVolumeLabel(&Path, &NewPath) : Status;
 
     case ZP_FILE_OPERATION_OPEN_READ:
         if (Client == NULL)

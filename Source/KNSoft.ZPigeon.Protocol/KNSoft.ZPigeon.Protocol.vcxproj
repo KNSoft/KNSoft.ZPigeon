@@ -38,7 +38,9 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Administration.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\EventLog.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Execution.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Protocol.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Registry.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\File.h" />
@@ -46,6 +48,7 @@
     <ClInclude Include="Include\KNSoft\ZPigeon\Service.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\System.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Terminal.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Tunnel.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Window.h" />
     <ClInclude Include="Core\Protocol.inl" />
   </ItemGroup>
@@ -53,13 +56,16 @@
     <ClCompile Include="Core\Codec.c" />
     <ClCompile Include="Core\Frame.c" />
     <ClCompile Include="Core\Message.c" />
+    <ClCompile Include="..\Modules\Administration\Protocol.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\EventLog\Protocol.c"><ObjectFileName>$(IntDir)Modules\EventLog\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Execution\Protocol.c"><ObjectFileName>$(IntDir)Modules\Execution\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\File\Protocol.c"><ObjectFileName>$(IntDir)Modules\File\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Process\Protocol.c"><ObjectFileName>$(IntDir)Modules\Process\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Registry\Protocol.c"><ObjectFileName>$(IntDir)Modules\Registry\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Service\Protocol.c"><ObjectFileName>$(IntDir)Modules\Service\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\System\Protocol.c"><ObjectFileName>$(IntDir)Modules\System\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Terminal\Protocol.c"><ObjectFileName>$(IntDir)Modules\Terminal\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Tunnel\Protocol.c"><ObjectFileName>$(IntDir)Modules\Tunnel\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Window\Protocol.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
   </ItemGroup>
   <ItemGroup>

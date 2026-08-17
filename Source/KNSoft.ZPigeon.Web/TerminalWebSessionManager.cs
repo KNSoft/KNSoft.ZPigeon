@@ -19,6 +19,24 @@ internal sealed class TerminalWebSessionManager : IAsyncDisposable
         ushort rows)
     {
         var terminal = await server.CreateShellAsync(shell, columns, rows);
+        return Add(terminal, shell);
+    }
+
+    internal async Task<TerminalWebSessionInfo> CreateScriptAsync(
+        TerminalShell shell,
+        string path,
+        ushort columns,
+        ushort rows)
+    {
+        var terminal = await server.CreateScriptTerminalAsync(shell, path, columns, rows);
+        return Add(terminal, shell, () => server.DeleteFileAsync(path));
+    }
+
+    private TerminalWebSessionInfo Add(
+        TerminalSession terminal,
+        TerminalShell shell,
+        Func<Task>? cleanup = null)
+    {
         TerminalWebSession session;
         lock (sync)
         {
@@ -34,7 +52,8 @@ internal sealed class TerminalWebSessionManager : IAsyncDisposable
                 terminal,
                 shell,
                 number,
-                $"{terminal.Shell!.Name} {number}");
+                $"{terminal.Shell!.Name} {number}",
+                cleanup);
             sessions.Add(id, session);
         }
         session.Start();
@@ -107,19 +126,22 @@ internal sealed class TerminalWebSession : IAsyncDisposable
     private Task? pump;
     private int historyLength;
     private string title;
+    private readonly Func<Task>? cleanup;
 
     internal TerminalWebSession(
         uint id,
         TerminalSession terminal,
         TerminalShell shell,
         uint number,
-        string title)
+        string title,
+        Func<Task>? cleanup = null)
     {
         Id = id;
         Shell = shell;
         Number = number;
         this.terminal = terminal;
         this.title = title;
+        this.cleanup = cleanup;
     }
 
     internal uint Id { get; }
@@ -232,6 +254,16 @@ internal sealed class TerminalWebSession : IAsyncDisposable
         {
             completion = result;
             attachment?.Writer.TryComplete();
+        }
+        if (cleanup is not null)
+        {
+            try
+            {
+                await cleanup();
+            }
+            catch (NativeException)
+            {
+            }
         }
     }
 

@@ -14,6 +14,8 @@ EXTERN_C_START
 #define ZP_FILE_OPERATION_DELETE 6
 #define ZP_FILE_OPERATION_RENAME 7
 #define ZP_FILE_OPERATION_SET_ATTRIBUTES 8
+#define ZP_FILE_OPERATION_QUERY_VOLUME 9
+#define ZP_FILE_OPERATION_SET_VOLUME_LABEL 10
 #define ZP_FILE_CRC32_SIZE 4
 #define ZP_FILE_MD5_SIZE 16
 #define ZP_FILE_SHA1_SIZE 20
@@ -54,6 +56,32 @@ typedef struct _ZP_FILE_INFO
 } ZP_FILE_INFO, *PZP_FILE_INFO;
 
 typedef const ZP_FILE_INFO* PCZP_FILE_INFO;
+
+typedef struct _ZP_FILE_VOLUME_INFO
+{
+    ULONGLONG TotalBytes;
+    ULONGLONG FreeBytes;
+    ULONG SerialNumber;
+    ULONG MaximumComponentLength;
+    ULONG FileSystemFlags;
+    PCWCH Label;
+    ULONG LabelLength;
+    PCWCH FileSystem;
+    ULONG FileSystemLength;
+} ZP_FILE_VOLUME_INFO, *PZP_FILE_VOLUME_INFO;
+
+typedef const ZP_FILE_VOLUME_INFO* PCZP_FILE_VOLUME_INFO;
+
+typedef struct _ZP_FILE_VOLUME_INFO_VIEW
+{
+    ULONGLONG TotalBytes;
+    ULONGLONG FreeBytes;
+    ULONG SerialNumber;
+    ULONG MaximumComponentLength;
+    ULONG FileSystemFlags;
+    ZP_STRING_VIEW Label;
+    ZP_STRING_VIEW FileSystem;
+} ZP_FILE_VOLUME_INFO_VIEW, *PZP_FILE_VOLUME_INFO_VIEW;
 
 typedef struct _ZP_FILE_RECORD
 {
@@ -295,5 +323,18 @@ ZpFile_GetRecord(
     _In_ PCZP_FILE_LIST_VIEW List,
     _In_ ULONG Index,
     _Out_ PZP_FILE_RECORD_VIEW Record);
+
+NTSTATUS
+ZpFile_EncodeVolumeInfo(
+    _In_ PCZP_FILE_VOLUME_INFO Info,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeVolumeInfo(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_VOLUME_INFO_VIEW Info);
 
 EXTERN_C_END

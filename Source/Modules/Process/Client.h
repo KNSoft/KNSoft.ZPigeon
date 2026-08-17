@@ -2,7 +2,7 @@
 
 #include <KNSoft/ZPigeon/Process.h>
 
-NTSTATUS
+ZP_STATUS
 ZpProcess_Execute(
     _In_ USHORT OperationId,
     _In_reads_bytes_opt_(RequestLength) const VOID* Request,

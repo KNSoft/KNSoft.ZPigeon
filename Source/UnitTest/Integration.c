@@ -1532,6 +1532,40 @@ TEST_FUNC(SDKQuicIntegration)
     {
         goto Cleanup;
     }
+    ResetEvent(TestContext.EventLogPageEvent);
+    TestContext.EventLogPageStatus = ZpStatus_FromNtStatus(STATUS_PENDING);
+    TestContext.EventLogPageCount = 0;
+    TestContext.EventLogBookmarkLength = 0;
+    TestContext.EventLogXmlLength = 0;
+    Status = ZpServer_QueryEventLogPage(
+        TestContext.Connection,
+        ZpEventLogStartAfterBookmarkForward,
+        1,
+        L"System",
+        ARRAYSIZE(L"System") - 1,
+        NULL,
+        0,
+        FirstEventBookmark,
+        FirstEventBookmarkLength,
+        SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+        SDKIntegration_EventLogPageCallback,
+        &TestContext,
+        &Request);
+    if (NT_SUCCESS(Status))
+    {
+        ZpRequest_Close(Request);
+        Request = NULL;
+    }
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext.EventLogPageEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !ZpStatus_IsSuccess(TestContext.EventLogPageStatus) ||
+        TestContext.EventLogPageCount > 1 ||
+        (TestContext.EventLogPageCount != 0 &&
+         TestContext.EventLogBookmarkLength == 0))
+    {
+        goto Cleanup;
+    }
 
     Status = ZpServer_GetSystemInfo(TestContext.Connection,
                                     SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
@@ -1667,15 +1701,16 @@ TEST_FUNC(SDKQuicIntegration)
     {
         goto Cleanup;
     }
-    Status = ZpServer_TerminateProcess(TestContext.Connection,
-                                       TemporaryProcess.dwProcessId,
-                                       ((ULONGLONG)TemporaryCreateTime.dwHighDateTime << 32) |
-                                           TemporaryCreateTime.dwLowDateTime,
-                                       0x10203040,
-                                       SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
-                                       SDKIntegration_ProcessTerminateCallback,
-                                       &TestContext,
-                                       &Request);
+    Status = ZpServer_ControlProcess(TestContext.Connection,
+                                     TemporaryProcess.dwProcessId,
+                                     ((ULONGLONG)TemporaryCreateTime.dwHighDateTime << 32) |
+                                         TemporaryCreateTime.dwLowDateTime,
+                                     ZpProcessControlTerminate,
+                                     0,
+                                     SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                     SDKIntegration_ProcessTerminateCallback,
+                                     &TestContext,
+                                     &Request);
     if (NT_SUCCESS(Status))
     {
         ZpRequest_Close(Request);

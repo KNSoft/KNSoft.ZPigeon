@@ -80,31 +80,48 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\Modules\Administration\Client.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
     <ClCompile Include="Core\Channel.c" />
+    <ClCompile Include="Core\Account.c" />
     <ClCompile Include="Core\Request.c" />
     <ClCompile Include="..\Network\Connection.c">
       <ObjectFileName>$(IntDir)Network\</ObjectFileName>
     </ClCompile>
     <ClCompile Include="..\Modules\EventLog\Client.c"><ObjectFileName>$(IntDir)Modules\EventLog\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Execution\Client.c"><ObjectFileName>$(IntDir)Modules\Execution\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\File\Client.c"><ObjectFileName>$(IntDir)Modules\File\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Process\Client.c"><ObjectFileName>$(IntDir)Modules\Process\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Registry\Client.c"><ObjectFileName>$(IntDir)Modules\Registry\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Service\Client.c"><ObjectFileName>$(IntDir)Modules\Service\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\System\Client.c"><ObjectFileName>$(IntDir)Modules\System\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Terminal\Client.c"><ObjectFileName>$(IntDir)Modules\Terminal\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Tunnel\Client.c"><ObjectFileName>$(IntDir)Modules\Tunnel\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Window\Client.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
     <ClCompile Include="Transport\Main.c" />
     <ClCompile Include="Transport\Quic.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\Modules\Administration\Client.h" />
+    <ClInclude Include="..\Modules\Administration\Firewall.inl" />
+    <ClInclude Include="..\Modules\Administration\Hardware.inl" />
+    <ClInclude Include="..\Modules\Administration\Power.inl" />
+    <ClInclude Include="..\Modules\Administration\Software.inl" />
+    <ClInclude Include="..\Modules\Administration\System.inl" />
+    <ClInclude Include="..\Modules\Administration\Task.inl" />
+    <ClInclude Include="..\Modules\Administration\Update.inl" />
+    <ClInclude Include="..\Modules\Administration\User.inl" />
+    <ClInclude Include="..\Modules\Administration\Wlan.inl" />
     <ClInclude Include="Core\Channel.h" />
+    <ClInclude Include="Core\Account.h" />
     <ClInclude Include="..\Modules\EventLog\Client.h" />
+    <ClInclude Include="..\Modules\Execution\Client.h" />
     <ClInclude Include="..\Modules\File\Client.h" />
     <ClInclude Include="..\Modules\Process\Client.h" />
     <ClInclude Include="..\Modules\Registry\Client.h" />
     <ClInclude Include="..\Modules\Service\Client.h" />
     <ClInclude Include="..\Modules\System\Client.h" />
     <ClInclude Include="..\Modules\Terminal\Client.h" />
+    <ClInclude Include="..\Modules\Tunnel\Client.h" />
     <ClInclude Include="..\Modules\Window\Client.h" />
     <ClInclude Include="..\Network\Config.inl" />
     <ClInclude Include="..\Network\Authentication.inl" />

@@ -1,5 +1,6 @@
 ﻿#include "UnitTest.h"
 
+#include <KNSoft/ZPigeon/Administration.h>
 #include <KNSoft/ZPigeon/EventLog.h>
 #include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Protocol.h>
@@ -15,6 +16,7 @@ TEST_FUNC(ProtocolMessage)
     static const WCHAR EventQuery[] = L"*[System/Level<=3]";
     static const WCHAR EventBookmark[] = L"<Bookmark>1</Bookmark>";
     static const WCHAR EventXml[] = L"<Event/>";
+    static const WCHAR EventLogFile[] = L"%SystemRoot%\\System32\\Winevt\\Logs\\System.evtx";
     static const WCHAR RegistryPath[] = L"Software\\KNSoft";
     static const WCHAR RegistryValueName[] = L"Enabled";
     static const WCHAR RegistryNewName[] = L"Active";
@@ -54,8 +56,10 @@ TEST_FUNC(ProtocolMessage)
     };
     ZP_SYSTEM_INFO_VIEW SystemInfoView;
     ZP_PROCESS_RECORD Processes[] = {
-        { 0, 0, 0, 4, 0, 10, 20, 30, 40, 50, L"", 0 },
-        { 1234, 1000, 1, 8, 64, 100, 200, 300, 400, 500, L"example.exe", 11 }
+        { 0, 0, 0, 4, 0, 0, 0, 0, 10, 20, 30, 40, 50, L"", 0, L"", 0, L"", 0, NULL, 0 },
+        { 1234, 1000, 1, 8, 64, ZP_PROCESS_FLAG_EFFICIENCY_MODE, IMAGE_FILE_MACHINE_AMD64, 2,
+          100, 200, 300, 400, 500, L"example.exe", 11, L"TEST\\User", 9, L"C:\\example.exe", 14,
+          L"SvcA\0SvcB", 9 }
     };
     ZP_PROCESS_LIST_VIEW ProcessList;
     ZP_PROCESS_RECORD_VIEW ProcessRecord;
@@ -65,6 +69,9 @@ TEST_FUNC(ProtocolMessage)
         1,
         8,
         64,
+        ZP_PROCESS_FLAG_EFFICIENCY_MODE,
+        IMAGE_FILE_MACHINE_AMD64,
+        2,
         100,
         200,
         300,
@@ -72,6 +79,8 @@ TEST_FUNC(ProtocolMessage)
         500,
         L"example.exe",
         11,
+        L"TEST\\User",
+        9,
         STATUS_SUCCESS,
         L"C:\\example.exe",
         14,
@@ -180,7 +189,32 @@ TEST_FUNC(ProtocolMessage)
     ZP_EVENT_LOG_PAGE_VIEW EventLogPage;
     ZP_EVENT_LOG_RECORD_VIEW EventLogRecord;
     ZP_STRING_VIEW EventLogChannel;
+    ZP_STRING_VIEW EventLogChannels[] = {
+        { (const BYTE*)EventChannel, ARRAYSIZE(EventChannel) - 1 }
+    };
+    ZP_EVENT_LOG_CHANNEL_LIST_VIEW EventLogChannelList;
     BOOLEAN EventLogEnabled;
+    ZP_EVENT_LOG_CHANNEL_INFO EventLogInfo = {
+        TRUE,
+        0,
+        ZpEventLogRetentionOverwrite,
+        0x100000,
+        0x20000,
+        1,
+        2,
+        3,
+        EventLogFile,
+        ARRAYSIZE(EventLogFile) - 1
+    };
+    ZP_EVENT_LOG_CHANNEL_INFO_VIEW EventLogInfoView;
+    ZP_EVENT_LOG_RETENTION_MODE EventLogRetentionMode;
+    ULONGLONG EventLogMaximumSize;
+    ZP_ADMINISTRATION_RECORD AdministrationRecords[] = {
+        { ZpAdministrationKindDevice, 1, 2, 3, L"ID", 2, L"Device", 6, NULL, 0, L"Class", 5 }
+    };
+    ZP_ADMINISTRATION_LIST_VIEW AdministrationList;
+    ZP_ADMINISTRATION_RECORD_VIEW AdministrationRecord;
+    ZP_ADMINISTRATION_CONTROL_VIEW AdministrationControl;
     ZP_REGISTRY_ENUMERATE_VIEW RegistryEnumerate;
     ZP_REGISTRY_VALUE_REQUEST_VIEW RegistryValueRequest;
     ZP_REGISTRY_SET_VALUE_VIEW RegistrySetValue;
@@ -202,6 +236,7 @@ TEST_FUNC(ProtocolMessage)
     ZP_BUFFER_VIEW BufferView;
     ULONGLONG Value, FileSize, FileOffset, EnumerationId;
     ULONG Length, Index, ExitCode, CreditBytes, ProcessId, Shells, FileAttributes;
+    ZP_PROCESS_CONTROL ProcessControl;
     USHORT Columns, Rows;
 
     for (Index = 0; Index < ARRAYSIZE(Challenge); Index++)
@@ -375,7 +410,7 @@ TEST_FUNC(ProtocolMessage)
                                            Buffer,
                                            sizeof(Buffer),
                                            &Length)) &&
-            Length == 154 &&
+            Length == 258 &&
             NT_SUCCESS(ZpProcess_DecodeList(Buffer, Length, &ProcessList)) &&
             ProcessList.Count == ARRAYSIZE(Processes) &&
             NT_SUCCESS(ZpProcess_GetRecord(&ProcessList, 0, &ProcessRecord)) &&
@@ -387,6 +422,9 @@ TEST_FUNC(ProtocolMessage)
             ProcessRecord.SessionId == Processes[1].SessionId &&
             ProcessRecord.ThreadCount == Processes[1].ThreadCount &&
             ProcessRecord.HandleCount == Processes[1].HandleCount &&
+            ProcessRecord.Flags == Processes[1].Flags &&
+            ProcessRecord.MachineType == Processes[1].MachineType &&
+            ProcessRecord.PriorityClass == Processes[1].PriorityClass &&
             ProcessRecord.CreateTime == Processes[1].CreateTime &&
             ProcessRecord.UserTime == Processes[1].UserTime &&
             ProcessRecord.KernelTime == Processes[1].KernelTime &&
@@ -396,7 +434,12 @@ TEST_FUNC(ProtocolMessage)
             RtlCompareMemory(ProcessRecord.ImageName.Buffer,
                              Processes[1].ImageName,
                              Processes[1].ImageNameLength * sizeof(WCHAR)) ==
-                Processes[1].ImageNameLength * sizeof(WCHAR));
+                Processes[1].ImageNameLength * sizeof(WCHAR) &&
+            ProcessRecord.ServiceNames.Length == Processes[1].ServiceNamesLength &&
+            RtlCompareMemory(ProcessRecord.ServiceNames.Buffer,
+                             Processes[1].ServiceNames,
+                             Processes[1].ServiceNamesLength * sizeof(WCHAR)) ==
+                Processes[1].ServiceNamesLength * sizeof(WCHAR));
     TEST_OK(ZpProcess_GetRecord(&ProcessList,
                                 ProcessList.Count,
                                 &ProcessRecord) == STATUS_INVALID_PARAMETER);
@@ -412,39 +455,46 @@ TEST_FUNC(ProtocolMessage)
                                             Buffer,
                                             sizeof(Buffer),
                                             &Length)) &&
-            Length == 164 &&
+            Length == 194 &&
             NT_SUCCESS(ZpProcess_DecodeInfo(Buffer, Length, &ProcessInfoView)) &&
             ProcessInfoView.ProcessId == ProcessInfo.ProcessId &&
             ProcessInfoView.ParentProcessId == ProcessInfo.ParentProcessId &&
             ProcessInfoView.ThreadCount == ProcessInfo.ThreadCount &&
             ProcessInfoView.WorkingSetBytes == ProcessInfo.WorkingSetBytes &&
             ProcessInfoView.PrivateBytes == ProcessInfo.PrivateBytes &&
+            ProcessInfoView.Flags == ProcessInfo.Flags &&
+            ProcessInfoView.MachineType == ProcessInfo.MachineType &&
             ProcessInfoView.ImageName.Length == ProcessInfo.ImageNameLength &&
+            ProcessInfoView.UserName.Length == ProcessInfo.UserNameLength &&
             ProcessInfoView.ImagePathStatus == STATUS_SUCCESS &&
             ProcessInfoView.ImagePath.Length == ProcessInfo.ImagePathLength &&
             ProcessInfoView.CommandLineStatus == STATUS_SUCCESS &&
             ProcessInfoView.CommandLine.Length == ProcessInfo.CommandLineLength);
-    TEST_OK(NT_SUCCESS(ZpProcess_EncodeTerminate(ProcessInfo.ProcessId,
-                                                 ProcessInfo.CreateTime,
-                                                 0x10203040,
-                                                 Buffer,
-                                                 sizeof(Buffer),
-                                                 &Length)) &&
-            Length == 2 * sizeof(ULONG) + sizeof(ULONGLONG) &&
-            NT_SUCCESS(ZpProcess_DecodeTerminate(Buffer,
-                                                 Length,
-                                                 &Index,
-                                                 &Value,
-                                                 &ExitCode)) &&
+    TEST_OK(NT_SUCCESS(ZpProcess_EncodeControl(ProcessInfo.ProcessId,
+                                               ProcessInfo.CreateTime,
+                                               ZpProcessControlPriority,
+                                               0x10203040,
+                                               Buffer,
+                                               sizeof(Buffer),
+                                               &Length)) &&
+            Length == 2 * sizeof(ULONG) + sizeof(ULONGLONG) + sizeof(USHORT) &&
+            NT_SUCCESS(ZpProcess_DecodeControl(Buffer,
+                                               Length,
+                                               &Index,
+                                               &Value,
+                                               &ProcessControl,
+                                               &ExitCode)) &&
             Index == ProcessInfo.ProcessId &&
             Value == ProcessInfo.CreateTime &&
+            ProcessControl == ZpProcessControlPriority &&
             ExitCode == 0x10203040);
-    TEST_OK(ZpProcess_EncodeTerminate(0,
-                                      ProcessInfo.CreateTime,
-                                      0,
-                                      NULL,
-                                      0,
-                                      &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(ZpProcess_EncodeControl(0,
+                                    ProcessInfo.CreateTime,
+                                    ZpProcessControlTerminate,
+                                    0,
+                                    NULL,
+                                    0,
+                                    &Length) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpService_EncodeList(Services,
                                            ARRAYSIZE(Services),
                                            Buffer,
@@ -612,6 +662,18 @@ TEST_FUNC(ProtocolMessage)
                                                          &EnumerationId)) &&
             FilePathView.Length == 0 &&
             EnumerationId == 42);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeEnumeratePageRequest(NULL,
+                                                         0,
+                                                         0,
+                                                         Buffer,
+                                                         sizeof(Buffer),
+                                                         &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeEnumeratePageRequest(Buffer,
+                                                         Length,
+                                                         &FilePathView,
+                                                         &EnumerationId)) &&
+            FilePathView.Length == 0 &&
+            EnumerationId == 0);
     TEST_OK(ZpFile_EncodeEnumeratePageRequest(L"C:\\Test",
                                                7,
                                                42,
@@ -853,6 +915,40 @@ TEST_FUNC(ProtocolMessage)
                                                          &EventLogQuery)) &&
             EventLogQuery.StartMode == ZpEventLogStartAfterBookmark &&
             EventLogQuery.Bookmark.Length == ARRAYSIZE(EventBookmark) - 1);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeQueryPageRequest(
+                           ZpEventLogStartForward,
+                           16,
+                           EventChannel,
+                           ARRAYSIZE(EventChannel) - 1,
+                           EventQuery,
+                           ARRAYSIZE(EventQuery) - 1,
+                           NULL,
+                           0,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodeQueryPageRequest(Buffer,
+                                                         Length,
+                                                         &EventLogQuery)) &&
+            EventLogQuery.StartMode == ZpEventLogStartForward &&
+            EventLogQuery.Bookmark.Length == 0 &&
+            NT_SUCCESS(ZpEventLog_EncodeQueryPageRequest(
+                ZpEventLogStartAfterBookmarkForward,
+                16,
+                EventChannel,
+                ARRAYSIZE(EventChannel) - 1,
+                EventQuery,
+                ARRAYSIZE(EventQuery) - 1,
+                EventBookmark,
+                ARRAYSIZE(EventBookmark) - 1,
+                Buffer,
+                sizeof(Buffer),
+                &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodeQueryPageRequest(Buffer,
+                                                         Length,
+                                                         &EventLogQuery)) &&
+            EventLogQuery.StartMode == ZpEventLogStartAfterBookmarkForward &&
+            EventLogQuery.Bookmark.Length == ARRAYSIZE(EventBookmark) - 1);
     TEST_OK(ZpEventLog_EncodeQueryPageRequest((ZP_EVENT_LOG_START_MODE)0,
                                               16,
                                               EventChannel,
@@ -891,6 +987,51 @@ TEST_FUNC(ProtocolMessage)
                 &EventLogEnabled)) &&
             EventLogEnabled &&
             EventLogChannel.Length == ARRAYSIZE(EventChannel) - 1);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeChannelInfo(&EventLogInfo,
+                                                    Buffer,
+                                                    sizeof(Buffer),
+                                                    &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodeChannelInfo(Buffer,
+                                                     Length,
+                                                     &EventLogInfoView)) &&
+            EventLogInfoView.Enabled &&
+            EventLogInfoView.MaximumSize == EventLogInfo.MaximumSize &&
+            EventLogInfoView.LogFilePath.Length == ARRAYSIZE(EventLogFile) - 1);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeConfigureChannelRequest(
+                           EventChannel,
+                           ARRAYSIZE(EventChannel) - 1,
+                           TRUE,
+                           ZpEventLogRetentionArchive,
+                           0x200000,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodeConfigureChannelRequest(
+                Buffer,
+                Length,
+                &EventLogChannel,
+                &EventLogEnabled,
+                &EventLogRetentionMode,
+                &EventLogMaximumSize)) &&
+            EventLogEnabled &&
+            EventLogRetentionMode == ZpEventLogRetentionArchive &&
+            EventLogMaximumSize == 0x200000);
+    TEST_OK(NT_SUCCESS(ZpEventLog_EncodeChannels(EventLogChannels,
+                                                 ARRAYSIZE(EventLogChannels),
+                                                 Buffer,
+                                                 sizeof(Buffer),
+                                                 &Length)) &&
+            NT_SUCCESS(ZpEventLog_DecodeChannels(Buffer,
+                                                 Length,
+                                                 &EventLogChannelList)) &&
+            EventLogChannelList.Count == ARRAYSIZE(EventLogChannels) &&
+            NT_SUCCESS(ZpEventLog_GetChannel(&EventLogChannelList,
+                                             0,
+                                             &EventLogChannel)) &&
+            EventLogChannel.Length == ARRAYSIZE(EventChannel) - 1 &&
+            ZpEventLog_GetChannel(&EventLogChannelList,
+                                  EventLogChannelList.Count,
+                                  &EventLogChannel) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpEventLog_EncodePage(
                            TRUE,
                            EventRecords,
@@ -930,6 +1071,60 @@ TEST_FUNC(ProtocolMessage)
                                                      Length,
                                                      &EventLogChannel)) &&
             EventLogChannel.Length == ARRAYSIZE(EventChannel) - 1);
+    TEST_OK(NT_SUCCESS(ZpAdministration_EncodeList(
+                           AdministrationRecords,
+                           ARRAYSIZE(AdministrationRecords),
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpAdministration_DecodeList(Buffer,
+                                                    Length,
+                                                    &AdministrationList)) &&
+            AdministrationList.Count == ARRAYSIZE(AdministrationRecords) &&
+            NT_SUCCESS(ZpAdministration_GetRecord(&AdministrationList,
+                                                   0,
+                                                   &AdministrationRecord)) &&
+            AdministrationRecord.Kind == ZpAdministrationKindDevice &&
+            AdministrationRecord.Identity.Length == 2 &&
+            AdministrationRecord.Name.Length == 6 &&
+            AdministrationRecord.Description.Length == 0 &&
+            AdministrationRecord.Detail.Length == 5);
+    TEST_OK(NT_SUCCESS(ZpAdministration_EncodeControl(
+                           ZpAdministrationActionSetPassword,
+                           L"User",
+                           4,
+                           NULL,
+                           0,
+                           L"Secret",
+                           6,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpAdministration_DecodeControl(Buffer,
+                                                       Length,
+                                                       &AdministrationControl)) &&
+            AdministrationControl.Action == ZpAdministrationActionSetPassword &&
+            AdministrationControl.Identity.Length == 4 &&
+            AdministrationControl.Argument.Length == 0 &&
+            AdministrationControl.Secret.Length == 6 &&
+            ZpAdministration_GetRecord(&AdministrationList,
+                                        AdministrationList.Count,
+                                        &AdministrationRecord) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpAdministration_EncodeControl(ZpAdministrationActionCheck,
+                                                       NULL,
+                                                       0,
+                                                       NULL,
+                                                       0,
+                                                       NULL,
+                                                       0,
+                                                       Buffer,
+                                                       sizeof(Buffer),
+                                                       &Length)) &&
+            NT_SUCCESS(ZpAdministration_DecodeControl(Buffer,
+                                                       Length,
+                                                       &AdministrationControl)) &&
+            AdministrationControl.Action == ZpAdministrationActionCheck &&
+            AdministrationControl.Identity.Length == 0);
     TEST_OK(NT_SUCCESS(ZpRegistry_EncodeEnumerateRequest(
                            ZpRegistryLocalMachine,
                            32,

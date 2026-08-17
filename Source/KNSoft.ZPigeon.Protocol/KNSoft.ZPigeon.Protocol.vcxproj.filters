@@ -4,7 +4,9 @@
     <Filter Include="Core"><UniqueIdentifier>{51f96f46-68fc-4534-9c19-5767046699c6}</UniqueIdentifier></Filter>
     <Filter Include="Include"><UniqueIdentifier>{a9cd7c55-5c82-4d1c-b9a5-0599342102c3}</UniqueIdentifier></Filter>
     <Filter Include="Modules"><UniqueIdentifier>{4521f4cc-d091-4692-812a-ca01269a2364}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Administration"><UniqueIdentifier>{c80260b0-0762-4375-9943-91139de8669e}</UniqueIdentifier></Filter>
     <Filter Include="Modules\EventLog"><UniqueIdentifier>{61d81070-e511-48b0-8d67-e6757942af7a}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Execution"><UniqueIdentifier>{27f0a9dc-631c-4f21-ab87-eb7d842f4489}</UniqueIdentifier></Filter>
     <Filter Include="Modules\File"><UniqueIdentifier>{a9d8f5eb-dc51-4c41-8f6d-48955099eda4}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Window"><UniqueIdentifier>{f65306f4-ccea-47a2-98a7-44c3522943ba}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Process"><UniqueIdentifier>{78abef0f-31c4-4880-a284-9855fd4dc9a0}</UniqueIdentifier></Filter>
@@ -12,12 +14,15 @@
     <Filter Include="Modules\Service"><UniqueIdentifier>{9c82bcb9-5346-4f6c-85a5-81498ce7ba06}</UniqueIdentifier></Filter>
     <Filter Include="Modules\System"><UniqueIdentifier>{35df8140-a4aa-4aa1-a496-e358347953f5}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Terminal"><UniqueIdentifier>{8b305900-503c-4e8f-896b-b6cc7afb0bce}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Tunnel"><UniqueIdentifier>{dcbf767a-8584-4f14-abd7-3a06b2a65d31}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\Modules\Administration\Protocol.c"><Filter>Modules\Administration</Filter></ClCompile>
     <ClCompile Include="Core\Codec.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="Core\Frame.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="Core\Message.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="..\Modules\EventLog\Protocol.c"><Filter>Modules\EventLog</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Execution\Protocol.c"><Filter>Modules\Execution</Filter></ClCompile>
     <ClCompile Include="..\Modules\File\Protocol.c"><Filter>Modules\File</Filter></ClCompile>
     <ClCompile Include="..\Modules\Window\Protocol.c"><Filter>Modules\Window</Filter></ClCompile>
     <ClCompile Include="..\Modules\Process\Protocol.c"><Filter>Modules\Process</Filter></ClCompile>
@@ -25,10 +30,13 @@
     <ClCompile Include="..\Modules\Service\Protocol.c"><Filter>Modules\Service</Filter></ClCompile>
     <ClCompile Include="..\Modules\System\Protocol.c"><Filter>Modules\System</Filter></ClCompile>
     <ClCompile Include="..\Modules\Terminal\Protocol.c"><Filter>Modules\Terminal</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Tunnel\Protocol.c"><Filter>Modules\Tunnel</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Administration.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Core\Protocol.inl"><Filter>Core</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\EventLog.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Execution.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\File.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Window.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Process.h"><Filter>Include</Filter></ClInclude>
@@ -37,6 +45,7 @@
     <ClInclude Include="Include\KNSoft\ZPigeon\Service.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\System.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Terminal.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Tunnel.h"><Filter>Include</Filter></ClInclude>
   </ItemGroup>
   <ItemGroup><None Include="packages.config" /></ItemGroup>
 </Project>
