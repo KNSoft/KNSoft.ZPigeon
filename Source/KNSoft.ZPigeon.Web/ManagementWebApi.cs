@@ -224,6 +224,30 @@ internal static class ManagementWebApi
                 request.Profile,
                 cursor));
         });
+        app.MapPost("/api/wmi/namespaces", async (WmiNamespaceRequest request) =>
+        {
+            ValidateWmiNamespace(request.Namespace);
+            return Results.Ok(await server.EnumerateWmiNamespacesAsync(request.Namespace));
+        });
+        app.MapPost("/api/wmi/classes", async (WmiNamespaceRequest request) =>
+        {
+            ValidateWmiNamespace(request.Namespace);
+            return Results.Ok(await server.EnumerateWmiClassesAsync(request.Namespace));
+        });
+        app.MapPost("/api/wmi/query", async (WmiQueryRequest request) =>
+        {
+            ValidateWmiNamespace(request.Namespace);
+            if (string.IsNullOrWhiteSpace(request.Query) || request.Query.Length > 32768 ||
+                request.Limit is 0 or > 1000)
+            {
+                throw new BadHttpRequestException("WMI 查询参数无效");
+            }
+            return Results.Ok(await server.QueryWmiAsync(
+                request.Namespace,
+                request.Query,
+                request.Limit,
+                request.SystemProperties));
+        });
         app.MapPost("/api/services", async () => await server.EnumerateServicesAsync());
         app.MapPost("/api/service/info", async (ServiceRequest request) =>
             await server.QueryServiceAsync(request.ServiceName));
@@ -324,6 +348,16 @@ internal static class ManagementWebApi
         });
     }
 
+    private static void ValidateWmiNamespace(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > 512 || value.Contains('\0') ||
+            !(value.Equals("ROOT", StringComparison.OrdinalIgnoreCase) ||
+              value.StartsWith("ROOT\\", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new BadHttpRequestException("WMI 命名空间无效");
+        }
+    }
+
     private static Task StartUpdateCheck(NativeServer server)
     {
         lock (UpdateCheckLock)
@@ -389,6 +423,8 @@ internal sealed record BrowserQueryRequest(
     BrowserKind Kind,
     string Profile,
     string Cursor);
+internal sealed record WmiNamespaceRequest(string Namespace);
+internal sealed record WmiQueryRequest(string Namespace, string Query, uint Limit, bool SystemProperties);
 internal sealed record AdministrationControlRequest(
     AdministrationAction Action,
     string? Identity,

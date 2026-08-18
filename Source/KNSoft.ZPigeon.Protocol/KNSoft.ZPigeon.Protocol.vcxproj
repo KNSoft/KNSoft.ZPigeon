@@ -40,6 +40,7 @@
   <ItemGroup>
     <ClInclude Include="Include\KNSoft\ZPigeon\Administration.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Browser.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Wmi.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\EventLog.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Execution.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Protocol.h" />
@@ -59,6 +60,7 @@
     <ClCompile Include="Core\Message.c" />
     <ClCompile Include="..\Modules\Administration\Protocol.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Browser\Protocol.c"><ObjectFileName>$(IntDir)Modules\Browser\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Wmi\Protocol.c"><ObjectFileName>$(IntDir)Modules\Wmi\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\EventLog\Protocol.c"><ObjectFileName>$(IntDir)Modules\EventLog\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Execution\Protocol.c"><ObjectFileName>$(IntDir)Modules\Execution\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\File\Protocol.c"><ObjectFileName>$(IntDir)Modules\File\</ObjectFileName></ClCompile>

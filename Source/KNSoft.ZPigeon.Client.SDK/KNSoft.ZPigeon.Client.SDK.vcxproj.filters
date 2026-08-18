@@ -8,6 +8,7 @@
     <Filter Include="Modules"><UniqueIdentifier>{9839cb5f-b2b4-4528-a237-948543bc124a}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Administration"><UniqueIdentifier>{b8676f90-b16b-46fc-9141-44d7263c3c2d}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Browser"><UniqueIdentifier>{df99788c-2820-46bd-92b5-5ea26b3a2024}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Wmi"><UniqueIdentifier>{797929dc-8529-4fda-a874-9dd00c3b53f3}</UniqueIdentifier></Filter>
     <Filter Include="Modules\EventLog"><UniqueIdentifier>{7656ca23-7a73-4df8-bcbe-e8497e34e953}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Execution"><UniqueIdentifier>{3fdf6799-3763-47ef-8e13-dd1235e3e14e}</UniqueIdentifier></Filter>
     <Filter Include="Modules\File"><UniqueIdentifier>{84b00e40-ae0e-447e-9811-f19bb2929dfe}</UniqueIdentifier></Filter>
@@ -22,6 +23,7 @@
   <ItemGroup>
     <ClCompile Include="..\Modules\Administration\Client.c"><Filter>Modules\Administration</Filter></ClCompile>
     <ClCompile Include="..\Modules\Browser\Client.c"><Filter>Modules\Browser</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Wmi\Client.c"><Filter>Modules\Wmi</Filter></ClCompile>
     <ClCompile Include="Core\Channel.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="Core\Account.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="Core\Security.c"><Filter>Core</Filter></ClCompile>
@@ -43,6 +45,7 @@
   <ItemGroup>
     <ClInclude Include="..\Modules\Administration\Client.h"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Browser\Client.h"><Filter>Modules\Browser</Filter></ClInclude>
+    <ClInclude Include="..\Modules\Wmi\Client.h"><Filter>Modules\Wmi</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\Firewall.inl"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\Hardware.inl"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\Power.inl"><Filter>Modules\Administration</Filter></ClInclude>

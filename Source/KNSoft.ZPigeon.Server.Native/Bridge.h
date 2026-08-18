@@ -383,6 +383,33 @@ VOID
     _In_ ULONG RecordCount,
     _In_opt_ PVOID Context);
 
+typedef struct _ZP_NATIVE_WMI_CELL
+{
+    ULONG Type;
+    PCWCH Name;
+    ULONG NameLength;
+    PCWCH Value;
+    ULONG ValueLength;
+} ZP_NATIVE_WMI_CELL, *PZP_NATIVE_WMI_CELL;
+
+typedef const ZP_NATIVE_WMI_CELL* PCZP_NATIVE_WMI_CELL;
+
+typedef struct _ZP_NATIVE_WMI_ROW
+{
+    PCZP_NATIVE_WMI_CELL Cells;
+    ULONG CellCount;
+} ZP_NATIVE_WMI_ROW, *PZP_NATIVE_WMI_ROW;
+
+typedef const ZP_NATIVE_WMI_ROW* PCZP_NATIVE_WMI_ROW;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_WMI_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(RowCount) PCZP_NATIVE_WMI_ROW Rows,
+    _In_ ULONG RowCount,
+    _In_opt_ PVOID Context);
+
 typedef struct _ZP_NATIVE_REGISTRY_KEY_RECORD
 {
     PCWCH Name;
@@ -939,6 +966,37 @@ ZpNative_QueryBrowser(
     _In_ ULONGLONG Cursor,
     _In_ ULONG Limit,
     _In_ ZP_NATIVE_BROWSER_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateWmiNamespaces(
+    _In_reads_(NamespaceLength) PCWCH Namespace,
+    _In_ ULONG NamespaceLength,
+    _In_ ZP_NATIVE_WMI_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateWmiClasses(
+    _In_reads_(NamespaceLength) PCWCH Namespace,
+    _In_ ULONG NamespaceLength,
+    _In_ ZP_NATIVE_WMI_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_QueryWmi(
+    _In_reads_(NamespaceLength) PCWCH Namespace,
+    _In_ ULONG NamespaceLength,
+    _In_reads_(QueryLength) PCWCH Query,
+    _In_ ULONG QueryLength,
+    _In_ ULONG Limit,
+    _In_ ULONG Flags,
+    _In_ ZP_NATIVE_WMI_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
 __declspec(dllexport)

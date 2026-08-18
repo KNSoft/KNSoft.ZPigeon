@@ -82,6 +82,7 @@
   <ItemGroup>
     <ClCompile Include="..\Modules\Administration\Client.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Browser\Client.c"><ObjectFileName>$(IntDir)Modules\Browser\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Wmi\Client.c"><ObjectFileName>$(IntDir)Modules\Wmi\</ObjectFileName></ClCompile>
     <ClCompile Include="Core\Channel.c" />
     <ClCompile Include="Core\Account.c" />
     <ClCompile Include="Core\Security.c" />
@@ -105,6 +106,7 @@
   <ItemGroup>
     <ClInclude Include="..\Modules\Administration\Client.h" />
     <ClInclude Include="..\Modules\Browser\Client.h" />
+    <ClInclude Include="..\Modules\Wmi\Client.h" />
     <ClInclude Include="..\Modules\Administration\Firewall.inl" />
     <ClInclude Include="..\Modules\Administration\Hardware.inl" />
     <ClInclude Include="..\Modules\Administration\Power.inl" />

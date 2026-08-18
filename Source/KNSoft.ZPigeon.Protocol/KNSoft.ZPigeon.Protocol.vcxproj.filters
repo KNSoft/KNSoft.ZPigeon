@@ -6,6 +6,7 @@
     <Filter Include="Modules"><UniqueIdentifier>{4521f4cc-d091-4692-812a-ca01269a2364}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Administration"><UniqueIdentifier>{c80260b0-0762-4375-9943-91139de8669e}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Browser"><UniqueIdentifier>{0198fafe-d2bd-4aab-bda7-78b53ad3e357}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Wmi"><UniqueIdentifier>{d42e7b7c-5ef7-4c4d-9406-4d3f0e68d98b}</UniqueIdentifier></Filter>
     <Filter Include="Modules\EventLog"><UniqueIdentifier>{61d81070-e511-48b0-8d67-e6757942af7a}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Execution"><UniqueIdentifier>{27f0a9dc-631c-4f21-ab87-eb7d842f4489}</UniqueIdentifier></Filter>
     <Filter Include="Modules\File"><UniqueIdentifier>{a9d8f5eb-dc51-4c41-8f6d-48955099eda4}</UniqueIdentifier></Filter>
@@ -20,6 +21,7 @@
   <ItemGroup>
     <ClCompile Include="..\Modules\Administration\Protocol.c"><Filter>Modules\Administration</Filter></ClCompile>
     <ClCompile Include="..\Modules\Browser\Protocol.c"><Filter>Modules\Browser</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Wmi\Protocol.c"><Filter>Modules\Wmi</Filter></ClCompile>
     <ClCompile Include="Core\Codec.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="Core\Frame.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="Core\Message.c"><Filter>Core</Filter></ClCompile>
@@ -37,6 +39,7 @@
   <ItemGroup>
     <ClInclude Include="Include\KNSoft\ZPigeon\Administration.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Browser.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Wmi.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Core\Protocol.inl"><Filter>Core</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\EventLog.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Execution.h"><Filter>Include</Filter></ClInclude>

@@ -3,6 +3,7 @@
 #include <KNSoft/ZPigeon/SDK.h>
 #include <KNSoft/ZPigeon/Administration.h>
 #include <KNSoft/ZPigeon/Browser.h>
+#include <KNSoft/ZPigeon/Wmi.h>
 #include <KNSoft/ZPigeon/EventLog.h>
 #include <KNSoft/ZPigeon/Execution.h>
 #include <KNSoft/ZPigeon/File.h>
@@ -304,6 +305,14 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
     _In_opt_ PCZP_BROWSER_PAGE_VIEW Page,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_WMI_PAGE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_WMI_PAGE_VIEW Page,
     _In_opt_ PVOID Context);
 
 EXTERN_C_END

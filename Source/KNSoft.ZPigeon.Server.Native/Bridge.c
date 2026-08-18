@@ -6,6 +6,7 @@
 #define ZP_NATIVE_SERVICE_CONTROL_TIMEOUT_MILLISECONDS 35000
 #define ZP_NATIVE_LONG_OPERATION_TIMEOUT_MILLISECONDS 300000
 #define ZP_NATIVE_PROCESS_DUMP_TIMEOUT_MILLISECONDS 600000
+#define ZP_NATIVE_WMI_TIMEOUT_MILLISECONDS 60000
 
 typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
 {
@@ -31,6 +32,7 @@ typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
         ZP_NATIVE_SERVICE_INFO_CALLBACK ServiceInfo;
         ZP_NATIVE_ADMINISTRATION_CALLBACK Administration;
         ZP_NATIVE_BROWSER_CALLBACK Browser;
+        ZP_NATIVE_WMI_CALLBACK Wmi;
         ZP_NATIVE_EVENT_LOG_CALLBACK EventLog;
         ZP_NATIVE_EVENT_LOG_CHANNELS_CALLBACK EventLogChannels;
         ZP_NATIVE_EVENT_LOG_CHANNEL_INFO_CALLBACK EventLogChannelInfo;
@@ -948,6 +950,82 @@ ZpNative_BrowserCallback(
 static
 VOID
 NTAPI
+ZpNative_WmiCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_WMI_PAGE_VIEW Page,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_WMI_ROW Rows = NULL;
+    PZP_NATIVE_WMI_CELL Cells = NULL, CellCursor;
+    ZP_WMI_ROW_VIEW Row;
+    ZP_WMI_CELL Cell;
+    ULONG RowIndex, CellIndex, CellCount = 0, RowOffset = 0, CellOffset;
+    NTSTATUS DecodeStatus;
+
+    for (RowIndex = 0; ZpStatus_IsSuccess(Status) && RowIndex < Page->RowCount; RowIndex++)
+    {
+        DecodeStatus = ZpWmi_GetNextRow(Page, &RowOffset, &Row);
+        if (!NT_SUCCESS(DecodeStatus) || CellCount > MAXULONG - Row.CellCount)
+        {
+            Status = ZpStatus_FromNtStatus(
+                NT_SUCCESS(DecodeStatus) ? STATUS_INTEGER_OVERFLOW : DecodeStatus);
+            break;
+        }
+        CellCount += Row.CellCount;
+    }
+    if (ZpStatus_IsSuccess(Status) && Page->RowCount != 0)
+    {
+        Rows = Mem_Alloc((SIZE_T)Page->RowCount * sizeof(*Rows));
+        Cells = CellCount == 0 ? NULL : Mem_Alloc((SIZE_T)CellCount * sizeof(*Cells));
+        if (Rows == NULL || (CellCount != 0 && Cells == NULL))
+        {
+            Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+        }
+    }
+    CellCursor = Cells;
+    RowOffset = 0;
+    for (RowIndex = 0; ZpStatus_IsSuccess(Status) && RowIndex < Page->RowCount; RowIndex++)
+    {
+        DecodeStatus = ZpWmi_GetNextRow(Page, &RowOffset, &Row);
+        if (!NT_SUCCESS(DecodeStatus))
+        {
+            Status = ZpStatus_FromNtStatus(DecodeStatus);
+            break;
+        }
+        Rows[RowIndex].Cells = CellCursor;
+        Rows[RowIndex].CellCount = Row.CellCount;
+        CellOffset = 0;
+        for (CellIndex = 0; CellIndex < Row.CellCount; CellIndex++, CellCursor++)
+        {
+            DecodeStatus = ZpWmi_GetNextCell(&Row, &CellOffset, &Cell);
+            if (!NT_SUCCESS(DecodeStatus))
+            {
+                Status = ZpStatus_FromNtStatus(DecodeStatus);
+                break;
+            }
+            CellCursor->Type = Cell.Type;
+            CellCursor->Name = Cell.Name;
+            CellCursor->NameLength = Cell.NameLength;
+            CellCursor->Value = Cell.Value;
+            CellCursor->ValueLength = Cell.ValueLength;
+        }
+        if (!NT_SUCCESS(DecodeStatus)) break;
+    }
+    CallbackContext->Callback.Wmi(Status,
+                                  ZpStatus_IsSuccess(Status) ? Rows : NULL,
+                                  ZpStatus_IsSuccess(Status) ? Page->RowCount : 0,
+                                  CallbackContext->Context);
+    Mem_Free(Cells);
+    Mem_Free(Rows);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
 ZpNative_EventLogCallback(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
@@ -1417,7 +1495,8 @@ ZpNative_Start(
         { ZP_ADMINISTRATION_MODULE_ID, ZP_ADMINISTRATION_MODULE_VERSION },
         { ZP_EXECUTION_MODULE_ID, ZP_EXECUTION_MODULE_VERSION },
         { ZP_TUNNEL_MODULE_ID, ZP_TUNNEL_MODULE_VERSION },
-        { ZP_BROWSER_MODULE_ID, ZP_BROWSER_MODULE_VERSION }
+        { ZP_BROWSER_MODULE_ID, ZP_BROWSER_MODULE_VERSION },
+        { ZP_WMI_MODULE_ID, ZP_WMI_MODULE_VERSION }
     };
     ZP_LISTENER_ENDPOINT Listener = {
         ZpTransportQuic,
@@ -3154,6 +3233,125 @@ ZpNative_QueryBrowser(
                               ZpNative_BrowserCallback,
                               CallbackContext,
                               &Request));
+}
+
+static
+NTSTATUS
+ZpNative_Wmi(
+    _In_ USHORT OperationId,
+    _In_reads_(NamespaceLength) PCWCH Namespace,
+    _In_ ULONG NamespaceLength,
+    _In_reads_opt_(QueryLength) PCWCH Query,
+    _In_ ULONG QueryLength,
+    _In_ ULONG Limit,
+    _In_ ULONG Flags,
+    _In_ ZP_NATIVE_WMI_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Wmi = Callback;
+    Status = OperationId == ZP_WMI_OPERATION_ENUMERATE_NAMESPACES ?
+                 ZpServer_EnumerateWmiNamespaces(Connection,
+                                                 Namespace,
+                                                 NamespaceLength,
+                                                 ZP_NATIVE_WMI_TIMEOUT_MILLISECONDS,
+                                                 ZpNative_WmiCallback,
+                                                 CallbackContext,
+                                                 &Request) :
+             OperationId == ZP_WMI_OPERATION_ENUMERATE_CLASSES ?
+                 ZpServer_EnumerateWmiClasses(Connection,
+                                              Namespace,
+                                              NamespaceLength,
+                                              ZP_NATIVE_WMI_TIMEOUT_MILLISECONDS,
+                                              ZpNative_WmiCallback,
+                                              CallbackContext,
+                                              &Request) :
+                 ZpServer_QueryWmi(Connection,
+                                   Namespace,
+                                   NamespaceLength,
+                                   Query,
+                                   QueryLength,
+                                   Limit,
+                                   Flags,
+                                   ZP_NATIVE_WMI_TIMEOUT_MILLISECONDS,
+                                   ZpNative_WmiCallback,
+                                   CallbackContext,
+                                   &Request);
+    return ZpNative_SendStatusRequest(CallbackContext, Status);
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumerateWmiNamespaces(
+    _In_reads_(NamespaceLength) PCWCH Namespace,
+    _In_ ULONG NamespaceLength,
+    _In_ ZP_NATIVE_WMI_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    return ZpNative_Wmi(ZP_WMI_OPERATION_ENUMERATE_NAMESPACES,
+                        Namespace,
+                        NamespaceLength,
+                        NULL,
+                        0,
+                        ZP_WMI_MAX_ROWS,
+                        0,
+                        Callback,
+                        Context);
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumerateWmiClasses(
+    _In_reads_(NamespaceLength) PCWCH Namespace,
+    _In_ ULONG NamespaceLength,
+    _In_ ZP_NATIVE_WMI_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    return ZpNative_Wmi(ZP_WMI_OPERATION_ENUMERATE_CLASSES,
+                        Namespace,
+                        NamespaceLength,
+                        NULL,
+                        0,
+                        ZP_WMI_MAX_ROWS,
+                        0,
+                        Callback,
+                        Context);
+}
+
+NTSTATUS
+NTAPI
+ZpNative_QueryWmi(
+    _In_reads_(NamespaceLength) PCWCH Namespace,
+    _In_ ULONG NamespaceLength,
+    _In_reads_(QueryLength) PCWCH Query,
+    _In_ ULONG QueryLength,
+    _In_ ULONG Limit,
+    _In_ ULONG Flags,
+    _In_ ZP_NATIVE_WMI_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    return ZpNative_Wmi(ZP_WMI_OPERATION_QUERY,
+                        Namespace,
+                        NamespaceLength,
+                        Query,
+                        QueryLength,
+                        Limit,
+                        Flags,
+                        Callback,
+                        Context);
 }
 
 NTSTATUS

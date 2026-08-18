@@ -10,6 +10,7 @@
 #include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
 #include <KNSoft/ZPigeon/Terminal.h>
+#include <KNSoft/ZPigeon/Wmi.h>
 
 TEST_FUNC(ProtocolMessage)
 {
@@ -225,6 +226,15 @@ TEST_FUNC(ProtocolMessage)
     ZP_BROWSER_PAGE_VIEW BrowserPage;
     ZP_BROWSER_RECORD_VIEW BrowserRecord;
     ZP_BROWSER_QUERY_VIEW BrowserQuery;
+    ZP_WMI_CELL WmiCells[] = {
+        { 19, L"ProcessId", 9, L"1234", 4 },
+        { 8, L"Name", 4, L"example.exe", 11 }
+    };
+    ZP_WMI_ROW WmiRows[] = { { WmiCells, ARRAYSIZE(WmiCells) } };
+    ZP_WMI_PAGE_VIEW WmiPage;
+    ZP_WMI_ROW_VIEW WmiRow;
+    ZP_WMI_CELL WmiCell;
+    ZP_WMI_REQUEST_VIEW WmiRequest;
     ZP_REGISTRY_ENUMERATE_VIEW RegistryEnumerate;
     ZP_REGISTRY_VALUE_REQUEST_VIEW RegistryValueRequest;
     ZP_REGISTRY_SET_VALUE_VIEW RegistrySetValue;
@@ -1168,6 +1178,27 @@ TEST_FUNC(ProtocolMessage)
             NT_SUCCESS(ZpBrowser_DecodeQuery(Buffer, Length, &BrowserQuery)) &&
             BrowserQuery.Browser == ZpBrowserEdge && BrowserQuery.Kind == ZpBrowserKindDownload &&
             BrowserQuery.Cursor == 42 && BrowserQuery.Limit == 100 && BrowserQuery.Profile.Length == 7);
+    TEST_OK(NT_SUCCESS(ZpWmi_EncodePage(WmiRows,
+                                        ARRAYSIZE(WmiRows),
+                                        Buffer,
+                                        sizeof(Buffer),
+                                        &Length)) &&
+            NT_SUCCESS(ZpWmi_DecodePage(Buffer, Length, &WmiPage)) && WmiPage.RowCount == 1 &&
+            NT_SUCCESS(ZpWmi_GetRow(&WmiPage, 0, &WmiRow)) && WmiRow.CellCount == 2 &&
+            NT_SUCCESS(ZpWmi_GetCell(&WmiRow, 1, &WmiCell)) && WmiCell.Type == 8 &&
+            WmiCell.NameLength == 4 && WmiCell.ValueLength == 11);
+    TEST_OK(NT_SUCCESS(ZpWmi_EncodeRequest(L"ROOT\\CIMV2",
+                                           11,
+                                           L"SELECT * FROM Win32_Process",
+                                           27,
+                                           100,
+                                           ZP_WMI_FLAG_SYSTEM_PROPERTIES,
+                                           Buffer,
+                                           sizeof(Buffer),
+                                           &Length)) &&
+            NT_SUCCESS(ZpWmi_DecodeRequest(Buffer, Length, &WmiRequest)) &&
+            WmiRequest.Namespace.Length == 11 && WmiRequest.Query.Length == 27 &&
+            WmiRequest.Limit == 100 && WmiRequest.Flags == ZP_WMI_FLAG_SYSTEM_PROPERTIES);
     TEST_OK(NT_SUCCESS(ZpRegistry_EncodeEnumerateRequest(
                            ZpRegistryLocalMachine,
                            32,

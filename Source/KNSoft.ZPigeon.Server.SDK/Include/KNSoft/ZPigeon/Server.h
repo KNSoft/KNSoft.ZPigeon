@@ -126,6 +126,43 @@ ZpServer_QueryBrowser(
 
 NTSTATUS
 NTAPI
+ZpServer_EnumerateWmiNamespaces(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(NamespaceLength) PCWCH Namespace,
+    _In_ ULONG NamespaceLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WMI_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateWmiClasses(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(NamespaceLength) PCWCH Namespace,
+    _In_ ULONG NamespaceLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WMI_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryWmi(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(NamespaceLength) PCWCH Namespace,
+    _In_ ULONG NamespaceLength,
+    _In_reads_(QueryLength) PCWCH Query,
+    _In_ ULONG QueryLength,
+    _In_ ULONG Limit,
+    _In_ ULONG Flags,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WMI_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_SendRequest(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ USHORT ModuleId,

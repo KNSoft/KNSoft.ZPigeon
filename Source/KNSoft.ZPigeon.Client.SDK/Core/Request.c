@@ -1,6 +1,7 @@
 ﻿#include "../Client.inl"
 #include "../../Modules/Administration/Client.h"
 #include "../../Modules/Browser/Client.h"
+#include "../../Modules/Wmi/Client.h"
 #include "../../Modules/EventLog/Client.h"
 #include "../../Modules/Execution/Client.h"
 #include "../../Modules/File/Client.h"
@@ -261,6 +262,15 @@ ZpClientInbound_RequestCallback(
                                    Request->PayloadLength,
                                    &AllocatedResponse,
                                    &PayloadLength);
+        Response = AllocatedResponse;
+    }
+    else if (Request->ModuleId == ZP_WMI_MODULE_ID)
+    {
+        Status = ZpWmi_Execute(Request->OperationId,
+                               Request->Payload,
+                               Request->PayloadLength,
+                               &AllocatedResponse,
+                               &PayloadLength);
         Response = AllocatedResponse;
     }
     else
