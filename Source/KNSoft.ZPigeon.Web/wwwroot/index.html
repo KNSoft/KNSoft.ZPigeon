@@ -10,7 +10,7 @@
     *{box-sizing:border-box}[hidden]{display:none!important}html,body{height:100%;margin:0}body{font:14px system-ui,"Microsoft YaHei UI",sans-serif;background:var(--bg);color:var(--text);overflow:hidden}
     button,input,select,textarea{font:inherit;color:inherit;background:#1c2431;border:1px solid #344056;border-radius:6px;padding:7px 10px}button{cursor:pointer}button:hover{border-color:#60718e}button:disabled{cursor:not-allowed;opacity:.45}
     header{height:54px;display:flex;align-items:center;gap:18px;padding:0 18px;border-bottom:1px solid var(--line);background:#111722}header strong{font-size:16px;white-space:nowrap}header .status{margin-left:auto;color:var(--muted);white-space:nowrap}.app-nav{display:flex;gap:4px;overflow-x:auto}.app-nav button{border-color:transparent;background:transparent;white-space:nowrap}.app-nav button.active{color:var(--accent);background:#1c2635;border-color:#344056}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 6px 0 14px;background:#596579}.dot.ok{background:#43d17d}.dot.off{background:#e2616e}
-    main{display:grid;grid-template-rows:auto 1fr;height:calc(100% - 54px)}.toolbar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line)}.toolbar .spacer{flex:1}.danger{color:#ff9aa5}
+    .module-nav{position:fixed;left:0;top:54px;bottom:0;width:172px;z-index:5;display:flex;flex-direction:column;gap:3px;padding:10px 8px;border-right:1px solid var(--line);background:#101620;overflow:auto}.module-nav button{text-align:left;border-color:transparent;background:transparent}.module-nav button.active{color:var(--accent);background:#1c2635;border-color:#344056}main{display:grid;grid-template-rows:auto 1fr;height:calc(100% - 54px);margin-left:172px}.toolbar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line)}.toolbar .spacer{flex:1}.danger{color:#ff9aa5}
     .shell-select{min-width:190px}.add-shell{font-size:18px;line-height:1;padding:6px 10px}
     .workspace{min-height:0;display:grid;grid-template-rows:39px 1fr}.tabs{display:flex;align-items:end;gap:2px;padding:5px 10px 0;background:#0f141d;border-bottom:1px solid var(--line);overflow-x:auto}.tab{max-width:220px;min-width:120px;border-radius:6px 6px 0 0;border-bottom:0;padding:8px 12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tab.active{background:#171e2a;color:var(--text);border-color:var(--line)}
     .terminals{position:relative;min-height:0;background:#0b0f15}.terminal-panel{position:absolute;inset:0;padding:10px;display:none}.terminal-panel.active{display:block}.terminal-host{width:100%;height:100%}.empty{height:100%;display:grid;place-content:center;text-align:center;color:var(--muted);gap:12px}.empty b{color:var(--text);font-size:18px}.empty button{justify-self:center}
@@ -33,16 +33,17 @@
     .certificate-body{height:100%}.certificate-list{position:relative;overflow:auto}.certificate-list table{min-width:980px}.certificate-list th:nth-child(3),.certificate-list th:nth-child(6){width:150px}.certificate-properties{width:min(820px,calc(100% - 30px));height:min(650px,calc(100vh - 30px));max-height:none}.certificate-properties form{height:100%;display:grid;grid-template-rows:auto auto 1fr auto;min-height:0}.certificate-properties [data-page]{overflow:auto;padding:14px 2px}.certificate-summary{display:flex;flex-direction:column;gap:8px;padding:14px;border:1px solid var(--line);border-radius:8px;margin-bottom:12px}.certificate-detail-list{display:grid;grid-template-columns:1fr 1fr;gap:6px}.certificate-detail-list button{display:flex;flex-direction:column;gap:4px;text-align:left;min-width:0}.certificate-detail-list button.selected{border-color:var(--accent)}.certificate-detail-list span{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.certificate-properties [data-role=detail-value]{white-space:pre-wrap;min-height:80px;max-height:160px}.certificate-chain{border:1px solid var(--line);border-radius:7px;padding:10px}.certificate-chain div{padding:7px}.certificate-chain .error{color:var(--danger)}.certificate-properties [data-role=chain-status]{white-space:pre-wrap;max-height:180px}.certificate-properties .property-tabs{margin-bottom:0}
     .browser-body{display:grid;grid-template-columns:minmax(260px,32%) 1fr;min-height:0}.browser-body>aside{padding:18px;border-right:1px solid var(--line);overflow:auto;background:#0d121a}.browser-body h2{margin:0 0 16px}.browser-data{display:grid;grid-template-rows:1fr auto;min-height:0}.browser-data footer{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--line);background:var(--panel)}.browser-data pre{height:100%;max-height:none;margin:0;border-radius:0;overflow:auto}.browser-data table{min-width:900px}.wmi-toolbar{grid-template-columns:minmax(110px,auto) minmax(280px,1fr) auto auto auto}.wmi-toolbar>[data-role=namespace]{max-width:260px;overflow:hidden;text-overflow:ellipsis}.wmi-body .administration-tree{padding-top:12px}.wmi-body .administration-tree>input{width:calc(100% - 16px);margin:0 8px 10px}.wmi-body>.manager-table{min-width:0}.wmi-body table{width:max-content;min-width:100%;table-layout:auto}.wmi-body th,.wmi-body td{min-width:140px;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.error-text{color:var(--danger)}
     #audioManager{overflow:auto;display:block}.audio-streams{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px;background:#0d121a}.audio-streams section,.audio-panel{border:1px solid var(--line);border-radius:8px;background:#101721;overflow:hidden}.audio-streams h3,.audio-panel h2{font-size:15px;margin:0;padding:10px 12px;border-bottom:1px solid var(--line)}.audio-streams section>div{display:flex;gap:8px;padding:12px}.audio-streams select{flex:1;min-width:0}.audio-streams p{margin:0;padding:0 12px 12px}.audio-panel{margin:0 12px 12px}.audio-panel .manager-table{max-height:330px}.audio-panel table{min-width:840px}.audio-panel input[type=range]{width:100%}.audio-panel th:nth-last-child(-n+3){width:90px}
-    .system-information{grid-auto-rows:max-content}
+    .system-information{grid-auto-rows:max-content}.remote-desktop{padding:18px;max-width:720px}.remote-desktop code{font:16px "Cascadia Mono",Consolas,monospace}
     @media(max-width:760px){.status{display:none}.registry-body,.file-body{grid-template-columns:minmax(180px,42%) 1fr}}
   </style>
 </head>
 <body>
   <header>
     <strong>KNSoft ZPigeon</strong>
-    <nav class="app-nav"><button class="active" data-view="terminal">远程终端</button><button data-view="execution">远程执行</button><button data-view="forwards">端口转发</button><button data-view="system">系统信息</button><button data-view="files">文件</button><button data-view="processes">进程</button><button data-view="windows">窗口</button><button data-view="audio">音频</button><button data-view="services">服务</button><button data-view="registry">注册表</button><button data-view="users">用户</button><button data-view="software">已安装程序</button><button data-view="hardware">硬件</button><button data-view="certificates">证书</button><button data-view="browsers">浏览器</button><button data-view="wmi">WMI</button><button data-view="updates">更新</button><button data-view="events">事件查看器</button><button data-view="tasks">任务计划</button><button data-view="firewall">防火墙</button><button data-view="wlan">WLAN</button><button data-view="power">电源</button></nav>
+    <nav class="app-nav"><button data-category="system">系统管理</button><button data-category="network">网络</button><button data-category="storage">存储管理</button><button data-category="tasks">任务管理</button><button data-category="hardware">硬件管理</button><button data-category="software">软件管理</button><button class="active" data-category="remote">远程访问</button></nav>
     <div class="status"><span id="serverDot" class="dot"></span>Server <span id="server">读取中</span><span id="clientDot" class="dot"></span>Client <span id="client">读取中</span></div>
   </header>
+  <aside id="moduleNav" class="module-nav" aria-label="模块"></aside>
   <main id="terminalView">
     <div class="toolbar">
       <select id="shellSelect" class="shell-select" disabled><option>Client 未连接</option></select>
@@ -62,6 +63,7 @@
   <main id="executionView" class="manager-view" hidden><section id="executionManager" class="manager"></section></main>
   <main id="forwardsView" class="manager-view" hidden><section id="portForwardManager" class="manager"></section></main>
   <main id="systemView" class="manager-view" hidden><section id="systemManager" class="manager"></section></main>
+  <main id="hardwareInfoView" class="manager-view" hidden><section id="hardwareInfoManager" class="manager"></section></main>
   <main id="registryView" hidden><section id="registryEditor" class="registry-editor"></section></main>
   <main id="filesView" class="manager-view" hidden><section id="fileManager" class="manager"></section></main>
   <main id="processesView" class="manager-view" hidden><section id="processManager" class="manager"></section></main>
@@ -80,6 +82,7 @@
   <main id="firewallView" class="manager-view" hidden><section id="firewallManager" class="manager"></section></main>
   <main id="wlanView" class="manager-view" hidden><section id="wlanManager" class="manager"></section></main>
   <main id="powerView" class="manager-view" hidden><section id="powerManager" class="manager"></section></main>
+  <main id="remoteDesktopView" class="manager-view" hidden><section id="remoteDesktopManager" class="manager"></section></main>
 
   <dialog id="scriptDialog">
     <form method="dialog">
@@ -123,7 +126,7 @@
     import {RegistryEditor} from './registry-editor.mjs';
     import {FileManager,ProcessManager,ServiceManager,WindowManager} from './management.mjs';
     import {CertificateManager,EventViewer,FirewallManager,HardwareManager,PowerManager,SoftwareManager,SystemInformationManager,TaskManager,UpdateManager,UserManager,WlanManager} from './administration.mjs';
-    import {ExecutionManager} from './execution.mjs';
+    import {ExecutionManager,RemoteDesktopManager} from './execution.mjs';
     import {PortForwardManager} from './port-forward.mjs';
     import {AclEditor,RemoteFilePicker} from './remote-dialogs.mjs';
     import {BrowserManager} from './browser.mjs';
@@ -132,7 +135,8 @@
 
     const $=id=>document.getElementById(id),encoder=new TextEncoder(),sessions=new Map();
     const shellSelect=$('shellSelect'),newShell=$('newShell'),emptyNew=$('emptyNew'),scriptButton=$('scriptButton'),tabs=$('tabs'),terminals=$('terminals'),empty=$('empty'),closeShell=$('closeShell'),tabMenu=$('tabMenu'),renameDialog=$('renameDialog'),pasteDialog=$('pasteDialog'),scriptDialog=$('scriptDialog');
-    let active=null,selectedShell=null,clientConnected=false,shellsLoaded=false,shellsLoading=false,sessionsRestored=false,currentView='terminal',fitFrame=0,contextSession=null,renameSession=null,pendingPaste=null,toastTimer=0;
+    const categories={system:[['system','系统信息'],['registry','注册表'],['users','用户'],['wmi','WMI'],['updates','更新'],['certificates','证书'],['events','事件查看器']],network:[['forwards','端口转发'],['wlan','WLAN'],['firewall','防火墙']],storage:[['files','文件']],tasks:[['processes','进程'],['windows','窗口'],['services','服务'],['tasks','任务计划']],hardware:[['hardwareInfo','硬件信息'],['hardware','设备管理'],['audio','音频'],['power','电源']],software:[['software','已安装程序'],['browsers','浏览器']],remote:[['terminal','远程终端'],['execution','远程执行'],['remoteDesktop','远程桌面']]},views=Object.values(categories).flat(),viewCategory=new Map(Object.entries(categories).flatMap(([category,items])=>items.map(([view])=>[view,category])));
+    let active=null,selectedShell=null,clientConnected=false,shellsLoaded=false,shellsLoading=false,sessionsRestored=false,currentView=views.some(([view])=>view===location.hash.slice(1))?location.hash.slice(1):'terminal',fitFrame=0,contextSession=null,renameSession=null,pendingPaste=null,toastTimer=0;
     const filePicker=new RemoteFilePicker({call,notify}),aclEditor=new AclEditor({call,notify});
     const registry=new RegistryEditor($('registryEditor'),{call,notify,aclEditor});
     const files=new FileManager($('fileManager'),{call,notify,aclEditor}),services=new ServiceManager($('serviceManager'),{call,notify,filePicker}),processes=new ProcessManager($('processManager'),{call,notify,isConnected:()=>clientConnected,revealFile:path=>{showView('files');files.reveal(path)},revealServices:names=>{showView('services');services.revealServices(names)}}),windows=new WindowManager($('windowManager'),{call,notify}),audio=new AudioManager($('audioManager'),{call,notify});
@@ -148,18 +152,19 @@
     const tasks=new TaskManager($('taskManager'),{call,notify});
     const events=new EventViewer($('eventViewer'),{call,notify});
     const firewall=new FirewallManager($('firewallManager'),{call,notify,revealEvents:channel=>{showView('events');events.openChannel(channel)}});
-    const system=new SystemInformationManager($('systemManager'),{call,notify,filePicker}),wlan=new WlanManager($('wlanManager'),{call,notify});
-    const power=new PowerManager($('powerManager'),{call,notify}),administration=[system,users,software,hardware,certificates,browsers,wmi,updates,events,tasks,firewall,wlan,power];
+    const system=new SystemInformationManager($('systemManager'),{call,notify,filePicker}),hardwareInfo=new SystemInformationManager($('hardwareInfoManager'),{call,notify,filePicker,hardwareOnly:true}),wlan=new WlanManager($('wlanManager'),{call,notify});
+    const power=new PowerManager($('powerManager'),{call,notify}),administration=[system,hardwareInfo,users,software,hardware,certificates,browsers,wmi,updates,events,tasks,firewall,wlan,power];
     const execution=new ExecutionManager($('executionManager'),{call,notify,openTerminal:openScriptDialog,filePicker});
+    const remoteDesktop=new RemoteDesktopManager($('remoteDesktopManager'),{call,notify});
     const forwards=new PortForwardManager($('portForwardManager'),{call,notify});
-    files.disconnect();processes.disconnect();windows.disconnect();audio.disconnect();services.disconnect();forwards.disconnect();for(const manager of administration)manager.disconnect();
+    files.disconnect();processes.disconnect();windows.disconnect();audio.disconnect();services.disconnect();forwards.disconnect();remoteDesktop.disconnect();for(const manager of administration)manager.disconnect();
 
     async function refresh(){
       try{
         const state=await fetch('/api/status').then(r=>r.json()),connected=state.clientConnected,disconnected=clientConnected&&!connected;clientConnected=connected;
         $('server').textContent=state.state===2?'运行中':`状态 ${state.state}`;$('client').textContent=connected?'已连接':'未连接';
         $('serverDot').className=`dot ${state.state===2?'ok':'off'}`;$('clientDot').className=`dot ${connected?'ok':'off'}`;
-        if(disconnected){selectedShell=null;shellsLoaded=false;shellSelect.replaceChildren(new Option('Client 未连接'));files.disconnect();processes.disconnect();windows.disconnect();audio.disconnect();services.disconnect();forwards.disconnect();for(const manager of administration)manager.disconnect()}
+        if(disconnected){selectedShell=null;shellsLoaded=false;shellSelect.replaceChildren(new Option('Client 未连接'));files.disconnect();processes.disconnect();windows.disconnect();audio.disconnect();services.disconnect();forwards.disconnect();remoteDesktop.disconnect();for(const manager of administration)manager.disconnect()}
         shellSelect.disabled=newShell.disabled=emptyNew.disabled=!connected||selectedShell===null;scriptButton.disabled=!connected;
         return connected;
       }catch{
@@ -271,7 +276,14 @@
 
     function closeActive(){closeSession(active)}
 
-    function showView(name){currentView=name;for(const view of ['terminal','execution','forwards','system','registry','files','processes','windows','audio','services','users','software','hardware','certificates','browsers','wmi','updates','events','tasks','firewall','wlan','power'])$(`${view}View`).hidden=name!==view;for(const button of document.querySelectorAll('.app-nav button'))button.classList.toggle('active',button.dataset.view===name);processes.setActive(name==='processes');if(name==='terminal'){scheduleFit();loadShells()}else if(name==='execution')execution.activate(clientConnected);else if(name==='forwards')forwards.activate(clientConnected);else if(name==='files')files.activate(clientConnected);else if(name==='windows')windows.activate(clientConnected);else if(name==='audio')audio.activate(clientConnected);else if(name==='services')services.activate(clientConnected);else ({system,users,software,hardware,certificates,browsers,wmi,updates,events,tasks,firewall,wlan,power})[name]?.activate(clientConnected)}
+    function showView(name,historyMode='replace'){
+      if(!viewCategory.has(name))name='terminal';currentView=name;const category=viewCategory.get(name),moduleNav=$('moduleNav');
+      for(const [view] of views)$(`${view}View`).hidden=name!==view;
+      for(const button of document.querySelectorAll('.app-nav button'))button.classList.toggle('active',button.dataset.category===category);
+      moduleNav.replaceChildren(...categories[category].map(([view,title])=>{const button=document.createElement('button');button.textContent=title;button.classList.toggle('active',view===name);button.onclick=()=>showView(view,'push');return button}));
+      const url=`#${name}`;if(location.hash!==url)history[`${historyMode}State`](null,'',url);processes.setActive(name==='processes');
+      if(name==='terminal'){scheduleFit();loadShells()}else if(name==='execution')execution.activate(clientConnected);else if(name==='remoteDesktop')remoteDesktop.activate(clientConnected);else if(name==='forwards')forwards.activate(clientConnected);else if(name==='files')files.activate(clientConnected);else if(name==='windows')windows.activate(clientConnected);else if(name==='audio')audio.activate(clientConnected);else if(name==='services')services.activate(clientConnected);else ({system,hardwareInfo,users,software,hardware,certificates,browsers,wmi,updates,events,tasks,firewall,wlan,power})[name]?.activate(clientConnected)
+    }
 
     async function call(url,body){
       let response;
@@ -303,8 +315,8 @@
     renameDialog.onclose=async()=>{const session=sessions.get(renameSession),title=$('renameInput').value.trim();if(renameDialog.returnValue==='rename'&&session&&title)try{await call('/api/terminal/session/rename',{id:session.id,title});session.title=title;session.tab.textContent=title}catch(error){notify(error)}renameSession=null;if(session)session.terminal.focus()};
     pasteDialog.onclose=()=>{const paste=pendingPaste;pendingPaste=null;const session=paste&&sessions.get(paste.id);if(pasteDialog.returnValue==='paste'&&session&&!session.ended&&session.socket.readyState===WebSocket.OPEN)pasteTerminal(session.terminal,paste.text);else if(session)session.terminal.focus()};
     document.addEventListener('pointerdown',event=>{if(!tabMenu.hidden&&!tabMenu.contains(event.target))hideTabMenu()});document.addEventListener('keydown',event=>{if(event.key==='Escape')hideTabMenu()});addEventListener('resize',hideTabMenu);tabs.addEventListener('scroll',hideTabMenu);
-    for(const button of document.querySelectorAll('.app-nav button'))button.onclick=()=>showView(button.dataset.view);
-    new ResizeObserver(scheduleFit).observe(terminals);const connected=await refresh();await restoreSessions();if(connected)await loadShells();setInterval(async()=>{const wasConnected=clientConnected,connected=await refresh();if(connected&&!wasConnected)showView(currentView)},1000);
+    for(const button of document.querySelectorAll('.app-nav button'))button.onclick=()=>showView(categories[button.dataset.category][0][0],'push');
+    addEventListener('popstate',()=>showView(location.hash.slice(1)));showView(currentView);new ResizeObserver(scheduleFit).observe(terminals);const connected=await refresh();await restoreSessions();if(connected)await loadShells();setInterval(async()=>{const wasConnected=clientConnected,connected=await refresh();if(connected&&!wasConnected)showView(currentView)},1000);
   </script>
 </body>
 </html>
