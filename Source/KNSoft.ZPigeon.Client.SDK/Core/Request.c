@@ -241,6 +241,7 @@ ZpClientInbound_RequestCallback(
                                   Request->OperationId,
                                   Request->Payload,
                                   Request->PayloadLength,
+                                  Request->TimeoutMilliseconds,
                                   &AllocatedResponse,
                                   &PayloadLength,
                                   &TunnelChannel);

@@ -10,12 +10,14 @@ var server = new NativeServer(AppContext.BaseDirectory);
 var terminalSessions = new TerminalWebSessionManager(server);
 var eventLogStreams = new EventLogStreamManager(server);
 var tcpForwards = new TcpForwardManager(server);
+var udpForwards = new UdpForwardManager(server);
 var cdpSessions = new CdpSessionManager(server, tcpForwards);
 var proxyUserHeader = builder.Configuration["ReverseProxy:UserHeader"] ?? "X-Forwarded-User";
 builder.Services.AddSingleton(server);
 builder.Services.AddSingleton(terminalSessions);
 builder.Services.AddSingleton(eventLogStreams);
 builder.Services.AddSingleton(tcpForwards);
+builder.Services.AddSingleton(udpForwards);
 builder.Services.AddSingleton(cdpSessions);
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -143,13 +145,14 @@ app.Map("/api/terminal", context =>
 app.MapRegistryApi(server);
 app.MapManagementApi(server);
 app.MapExecutionApi(server, terminalSessions);
-app.MapRemoteAccessApi(tcpForwards, cdpSessions, proxyUserHeader);
+app.MapRemoteAccessApi(tcpForwards, udpForwards, cdpSessions, proxyUserHeader);
 app.Lifetime.ApplicationStopping.Register(server.Dispose);
 app.Lifetime.ApplicationStopping.Register(() =>
     terminalSessions.DisposeAsync().AsTask().GetAwaiter().GetResult());
 app.Lifetime.ApplicationStopping.Register(eventLogStreams.Dispose);
 app.Lifetime.ApplicationStopping.Register(cdpSessions.Dispose);
 app.Lifetime.ApplicationStopping.Register(tcpForwards.Dispose);
+app.Lifetime.ApplicationStopping.Register(udpForwards.Dispose);
 server.Start();
 app.Run();
 

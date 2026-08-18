@@ -91,7 +91,10 @@ NTSTATUS
 NTAPI
 ZpServer_OpenTunnel(
     _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(HostLength) PCWCH Host,
+    _In_ ULONG HostLength,
     _In_ USHORT Port,
+    _In_ USHORT Protocol,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_TUNNEL_OPEN_CALLBACK OpenCallback,
     _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
@@ -518,6 +521,28 @@ ZpServer_ControlWindow(
     _In_ ZP_WINDOW_CONTROL Control,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_UpdateWindow(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ PCZP_WINDOW_UPDATE Update,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_CaptureWindow(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WINDOW_CAPTURE_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 

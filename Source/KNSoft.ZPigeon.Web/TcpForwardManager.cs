@@ -5,45 +5,83 @@ using System.Net.Sockets;
 
 namespace KNSoft.ZPigeon.Web;
 
-internal sealed record TcpForwardInfo(
+internal sealed record PortForwardInfo(
     Guid Id,
     int Port,
-    DateTimeOffset Expires,
+    string Protocol,
+    string Kind,
+    string SourceAddress,
+    string TargetHost,
+    ushort TargetPort,
+    uint IdleTimeoutSeconds,
+    DateTimeOffset? IdleExpires,
+    int ActiveCount,
     string State,
     ZpStatus? Status);
 
 internal sealed class TcpForwardManager(NativeServer server) : IDisposable
 {
-    private static readonly TimeSpan DefaultLeaseLifetime = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan DefaultIdleTimeout = TimeSpan.FromSeconds(3600);
     private readonly ConcurrentDictionary<Guid, Lease> leases = new();
     private readonly CancellationTokenSource stopping = new();
 
-    public TcpForwardInfo Create(
+    public PortForwardInfo Create(
+        IPAddress ownerAddress,
         IPAddress sourceAddress,
+        string kind,
+        string targetHost,
         ushort targetPort,
-        bool singleUse = true,
-        TimeSpan? lifetime = null)
+        TimeSpan? idleTimeout = null)
     {
-        var listener = new TcpListener(IPAddress.Any, 0);
-        listener.Start(singleUse ? 1 : 16);
-        var leaseLifetime = lifetime ?? DefaultLeaseLifetime;
+        var listener = new TcpListener(IPAddress.IPv6Any, 0);
+        listener.Server.DualMode = true;
+        listener.Start(16);
         var lease = new Lease(listener,
+                              Normalize(ownerAddress),
                               Normalize(sourceAddress),
+                              kind,
+                              targetHost,
                               targetPort,
-                              DateTimeOffset.UtcNow.Add(leaseLifetime),
-                              singleUse,
-                              leaseLifetime);
+                              idleTimeout ?? DefaultIdleTimeout);
         leases[lease.Id] = lease;
         _ = RunAsync(lease);
         return lease.GetInfo();
     }
 
-    public TcpForwardInfo? Get(Guid id) =>
+    public PortForwardInfo? Get(Guid id) =>
         leases.TryGetValue(id, out var lease) ? lease.GetInfo() : null;
+
+    public PortForwardInfo? Get(Guid id, IPAddress sourceAddress) =>
+        leases.TryGetValue(id, out var lease) &&
+        lease.OwnerAddress.Equals(Normalize(sourceAddress)) ? lease.GetInfo() : null;
+
+    public PortForwardInfo[] GetAll(IPAddress sourceAddress)
+    {
+        var address = Normalize(sourceAddress);
+        return leases.Values.Where(lease => lease.OwnerAddress.Equals(address))
+            .Select(lease => lease.GetInfo())
+            .OrderBy(info => info.Port)
+            .ToArray();
+    }
 
     public bool Close(Guid id)
     {
-        if (!leases.TryGetValue(id, out var lease))
+        if (!leases.TryRemove(id, out var lease))
+        {
+            return false;
+        }
+        lease.Close();
+        return true;
+    }
+
+    public bool Close(Guid id, IPAddress sourceAddress)
+    {
+        if (!leases.TryGetValue(id, out var lease) ||
+            !lease.OwnerAddress.Equals(Normalize(sourceAddress)))
+        {
+            return false;
+        }
+        if (!leases.TryRemove(id, out lease))
         {
             return false;
         }
@@ -53,36 +91,27 @@ internal sealed class TcpForwardManager(NativeServer server) : IDisposable
 
     private async Task RunAsync(Lease lease)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(
             stopping.Token,
             lease.Cancellation.Token);
-        timeout.CancelAfter(lease.Lifetime);
         try
         {
             for (;;)
             {
-                var client = await lease.Listener.AcceptTcpClientAsync(timeout.Token);
+                var client = await lease.Listener.AcceptTcpClientAsync(cancellation.Token);
                 var address = ((IPEndPoint)client.Client.RemoteEndPoint!).Address;
                 if (!Normalize(address).Equals(lease.SourceAddress))
                 {
                     client.Dispose();
                     continue;
                 }
-                if (lease.SingleUse)
+                if (!lease.BeginConnection())
                 {
-                    lease.Listener.Stop();
-                    lease.SetState("Connecting");
-                    await ForwardAsync(client, lease, timeout.Token);
-                    lease.SetState("Closed");
-                    return;
+                    client.Dispose();
+                    continue;
                 }
-                _ = ObserveForwardAsync(client, lease, timeout.Token);
+                _ = ObserveForwardAsync(client, lease, cancellation.Token);
             }
-        }
-        catch (OperationCanceledException) when (!stopping.IsCancellationRequested &&
-                                                  !lease.Cancellation.IsCancellationRequested)
-        {
-            lease.SetState("Expired");
         }
         catch (NativeException exception)
         {
@@ -120,7 +149,6 @@ internal sealed class TcpForwardManager(NativeServer server) : IDisposable
         catch (NativeException exception)
         {
             lease.SetFailure(exception.Status);
-            lease.Close(false);
         }
         catch (SocketException exception)
         {
@@ -130,6 +158,10 @@ internal sealed class TcpForwardManager(NativeServer server) : IDisposable
         {
             lease.SetFailure(new(ZpStatusType.Winsock, (uint)socketException.SocketErrorCode));
         }
+        finally
+        {
+            lease.EndConnection();
+        }
     }
 
     private async Task ForwardAsync(
@@ -138,24 +170,16 @@ internal sealed class TcpForwardManager(NativeServer server) : IDisposable
         CancellationToken cancellationToken)
     {
         using (client)
-        await using (var tunnel = await server.OpenTunnelAsync(lease.TargetPort))
+        await using (var tunnel = await server.OpenTunnelAsync(lease.TargetHost, lease.TargetPort))
         using (var transfer = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
-            lease.BeginConnection();
-            try
-            {
-                var stream = client.GetStream();
-                var upload = UploadAsync(stream, tunnel, transfer.Token);
-                var download = DownloadAsync(stream, tunnel, transfer.Token);
-                await Task.WhenAny(upload, download);
-                transfer.Cancel();
-                await IgnoreCancellationAsync(upload);
-                await IgnoreCancellationAsync(download);
-            }
-            finally
-            {
-                lease.EndConnection();
-            }
+            var stream = client.GetStream();
+            var upload = UploadAsync(stream, tunnel, transfer.Token);
+            var download = DownloadAsync(stream, tunnel, transfer.Token);
+            await Task.WhenAny(upload, download);
+            transfer.Cancel();
+            await IgnoreCancellationAsync(upload);
+            await IgnoreCancellationAsync(download);
         }
     }
 
@@ -215,50 +239,60 @@ internal sealed class TcpForwardManager(NativeServer server) : IDisposable
     private sealed class Lease
     {
         private readonly Lock sync = new();
+        private readonly Timer idleTimer;
         private string state = "Waiting";
         private ZpStatus? status;
         private int activeConnections;
 
         internal Lease(
             TcpListener listener,
+            IPAddress ownerAddress,
             IPAddress sourceAddress,
+            string kind,
+            string targetHost,
             ushort targetPort,
-            DateTimeOffset expires,
-            bool singleUse,
-            TimeSpan lifetime)
+            TimeSpan idleTimeout)
         {
             Listener = listener;
+            OwnerAddress = ownerAddress;
             SourceAddress = sourceAddress;
+            Kind = kind;
+            TargetHost = targetHost;
             TargetPort = targetPort;
-            Expires = expires;
-            SingleUse = singleUse;
-            Lifetime = lifetime;
+            IdleTimeout = idleTimeout;
+            IdleExpires = DateTimeOffset.UtcNow.Add(idleTimeout);
             Port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            idleTimer = new(_ => Expire(), null, idleTimeout, Timeout.InfiniteTimeSpan);
         }
 
         internal Guid Id { get; } = Guid.NewGuid();
         internal TcpListener Listener { get; }
+        internal IPAddress OwnerAddress { get; }
         internal IPAddress SourceAddress { get; }
+        internal string Kind { get; }
+        internal string TargetHost { get; }
         internal ushort TargetPort { get; }
-        internal DateTimeOffset Expires { get; }
         internal int Port { get; }
-        internal bool SingleUse { get; }
-        internal TimeSpan Lifetime { get; }
+        internal TimeSpan IdleTimeout { get; }
+        internal DateTimeOffset? IdleExpires { get; private set; }
         internal CancellationTokenSource Cancellation { get; } = new();
 
-        internal TcpForwardInfo GetInfo()
+        internal PortForwardInfo GetInfo()
         {
             lock (sync)
             {
-                return new(Id, Port, Expires, state, status);
-            }
-        }
-
-        internal void SetState(string value)
-        {
-            lock (sync)
-            {
-                state = value;
+                return new(Id,
+                           Port,
+                           "TCP",
+                           Kind,
+                           SourceAddress.ToString(),
+                           TargetHost,
+                           TargetPort,
+                           (uint)IdleTimeout.TotalSeconds,
+                           IdleExpires,
+                           activeConnections,
+                           state,
+                           status);
             }
         }
 
@@ -271,12 +305,17 @@ internal sealed class TcpForwardManager(NativeServer server) : IDisposable
             }
         }
 
-        internal void BeginConnection()
+        internal bool BeginConnection()
         {
             lock (sync)
             {
+                if (state is "Closed" or "Expired") return false;
                 activeConnections++;
+                IdleExpires = null;
+                idleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
                 state = "Connected";
+                status = null;
+                return true;
             }
         }
 
@@ -288,19 +327,36 @@ internal sealed class TcpForwardManager(NativeServer server) : IDisposable
                 {
                     activeConnections--;
                 }
-                if (!SingleUse && activeConnections == 0 && state == "Connected")
+                if (activeConnections == 0 && state is not ("Closed" or "Expired"))
                 {
                     state = "Waiting";
+                    IdleExpires = DateTimeOffset.UtcNow.Add(IdleTimeout);
+                    idleTimer.Change(IdleTimeout, Timeout.InfiniteTimeSpan);
                 }
             }
         }
 
-        internal void Close(bool setState = true)
+        private void Expire()
         {
-            if (setState)
+            lock (sync)
             {
-                SetState("Closed");
+                if (activeConnections != 0 || state is "Closed" or "Expired") return;
+                state = "Expired";
+                IdleExpires = null;
             }
+            idleTimer.Dispose();
+            Cancellation.Cancel();
+            Listener.Stop();
+        }
+
+        internal void Close()
+        {
+            lock (sync)
+            {
+                state = "Closed";
+                IdleExpires = null;
+            }
+            idleTimer.Dispose();
             Cancellation.Cancel();
             Listener.Stop();
         }

@@ -28,6 +28,7 @@ typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
         ZP_NATIVE_EXECUTION_STAGING_CALLBACK ExecutionStaging;
         ZP_NATIVE_WINDOW_LIST_CALLBACK WindowList;
         ZP_NATIVE_WINDOW_INFO_CALLBACK WindowInfo;
+        ZP_NATIVE_WINDOW_CAPTURE_CALLBACK WindowCapture;
         ZP_NATIVE_SERVICE_LIST_CALLBACK ServiceList;
         ZP_NATIVE_SERVICE_INFO_CALLBACK ServiceInfo;
         ZP_NATIVE_ADMINISTRATION_CALLBACK Administration;
@@ -629,6 +630,26 @@ ZpNative_WindowInfoCallback(
     CallbackContext->Callback.WindowInfo(Status,
                                           ZpStatus_IsSuccess(Status) ? Info : NULL,
                                           CallbackContext->Context);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_WindowCaptureCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_BUFFER_VIEW Bitmap,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+
+    CallbackContext->Callback.WindowCapture(
+        Status,
+        ZpStatus_IsSuccess(Status) ? Bitmap->Buffer : NULL,
+        ZpStatus_IsSuccess(Status) ? Bitmap->Length : 0,
+        CallbackContext->Context);
     ZpRequest_Close(Request);
     ZpNative_FreeCallbackContext(CallbackContext);
 }
@@ -2752,6 +2773,97 @@ ZpNative_ControlWindow(
 
 NTSTATUS
 NTAPI
+ZpNative_UpdateWindow(
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ULONG Fields,
+    _In_reads_opt_(CaptionLength) PCWCH Caption,
+    _In_ ULONG CaptionLength,
+    _In_ LONG Left,
+    _In_ LONG Top,
+    _In_ LONG Right,
+    _In_ LONG Bottom,
+    _In_ ULONG Style,
+    _In_ ULONG ExStyle,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_WINDOW_UPDATE Update = {
+        Handle,
+        ProcessId,
+        ThreadId,
+        Fields,
+        Caption,
+        CaptionLength,
+        Left,
+        Top,
+        Right,
+        Bottom,
+        Style,
+        ExStyle
+    };
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_UpdateWindow(Connection,
+                              &Update,
+                              ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                              ZpNative_StatusCallback,
+                              CallbackContext,
+                              &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_CaptureWindow(
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.WindowCapture = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_CaptureWindow(Connection,
+                               Handle,
+                               ProcessId,
+                               ThreadId,
+                               ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                               ZpNative_WindowCaptureCallback,
+                               CallbackContext,
+                               &Request));
+}
+
+NTSTATUS
+NTAPI
 ZpNative_EnumerateServices(
     _In_ ZP_NATIVE_SERVICE_LIST_CALLBACK Callback,
     _In_opt_ PVOID Context)
@@ -3548,7 +3660,10 @@ ZpNative_CloseTerminal(
 NTSTATUS
 NTAPI
 ZpNative_OpenTunnel(
+    _In_reads_(HostLength) PCWCH Host,
+    _In_ ULONG HostLength,
     _In_ USHORT Port,
+    _In_ USHORT Protocol,
     _In_ ZP_NATIVE_TUNNEL_OPEN_CALLBACK OpenCallback,
     _In_ ZP_NATIVE_TUNNEL_DATA_CALLBACK DataCallback,
     _In_ ZP_NATIVE_TUNNEL_WRITABLE_CALLBACK WritableCallback,
@@ -3560,7 +3675,7 @@ ZpNative_OpenTunnel(
     ZP_REQUEST_HANDLE Request;
     NTSTATUS Status;
 
-    if (Port == 0 || OpenCallback == NULL || DataCallback == NULL ||
+    if (Host == NULL || HostLength == 0 || Port == 0 || OpenCallback == NULL || DataCallback == NULL ||
         WritableCallback == NULL || CloseCallback == NULL)
     {
         return STATUS_INVALID_PARAMETER;
@@ -3584,7 +3699,10 @@ ZpNative_OpenTunnel(
     Tunnel->CloseCallback = CloseCallback;
     Tunnel->Context = Context;
     Status = ZpServer_OpenTunnel(Connection,
+                                 Host,
+                                 HostLength,
                                  Port,
+                                 Protocol,
                                  ZP_NATIVE_TIMEOUT_MILLISECONDS,
                                  ZpNative_TunnelOpenCallback,
                                  ZpNative_TunnelDataCallback,

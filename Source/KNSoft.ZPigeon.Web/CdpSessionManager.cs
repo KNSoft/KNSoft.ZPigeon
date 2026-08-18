@@ -18,7 +18,7 @@ internal sealed record CdpSessionInfo(
     string Browser,
     string Profile,
     string JobId,
-    TcpForwardInfo Forward);
+    PortForwardInfo Forward);
 
 internal sealed class CdpSessionManager(
     NativeServer server,
@@ -27,7 +27,6 @@ internal sealed class CdpSessionManager(
     private const uint CurrentSession = uint.MaxValue;
     private const uint ClientSessionFlag = 1;
     private const uint ActiveSessionFlag = 2;
-    private static readonly TimeSpan ForwardLifetime = TimeSpan.FromMinutes(30);
     private readonly ConcurrentDictionary<Guid, Session> sessions = new();
 
     internal async Task<CdpDiscovery> DiscoverAsync()
@@ -162,7 +161,7 @@ internal sealed class CdpSessionManager(
         try
         {
             var port = await WaitForPortAsync(Path.Combine(profilePath, "DevToolsActivePort"));
-            var forward = forwards.Create(sourceAddress, port, false, ForwardLifetime);
+            var forward = forwards.Create(sourceAddress, sourceAddress, "CDP", "127.0.0.1", port);
             var session = new Session(
                 Guid.NewGuid(),
                 browser.Name,
@@ -214,6 +213,12 @@ internal sealed class CdpSessionManager(
             await RemoveTemporaryProfileAsync(session.ProfilePath);
         }
         return true;
+    }
+
+    internal Task<bool> CloseForwardAsync(Guid forwardId)
+    {
+        var session = sessions.Values.FirstOrDefault(value => value.ForwardId == forwardId);
+        return session is null ? Task.FromResult(false) : CloseAsync(session.Id);
     }
 
     private async Task RemoveTemporaryProfileAsync(string path)
@@ -318,7 +323,7 @@ internal sealed class CdpSessionManager(
         string JobId,
         Guid ForwardId)
     {
-        internal CdpSessionInfo ToInfo(TcpForwardInfo forward) =>
+        internal CdpSessionInfo ToInfo(PortForwardInfo forward) =>
             new(Id, Browser, Profile, JobId, forward);
     }
 }

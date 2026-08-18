@@ -9,6 +9,8 @@ EXTERN_C_START
 #define ZP_WINDOW_OPERATION_ENUMERATE 1
 #define ZP_WINDOW_OPERATION_QUERY 2
 #define ZP_WINDOW_OPERATION_CONTROL 3
+#define ZP_WINDOW_OPERATION_UPDATE 4
+#define ZP_WINDOW_OPERATION_CAPTURE 5
 
 typedef USHORT ZP_WINDOW_CONTROL, *PZP_WINDOW_CONTROL;
 
@@ -19,6 +21,18 @@ typedef USHORT ZP_WINDOW_CONTROL, *PZP_WINDOW_CONTROL;
 #define ZpWindowControlRestore ((ZP_WINDOW_CONTROL)5)
 #define ZpWindowControlForeground ((ZP_WINDOW_CONTROL)6)
 #define ZpWindowControlClose ((ZP_WINDOW_CONTROL)7)
+#define ZpWindowControlHighlight ((ZP_WINDOW_CONTROL)8)
+#define ZpWindowControlEnable ((ZP_WINDOW_CONTROL)9)
+#define ZpWindowControlDisable ((ZP_WINDOW_CONTROL)10)
+#define ZpWindowControlTopmost ((ZP_WINDOW_CONTROL)11)
+#define ZpWindowControlNotTopmost ((ZP_WINDOW_CONTROL)12)
+
+#define ZP_WINDOW_UPDATE_CAPTION 0x00000001UL
+#define ZP_WINDOW_UPDATE_RECT 0x00000002UL
+#define ZP_WINDOW_UPDATE_STYLE 0x00000004UL
+#define ZP_WINDOW_UPDATE_EXSTYLE 0x00000008UL
+#define ZP_WINDOW_UPDATE_MASK 0x0000000FUL
+#define ZP_WINDOW_CAPTION_MAX_CCH 512
 
 #define ZP_WINDOW_FLAG_VISIBLE 0x00000001UL
 #define ZP_WINDOW_FLAG_ENABLED 0x00000002UL
@@ -85,6 +99,17 @@ typedef struct _ZP_WINDOW_INFO
     ULONG BorderHeight;
     USHORT ClassAtom;
     USHORT CreatorVersion;
+    ULONGLONG PreviousHandle;
+    ULONGLONG NextHandle;
+    ULONGLONG FirstChildHandle;
+    ULONGLONG FirstSiblingHandle;
+    ULONGLONG LastSiblingHandle;
+    LONG MonitorLeft;
+    LONG MonitorTop;
+    LONG MonitorRight;
+    LONG MonitorBottom;
+    PCWCH MonitorDevice;
+    ULONG MonitorDeviceLength;
 } ZP_WINDOW_INFO, *PZP_WINDOW_INFO;
 
 typedef const ZP_WINDOW_INFO* PCZP_WINDOW_INFO;
@@ -106,7 +131,50 @@ typedef struct _ZP_WINDOW_INFO_VIEW
     ULONG BorderHeight;
     USHORT ClassAtom;
     USHORT CreatorVersion;
+    ULONGLONG PreviousHandle;
+    ULONGLONG NextHandle;
+    ULONGLONG FirstChildHandle;
+    ULONGLONG FirstSiblingHandle;
+    ULONGLONG LastSiblingHandle;
+    LONG MonitorLeft;
+    LONG MonitorTop;
+    LONG MonitorRight;
+    LONG MonitorBottom;
+    ZP_STRING_VIEW MonitorDevice;
 } ZP_WINDOW_INFO_VIEW, *PZP_WINDOW_INFO_VIEW;
+
+typedef struct _ZP_WINDOW_UPDATE
+{
+    ULONGLONG Handle;
+    ULONG ProcessId;
+    ULONG ThreadId;
+    ULONG Fields;
+    PCWCH Caption;
+    ULONG CaptionLength;
+    LONG Left;
+    LONG Top;
+    LONG Right;
+    LONG Bottom;
+    ULONG Style;
+    ULONG ExStyle;
+} ZP_WINDOW_UPDATE, *PZP_WINDOW_UPDATE;
+
+typedef const ZP_WINDOW_UPDATE* PCZP_WINDOW_UPDATE;
+
+typedef struct _ZP_WINDOW_UPDATE_VIEW
+{
+    ULONGLONG Handle;
+    ULONG ProcessId;
+    ULONG ThreadId;
+    ULONG Fields;
+    ZP_STRING_VIEW Caption;
+    LONG Left;
+    LONG Top;
+    LONG Right;
+    LONG Bottom;
+    ULONG Style;
+    ULONG ExStyle;
+} ZP_WINDOW_UPDATE_VIEW, *PZP_WINDOW_UPDATE_VIEW;
 
 NTSTATUS
 ZpWindow_EncodeList(
@@ -176,5 +244,18 @@ ZpWindow_DecodeInfo(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_WINDOW_INFO_VIEW View);
+
+NTSTATUS
+ZpWindow_EncodeUpdate(
+    _In_ PCZP_WINDOW_UPDATE Update,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpWindow_DecodeUpdate(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_WINDOW_UPDATE_VIEW View);
 
 EXTERN_C_END

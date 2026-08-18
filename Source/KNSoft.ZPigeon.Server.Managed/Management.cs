@@ -14,6 +14,7 @@ public sealed partial class NativeServer
     private static readonly NativeMethods.ProcessDumpCallback ProcessDumpCallback = CompleteProcessDump;
     private static readonly NativeMethods.WindowListCallback WindowListCallback = CompleteWindowList;
     private static readonly NativeMethods.WindowInfoCallback WindowInfoCallback = CompleteWindowInfo;
+    private static readonly NativeMethods.WindowCaptureCallback WindowCaptureCallback = CompleteWindowCapture;
     private static readonly NativeMethods.ServiceListCallback ServiceListCallback = CompleteServiceList;
     private static readonly NativeMethods.ServiceInfoCallback ServiceInfoCallback = CompleteServiceInfo;
 
@@ -141,6 +142,31 @@ public sealed partial class NativeServer
         WindowControl control) =>
         RunStatusAsync((callback, context) =>
             NativeMethods.ControlWindow(handle, processId, threadId, control, callback, context));
+
+    public Task UpdateWindowAsync(
+        ulong handle,
+        uint processId,
+        uint threadId,
+        WindowUpdate update) =>
+        RunStatusAsync((callback, context) => NativeMethods.UpdateWindow(
+            handle,
+            processId,
+            threadId,
+            update.Fields,
+            update.Caption,
+            (uint)update.Caption.Length,
+            update.Left,
+            update.Top,
+            update.Right,
+            update.Bottom,
+            update.Style,
+            update.ExStyle,
+            callback,
+            context));
+
+    public Task<byte[]> CaptureWindowAsync(ulong handle, uint processId, uint threadId) =>
+        RunManagementAsync<byte[]>((context) =>
+            NativeMethods.CaptureWindow(handle, processId, threadId, WindowCaptureCallback, context));
 
     public Task<ServiceRecord[]> EnumerateServicesAsync() =>
         RunManagementAsync<ServiceRecord[]>((context) => NativeMethods.EnumerateServices(ServiceListCallback, context));
@@ -489,7 +515,34 @@ public sealed partial class NativeServer
             value.BorderWidth,
             value.BorderHeight,
             value.ClassAtom,
-            value.CreatorVersion));
+            value.CreatorVersion,
+            value.PreviousHandle.ToString(),
+            value.NextHandle.ToString(),
+            value.FirstChildHandle.ToString(),
+            value.FirstSiblingHandle.ToString(),
+            value.LastSiblingHandle.ToString(),
+            value.MonitorLeft,
+            value.MonitorTop,
+            value.MonitorRight,
+            value.MonitorBottom,
+            String(value.MonitorDevice)));
+    }
+
+    private static void CompleteWindowCapture(
+        ZpStatus status,
+        nint bitmap,
+        uint bitmapLength,
+        nint context)
+    {
+        var completion = GetCompletion<byte[]>(context);
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        var result = new byte[bitmapLength];
+        Marshal.Copy(bitmap, result, 0, result.Length);
+        completion.SetResult(result);
     }
 
     private static void CompleteServiceList(
@@ -685,7 +738,17 @@ public sealed record WindowInfo(
     uint BorderWidth,
     uint BorderHeight,
     ushort ClassAtom,
-    ushort CreatorVersion);
+    ushort CreatorVersion,
+    string PreviousHandle,
+    string NextHandle,
+    string FirstChildHandle,
+    string FirstSiblingHandle,
+    string LastSiblingHandle,
+    int MonitorLeft,
+    int MonitorTop,
+    int MonitorRight,
+    int MonitorBottom,
+    string MonitorDevice);
 public enum WindowControl : ushort
 {
     Show = 1,
@@ -694,8 +757,30 @@ public enum WindowControl : ushort
     Maximize = 4,
     Restore = 5,
     Foreground = 6,
-    Close = 7
+    Close = 7,
+    Highlight = 8,
+    Enable = 9,
+    Disable = 10,
+    Topmost = 11,
+    NotTopmost = 12
 }
+[Flags]
+public enum WindowUpdateFields : uint
+{
+    Caption = 1,
+    Rect = 2,
+    Style = 4,
+    ExStyle = 8
+}
+public sealed record WindowUpdate(
+    WindowUpdateFields Fields,
+    string Caption,
+    int Left,
+    int Top,
+    int Right,
+    int Bottom,
+    uint Style,
+    uint ExStyle);
 public sealed record ServiceRecord(
     uint ServiceType,
     uint CurrentState,
@@ -828,6 +913,9 @@ internal static partial class NativeMethods
     internal delegate void WindowInfoCallback(ZpStatus status, nint info, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void WindowCaptureCallback(ZpStatus status, nint bitmap, uint bitmapLength, nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void ServiceListCallback(ZpStatus status, nint records, uint recordCount, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
@@ -946,6 +1034,16 @@ internal static partial class NativeMethods
         internal readonly uint BorderHeight;
         internal readonly ushort ClassAtom;
         internal readonly ushort CreatorVersion;
+        internal readonly ulong PreviousHandle;
+        internal readonly ulong NextHandle;
+        internal readonly ulong FirstChildHandle;
+        internal readonly ulong FirstSiblingHandle;
+        internal readonly ulong LastSiblingHandle;
+        internal readonly int MonitorLeft;
+        internal readonly int MonitorTop;
+        internal readonly int MonitorRight;
+        internal readonly int MonitorBottom;
+        internal readonly StringView MonitorDevice;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1154,6 +1252,33 @@ internal static partial class NativeMethods
         uint threadId,
         WindowControl control,
         StatusCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_UpdateWindow",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int UpdateWindow(
+        ulong handle,
+        uint processId,
+        uint threadId,
+        WindowUpdateFields fields,
+        string caption,
+        uint captionLength,
+        int left,
+        int top,
+        int right,
+        int bottom,
+        uint style,
+        uint exStyle,
+        StatusCallback callback,
+        nint context);
+
+    [LibraryImport(Library, EntryPoint = "ZpNative_CaptureWindow")]
+    internal static partial int CaptureWindow(
+        ulong handle,
+        uint processId,
+        uint threadId,
+        WindowCaptureCallback callback,
         nint context);
 
     [LibraryImport(Library, EntryPoint = "ZpNative_EnumerateServices")]

@@ -42,7 +42,7 @@ Source\OutDir\x64\Debug\UnitTest.exe -Run
 
 Client 的 `network.log` 与各业务模块日志位于同目录 `logs`。试用 EXE 使用当前用户范围的持久 CNG 身份密钥；SDK 默认仍使用机器范围，服务化部署不改变原安全边界。
 
-Web 固定监听本机回环。对外访问必须经过本机反向代理并由代理完成鉴权；代理应移除外部请求携带的转发头，写入原始地址和已认证用户。默认用户头为 `X-Forwarded-User`，可用 `ReverseProxy__UserHeader` 修改。RDP/CDP 临时入口只允许该原始地址连接，且目标系统身份验证仍由 RDP NLA 或浏览器调试会话负责。
+Web 固定监听本机回环。对外访问必须经过本机反向代理并由代理完成鉴权；代理应移除外部请求携带的转发头，写入原始地址和已认证用户。默认用户头为 `X-Forwarded-User`，可用 `ReverseProxy__UserHeader` 修改。端口转发页面统一管理 RDP、CDP、WinDbg 和通用 TCP/UDP 规则，默认只允许创建入口的原始地址连接。TCP 仅在没有活动连接时计算空闲超时；UDP 按来源 IP 和端口建立独立映射及 Client 侧 connected socket，按最后一次收发重新计时。目标系统身份验证仍由 RDP NLA、浏览器调试会话或调试器负责。WinDbg 可连接被控端的进程服务器，或通过调试器服务器接管已有的用户态/内核调试会话；KDNET 本身不依赖 Client 转发。
 
 ## 最小 Server 生命周期
 

@@ -195,6 +195,13 @@ internal static class ManagementWebApi
         app.MapPost("/api/windows", async () => await server.EnumerateWindowsAsync());
         app.MapPost("/api/window/info", async (WindowIdentityRequest request) =>
             await server.QueryWindowAsync(ulong.Parse(request.Handle), request.ProcessId, request.ThreadId));
+        app.MapPost("/api/window/image", async (WindowIdentityRequest request) =>
+            Results.File(
+                await server.CaptureWindowAsync(
+                    ulong.Parse(request.Handle),
+                    request.ProcessId,
+                    request.ThreadId),
+                "image/bmp"));
         app.MapPost("/api/window/control", async (WindowControlRequest request) =>
         {
             if (!Enum.IsDefined(request.Control))
@@ -206,6 +213,32 @@ internal static class ManagementWebApi
                 request.ProcessId,
                 request.ThreadId,
                 request.Control);
+            return Results.NoContent();
+        });
+        app.MapPost("/api/window/update", async (WindowUpdateRequest request) =>
+        {
+            const WindowUpdateFields mask = WindowUpdateFields.Caption | WindowUpdateFields.Rect |
+                                            WindowUpdateFields.Style | WindowUpdateFields.ExStyle;
+            if (request.Fields == 0 || (request.Fields & ~mask) != 0 || request.Caption is null ||
+                request.Caption.Length > 512 ||
+                (request.Fields.HasFlag(WindowUpdateFields.Rect) &&
+                 (request.Right <= request.Left || request.Bottom <= request.Top)))
+            {
+                return Results.BadRequest();
+            }
+            await server.UpdateWindowAsync(
+                ulong.Parse(request.Handle),
+                request.ProcessId,
+                request.ThreadId,
+                new WindowUpdate(
+                    request.Fields,
+                    request.Caption,
+                    request.Left,
+                    request.Top,
+                    request.Right,
+                    request.Bottom,
+                    request.Style,
+                    request.ExStyle));
             return Results.NoContent();
         });
         app.MapPost("/api/browsers", async () => await server.EnumerateBrowsersAsync());
@@ -418,6 +451,18 @@ internal sealed record WindowControlRequest(
     uint ProcessId,
     uint ThreadId,
     WindowControl Control);
+internal sealed record WindowUpdateRequest(
+    string Handle,
+    uint ProcessId,
+    uint ThreadId,
+    WindowUpdateFields Fields,
+    string? Caption,
+    int Left,
+    int Top,
+    int Right,
+    int Bottom,
+    uint Style,
+    uint ExStyle);
 internal sealed record BrowserQueryRequest(
     BrowserType Browser,
     BrowserKind Kind,

@@ -10,6 +10,8 @@
 #include <KNSoft/ZPigeon/Service.h>
 #include <KNSoft/ZPigeon/System.h>
 #include <KNSoft/ZPigeon/Terminal.h>
+#include <KNSoft/ZPigeon/Tunnel.h>
+#include <KNSoft/ZPigeon/Window.h>
 #include <KNSoft/ZPigeon/Wmi.h>
 
 TEST_FUNC(ProtocolMessage)
@@ -23,6 +25,7 @@ TEST_FUNC(ProtocolMessage)
     static const WCHAR RegistryValueName[] = L"Enabled";
     static const WCHAR RegistryNewName[] = L"Active";
     static const WCHAR RegistrySddl[] = L"D:P(A;;KA;;;BA)";
+    static const WCHAR TunnelHost[] = L"debug-host.test";
     static const BYTE RegistryData[] = { 1, 2, 3, 4 };
     ZP_MODULE_RECORD Modules[] = {
         { 1, 1 },
@@ -155,6 +158,7 @@ TEST_FUNC(ProtocolMessage)
     };
     ZP_SERVICE_ACCOUNT_CONFIG_VIEW ServiceAccountConfigView;
     ZP_STRING_VIEW ServiceArgument;
+    ZP_TUNNEL_OPEN_VIEW TunnelOpen;
     ULONG ServiceControl;
     ZP_FILE_INFO FileInfo = {
         FILE_ATTRIBUTE_ARCHIVE,
@@ -235,6 +239,29 @@ TEST_FUNC(ProtocolMessage)
     ZP_WMI_ROW_VIEW WmiRow;
     ZP_WMI_CELL WmiCell;
     ZP_WMI_REQUEST_VIEW WmiRequest;
+    ZP_WINDOW_INFO WindowInfo = {
+        { 1, 2, 100, 200, 0x10, 0x20, ZP_WINDOW_FLAG_VISIBLE, L"Caption", 7, L"Class", 5 },
+        3,
+        10, 20, 110, 220,
+        11, 22, 99, 199,
+        4, 5, 6, 7, 8,
+        9, 10, 11, 12, 13,
+        0, 0, 1920, 1080,
+        L"DISPLAY1", 8
+    };
+    ZP_WINDOW_INFO_VIEW WindowInfoView;
+    ZP_WINDOW_UPDATE WindowUpdate = {
+        1,
+        100,
+        200,
+        ZP_WINDOW_UPDATE_CAPTION | ZP_WINDOW_UPDATE_RECT | ZP_WINDOW_UPDATE_STYLE,
+        L"Updated",
+        7,
+        30, 40, 330, 240,
+        0x100,
+        0x200
+    };
+    ZP_WINDOW_UPDATE_VIEW WindowUpdateView;
     ZP_REGISTRY_ENUMERATE_VIEW RegistryEnumerate;
     ZP_REGISTRY_VALUE_REQUEST_VIEW RegistryValueRequest;
     ZP_REGISTRY_SET_VALUE_VIEW RegistrySetValue;
@@ -321,6 +348,21 @@ TEST_FUNC(ProtocolMessage)
             ReadyView.Modules.Count == ARRAYSIZE(Modules));
     TEST_OK(NT_SUCCESS(ZpMessage_GetModuleRecord(&ReadyView.Modules, 1, &Module)) &&
             Module.ModuleId == Modules[1].ModuleId);
+
+    TEST_OK(NT_SUCCESS(ZpTunnel_EncodeOpen(TunnelHost,
+                                           ARRAYSIZE(TunnelHost) - 1,
+                                           5005,
+                                           ZP_TUNNEL_PROTOCOL_UDP,
+                                           Buffer,
+                                           sizeof(Buffer),
+                                           &Length)) &&
+            NT_SUCCESS(ZpTunnel_DecodeOpen(Buffer, Length, &TunnelOpen)) &&
+            TunnelOpen.Host.Length == ARRAYSIZE(TunnelHost) - 1 &&
+            RtlCompareMemory(TunnelOpen.Host.Buffer,
+                             TunnelHost,
+                             sizeof(TunnelHost) - sizeof(WCHAR)) == sizeof(TunnelHost) - sizeof(WCHAR) &&
+            TunnelOpen.Port == 5005 && TunnelOpen.Protocol == ZP_TUNNEL_PROTOCOL_UDP);
+    TEST_OK(ZpTunnel_DecodeOpen(Buffer, Length - 1, &TunnelOpen) == STATUS_DATA_ERROR);
 
     TEST_OK(NT_SUCCESS(ZpMessage_EncodeRequest(&Request, Buffer, sizeof(Buffer), &Length)) && Length == 19);
     TEST_OK(NT_SUCCESS(ZpMessage_DecodeRequest(Buffer, Length, &RequestView)) &&
@@ -1199,6 +1241,27 @@ TEST_FUNC(ProtocolMessage)
             NT_SUCCESS(ZpWmi_DecodeRequest(Buffer, Length, &WmiRequest)) &&
             WmiRequest.Namespace.Length == 11 && WmiRequest.Query.Length == 27 &&
             WmiRequest.Limit == 100 && WmiRequest.Flags == ZP_WMI_FLAG_SYSTEM_PROPERTIES);
+    TEST_OK(NT_SUCCESS(ZpWindow_EncodeInfo(&WindowInfo,
+                                           Buffer,
+                                           sizeof(Buffer),
+                                           &Length)) &&
+            NT_SUCCESS(ZpWindow_DecodeInfo(Buffer, Length, &WindowInfoView)) &&
+            WindowInfoView.Record.Handle == 1 && WindowInfoView.PreviousHandle == 9 &&
+            WindowInfoView.LastSiblingHandle == 13 && WindowInfoView.MonitorRight == 1920 &&
+            WindowInfoView.MonitorDevice.Length == 8);
+    TEST_OK(NT_SUCCESS(ZpWindow_EncodeUpdate(&WindowUpdate,
+                                             Buffer,
+                                             sizeof(Buffer),
+                                             &Length)) &&
+            NT_SUCCESS(ZpWindow_DecodeUpdate(Buffer, Length, &WindowUpdateView)) &&
+            WindowUpdateView.Handle == 1 && WindowUpdateView.Fields == WindowUpdate.Fields &&
+            WindowUpdateView.Caption.Length == 7 && WindowUpdateView.Left == 30 &&
+            WindowUpdateView.Right == 330 && WindowUpdateView.Style == 0x100);
+    WindowUpdate.Right = WindowUpdate.Left;
+    TEST_OK(ZpWindow_EncodeUpdate(&WindowUpdate,
+                                  Buffer,
+                                  sizeof(Buffer),
+                                  &Length) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpRegistry_EncodeEnumerateRequest(
                            ZpRegistryLocalMachine,
                            32,

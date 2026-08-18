@@ -53,7 +53,7 @@ LOGICAL
 ZpWindow_IsControlValid(
     _In_ ZP_WINDOW_CONTROL Control)
 {
-    return Control >= ZpWindowControlShow && Control <= ZpWindowControlClose;
+    return Control >= ZpWindowControlShow && Control <= ZpWindowControlNotTopmost;
 }
 
 NTSTATUS
@@ -267,13 +267,16 @@ ZpWindow_EncodeInfo(
 
     if (Info->Record.CaptionLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
         Info->Record.ClassNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Info->MonitorDeviceLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
         (Info->Record.CaptionLength != 0 && Info->Record.Caption == NULL) ||
-        (Info->Record.ClassNameLength != 0 && Info->Record.ClassName == NULL))
+        (Info->Record.ClassNameLength != 0 && Info->Record.ClassName == NULL) ||
+        (Info->MonitorDeviceLength != 0 && Info->MonitorDevice == NULL))
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 3 * sizeof(ULONGLONG) + 18 * sizeof(ULONG) + 2 * sizeof(USHORT) +
-                   ((ULONGLONG)Info->Record.CaptionLength + Info->Record.ClassNameLength) * sizeof(WCHAR);
+    RequiredSize = 8 * sizeof(ULONGLONG) + 23 * sizeof(ULONG) + 2 * sizeof(USHORT) +
+                   ((ULONGLONG)Info->Record.CaptionLength + Info->Record.ClassNameLength +
+                    Info->MonitorDeviceLength) * sizeof(WCHAR);
     if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12) return STATUS_BUFFER_OVERFLOW;
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
@@ -294,6 +297,19 @@ ZpWindow_EncodeInfo(
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Info->BorderHeight);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, Info->ClassAtom);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, Info->CreatorVersion);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->PreviousHandle);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->NextHandle);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->FirstChildHandle);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->FirstSiblingHandle);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->LastSiblingHandle);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->MonitorLeft);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->MonitorTop);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->MonitorRight);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->MonitorBottom);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer, Info->MonitorDevice, Info->MonitorDeviceLength);
+    }
     return Status;
 }
 
@@ -322,9 +338,100 @@ ZpWindow_DecodeInfo(
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &View->BorderHeight);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(&Reader, &View->ClassAtom);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(&Reader, &View->CreatorVersion);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &View->PreviousHandle);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &View->NextHandle);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &View->FirstChildHandle);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &View->FirstSiblingHandle);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &View->LastSiblingHandle);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, (PULONG)&View->MonitorLeft);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, (PULONG)&View->MonitorTop);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, (PULONG)&View->MonitorRight);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, (PULONG)&View->MonitorBottom);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &View->MonitorDevice);
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpWindow_EncodeUpdate(
+    _In_ PCZP_WINDOW_UPDATE Update,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize;
+    NTSTATUS Status;
+
+    if (Update->Handle == 0 || Update->ProcessId == 0 || Update->ThreadId == 0 ||
+        Update->Fields == 0 || FlagOn(Update->Fields, ~ZP_WINDOW_UPDATE_MASK) ||
+        Update->CaptionLength > ZP_WINDOW_CAPTION_MAX_CCH ||
+        (Update->CaptionLength != 0 && Update->Caption == NULL) ||
+        (!FlagOn(Update->Fields, ZP_WINDOW_UPDATE_CAPTION) && Update->CaptionLength != 0) ||
+        (FlagOn(Update->Fields, ZP_WINDOW_UPDATE_RECT) &&
+         (Update->Right <= Update->Left || Update->Bottom <= Update->Top)))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = sizeof(ULONGLONG) + 10 * sizeof(ULONG) +
+                   (ULONGLONG)Update->CaptionLength * sizeof(WCHAR);
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt64(&Writer, Update->Handle);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Update->ProcessId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Update->ThreadId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Update->Fields);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(&Writer, Update->Caption, Update->CaptionLength);
+    }
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Update->Left);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Update->Top);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Update->Right);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Update->Bottom);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Update->Style);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Update->ExStyle);
+    return Status;
+}
+
+NTSTATUS
+ZpWindow_DecodeUpdate(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_WINDOW_UPDATE_VIEW View)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt64(&Reader, &View->Handle);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &View->ProcessId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &View->ThreadId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &View->Fields);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &View->Caption);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, (PULONG)&View->Left);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, (PULONG)&View->Top);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, (PULONG)&View->Right);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, (PULONG)&View->Bottom);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &View->Style);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &View->ExStyle);
+    if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    if (View->Handle == 0 || View->ProcessId == 0 || View->ThreadId == 0 ||
+        View->Fields == 0 || FlagOn(View->Fields, ~ZP_WINDOW_UPDATE_MASK) ||
+        View->Caption.Length > ZP_WINDOW_CAPTION_MAX_CCH ||
+        (!FlagOn(View->Fields, ZP_WINDOW_UPDATE_CAPTION) && View->Caption.Length != 0) ||
+        (FlagOn(View->Fields, ZP_WINDOW_UPDATE_RECT) &&
+         (View->Right <= View->Left || View->Bottom <= View->Top)))
+    {
+        return STATUS_DATA_ERROR;
     }
     return STATUS_SUCCESS;
 }

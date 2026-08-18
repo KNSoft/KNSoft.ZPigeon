@@ -5,13 +5,12 @@
 
 #pragma comment(lib, "KNSoft.NDK.Win32u.lib")
 
-#define ZP_WINDOW_CAPTION_CCH 512
 #define ZP_WINDOW_CLASS_CCH 256
 
 typedef struct _ZP_WINDOW_ENTRY
 {
     ZP_WINDOW_RECORD Record;
-    WCHAR Caption[ZP_WINDOW_CAPTION_CCH];
+    WCHAR Caption[ZP_WINDOW_CAPTION_MAX_CCH];
     WCHAR ClassName[ZP_WINDOW_CLASS_CCH];
 } ZP_WINDOW_ENTRY, *PZP_WINDOW_ENTRY;
 
@@ -186,7 +185,9 @@ ZpWindow_Query(
     ZP_WINDOW_ENTRY Entry;
     ZP_WINDOW_INFO Info;
     WINDOWINFO WindowInfo;
+    MONITORINFOEXW MonitorInfo = { sizeof(MonitorInfo) };
     HWND Window;
+    HMONITOR Monitor;
     PBYTE Buffer;
     ULONG Length;
     NTSTATUS Status;
@@ -213,6 +214,30 @@ ZpWindow_Query(
     Info.BorderHeight = WindowInfo.cyWindowBorders;
     Info.ClassAtom = WindowInfo.atomWindowType;
     Info.CreatorVersion = WindowInfo.wCreatorVersion;
+    Info.PreviousHandle = (ULONGLONG)(ULONG_PTR)GetWindow(Window, GW_HWNDPREV);
+    Info.NextHandle = (ULONGLONG)(ULONG_PTR)GetWindow(Window, GW_HWNDNEXT);
+    Info.FirstChildHandle = (ULONGLONG)(ULONG_PTR)GetWindow(Window, GW_CHILD);
+    Info.FirstSiblingHandle = (ULONGLONG)(ULONG_PTR)GetWindow(Window, GW_HWNDFIRST);
+    Info.LastSiblingHandle = (ULONGLONG)(ULONG_PTR)GetWindow(Window, GW_HWNDLAST);
+    Monitor = MonitorFromWindow(Window, MONITOR_DEFAULTTONULL);
+    if (Monitor != NULL)
+    {
+        if (!GetMonitorInfoW(Monitor, (LPMONITORINFO)&MonitorInfo))
+        {
+            return ZpWindow_StatusFromLastError();
+        }
+        Info.MonitorLeft = MonitorInfo.rcMonitor.left;
+        Info.MonitorTop = MonitorInfo.rcMonitor.top;
+        Info.MonitorRight = MonitorInfo.rcMonitor.right;
+        Info.MonitorBottom = MonitorInfo.rcMonitor.bottom;
+        Info.MonitorDevice = MonitorInfo.szDevice;
+        Info.MonitorDeviceLength = (ULONG)wcslen(MonitorInfo.szDevice);
+    } else
+    {
+        Info.MonitorLeft = Info.MonitorTop = Info.MonitorRight = Info.MonitorBottom = 0;
+        Info.MonitorDevice = NULL;
+        Info.MonitorDeviceLength = 0;
+    }
     Status = ZpWindow_EncodeInfo(&Info, NULL, 0, &Length);
     Buffer = NT_SUCCESS(Status) ? Mem_Alloc(Length) : NULL;
     if (NT_SUCCESS(Status) && Buffer == NULL) Status = STATUS_NO_MEMORY;
@@ -236,6 +261,8 @@ ZpWindow_Control(
     _In_ ZP_WINDOW_CONTROL Control)
 {
     HWND Window;
+    HWND RootWindow;
+    FLASHWINFO FlashInfo;
     LONG Command;
     ZP_STATUS Status;
 
@@ -249,18 +276,219 @@ ZpWindow_Control(
         case ZpWindowControlMaximize: Command = SW_MAXIMIZE; break;
         case ZpWindowControlRestore: Command = SW_RESTORE; break;
         case ZpWindowControlForeground:
-            SwitchToThisWindow(Window, TRUE);
-            return ZpStatus_Make(ZpStatusNone, 0);
+            return NtUserSwitchToThisWindow(Window, TRUE) ?
+                       ZpStatus_Make(ZpStatusNone, 0) :
+                       ZpWindow_StatusFromLastError();
         case ZpWindowControlClose:
             return PostMessageW(Window, WM_CLOSE, 0, 0) ?
+                       ZpStatus_Make(ZpStatusNone, 0) :
+                       ZpWindow_StatusFromLastError();
+        case ZpWindowControlHighlight:
+            RootWindow = NtUserGetAncestor(Window, GA_ROOT);
+            if (RootWindow == NULL ||
+                !NtUserSetWindowPos(RootWindow,
+                                    HWND_TOP,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE))
+            {
+                return ZpWindow_StatusFromLastError();
+            }
+            FlashInfo.cbSize = sizeof(FlashInfo);
+            FlashInfo.hwnd = RootWindow;
+            FlashInfo.dwFlags = FLASHW_ALL;
+            FlashInfo.uCount = 3;
+            FlashInfo.dwTimeout = 0;
+            return NtUserFlashWindowEx(&FlashInfo) ?
+                       ZpStatus_Make(ZpStatusNone, 0) :
+                       ZpWindow_StatusFromLastError();
+        case ZpWindowControlEnable:
+            /* Returns the previous disabled state, not operation success. */
+            NtUserEnableWindow(Window, TRUE);
+            return ZpStatus_Make(ZpStatusNone, 0);
+        case ZpWindowControlDisable:
+            /* Returns the previous disabled state, not operation success. */
+            NtUserEnableWindow(Window, FALSE);
+            return ZpStatus_Make(ZpStatusNone, 0);
+        case ZpWindowControlTopmost:
+        case ZpWindowControlNotTopmost:
+            return NtUserSetWindowPos(Window,
+                                      Control == ZpWindowControlTopmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) ?
                        ZpStatus_Make(ZpStatusNone, 0) :
                        ZpWindow_StatusFromLastError();
         default:
             return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
-    return ShowWindowAsync(Window, Command) ?
-               ZpStatus_Make(ZpStatusNone, 0) :
-               ZpWindow_StatusFromLastError();
+    /* Returns the previous visibility state, not operation success. */
+    NtUserShowWindowAsync(Window, Command);
+    return ZpStatus_Make(ZpStatusNone, 0);
+}
+
+static
+ZP_STATUS
+ZpWindow_Update(
+    _In_ const ZP_WINDOW_UPDATE_VIEW* Update)
+{
+    WCHAR Caption[ZP_WINDOW_CAPTION_MAX_CCH + 1];
+    HWND Window;
+    W32ERROR Error;
+    ZP_STATUS Status;
+
+    Status = ZpWindow_ValidateIdentity(Update->Handle,
+                                       Update->ProcessId,
+                                       Update->ThreadId,
+                                       &Window);
+    if (!ZpStatus_IsSuccess(Status)) return Status;
+    if (FlagOn(Update->Fields, ZP_WINDOW_UPDATE_CAPTION))
+    {
+        if (Update->Caption.Length != 0)
+        {
+            memcpy(Caption, Update->Caption.Buffer, (SIZE_T)Update->Caption.Length * sizeof(WCHAR));
+        }
+        Caption[Update->Caption.Length] = UNICODE_NULL;
+        Error = UI_SendMessageTimeout(Window,
+                                      WM_SETTEXT,
+                                      0,
+                                      (LPARAM)Caption,
+                                      SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT,
+                                      1000,
+                                      NULL);
+        if (Error != ERROR_SUCCESS) return ZpStatus_FromCode(ZpStatusWin32, Error);
+    }
+    if (FlagOn(Update->Fields, ZP_WINDOW_UPDATE_STYLE))
+    {
+        Error = UI_SetWindowLong(Window, GWL_STYLE, Update->Style);
+        if (Error != ERROR_SUCCESS) return ZpStatus_FromCode(ZpStatusWin32, Error);
+    }
+    if (FlagOn(Update->Fields, ZP_WINDOW_UPDATE_EXSTYLE))
+    {
+        Error = UI_SetWindowLong(Window, GWL_EXSTYLE, Update->ExStyle);
+        if (Error != ERROR_SUCCESS) return ZpStatus_FromCode(ZpStatusWin32, Error);
+    }
+    if (FlagOn(Update->Fields, ZP_WINDOW_UPDATE_STYLE | ZP_WINDOW_UPDATE_EXSTYLE) &&
+        !NtUserSetWindowPos(Window,
+                            NULL,
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE))
+    {
+        return ZpWindow_StatusFromLastError();
+    }
+    if (FlagOn(Update->Fields, ZP_WINDOW_UPDATE_RECT) &&
+        !NtUserMoveWindow(Window,
+                          Update->Left,
+                          Update->Top,
+                          Update->Right - Update->Left,
+                          Update->Bottom - Update->Top,
+                          TRUE))
+    {
+        return ZpWindow_StatusFromLastError();
+    }
+    return ZpStatus_Make(ZpStatusNone, 0);
+}
+
+static
+ZP_STATUS
+ZpWindow_Capture(
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _Outptr_result_bytebuffer_(*PayloadLength) PBYTE* Payload,
+    _Out_ PULONG PayloadLength)
+{
+    RECT Rect;
+    HWND Window;
+    HDC WindowDC, MemoryDC;
+    HBITMAP Bitmap, OriginalBitmap;
+    PBYTE Buffer;
+    ULONG Length;
+    W32ERROR Error;
+    ZP_STATUS Status;
+
+    Status = ZpWindow_ValidateIdentity(Handle, ProcessId, ThreadId, &Window);
+    if (!ZpStatus_IsSuccess(Status)) return Status;
+    if (!GetClientRect(Window, &Rect)) return ZpWindow_StatusFromLastError();
+    if (Rect.right <= 0 || Rect.bottom <= 0)
+    {
+        return ZpStatus_FromCode(ZpStatusWin32, ERROR_INVALID_DATA);
+    }
+    if ((ULONGLONG)(ULONG)Rect.right * (ULONG)Rect.bottom >
+        (ZP_FRAME_MAX_BODY_SIZE - 16) / sizeof(RGBQUAD))
+    {
+        return ZpStatus_FromCode(ZpStatusWin32, ERROR_FILE_TOO_LARGE);
+    }
+    WindowDC = GetDC(Window);
+    if (WindowDC == NULL) return ZpWindow_StatusFromLastError();
+    MemoryDC = CreateCompatibleDC(WindowDC);
+    if (MemoryDC == NULL)
+    {
+        Status = ZpWindow_StatusFromLastError();
+        goto ExitWindowDC;
+    }
+    Bitmap = CreateCompatibleBitmap(WindowDC, Rect.right, Rect.bottom);
+    if (Bitmap == NULL)
+    {
+        Status = ZpWindow_StatusFromLastError();
+        goto ExitMemoryDC;
+    }
+    OriginalBitmap = SelectObject(MemoryDC, Bitmap);
+    if (OriginalBitmap == NULL)
+    {
+        Status = ZpWindow_StatusFromLastError();
+        goto ExitBitmap;
+    }
+    Error = UI_SendMessageTimeout(Window,
+                                  WM_PRINTCLIENT,
+                                  (WPARAM)MemoryDC,
+                                  PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND,
+                                  SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT,
+                                  1000,
+                                  NULL);
+    if (Error != ERROR_SUCCESS &&
+        !BitBlt(MemoryDC, 0, 0, Rect.right, Rect.bottom, WindowDC, 0, 0, SRCCOPY | CAPTUREBLT))
+    {
+        Status = ZpWindow_StatusFromLastError();
+        SelectObject(MemoryDC, OriginalBitmap);
+        goto ExitBitmap;
+    }
+    SelectObject(MemoryDC, OriginalBitmap);
+    Error = UI_WriteBitmapFileData(MemoryDC, Bitmap, NULL, 0, &Length);
+    if (Error == ERROR_SUCCESS && Length > ZP_FRAME_MAX_BODY_SIZE - 16)
+    {
+        Error = ERROR_FILE_TOO_LARGE;
+    }
+    Buffer = Error == ERROR_SUCCESS ? Mem_Alloc(Length) : NULL;
+    if (Error == ERROR_SUCCESS && Buffer == NULL) Error = ERROR_NOT_ENOUGH_MEMORY;
+    if (Error == ERROR_SUCCESS)
+    {
+        Error = UI_WriteBitmapFileData(MemoryDC, Bitmap, Buffer, Length, &Length);
+    }
+    if (Error != ERROR_SUCCESS)
+    {
+        Mem_Free(Buffer);
+        Status = ZpStatus_FromCode(ZpStatusWin32, Error);
+        goto ExitBitmap;
+    }
+    *Payload = Buffer;
+    *PayloadLength = Length;
+    Status = ZpStatus_Make(ZpStatusNone, 0);
+
+ExitBitmap:
+    DeleteObject(Bitmap);
+ExitMemoryDC:
+    DeleteDC(MemoryDC);
+ExitWindowDC:
+    ReleaseDC(Window, WindowDC);
+    return Status;
 }
 
 ZP_STATUS
@@ -274,6 +502,7 @@ ZpWindow_Execute(
     ULONGLONG Handle;
     ULONG ProcessId, ThreadId;
     ZP_WINDOW_CONTROL Control;
+    ZP_WINDOW_UPDATE_VIEW Update;
     NTSTATUS Status;
     ZP_STATUS Result;
 
@@ -310,6 +539,27 @@ ZpWindow_Execute(
                 *ResponseLength = 0;
             }
             return Result;
+
+        case ZP_WINDOW_OPERATION_UPDATE:
+            Status = ZpWindow_DecodeUpdate(Request, RequestLength, &Update);
+            if (!NT_SUCCESS(Status)) return ZpStatus_FromNtStatus(Status);
+            Result = ZpWindow_Update(&Update);
+            if (ZpStatus_IsSuccess(Result))
+            {
+                *Response = NULL;
+                *ResponseLength = 0;
+            }
+            return Result;
+
+        case ZP_WINDOW_OPERATION_CAPTURE:
+            Status = ZpWindow_DecodeIdentity(Request,
+                                             RequestLength,
+                                             &Handle,
+                                             &ProcessId,
+                                             &ThreadId);
+            return NT_SUCCESS(Status) ?
+                       ZpWindow_Capture(Handle, ProcessId, ThreadId, Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(Status);
 
         default:
             return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);

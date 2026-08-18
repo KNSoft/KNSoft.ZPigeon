@@ -6,6 +6,7 @@ typedef union _ZP_WINDOW_CALLBACK
 {
     ZP_WINDOW_ENUMERATE_CALLBACK Enumerate;
     ZP_WINDOW_QUERY_CALLBACK Query;
+    ZP_WINDOW_CAPTURE_CALLBACK Capture;
     ZP_REQUEST_STATUS_CALLBACK Status;
 } ZP_WINDOW_CALLBACK;
 
@@ -79,6 +80,28 @@ ZpWindow_StatusComplete(
         Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
     }
     WindowContext->Callback.Status(Request, Status, WindowContext->Context);
+    Mem_Free(WindowContext);
+}
+
+static
+VOID
+NTAPI
+ZpWindow_CaptureComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_WINDOW_CONTEXT WindowContext = Context;
+
+    if (ZpStatus_IsSuccess(Status) && Payload->Length == 0)
+    {
+        Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
+    }
+    WindowContext->Callback.Capture(Request,
+                                    Status,
+                                    ZpStatus_IsSuccess(Status) ? Payload : NULL,
+                                    WindowContext->Context);
     Mem_Free(WindowContext);
 }
 
@@ -211,6 +234,84 @@ ZpServer_ControlWindow(
                              Payload,
                              PayloadLength,
                              ZpWindow_StatusComplete,
+                             WindowCallback,
+                             Context,
+                             Request) :
+               Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_UpdateWindow(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ PCZP_WINDOW_UPDATE Update,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_WINDOW_CALLBACK WindowCallback;
+    PBYTE Payload;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    WindowCallback.Status = Callback;
+    Status = ZpWindow_EncodeUpdate(Update, NULL, 0, &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (!NT_SUCCESS(Status) || Payload == NULL)
+    {
+        return NT_SUCCESS(Status) ? STATUS_NO_MEMORY : Status;
+    }
+    Status = ZpWindow_EncodeUpdate(Update, Payload, PayloadLength, &PayloadLength);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpWindow_Send(Connection,
+                               ZP_WINDOW_OPERATION_UPDATE,
+                               TimeoutMilliseconds,
+                               Payload,
+                               PayloadLength,
+                               ZpWindow_StatusComplete,
+                               WindowCallback,
+                               Context,
+                               Request);
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_CaptureWindow(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WINDOW_CAPTURE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_WINDOW_CALLBACK WindowCallback;
+    BYTE Payload[sizeof(ULONGLONG) + 2 * sizeof(ULONG)];
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    WindowCallback.Capture = Callback;
+    Status = ZpWindow_EncodeIdentity(Handle,
+                                     ProcessId,
+                                     ThreadId,
+                                     Payload,
+                                     sizeof(Payload),
+                                     &PayloadLength);
+    return NT_SUCCESS(Status) ?
+               ZpWindow_Send(Connection,
+                             ZP_WINDOW_OPERATION_CAPTURE,
+                             TimeoutMilliseconds,
+                             Payload,
+                             PayloadLength,
+                             ZpWindow_CaptureComplete,
                              WindowCallback,
                              Context,
                              Request) :

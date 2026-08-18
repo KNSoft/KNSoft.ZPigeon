@@ -78,7 +78,10 @@ NTSTATUS
 NTAPI
 ZpServer_OpenTunnel(
     _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(HostLength) PCWCH Host,
+    _In_ ULONG HostLength,
     _In_ USHORT Port,
+    _In_ USHORT Protocol,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_TUNNEL_OPEN_CALLBACK OpenCallback,
     _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
@@ -88,7 +91,7 @@ ZpServer_OpenTunnel(
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
     PZP_SERVER_TUNNEL_CONTEXT TunnelContext;
-    BYTE Payload[sizeof(USHORT)];
+    BYTE Payload[sizeof(ULONG) + ZP_TUNNEL_HOST_MAX_LENGTH * sizeof(WCHAR) + sizeof(USHORT) * 2];
     ULONG PayloadLength;
     NTSTATUS Status;
     LOGICAL Reserved = FALSE;
@@ -98,7 +101,7 @@ ZpServer_OpenTunnel(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    Status = ZpTunnel_EncodeOpen(Port, Payload, sizeof(Payload), &PayloadLength);
+    Status = ZpTunnel_EncodeOpen(Host, HostLength, Port, Protocol, Payload, sizeof(Payload), &PayloadLength);
     TunnelContext = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*TunnelContext)) : NULL;
     if (NT_SUCCESS(Status) && TunnelContext == NULL) Status = STATUS_NO_MEMORY;
     if (NT_SUCCESS(Status))

@@ -258,6 +258,14 @@ VOID
     _In_opt_ const ZP_WINDOW_INFO_VIEW* Info,
     _In_opt_ PVOID Context);
 
+typedef
+VOID
+(NTAPI *ZP_NATIVE_WINDOW_CAPTURE_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_bytes_opt_(BitmapLength) const BYTE* Bitmap,
+    _In_ ULONG BitmapLength,
+    _In_opt_ PVOID Context);
+
 typedef struct _ZP_NATIVE_SERVICE_RECORD
 {
     ULONG ServiceType;
@@ -835,6 +843,35 @@ ZpNative_ControlWindow(
 __declspec(dllexport)
 NTSTATUS
 NTAPI
+ZpNative_UpdateWindow(
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ULONG Fields,
+    _In_reads_opt_(CaptionLength) PCWCH Caption,
+    _In_ ULONG CaptionLength,
+    _In_ LONG Left,
+    _In_ LONG Top,
+    _In_ LONG Right,
+    _In_ LONG Bottom,
+    _In_ ULONG Style,
+    _In_ ULONG ExStyle,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_CaptureWindow(
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
 ZpNative_EnumerateServices(
     _In_ ZP_NATIVE_SERVICE_LIST_CALLBACK Callback,
     _In_opt_ PVOID Context);
@@ -1050,7 +1087,10 @@ __declspec(dllexport)
 NTSTATUS
 NTAPI
 ZpNative_OpenTunnel(
+    _In_reads_(HostLength) PCWCH Host,
+    _In_ ULONG HostLength,
     _In_ USHORT Port,
+    _In_ USHORT Protocol,
     _In_ ZP_NATIVE_TUNNEL_OPEN_CALLBACK OpenCallback,
     _In_ ZP_NATIVE_TUNNEL_DATA_CALLBACK DataCallback,
     _In_ ZP_NATIVE_TUNNEL_WRITABLE_CALLBACK WritableCallback,

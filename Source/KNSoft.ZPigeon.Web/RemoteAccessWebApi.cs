@@ -6,7 +6,8 @@ internal static class RemoteAccessWebApi
 {
     internal static void MapRemoteAccessApi(
         this WebApplication app,
-        TcpForwardManager forwards,
+        TcpForwardManager tcpForwards,
+        UdpForwardManager udpForwards,
         CdpSessionManager cdp,
         string proxyUserHeader)
     {
@@ -17,18 +18,96 @@ internal static class RemoteAccessWebApi
             {
                 return Results.Unauthorized();
             }
-            return Results.Ok(forwards.Create(sourceAddress, 3389));
+            return Results.Ok(tcpForwards.Create(sourceAddress, sourceAddress, "RDP", "127.0.0.1", 3389));
         });
         app.MapPost("/api/remote/forward/{id:guid}", (
             HttpContext context,
             Guid id) =>
         {
-            if (!IsAuthenticated(context, proxyUserHeader))
+            if (!IsAuthenticated(context, proxyUserHeader) ||
+                context.Connection.RemoteIpAddress is not IPAddress sourceAddress)
             {
                 return Results.Unauthorized();
             }
-            var info = forwards.Get(id);
+            var info = tcpForwards.Get(id, sourceAddress) ?? udpForwards.Get(id, sourceAddress);
             return info is null ? Results.NotFound() : Results.Ok(info);
+        });
+        app.MapPost("/api/remote/forwards", (HttpContext context) =>
+        {
+            if (!IsAuthenticated(context, proxyUserHeader) ||
+                context.Connection.RemoteIpAddress is not IPAddress sourceAddress)
+            {
+                return Results.Unauthorized();
+            }
+            return Results.Ok(new
+            {
+                SourceAddress = sourceAddress.ToString(),
+                Rules = tcpForwards.GetAll(sourceAddress)
+                    .Concat(udpForwards.GetAll(sourceAddress))
+                    .OrderBy(rule => rule.Port)
+            });
+        });
+        app.MapPost("/api/remote/forward", (
+            HttpContext context,
+            PortForwardRequest request) =>
+        {
+            if (!IsAuthenticated(context, proxyUserHeader) ||
+                context.Connection.RemoteIpAddress is not IPAddress sourceAddress)
+            {
+                return Results.Unauthorized();
+            }
+            var host = request.Host?.Trim();
+            var kind = request.Protocol == "tcp" ? request.Kind switch
+            {
+                "tcp" => "TCP",
+                "rdp" => "RDP",
+                "cdp" => "CDP",
+                "windbg-process" => "WinDbgProcess",
+                "windbg-server" => "WinDbgServer",
+                _ => null
+            } : request.Protocol == "udp" && request.Kind == "tcp" ? "UDP" : null;
+            if (host is null || host.Length is 0 or > 255 || host.Contains('\0') ||
+                kind is null || request.Port == 0 ||
+                !IPAddress.TryParse(request.SourceAddress, out var allowedSourceAddress) ||
+                request.IdleTimeoutSeconds is < 1 or > 86400)
+            {
+                return Results.BadRequest();
+            }
+            var timeout = TimeSpan.FromSeconds(request.IdleTimeoutSeconds);
+            return Results.Ok(request.Protocol == "tcp" ?
+                tcpForwards.Create(sourceAddress,
+                                   allowedSourceAddress,
+                                   kind,
+                                   host,
+                                   request.Port,
+                                   timeout) :
+                udpForwards.Create(sourceAddress,
+                                   allowedSourceAddress,
+                                   kind,
+                                   host,
+                                   request.Port,
+                                   timeout));
+        });
+        app.MapPost("/api/remote/forward/{id:guid}/close", async (
+            HttpContext context,
+            Guid id) =>
+        {
+            if (!IsAuthenticated(context, proxyUserHeader) ||
+                context.Connection.RemoteIpAddress is not IPAddress sourceAddress)
+            {
+                return Results.Unauthorized();
+            }
+            var info = tcpForwards.Get(id, sourceAddress) ?? udpForwards.Get(id, sourceAddress);
+            if (info is null)
+            {
+                return Results.NotFound();
+            }
+            if (info.Kind == "CDP" && await cdp.CloseForwardAsync(id))
+            {
+                return Results.NoContent();
+            }
+            return tcpForwards.Close(id, sourceAddress) || udpForwards.Close(id, sourceAddress) ?
+                Results.NoContent() : Results.NotFound();
         });
         app.MapPost("/api/remote/cdp/browsers", async (HttpContext context) =>
             IsAuthenticated(context, proxyUserHeader) ?
@@ -80,7 +159,8 @@ internal static class RemoteAccessWebApi
 
     private static bool IsAuthenticated(HttpContext context, string proxyUserHeader)
     {
-        if (context.User.Identity?.IsAuthenticated == true)
+        if (context.User.Identity?.IsAuthenticated == true ||
+            context.Connection.RemoteIpAddress is IPAddress address && IPAddress.IsLoopback(address))
         {
             return true;
         }
@@ -91,3 +171,10 @@ internal static class RemoteAccessWebApi
 
 internal sealed record CdpStartRequest(string Browser, string Mode, string? Profile);
 internal sealed record CdpSessionRequest(Guid Id);
+internal sealed record PortForwardRequest(
+    string? Kind,
+    string? Protocol,
+    string? SourceAddress,
+    string? Host,
+    ushort Port,
+    uint IdleTimeoutSeconds);

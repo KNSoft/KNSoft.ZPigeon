@@ -10,6 +10,7 @@ ZpTunnel_Execute(
     _In_ USHORT OperationId,
     _In_reads_bytes_(RequestLength) const VOID* Request,
     _In_ ULONG RequestLength,
+    _In_ ULONG TimeoutMilliseconds,
     _Outptr_result_maybenull_ PBYTE* Response,
     _Out_ PULONG ResponseLength,
     _Outptr_result_maybenull_ PZP_CLIENT_TUNNEL_CHANNEL* Channel);

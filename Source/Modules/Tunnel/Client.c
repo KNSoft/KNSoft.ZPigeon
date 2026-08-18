@@ -10,6 +10,7 @@
 
 #define ZP_TUNNEL_CHUNK_SIZE 0x00010000UL
 #define ZP_TUNNEL_WINDOW_SIZE 0x00100000UL
+#define ZP_TUNNEL_DATAGRAM_FRAME_SIZE (ZP_TUNNEL_DATAGRAM_MAX_SIZE + 1)
 
 struct _ZP_CLIENT_TUNNEL_CHANNEL
 {
@@ -19,6 +20,7 @@ struct _ZP_CLIENT_TUNNEL_CHANNEL
     LOGICAL WorkerActive;
     ULONGLONG Credit;
     ULONGLONG ReceiveCredit;
+    USHORT Protocol;
     SOCKET Socket;
     HANDLE WorkerThread;
     HANDLE CreditEvent;
@@ -147,7 +149,7 @@ ZpTunnel_ReceiveThread(
     PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
     PBYTE Body = Mem_Alloc(sizeof(ULONGLONG) + ZP_TUNNEL_CHUNK_SIZE);
     ZP_STATUS Completion = ZpStatus_Make(ZpStatusNone, 0);
-    ULONG ReadLength, ReservedLength, BodyLength;
+    ULONG ReadLength, ReservedLength, DataLength, BodyLength;
     INT Received;
     NTSTATUS Status = STATUS_SUCCESS;
     LOGICAL Pending, Removed, Notify = TRUE;
@@ -161,7 +163,9 @@ ZpTunnel_ReceiveThread(
     {
         RtlAcquireSRWLockExclusive(&Object->Lock);
         Pending = Channel->Header.Pending;
-        if (Pending && Channel->Credit == 0)
+        if (Pending && (Channel->Credit == 0 ||
+                        Channel->Protocol == ZP_TUNNEL_PROTOCOL_UDP &&
+                        Channel->Credit < ZP_TUNNEL_DATAGRAM_FRAME_SIZE))
         {
             RtlReleaseSRWLockExclusive(&Object->Lock);
             Status = NtWaitForSingleObject(Channel->CreditEvent, FALSE, NULL);
@@ -174,30 +178,43 @@ ZpTunnel_ReceiveThread(
             Notify = FALSE;
             break;
         }
-        ReadLength = (ULONG)min(Channel->Credit, ZP_TUNNEL_CHUNK_SIZE);
-        ReservedLength = ReadLength;
+        ReadLength = Channel->Protocol == ZP_TUNNEL_PROTOCOL_UDP ?
+                         ZP_TUNNEL_DATAGRAM_MAX_SIZE : (ULONG)min(Channel->Credit, ZP_TUNNEL_CHUNK_SIZE);
+        ReservedLength = Channel->Protocol == ZP_TUNNEL_PROTOCOL_UDP ?
+                             ZP_TUNNEL_DATAGRAM_FRAME_SIZE : ReadLength;
         Channel->Credit -= ReservedLength;
         RtlReleaseSRWLockExclusive(&Object->Lock);
-        Received = recv(Channel->Socket, Add2Ptr(Body, sizeof(ULONGLONG)), ReadLength, 0);
+        Received = recv(Channel->Socket,
+                        Add2Ptr(Body,
+                                sizeof(ULONGLONG) +
+                                    (Channel->Protocol == ZP_TUNNEL_PROTOCOL_UDP ? sizeof(BYTE) : 0)),
+                        ReadLength,
+                        0);
         if (Received == SOCKET_ERROR)
         {
             Completion = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
             break;
         }
-        if (Received == 0)
+        if (Received == 0 && Channel->Protocol == ZP_TUNNEL_PROTOCOL_TCP)
         {
             Completion = ZpStatus_Make(ZpStatusNone, 0);
             break;
         }
+        DataLength = (ULONG)Received;
+        if (Channel->Protocol == ZP_TUNNEL_PROTOCOL_UDP)
+        {
+            *(PBYTE)Add2Ptr(Body, sizeof(ULONGLONG)) = 0;
+            DataLength++;
+        }
         Status = ZpMessage_EncodeChannelData(Channel->Header.ChannelId,
                                              Add2Ptr(Body, sizeof(ULONGLONG)),
-                                             (ULONG)Received,
+                                             DataLength,
                                              Body,
                                              sizeof(ULONGLONG) + ZP_TUNNEL_CHUNK_SIZE,
                                              &BodyLength);
         if (!NT_SUCCESS(Status)) break;
         RtlAcquireSRWLockExclusive(&Object->Lock);
-        Channel->Credit += ReservedLength - Received;
+        Channel->Credit += ReservedLength - DataLength;
         Status = Channel->Header.Pending ?
                      ZpTunnel_SendLocked(Object, ZpMessageChannelData, Body, BodyLength) : STATUS_SUCCESS;
         Removed = !NT_SUCCESS(Status) && ZpClientLocalChannel_RemoveLocked(&Channel->Header);
@@ -282,7 +299,30 @@ ZpTunnel_ChannelData(
     Channel->ReceiveCredit -= Message->Data.Length;
     RtlReleaseSRWLockExclusive(&Object->Lock);
     RtlAcquireSRWLockExclusive(&Channel->SendLock);
-    while (Offset < Message->Data.Length)
+    if (Channel->Protocol == ZP_TUNNEL_PROTOCOL_UDP)
+    {
+        if (Message->Data.Length == 0 || Message->Data.Length > ZP_TUNNEL_DATAGRAM_FRAME_SIZE ||
+            *(PBYTE)Message->Data.Buffer != 0)
+        {
+            Completion = ZpStatus_FromNtStatus(STATUS_INVALID_BUFFER_SIZE);
+        }
+        else
+        {
+            Sent = send(Channel->Socket,
+                        Add2Ptr(Message->Data.Buffer, sizeof(BYTE)),
+                        Message->Data.Length - sizeof(BYTE),
+                        0);
+            if (Sent == SOCKET_ERROR)
+            {
+                Completion = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
+            }
+            else if ((ULONG)Sent != Message->Data.Length - sizeof(BYTE))
+            {
+                Completion = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
+            }
+        }
+    }
+    while (Channel->Protocol == ZP_TUNNEL_PROTOCOL_TCP && Offset < Message->Data.Length)
     {
         Sent = send(Channel->Socket,
                     Add2Ptr(Message->Data.Buffer, Offset),
@@ -340,20 +380,130 @@ ZpTunnel_ChannelClose(
 }
 
 static
+INT
+ZpTunnel_ConnectSocket(
+    _In_ SOCKET Socket,
+    _In_ const SOCKADDR* Address,
+    _In_ INT AddressLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ULONGLONG StartTickCount)
+{
+    WSAPOLLFD Poll = { Socket, POLLWRNORM, 0 };
+    ULONG Nonblocking = TRUE;
+    INT Result, Error, ErrorLength = sizeof(Error), PollTimeout;
+    ULONGLONG Elapsed;
+
+    if (ioctlsocket(Socket, FIONBIO, &Nonblocking) == SOCKET_ERROR) return WSAGetLastError();
+    if (connect(Socket, Address, AddressLength) == SOCKET_ERROR)
+    {
+        Result = WSAGetLastError();
+        if (Result != WSAEWOULDBLOCK) return Result;
+        if (TimeoutMilliseconds == 0)
+        {
+            PollTimeout = -1;
+        }
+        else
+        {
+            Elapsed = GetTickCount64() - StartTickCount;
+            if (Elapsed >= TimeoutMilliseconds) return WSAETIMEDOUT;
+            PollTimeout = (INT)min(TimeoutMilliseconds - Elapsed, MAXINT);
+        }
+        Result = WSAPoll(&Poll, 1, PollTimeout);
+        if (Result == 0) return WSAETIMEDOUT;
+        if (Result == SOCKET_ERROR) return WSAGetLastError();
+        if (getsockopt(Socket, SOL_SOCKET, SO_ERROR, (PSTR)&Error, &ErrorLength) == SOCKET_ERROR)
+        {
+            return WSAGetLastError();
+        }
+        if (Error != ERROR_SUCCESS) return Error;
+    }
+    Nonblocking = FALSE;
+    return ioctlsocket(Socket, FIONBIO, &Nonblocking) == 0 ? ERROR_SUCCESS : WSAGetLastError();
+}
+
+static
+ZP_STATUS
+ZpTunnel_Connect(
+    _In_ PCZP_STRING_VIEW Host,
+    _In_ USHORT Port,
+    _In_ USHORT Protocol,
+    _In_ ULONG TimeoutMilliseconds,
+    _Out_ SOCKET* ConnectedSocket)
+{
+    ADDRINFOW Hints = { 0 }, *Addresses, *Address;
+    PWSTR HostName;
+    SOCKET Socket;
+    INT Result;
+    ULONGLONG StartTickCount = GetTickCount64();
+
+    HostName = Mem_Alloc(((SIZE_T)Host->Length + 1) * sizeof(WCHAR));
+    if (HostName == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    RtlCopyMemory(HostName, Host->Buffer, (SIZE_T)Host->Length * sizeof(WCHAR));
+    HostName[Host->Length] = UNICODE_NULL;
+    Hints.ai_family = AF_UNSPEC;
+    Hints.ai_socktype = Protocol == ZP_TUNNEL_PROTOCOL_TCP ? SOCK_STREAM : SOCK_DGRAM;
+    Hints.ai_protocol = Protocol == ZP_TUNNEL_PROTOCOL_TCP ? IPPROTO_TCP : IPPROTO_UDP;
+    Result = GetAddrInfoW(HostName, NULL, &Hints, &Addresses);
+    Mem_Free(HostName);
+    if (Result != 0) return ZpStatus_FromCode(ZpStatusWinsock, Result);
+    Result = WSAEHOSTUNREACH;
+    for (Address = Addresses; Address != NULL; Address = Address->ai_next)
+    {
+        if (Address->ai_family == AF_INET)
+        {
+            ((SOCKADDR_IN*)Address->ai_addr)->sin_port = htons(Port);
+        }
+        else if (Address->ai_family == AF_INET6)
+        {
+            ((SOCKADDR_IN6*)Address->ai_addr)->sin6_port = htons(Port);
+        }
+        else
+        {
+            continue;
+        }
+        Socket = WSASocketW(Address->ai_family,
+                            Hints.ai_socktype,
+                            Hints.ai_protocol,
+                            NULL,
+                            0,
+                            WSA_FLAG_OVERLAPPED);
+        if (Socket == INVALID_SOCKET)
+        {
+            Result = WSAGetLastError();
+            continue;
+        }
+        Result = ZpTunnel_ConnectSocket(Socket,
+                                       Address->ai_addr,
+                                       (INT)Address->ai_addrlen,
+                                       TimeoutMilliseconds,
+                                       StartTickCount);
+        if (Result == ERROR_SUCCESS)
+        {
+            *ConnectedSocket = Socket;
+            break;
+        }
+        closesocket(Socket);
+    }
+    FreeAddrInfoW(Addresses);
+    return ZpStatus_FromCode(ZpStatusWinsock, Result);
+}
+
+static
 ZP_STATUS
 ZpTunnel_Open(
     _Inout_ PZP_CLIENT_OBJECT Client,
-    _In_ USHORT Port,
+    _In_ const ZP_TUNNEL_OPEN_VIEW* View,
+    _In_ ULONG TimeoutMilliseconds,
     _Outptr_ PZP_CLIENT_TUNNEL_CHANNEL* OpenedChannel)
 {
     WSADATA WsaData;
-    SOCKADDR_IN Address = { 0 };
     PZP_CLIENT_TUNNEL_CHANNEL Channel;
-    INT Result = 0;
+    ZP_STATUS Result = ZpStatus_Make(ZpStatusNone, 0);
+    INT WinsockStatus;
     NTSTATUS Status;
 
-    Result = WSAStartup(MAKEWORD(2, 2), &WsaData);
-    if (Result != 0) return ZpStatus_FromCode(ZpStatusWinsock, Result);
+    WinsockStatus = WSAStartup(MAKEWORD(2, 2), &WsaData);
+    if (WinsockStatus != ERROR_SUCCESS) return ZpStatus_FromCode(ZpStatusWinsock, WinsockStatus);
     Channel = Mem_Alloc(sizeof(*Channel));
     if (Channel == NULL)
     {
@@ -362,28 +512,19 @@ ZpTunnel_Open(
     }
     RtlZeroMemory(Channel, sizeof(*Channel));
     Channel->Socket = INVALID_SOCKET;
+    Channel->Protocol = View->Protocol;
     Status = NtCreateEvent(&Channel->CreditEvent,
                            EVENT_MODIFY_STATE | SYNCHRONIZE,
                            NULL,
                            SynchronizationEvent,
                            FALSE);
     if (!NT_SUCCESS(Status)) goto Cleanup;
-    Channel->Socket = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
-    if (Channel->Socket == INVALID_SOCKET)
-    {
-        Result = WSAGetLastError();
-        Status = STATUS_UNSUCCESSFUL;
-        goto Cleanup;
-    }
-    Address.sin_family = AF_INET;
-    Address.sin_port = htons(Port);
-    Address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (connect(Channel->Socket, (SOCKADDR*)&Address, sizeof(Address)) == SOCKET_ERROR)
-    {
-        Result = WSAGetLastError();
-        Status = STATUS_UNSUCCESSFUL;
-        goto Cleanup;
-    }
+    Result = ZpTunnel_Connect(&View->Host,
+                              View->Port,
+                              View->Protocol,
+                              TimeoutMilliseconds,
+                              &Channel->Socket);
+    if (!ZpStatus_IsSuccess(Result)) goto Cleanup;
     Status = ZpClientLocalChannel_Insert(Client,
                                          &Channel->Header,
                                          ZP_TUNNEL_MODULE_ID,
@@ -401,7 +542,7 @@ Cleanup:
     if (Channel->CreditEvent != NULL) NtClose(Channel->CreditEvent);
     Mem_Free(Channel);
     WSACleanup();
-    return Result != 0 ? ZpStatus_FromCode(ZpStatusWinsock, Result) : ZpStatus_FromNtStatus(Status);
+    return !ZpStatus_IsSuccess(Result) ? Result : ZpStatus_FromNtStatus(Status);
 }
 
 ZP_STATUS
@@ -410,12 +551,13 @@ ZpTunnel_Execute(
     _In_ USHORT OperationId,
     _In_reads_bytes_(RequestLength) const VOID* Request,
     _In_ ULONG RequestLength,
+    _In_ ULONG TimeoutMilliseconds,
     _Outptr_result_maybenull_ PBYTE* Response,
     _Out_ PULONG ResponseLength,
     _Outptr_result_maybenull_ PZP_CLIENT_TUNNEL_CHANNEL* Channel)
 {
     PZP_CLIENT_TUNNEL_CHANNEL OpenedChannel = NULL;
-    USHORT Port;
+    ZP_TUNNEL_OPEN_VIEW View;
     NTSTATUS Status;
     ZP_STATUS Result;
 
@@ -423,9 +565,9 @@ ZpTunnel_Execute(
     *ResponseLength = 0;
     *Channel = NULL;
     if (OperationId != ZP_TUNNEL_OPERATION_OPEN) return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
-    Status = ZpTunnel_DecodeOpen(Request, RequestLength, &Port);
+    Status = ZpTunnel_DecodeOpen(Request, RequestLength, &View);
     if (!NT_SUCCESS(Status)) return ZpStatus_FromNtStatus(Status);
-    Result = ZpTunnel_Open(Client, Port, &OpenedChannel);
+    Result = ZpTunnel_Open(Client, &View, TimeoutMilliseconds, &OpenedChannel);
     if (!ZpStatus_IsSuccess(Result)) return Result;
     Status = ZpTunnel_EncodeOpenResponse(OpenedChannel->Header.ChannelId, NULL, 0, ResponseLength);
     *Response = NT_SUCCESS(Status) ? Mem_Alloc(*ResponseLength) : NULL;
