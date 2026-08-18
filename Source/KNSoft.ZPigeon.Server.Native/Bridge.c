@@ -29,6 +29,8 @@ typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
         ZP_NATIVE_WINDOW_LIST_CALLBACK WindowList;
         ZP_NATIVE_WINDOW_INFO_CALLBACK WindowInfo;
         ZP_NATIVE_WINDOW_CAPTURE_CALLBACK WindowCapture;
+        ZP_NATIVE_AUDIO_DEVICES_CALLBACK AudioDevices;
+        ZP_NATIVE_AUDIO_SESSIONS_CALLBACK AudioSessions;
         ZP_NATIVE_SERVICE_LIST_CALLBACK ServiceList;
         ZP_NATIVE_SERVICE_INFO_CALLBACK ServiceInfo;
         ZP_NATIVE_ADMINISTRATION_CALLBACK Administration;
@@ -86,6 +88,32 @@ typedef struct _ZP_NATIVE_TUNNEL
     ZP_NATIVE_TUNNEL_CLOSE_CALLBACK CloseCallback;
     PVOID Context;
 } ZP_NATIVE_TUNNEL, *PZP_NATIVE_TUNNEL;
+
+typedef struct _ZP_NATIVE_WINDOW_CAPTURE_STREAM
+{
+    RTL_SRWLOCK Lock;
+    volatile LONG ReferenceCount;
+    volatile LONG CallerClosed;
+    ZP_CONNECTION_HANDLE Connection;
+    ZP_CHANNEL_HANDLE Channel;
+    ZP_NATIVE_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback;
+    ZP_NATIVE_WINDOW_CAPTURE_DATA_CALLBACK DataCallback;
+    ZP_NATIVE_WINDOW_CAPTURE_CLOSE_CALLBACK CloseCallback;
+    PVOID Context;
+} ZP_NATIVE_WINDOW_CAPTURE_STREAM, *PZP_NATIVE_WINDOW_CAPTURE_STREAM;
+
+typedef struct _ZP_NATIVE_AUDIO_STREAM
+{
+    RTL_SRWLOCK Lock;
+    volatile LONG ReferenceCount;
+    volatile LONG CallerClosed;
+    ZP_CONNECTION_HANDLE Connection;
+    ZP_CHANNEL_HANDLE Channel;
+    ZP_NATIVE_AUDIO_STREAM_OPEN_CALLBACK OpenCallback;
+    ZP_NATIVE_AUDIO_STREAM_DATA_CALLBACK DataCallback;
+    ZP_NATIVE_AUDIO_STREAM_CLOSE_CALLBACK CloseCallback;
+    PVOID Context;
+} ZP_NATIVE_AUDIO_STREAM, *PZP_NATIVE_AUDIO_STREAM;
 
 static RTL_SRWLOCK ZpNativeLock = RTL_SRWLOCK_INIT;
 static ZP_SERVER_HANDLE ZpNativeServer;
@@ -640,18 +668,253 @@ NTAPI
 ZpNative_WindowCaptureCallback(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
-    _In_opt_ PCZP_BUFFER_VIEW Bitmap,
+    _In_opt_ PCZP_BUFFER_VIEW Image,
     _In_opt_ PVOID Context)
 {
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
 
     CallbackContext->Callback.WindowCapture(
         Status,
-        ZpStatus_IsSuccess(Status) ? Bitmap->Buffer : NULL,
-        ZpStatus_IsSuccess(Status) ? Bitmap->Length : 0,
+        ZpStatus_IsSuccess(Status) ? Image->Buffer : NULL,
+        ZpStatus_IsSuccess(Status) ? Image->Length : 0,
         CallbackContext->Context);
     ZpRequest_Close(Request);
     ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+ZpNative_ReleaseWindowCapture(
+    _Inout_ PZP_NATIVE_WINDOW_CAPTURE_STREAM Stream)
+{
+    if (InterlockedDecrement(&Stream->ReferenceCount) == 0)
+    {
+        ZpConnection_Release(Stream->Connection);
+        Mem_Free(Stream);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_WindowCaptureOpenCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_WINDOW_CAPTURE_STREAM Stream = Context;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Stream->Channel = Channel;
+        Stream->ReferenceCount = 2;
+    }
+    Stream->OpenCallback(Status,
+                         ZpStatus_IsSuccess(Status) ? Stream : NULL,
+                         Stream->Context);
+    ZpRequest_Close(Request);
+    if (!ZpStatus_IsSuccess(Status))
+    {
+        ZpConnection_Release(Stream->Connection);
+        Mem_Free(Stream);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_WindowCaptureDataCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ PCZP_BUFFER_VIEW Data,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_WINDOW_CAPTURE_STREAM Stream = Context;
+
+    if (!Stream->DataCallback(Data->Buffer, Data->Length, Stream->Context))
+    {
+        ZpChannel_Cancel(Channel);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_WindowCaptureCloseCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_WINDOW_CAPTURE_STREAM Stream = Context;
+
+    RtlAcquireSRWLockExclusive(&Stream->Lock);
+    Stream->Channel = NULL;
+    RtlReleaseSRWLockExclusive(&Stream->Lock);
+    Stream->CloseCallback(Status, Stream->Context);
+    ZpChannel_Close(Channel);
+    ZpNative_ReleaseWindowCapture(Stream);
+}
+
+static
+VOID
+NTAPI
+ZpNative_AudioDevicesCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_AUDIO_DEVICE_LIST_VIEW Devices,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_AUDIO_DEVICE_RECORD Records = NULL;
+    ZP_AUDIO_DEVICE_VIEW Device;
+    ULONG Index, Offset = 0;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status) && Devices->Count != 0)
+    {
+        Records = Mem_Alloc((SIZE_T)Devices->Count * sizeof(*Records));
+        if (Records == NULL) Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Devices->Count; Index++)
+    {
+        DecodeStatus = ZpAudio_GetNextDevice(Devices, &Offset, &Device);
+        if (!NT_SUCCESS(DecodeStatus))
+        {
+            Status = ZpStatus_FromNtStatus(DecodeStatus);
+            break;
+        }
+        Records[Index].Flow = Device.Flow;
+        Records[Index].State = Device.State;
+        Records[Index].Flags = Device.Flags;
+        Records[Index].Volume = Device.Volume;
+        Records[Index].Id = (PCWCH)Device.Id.Buffer;
+        Records[Index].IdLength = Device.Id.Length;
+        Records[Index].Name = (PCWCH)Device.Name.Buffer;
+        Records[Index].NameLength = Device.Name.Length;
+    }
+    CallbackContext->Callback.AudioDevices(Status,
+                                            ZpStatus_IsSuccess(Status) ? Records : NULL,
+                                            ZpStatus_IsSuccess(Status) ? Devices->Count : 0,
+                                            CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_AudioSessionsCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_AUDIO_SESSION_LIST_VIEW Sessions,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_AUDIO_SESSION_RECORD Records = NULL;
+    ZP_AUDIO_SESSION_VIEW Session;
+    ULONG Index, Offset = 0;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status) && Sessions->Count != 0)
+    {
+        Records = Mem_Alloc((SIZE_T)Sessions->Count * sizeof(*Records));
+        if (Records == NULL) Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Sessions->Count; Index++)
+    {
+        DecodeStatus = ZpAudio_GetNextSession(Sessions, &Offset, &Session);
+        if (!NT_SUCCESS(DecodeStatus))
+        {
+            Status = ZpStatus_FromNtStatus(DecodeStatus);
+            break;
+        }
+        Records[Index].ProcessId = Session.ProcessId;
+        Records[Index].State = Session.State;
+        Records[Index].Flags = Session.Flags;
+        Records[Index].Volume = Session.Volume;
+        Records[Index].DeviceId = (PCWCH)Session.DeviceId.Buffer;
+        Records[Index].DeviceIdLength = Session.DeviceId.Length;
+        Records[Index].Id = (PCWCH)Session.Id.Buffer;
+        Records[Index].IdLength = Session.Id.Length;
+        Records[Index].Name = (PCWCH)Session.Name.Buffer;
+        Records[Index].NameLength = Session.Name.Length;
+    }
+    CallbackContext->Callback.AudioSessions(Status,
+                                             ZpStatus_IsSuccess(Status) ? Records : NULL,
+                                             ZpStatus_IsSuccess(Status) ? Sessions->Count : 0,
+                                             CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+ZpNative_ReleaseAudioStream(
+    _Inout_ PZP_NATIVE_AUDIO_STREAM Stream)
+{
+    if (InterlockedDecrement(&Stream->ReferenceCount) == 0)
+    {
+        ZpConnection_Release(Stream->Connection);
+        Mem_Free(Stream);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_AudioStreamOpenCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_AUDIO_STREAM Stream = Context;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Stream->Channel = Channel;
+        Stream->ReferenceCount = 2;
+    }
+    Stream->OpenCallback(Status, ZpStatus_IsSuccess(Status) ? Stream : NULL, Stream->Context);
+    ZpRequest_Close(Request);
+    if (!ZpStatus_IsSuccess(Status))
+    {
+        ZpConnection_Release(Stream->Connection);
+        Mem_Free(Stream);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_AudioStreamDataCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ PCZP_BUFFER_VIEW Data,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_AUDIO_STREAM Stream = Context;
+
+    if (!Stream->DataCallback(Data->Buffer, Data->Length, Stream->Context)) ZpChannel_Cancel(Channel);
+}
+
+static
+VOID
+NTAPI
+ZpNative_AudioStreamCloseCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_AUDIO_STREAM Stream = Context;
+
+    RtlAcquireSRWLockExclusive(&Stream->Lock);
+    Stream->Channel = NULL;
+    RtlReleaseSRWLockExclusive(&Stream->Lock);
+    Stream->CloseCallback(Status, Stream->Context);
+    ZpChannel_Close(Channel);
+    ZpNative_ReleaseAudioStream(Stream);
 }
 
 static
@@ -1517,7 +1780,8 @@ ZpNative_Start(
         { ZP_EXECUTION_MODULE_ID, ZP_EXECUTION_MODULE_VERSION },
         { ZP_TUNNEL_MODULE_ID, ZP_TUNNEL_MODULE_VERSION },
         { ZP_BROWSER_MODULE_ID, ZP_BROWSER_MODULE_VERSION },
-        { ZP_WMI_MODULE_ID, ZP_WMI_MODULE_VERSION }
+        { ZP_WMI_MODULE_ID, ZP_WMI_MODULE_VERSION },
+        { ZP_AUDIO_MODULE_ID, ZP_AUDIO_MODULE_VERSION }
     };
     ZP_LISTENER_ENDPOINT Listener = {
         ZpTransportQuic,
@@ -2833,9 +3097,22 @@ ZpNative_CaptureWindow(
     _In_ ULONGLONG Handle,
     _In_ ULONG ProcessId,
     _In_ ULONG ThreadId,
+    _In_ ULONG Flags,
+    _In_ ULONG MaxDimension,
+    _In_ USHORT FrameRate,
+    _In_ USHORT Quality,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_CALLBACK Callback,
     _In_opt_ PVOID Context)
 {
+    ZP_WINDOW_CAPTURE_OPTIONS Options = {
+        Handle,
+        ProcessId,
+        ThreadId,
+        Flags,
+        MaxDimension,
+        FrameRate,
+        Quality
+    };
     ZP_CONNECTION_HANDLE Connection;
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
     ZP_REQUEST_HANDLE Request;
@@ -2853,13 +3130,295 @@ ZpNative_CaptureWindow(
     return ZpNative_SendStatusRequest(
         CallbackContext,
         ZpServer_CaptureWindow(Connection,
-                               Handle,
-                               ProcessId,
-                               ThreadId,
+                               &Options,
                                ZP_NATIVE_TIMEOUT_MILLISECONDS,
                                ZpNative_WindowCaptureCallback,
                                CallbackContext,
                                &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_OpenWindowCapture(
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ULONG Flags,
+    _In_ ULONG MaxDimension,
+    _In_ USHORT FrameRate,
+    _In_ USHORT Quality,
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context)
+{
+    ZP_WINDOW_CAPTURE_OPTIONS Options = {
+        Handle,
+        ProcessId,
+        ThreadId,
+        Flags,
+        MaxDimension,
+        FrameRate,
+        Quality
+    };
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_WINDOW_CAPTURE_STREAM Stream;
+    ZP_REQUEST_HANDLE Request;
+    NTSTATUS Status;
+
+    if (OpenCallback == NULL || DataCallback == NULL || CloseCallback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    Stream = Mem_Alloc(sizeof(*Stream));
+    if (Stream == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(Stream, sizeof(*Stream));
+    Stream->Connection = Connection;
+    Stream->OpenCallback = OpenCallback;
+    Stream->DataCallback = DataCallback;
+    Stream->CloseCallback = CloseCallback;
+    Stream->Context = Context;
+    Status = ZpServer_OpenWindowCapture(Connection,
+                                        &Options,
+                                        ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                        ZpNative_WindowCaptureOpenCallback,
+                                        ZpNative_WindowCaptureDataCallback,
+                                        ZpNative_WindowCaptureCloseCallback,
+                                        Stream,
+                                        &Request);
+    if (!NT_SUCCESS(Status))
+    {
+        ZpConnection_Release(Connection);
+        Mem_Free(Stream);
+    }
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_CloseWindowCapture(
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_STREAM_HANDLE Stream)
+{
+    ZP_CHANNEL_HANDLE Channel;
+    NTSTATUS Status;
+
+    if (Stream == NULL) return STATUS_INVALID_HANDLE;
+    if (InterlockedExchange(&Stream->CallerClosed, TRUE)) return STATUS_INVALID_DEVICE_STATE;
+    RtlAcquireSRWLockExclusive(&Stream->Lock);
+    Channel = Stream->Channel;
+    Stream->Channel = NULL;
+    RtlReleaseSRWLockExclusive(&Stream->Lock);
+    Status = Channel != NULL ? ZpChannel_Cancel(Channel) : STATUS_SUCCESS;
+    ZpNative_ReleaseWindowCapture(Stream);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumerateAudioDevices(
+    _In_ ZP_NATIVE_AUDIO_DEVICES_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.AudioDevices = Callback;
+    return ZpNative_SendStatusRequest(CallbackContext,
+                                      ZpServer_EnumerateAudioDevices(Connection,
+                                                                     ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                                                     ZpNative_AudioDevicesCallback,
+                                                                     CallbackContext,
+                                                                     &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumerateAudioSessions(
+    _In_ ZP_NATIVE_AUDIO_SESSIONS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.AudioSessions = Callback;
+    return ZpNative_SendStatusRequest(CallbackContext,
+                                      ZpServer_EnumerateAudioSessions(Connection,
+                                                                      ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                                                      ZpNative_AudioSessionsCallback,
+                                                                      CallbackContext,
+                                                                      &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_ControlAudioEndpoint(
+    _In_ USHORT Flow,
+    _In_ USHORT Control,
+    _In_ ULONG Value,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    return ZpNative_SendStatusRequest(CallbackContext,
+                                      ZpServer_ControlAudioEndpoint(Connection,
+                                                                    Flow,
+                                                                    Control,
+                                                                    Value,
+                                                                    DeviceId,
+                                                                    DeviceIdLength,
+                                                                    ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                                                    ZpNative_StatusCallback,
+                                                                    CallbackContext,
+                                                                    &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_ControlAudioSession(
+    _In_ USHORT Control,
+    _In_ ULONG Value,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(SessionIdLength) PCWCH SessionId,
+    _In_ ULONG SessionIdLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    return ZpNative_SendStatusRequest(CallbackContext,
+                                      ZpServer_ControlAudioSession(Connection,
+                                                                   Control,
+                                                                   Value,
+                                                                   DeviceId,
+                                                                   DeviceIdLength,
+                                                                   SessionId,
+                                                                   SessionIdLength,
+                                                                   ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                                                   ZpNative_StatusCallback,
+                                                                   CallbackContext,
+                                                                   &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_OpenAudioStream(
+    _In_ USHORT Flow,
+    _In_reads_opt_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_ ZP_NATIVE_AUDIO_STREAM_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_AUDIO_STREAM_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_AUDIO_STREAM_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_AUDIO_STREAM Stream;
+    ZP_REQUEST_HANDLE Request;
+    NTSTATUS Status;
+
+    if (OpenCallback == NULL || DataCallback == NULL || CloseCallback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    Stream = Mem_Alloc(sizeof(*Stream));
+    if (Stream == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(Stream, sizeof(*Stream));
+    Stream->Connection = Connection;
+    Stream->OpenCallback = OpenCallback;
+    Stream->DataCallback = DataCallback;
+    Stream->CloseCallback = CloseCallback;
+    Stream->Context = Context;
+    Status = ZpServer_OpenAudioStream(Connection,
+                                      Flow,
+                                      DeviceId,
+                                      DeviceIdLength,
+                                      ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                      ZpNative_AudioStreamOpenCallback,
+                                      ZpNative_AudioStreamDataCallback,
+                                      ZpNative_AudioStreamCloseCallback,
+                                      Stream,
+                                      &Request);
+    if (!NT_SUCCESS(Status))
+    {
+        ZpConnection_Release(Connection);
+        Mem_Free(Stream);
+    }
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_CloseAudioStream(
+    _In_ ZP_NATIVE_AUDIO_STREAM_HANDLE Stream)
+{
+    ZP_CHANNEL_HANDLE Channel;
+    NTSTATUS Status;
+
+    if (Stream == NULL) return STATUS_INVALID_HANDLE;
+    if (InterlockedExchange(&Stream->CallerClosed, TRUE)) return STATUS_INVALID_DEVICE_STATE;
+    RtlAcquireSRWLockExclusive(&Stream->Lock);
+    Channel = Stream->Channel;
+    Stream->Channel = NULL;
+    RtlReleaseSRWLockExclusive(&Stream->Lock);
+    Status = Channel != NULL ? ZpChannel_Cancel(Channel) : STATUS_SUCCESS;
+    ZpNative_ReleaseAudioStream(Stream);
+    return Status;
 }
 
 NTSTATUS

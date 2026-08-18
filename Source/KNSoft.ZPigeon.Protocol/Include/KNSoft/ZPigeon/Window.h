@@ -11,6 +11,7 @@ EXTERN_C_START
 #define ZP_WINDOW_OPERATION_CONTROL 3
 #define ZP_WINDOW_OPERATION_UPDATE 4
 #define ZP_WINDOW_OPERATION_CAPTURE 5
+#define ZP_WINDOW_OPERATION_OPEN_CAPTURE 6
 
 typedef USHORT ZP_WINDOW_CONTROL, *PZP_WINDOW_CONTROL;
 
@@ -42,6 +43,48 @@ typedef USHORT ZP_WINDOW_CONTROL, *PZP_WINDOW_CONTROL;
 #define ZP_WINDOW_FLAG_TOP_LEVEL 0x00000020UL
 #define ZP_WINDOW_FLAG_HUNG 0x00000040UL
 #define ZP_WINDOW_FLAG_TOPMOST 0x00000080UL
+#define ZP_WINDOW_FLAG_DESKTOP 0x00000100UL
+
+#define ZP_WINDOW_CAPTURE_CURSOR 0x00000001UL
+#define ZP_WINDOW_CAPTURE_FLAGS_MASK ZP_WINDOW_CAPTURE_CURSOR
+#define ZP_WINDOW_CAPTURE_DEFAULT_FRAME_RATE 12
+#define ZP_WINDOW_CAPTURE_DEFAULT_QUALITY 85
+#define ZP_WINDOW_CAPTURE_DEFAULT_MAX_DIMENSION 1280
+#define ZP_WINDOW_CAPTURE_MAX_FRAME_RATE 60
+#define ZP_WINDOW_CAPTURE_MAX_DIMENSION 7680
+
+typedef USHORT ZP_WINDOW_CAPTURE_RECORD_TYPE, *PZP_WINDOW_CAPTURE_RECORD_TYPE;
+
+#define ZpWindowCaptureRecordKeyFrame ((ZP_WINDOW_CAPTURE_RECORD_TYPE)1)
+#define ZpWindowCaptureRecordPatch ((ZP_WINDOW_CAPTURE_RECORD_TYPE)2)
+
+typedef struct _ZP_WINDOW_CAPTURE_OPTIONS
+{
+    ULONGLONG Handle;
+    ULONG ProcessId;
+    ULONG ThreadId;
+    ULONG Flags;
+    ULONG MaxDimension;
+    USHORT FrameRate;
+    USHORT Quality;
+} ZP_WINDOW_CAPTURE_OPTIONS, *PZP_WINDOW_CAPTURE_OPTIONS;
+
+typedef const ZP_WINDOW_CAPTURE_OPTIONS* PCZP_WINDOW_CAPTURE_OPTIONS;
+
+typedef struct _ZP_WINDOW_CAPTURE_RECORD
+{
+    ZP_WINDOW_CAPTURE_RECORD_TYPE Type;
+    ULONG Sequence;
+    ULONG CanvasWidth;
+    ULONG CanvasHeight;
+    ULONG Left;
+    ULONG Top;
+    ULONG Width;
+    ULONG Height;
+    ULONG DataLength;
+} ZP_WINDOW_CAPTURE_RECORD, *PZP_WINDOW_CAPTURE_RECORD;
+
+typedef const ZP_WINDOW_CAPTURE_RECORD* PCZP_WINDOW_CAPTURE_RECORD;
 
 typedef struct _ZP_WINDOW_RECORD
 {
@@ -212,6 +255,39 @@ ZpWindow_DecodeIdentity(
     _Out_ PULONGLONG Handle,
     _Out_ PULONG ProcessId,
     _Out_ PULONG ThreadId);
+
+NTSTATUS
+ZpWindow_EncodeCaptureRequest(
+    _In_ PCZP_WINDOW_CAPTURE_OPTIONS Options,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpWindow_DecodeCaptureRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_WINDOW_CAPTURE_OPTIONS Options);
+
+NTSTATUS
+ZpWindow_EncodeCaptureChannel(
+    _In_ ULONGLONG ChannelId,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpWindow_DecodeCaptureChannel(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONGLONG ChannelId);
+
+NTSTATUS
+ZpWindow_EncodeCaptureRecord(
+    _In_ PCZP_WINDOW_CAPTURE_RECORD Record,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
 
 NTSTATUS
 ZpWindow_EncodeControl(

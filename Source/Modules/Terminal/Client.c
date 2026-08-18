@@ -708,8 +708,10 @@ ZpTerminal_ChannelData(
     }
     if (!NT_SUCCESS(Status))
     {
+        ZP_STATUS CompletionStatus = ZpStatus_FromNtStatus(Status);
+
         Removed = ZpClientLocalChannel_RemoveLocked(&Channel->Header);
-        ZpTerminal_SendCloseLocked(Channel, ZpStatus_FromNtStatus(Status));
+        Status = ZpTerminal_SendCloseLocked(Channel, CompletionStatus);
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
     if (Removed)

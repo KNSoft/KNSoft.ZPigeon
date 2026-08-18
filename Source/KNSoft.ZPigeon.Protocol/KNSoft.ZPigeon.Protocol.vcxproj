@@ -52,6 +52,7 @@
     <ClInclude Include="Include\KNSoft\ZPigeon\Terminal.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Tunnel.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Window.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Audio.h" />
     <ClInclude Include="Core\Protocol.inl" />
   </ItemGroup>
   <ItemGroup>
@@ -71,6 +72,7 @@
     <ClCompile Include="..\Modules\Terminal\Protocol.c"><ObjectFileName>$(IntDir)Modules\Terminal\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Tunnel\Protocol.c"><ObjectFileName>$(IntDir)Modules\Tunnel\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Window\Protocol.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Audio\Protocol.c"><ObjectFileName>$(IntDir)Modules\Audio\</ObjectFileName></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

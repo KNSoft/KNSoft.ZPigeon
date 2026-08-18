@@ -243,6 +243,76 @@ typedef struct _ZP_NATIVE_WINDOW_RECORD
 
 typedef const ZP_NATIVE_WINDOW_RECORD* PCZP_NATIVE_WINDOW_RECORD;
 
+typedef struct _ZP_NATIVE_AUDIO_DEVICE_RECORD
+{
+    USHORT Flow;
+    ULONG State;
+    ULONG Flags;
+    ULONG Volume;
+    PCWCH Id;
+    ULONG IdLength;
+    PCWCH Name;
+    ULONG NameLength;
+} ZP_NATIVE_AUDIO_DEVICE_RECORD, *PZP_NATIVE_AUDIO_DEVICE_RECORD;
+
+typedef const ZP_NATIVE_AUDIO_DEVICE_RECORD* PCZP_NATIVE_AUDIO_DEVICE_RECORD;
+
+typedef struct _ZP_NATIVE_AUDIO_SESSION_RECORD
+{
+    ULONG ProcessId;
+    ULONG State;
+    ULONG Flags;
+    ULONG Volume;
+    PCWCH DeviceId;
+    ULONG DeviceIdLength;
+    PCWCH Id;
+    ULONG IdLength;
+    PCWCH Name;
+    ULONG NameLength;
+} ZP_NATIVE_AUDIO_SESSION_RECORD, *PZP_NATIVE_AUDIO_SESSION_RECORD;
+
+typedef const ZP_NATIVE_AUDIO_SESSION_RECORD* PCZP_NATIVE_AUDIO_SESSION_RECORD;
+
+typedef struct _ZP_NATIVE_AUDIO_STREAM* ZP_NATIVE_AUDIO_STREAM_HANDLE;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_AUDIO_DEVICES_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_AUDIO_DEVICE_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_AUDIO_SESSIONS_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_AUDIO_SESSION_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_AUDIO_STREAM_OPEN_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_NATIVE_AUDIO_STREAM_HANDLE Stream,
+    _In_opt_ PVOID Context);
+
+typedef
+BOOLEAN
+(NTAPI *ZP_NATIVE_AUDIO_STREAM_DATA_CALLBACK)(
+    _In_reads_bytes_(DataLength) const BYTE* Data,
+    _In_ ULONG DataLength,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_AUDIO_STREAM_CLOSE_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_opt_ PVOID Context);
+
+typedef struct _ZP_NATIVE_WINDOW_CAPTURE_STREAM* ZP_NATIVE_WINDOW_CAPTURE_STREAM_HANDLE;
+
 typedef
 VOID
 (NTAPI *ZP_NATIVE_WINDOW_LIST_CALLBACK)(
@@ -262,8 +332,28 @@ typedef
 VOID
 (NTAPI *ZP_NATIVE_WINDOW_CAPTURE_CALLBACK)(
     _In_ ZP_STATUS Status,
-    _In_reads_bytes_opt_(BitmapLength) const BYTE* Bitmap,
-    _In_ ULONG BitmapLength,
+    _In_reads_bytes_opt_(ImageLength) const BYTE* Image,
+    _In_ ULONG ImageLength,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_WINDOW_CAPTURE_OPEN_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_NATIVE_WINDOW_CAPTURE_STREAM_HANDLE Stream,
+    _In_opt_ PVOID Context);
+
+typedef
+BOOLEAN
+(NTAPI *ZP_NATIVE_WINDOW_CAPTURE_DATA_CALLBACK)(
+    _In_reads_bytes_(DataLength) const BYTE* Data,
+    _In_ ULONG DataLength,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_WINDOW_CAPTURE_CLOSE_CALLBACK)(
+    _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context);
 
 typedef struct _ZP_NATIVE_SERVICE_RECORD
@@ -866,8 +956,91 @@ ZpNative_CaptureWindow(
     _In_ ULONGLONG Handle,
     _In_ ULONG ProcessId,
     _In_ ULONG ThreadId,
+    _In_ ULONG Flags,
+    _In_ ULONG MaxDimension,
+    _In_ USHORT FrameRate,
+    _In_ USHORT Quality,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_CALLBACK Callback,
     _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_OpenWindowCapture(
+    _In_ ULONGLONG Handle,
+    _In_ ULONG ProcessId,
+    _In_ ULONG ThreadId,
+    _In_ ULONG Flags,
+    _In_ ULONG MaxDimension,
+    _In_ USHORT FrameRate,
+    _In_ USHORT Quality,
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_CloseWindowCapture(
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_STREAM_HANDLE Stream);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateAudioDevices(
+    _In_ ZP_NATIVE_AUDIO_DEVICES_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateAudioSessions(
+    _In_ ZP_NATIVE_AUDIO_SESSIONS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_ControlAudioEndpoint(
+    _In_ USHORT Flow,
+    _In_ USHORT Control,
+    _In_ ULONG Value,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_ControlAudioSession(
+    _In_ USHORT Control,
+    _In_ ULONG Value,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(SessionIdLength) PCWCH SessionId,
+    _In_ ULONG SessionIdLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_OpenAudioStream(
+    _In_ USHORT Flow,
+    _In_reads_opt_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_ ZP_NATIVE_AUDIO_STREAM_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_AUDIO_STREAM_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_AUDIO_STREAM_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_CloseAudioStream(
+    _In_ ZP_NATIVE_AUDIO_STREAM_HANDLE Stream);
 
 __declspec(dllexport)
 NTSTATUS

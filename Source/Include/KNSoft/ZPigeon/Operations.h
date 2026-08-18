@@ -2,6 +2,7 @@
 
 #include <KNSoft/ZPigeon/SDK.h>
 #include <KNSoft/ZPigeon/Administration.h>
+#include <KNSoft/ZPigeon/Audio.h>
 #include <KNSoft/ZPigeon/Browser.h>
 #include <KNSoft/ZPigeon/Wmi.h>
 #include <KNSoft/ZPigeon/EventLog.h>
@@ -15,6 +16,30 @@
 #include <KNSoft/ZPigeon/Window.h>
 
 EXTERN_C_START
+
+typedef
+VOID
+(NTAPI *ZP_AUDIO_DEVICES_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_AUDIO_DEVICE_LIST_VIEW Devices,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_AUDIO_SESSIONS_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_AUDIO_SESSION_LIST_VIEW Sessions,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_AUDIO_STREAM_OPEN_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_opt_ PVOID Context);
 
 typedef
 VOID
@@ -296,7 +321,15 @@ VOID
 (NTAPI *ZP_WINDOW_CAPTURE_CALLBACK)(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
-    _In_opt_ PCZP_BUFFER_VIEW Bitmap,
+    _In_opt_ PCZP_BUFFER_VIEW Image,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_WINDOW_CAPTURE_OPEN_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
     _In_opt_ PVOID Context);
 
 typedef

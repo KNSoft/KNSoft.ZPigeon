@@ -490,8 +490,15 @@ ZpServerConnection_ReceiveChannelData(
 
     RtlAcquireSRWLockExclusive(&Connection->Lock);
     Channel = ZpServerConnection_FindChannel(Connection, Message->ChannelId);
-    if (Channel == NULL || Channel->DataCallback == NULL ||
-        Message->Data.Length > Channel->ReceiveCredit ||
+    if (Channel == NULL)
+    {
+        Status = Message->ChannelId != 0 &&
+                 Message->ChannelId <= Connection->HighestChannelId ?
+                     STATUS_SUCCESS : STATUS_PROTOCOL_UNREACHABLE;
+        RtlReleaseSRWLockExclusive(&Connection->Lock);
+        return Status;
+    }
+    if (Channel->DataCallback == NULL || Message->Data.Length > Channel->ReceiveCredit ||
         (Channel->BoundedReceive &&
          Message->Data.Length > Channel->RemainingBytes))
     {

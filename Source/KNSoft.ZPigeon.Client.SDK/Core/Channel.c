@@ -24,6 +24,22 @@ ZpClientLocalChannel_FindLocked(
     return NULL;
 }
 
+static
+NTSTATUS
+ZpClientLocalChannel_NormalizeStatus(
+    _In_ PZP_CLIENT_OBJECT Object,
+    _In_ PZP_CLIENT_LOCAL_CHANNEL Channel,
+    _In_ NTSTATUS Status)
+{
+    if (Status == STATUS_PROTOCOL_UNREACHABLE)
+    {
+        RtlAcquireSRWLockShared(&Object->Lock);
+        if (!Channel->Pending) Status = STATUS_SUCCESS;
+        RtlReleaseSRWLockShared(&Object->Lock);
+    }
+    return Status;
+}
+
 NTSTATUS
 ZpClientLocalChannel_ReferenceById(
     _Inout_ PZP_CLIENT_OBJECT Object,
@@ -139,6 +155,7 @@ ZpClientLocalChannel_ReceiveData(
         Status = Channel->ReceiveData != NULL ?
                      Channel->ReceiveData(Channel, Message) :
                      STATUS_PROTOCOL_UNREACHABLE;
+        Status = ZpClientLocalChannel_NormalizeStatus(Object, Channel, Status);
         ZpClientLocalChannel_Release(Channel);
     }
     return Status;
@@ -162,6 +179,7 @@ ZpClientLocalChannel_ReceiveWindow(
         Status = Channel->ReceiveWindow != NULL ?
                      Channel->ReceiveWindow(Channel, CreditBytes) :
                      STATUS_PROTOCOL_UNREACHABLE;
+        Status = ZpClientLocalChannel_NormalizeStatus(Object, Channel, Status);
         ZpClientLocalChannel_Release(Channel);
     }
     return Status;
@@ -182,6 +200,7 @@ ZpClientLocalChannel_ReceiveClose(
     if (NT_SUCCESS(Status) && Channel != NULL)
     {
         Status = Channel->ReceiveClose(Channel, Message->Status);
+        Status = ZpClientLocalChannel_NormalizeStatus(Object, Channel, Status);
         ZpClientLocalChannel_Release(Channel);
     }
     return Status;

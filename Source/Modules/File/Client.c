@@ -756,8 +756,10 @@ ZpFile_ChannelData(
     }
     if (!NT_SUCCESS(Status) || Channel->RemainingBytes == 0)
     {
+        NTSTATUS CompletionStatus = Status;
+
         Removed = ZpClientLocalChannel_RemoveLocked(&Channel->Header);
-        ZpFile_SendCloseLocked(Channel, Status);
+        Status = ZpFile_SendCloseLocked(Channel, CompletionStatus);
     }
     else
     {

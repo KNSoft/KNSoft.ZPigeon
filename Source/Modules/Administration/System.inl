@@ -158,6 +158,53 @@ ZpAdministration_AddSystemDword(
                                                (ULONGLONG)Value * 10000000 + 116444736000000000 : Value);
 }
 
+typedef
+PWSTR
+(WINAPI* ZP_BRANDING_FORMAT_STRING)(
+    _In_ PCWSTR Format);
+
+static
+NTSTATUS
+ZpAdministration_AddWindowsProductName(
+    _Inout_ PZP_ADMINISTRATION_BUILDER Builder)
+{
+    ZP_BRANDING_FORMAT_STRING BrandingFormatString;
+    HMODULE Module;
+    PWSTR Value;
+    NTSTATUS Status;
+
+    Module = LoadLibraryExW(L"winbrand.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (Module == NULL) return NTSTATUS_FROM_WIN32(GetLastError());
+    BrandingFormatString = (ZP_BRANDING_FORMAT_STRING)GetProcAddress(
+        Module,
+        "BrandingFormatString");
+    if (BrandingFormatString == NULL)
+    {
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+    }
+    else
+    {
+        Value = BrandingFormatString(L"%WINDOWS_LONG%");
+        if (Value == NULL)
+        {
+            Status = STATUS_RESOURCE_DATA_NOT_FOUND;
+        }
+        else
+        {
+            Status = ZpAdministration_AddSystemValue(Builder,
+                                                     L"productName",
+                                                     L"产品名称",
+                                                     L"Windows",
+                                                     Value,
+                                                     0,
+                                                     0);
+            GlobalFree(Value);
+        }
+    }
+    FreeLibrary(Module);
+    return Status;
+}
+
 static
 NTSTATUS
 ZpAdministration_OpenEnvironment(
@@ -308,7 +355,6 @@ ZpAdministration_EnumerateSystem(
     _Out_ PULONG ResponseLength)
 {
     static const ZP_SYSTEM_REGISTRY_RECORD CurrentVersionRecords[] = {
-        { RTL_CONSTANT_STRING(L"ProductName"), L"productName", L"产品名称", L"Windows", 0 },
         { RTL_CONSTANT_STRING(L"DisplayVersion"), L"displayVersion", L"显示版本", L"Windows", 0 },
         { RTL_CONSTANT_STRING(L"EditionID"), L"edition", L"版本", L"Windows", 0 },
         { RTL_CONSTANT_STRING(L"InstallationType"), L"installationType", L"安装类型", L"Windows", 0 },
@@ -445,6 +491,10 @@ ZpAdministration_EnumerateSystem(
                                                  FirmwareName,
                                                  0,
                                                  Firmware);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpAdministration_AddWindowsProductName(&Builder);
     }
     if (NT_SUCCESS(Status))
     {

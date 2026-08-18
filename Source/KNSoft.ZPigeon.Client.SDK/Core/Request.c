@@ -1,5 +1,6 @@
 ﻿#include "../Client.inl"
 #include "../../Modules/Administration/Client.h"
+#include "../../Modules/Audio/Client.h"
 #include "../../Modules/Browser/Client.h"
 #include "../../Modules/Wmi/Client.h"
 #include "../../Modules/EventLog/Client.h"
@@ -134,6 +135,8 @@ ZpClientInbound_RequestCallback(
     PZP_CLIENT_FILE_CHANNEL FileChannel = NULL;
     PZP_CLIENT_TERMINAL_CHANNEL TerminalChannel = NULL;
     PZP_CLIENT_TUNNEL_CHANNEL TunnelChannel = NULL;
+    PZP_CLIENT_WINDOW_CAPTURE_CHANNEL WindowChannel = NULL;
+    PZP_CLIENT_AUDIO_CHANNEL AudioChannel = NULL;
     ULONG PayloadLength = 0;
     NTSTATUS ModuleStatus, SendStatus = STATUS_CANCELLED;
     ZP_STATUS Status;
@@ -228,11 +231,24 @@ ZpClientInbound_RequestCallback(
     }
     else if (Request->ModuleId == ZP_WINDOW_MODULE_ID)
     {
-        Status = ZpWindow_Execute(Request->OperationId,
+        Status = ZpWindow_Execute(Object,
+                                  Request->OperationId,
                                   Request->Payload,
                                   Request->PayloadLength,
                                   &AllocatedResponse,
-                                  &PayloadLength);
+                                  &PayloadLength,
+                                  &WindowChannel);
+        Response = AllocatedResponse;
+    }
+    else if (Request->ModuleId == ZP_AUDIO_MODULE_ID)
+    {
+        Status = ZpAudio_Execute(Object,
+                                 Request->OperationId,
+                                 Request->Payload,
+                                 Request->PayloadLength,
+                                 &AllocatedResponse,
+                                 &PayloadLength,
+                                 &AudioChannel);
         Response = AllocatedResponse;
     }
     else if (Request->ModuleId == ZP_TUNNEL_MODULE_ID)
@@ -321,6 +337,16 @@ ZpClientInbound_RequestCallback(
     {
         ZpTunnel_CommitChannel(TunnelChannel,
                                Respond && NT_SUCCESS(SendStatus));
+    }
+    if (WindowChannel != NULL)
+    {
+        ZpWindow_CommitCaptureChannel(WindowChannel,
+                                      Respond && NT_SUCCESS(SendStatus));
+    }
+    if (AudioChannel != NULL)
+    {
+        ZpAudio_CommitChannel(AudioChannel,
+                              Respond && NT_SUCCESS(SendStatus));
     }
     if (AllocatedResponse != NULL)
     {

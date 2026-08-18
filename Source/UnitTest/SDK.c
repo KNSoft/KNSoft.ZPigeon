@@ -5,6 +5,7 @@
 #include <KNSoft/ZPigeon/Terminal.h>
 
 #include "../KNSoft.ZPigeon.Client.SDK/Client.inl"
+#include "../KNSoft.ZPigeon.Client.SDK/Core/Channel.h"
 #include "../KNSoft.ZPigeon.Client.SDK/Transport/Retry.inl"
 #include "../KNSoft.ZPigeon.Server.SDK/Server.inl"
 #include "../KNSoft.ZPigeon.Server.SDK/Core/Connection.h"
@@ -1118,6 +1119,69 @@ SDKTest_ServerConnectionCallback(
     UNREFERENCED_PARAMETER(Context);
 }
 
+static
+NTSTATUS
+SDKTest_RemoveClientLocalChannel(
+    _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel)
+{
+    PZP_CLIENT_OBJECT Object = Channel->Owner;
+    LOGICAL Removed;
+
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Removed = ZpClientLocalChannel_RemoveLocked(Channel);
+    RtlReleaseSRWLockExclusive(&Object->Lock);
+    if (Removed) ZpClientLocalChannel_Release(Channel);
+    return STATUS_PROTOCOL_UNREACHABLE;
+}
+
+static
+NTSTATUS
+SDKTest_ClientLocalChannelData(
+    _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
+    _In_ const ZP_CHANNEL_DATA_VIEW* Message)
+{
+    UNREFERENCED_PARAMETER(Message);
+    return SDKTest_RemoveClientLocalChannel(Channel);
+}
+
+static
+NTSTATUS
+SDKTest_ClientLocalChannelWindow(
+    _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
+    _In_ ULONG CreditBytes)
+{
+    UNREFERENCED_PARAMETER(CreditBytes);
+    return SDKTest_RemoveClientLocalChannel(Channel);
+}
+
+static
+NTSTATUS
+SDKTest_ClientLocalChannelClose(
+    _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
+    _In_ ZP_STATUS Status)
+{
+    UNREFERENCED_PARAMETER(Status);
+    return SDKTest_RemoveClientLocalChannel(Channel);
+}
+
+static
+VOID
+SDKTest_ClientLocalChannelAbort(
+    _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
+    _In_ ZP_STATUS Status)
+{
+    UNREFERENCED_PARAMETER(Channel);
+    UNREFERENCED_PARAMETER(Status);
+}
+
+static
+VOID
+SDKTest_ClientLocalChannelDestroy(
+    _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel)
+{
+    UNREFERENCED_PARAMETER(Channel);
+}
+
 TEST_FUNC(SDKContract)
 {
     WCHAR Host[] = L"127.0.0.1", ServerName[] = L"server.example", ClientKeyName[] = L"ClientKey";
@@ -1173,6 +1237,7 @@ TEST_FUNC(SDKContract)
     ZP_RESPONSE_VIEW Response;
     ZP_CHANNEL_DATA_VIEW ChannelData;
     ZP_CHANNEL_CLOSE ChannelClose;
+    ZP_CLIENT_LOCAL_CHANNEL LocalChannel;
     BYTE FileOpenReadResponse[3 * sizeof(ULONGLONG)];
     ULONG FileOpenReadResponseLength;
     BYTE FileHashResponse[sizeof(USHORT) + sizeof(ULONGLONG) +
@@ -1645,6 +1710,52 @@ TEST_FUNC(SDKContract)
                                  ZpClientStateAuthenticating,
                                  ZpStatus_FromNtStatus(STATUS_SUCCESS)) ==
                 STATUS_INVALID_DEVICE_STATE);
+    RtlZeroMemory(&LocalChannel, sizeof(LocalChannel));
+    TEST_OK(NT_SUCCESS(ZpClientLocalChannel_Insert(
+                ClientObject,
+                &LocalChannel,
+                1,
+                SDKTest_ClientLocalChannelData,
+                NULL,
+                SDKTest_ClientLocalChannelClose,
+                SDKTest_ClientLocalChannelAbort,
+                SDKTest_ClientLocalChannelDestroy)));
+    ChannelData.ChannelId = LocalChannel.ChannelId;
+    ChannelData.Data.Buffer = RootCertificate;
+    ChannelData.Data.Length = sizeof(RootCertificate);
+    TEST_OK(NT_SUCCESS(ZpClientLocalChannel_ReceiveData(ClientObject,
+                                                        &ChannelData)) &&
+            ClientObject->LocalChannelCount == 0);
+    RtlZeroMemory(&LocalChannel, sizeof(LocalChannel));
+    TEST_OK(NT_SUCCESS(ZpClientLocalChannel_Insert(
+                ClientObject,
+                &LocalChannel,
+                1,
+                NULL,
+                SDKTest_ClientLocalChannelWindow,
+                SDKTest_ClientLocalChannelClose,
+                SDKTest_ClientLocalChannelAbort,
+                SDKTest_ClientLocalChannelDestroy)) &&
+            NT_SUCCESS(ZpClientLocalChannel_ReceiveWindow(
+                ClientObject,
+                LocalChannel.ChannelId,
+                1)) &&
+            ClientObject->LocalChannelCount == 0);
+    RtlZeroMemory(&LocalChannel, sizeof(LocalChannel));
+    TEST_OK(NT_SUCCESS(ZpClientLocalChannel_Insert(
+                ClientObject,
+                &LocalChannel,
+                1,
+                SDKTest_ClientLocalChannelData,
+                NULL,
+                SDKTest_ClientLocalChannelClose,
+                SDKTest_ClientLocalChannelAbort,
+                SDKTest_ClientLocalChannelDestroy)));
+    ChannelClose.ChannelId = LocalChannel.ChannelId;
+    ChannelClose.Status = ZpStatus_FromNtStatus(STATUS_SUCCESS);
+    TEST_OK(NT_SUCCESS(ZpClientLocalChannel_ReceiveClose(ClientObject,
+                                                         &ChannelClose)) &&
+            ClientObject->LocalChannelCount == 0);
     TEST_OK(NT_SUCCESS(ZpClient_Ping(Client, 0x0102030405060708)) &&
             TestContext.SendCount == 1 &&
             TestContext.SendMessageType == ZpMessagePing &&
@@ -2131,6 +2242,11 @@ TEST_FUNC(SDKContract)
             TestContext.ChannelCloseCount == 2 &&
             SDK_STATUS_IS(TestContext.ChannelCloseStatus, STATUS_CANCELLED));
     TEST_OK(ZpChannel_Cancel(TestContext.FileChannel) == STATUS_INVALID_DEVICE_STATE);
+    ChannelData.ChannelId = 2;
+    TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveChannelData(
+                           &RegistryConnection.Connection,
+                           &ChannelData)) &&
+            TestContext.ChannelDataCount == 1);
     ChannelClose.ChannelId = 2;
     ChannelClose.Status = ZpStatus_FromNtStatus(STATUS_SUCCESS);
     TEST_OK(NT_SUCCESS(ZpServerConnection_ReceiveChannelClose(

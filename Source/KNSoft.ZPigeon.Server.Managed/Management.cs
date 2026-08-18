@@ -164,9 +164,24 @@ public sealed partial class NativeServer
             callback,
             context));
 
-    public Task<byte[]> CaptureWindowAsync(ulong handle, uint processId, uint threadId) =>
-        RunManagementAsync<byte[]>((context) =>
-            NativeMethods.CaptureWindow(handle, processId, threadId, WindowCaptureCallback, context));
+    public Task<byte[]> CaptureWindowAsync(
+        ulong handle,
+        uint processId,
+        uint threadId,
+        WindowCaptureOptions options)
+    {
+        ValidateWindowCaptureOptions(options);
+        return RunManagementAsync<byte[]>((context) =>
+            NativeMethods.CaptureWindow(handle,
+                                        processId,
+                                        threadId,
+                                        options.Flags,
+                                        options.MaxDimension,
+                                        options.FrameRate,
+                                        options.ImageQuality,
+                                        WindowCaptureCallback,
+                                        context));
+    }
 
     public Task<ServiceRecord[]> EnumerateServicesAsync() =>
         RunManagementAsync<ServiceRecord[]>((context) => NativeMethods.EnumerateServices(ServiceListCallback, context));
@@ -1278,6 +1293,10 @@ internal static partial class NativeMethods
         ulong handle,
         uint processId,
         uint threadId,
+        uint flags,
+        uint maxDimension,
+        ushort frameRate,
+        ushort quality,
         WindowCaptureCallback callback,
         nint context);
 

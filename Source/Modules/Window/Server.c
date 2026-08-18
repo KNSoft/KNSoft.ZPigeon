@@ -1,5 +1,6 @@
 ﻿#include <KNSoft/ZPigeon/Server.h>
 
+#include "../../KNSoft.ZPigeon.Server.SDK/Core/Channel.h"
 #include <KNSoft/MakeLifeEasier/Memory/Core.h>
 
 typedef union _ZP_WINDOW_CALLBACK
@@ -15,6 +16,15 @@ typedef struct _ZP_WINDOW_CONTEXT
     ZP_WINDOW_CALLBACK Callback;
     PVOID Context;
 } ZP_WINDOW_CONTEXT, *PZP_WINDOW_CONTEXT;
+
+typedef struct _ZP_WINDOW_CAPTURE_CONTEXT
+{
+    ZP_CONNECTION_HANDLE Connection;
+    ZP_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback;
+    ZP_CHANNEL_DATA_CALLBACK DataCallback;
+    ZP_CHANNEL_CLOSE_CALLBACK CloseCallback;
+    PVOID Context;
+} ZP_WINDOW_CAPTURE_CONTEXT, *PZP_WINDOW_CAPTURE_CONTEXT;
 
 static
 VOID
@@ -284,27 +294,23 @@ NTSTATUS
 NTAPI
 ZpServer_CaptureWindow(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ ULONGLONG Handle,
-    _In_ ULONG ProcessId,
-    _In_ ULONG ThreadId,
+    _In_ PCZP_WINDOW_CAPTURE_OPTIONS Options,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_WINDOW_CAPTURE_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
     ZP_WINDOW_CALLBACK WindowCallback;
-    BYTE Payload[sizeof(ULONGLONG) + 2 * sizeof(ULONG)];
+    BYTE Payload[sizeof(ULONGLONG) + 4 * sizeof(ULONG) + 2 * sizeof(USHORT)];
     ULONG PayloadLength;
     NTSTATUS Status;
 
     if (Callback == NULL) return STATUS_INVALID_PARAMETER;
     WindowCallback.Capture = Callback;
-    Status = ZpWindow_EncodeIdentity(Handle,
-                                     ProcessId,
-                                     ThreadId,
-                                     Payload,
-                                     sizeof(Payload),
-                                     &PayloadLength);
+    Status = ZpWindow_EncodeCaptureRequest(Options,
+                                           Payload,
+                                           sizeof(Payload),
+                                           &PayloadLength);
     return NT_SUCCESS(Status) ?
                ZpWindow_Send(Connection,
                              ZP_WINDOW_OPERATION_CAPTURE,
@@ -316,4 +322,133 @@ ZpServer_CaptureWindow(
                              Context,
                              Request) :
                Status;
+}
+
+static
+VOID
+NTAPI
+ZpWindow_OpenCaptureComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_WINDOW_CAPTURE_CONTEXT CaptureContext = Context;
+    PZP_SERVER_CHANNEL_OBJECT Channel = NULL;
+    ULONGLONG ChannelId = 0;
+    NTSTATUS ChannelStatus;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(
+            ZpWindow_DecodeCaptureChannel(Payload->Buffer,
+                                           Payload->Length,
+                                           &ChannelId));
+    }
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(
+            ZpServerChannel_Create(
+                CaptureContext->Connection,
+                ChannelId,
+                ZP_WINDOW_MODULE_ID,
+                FALSE,
+                0,
+                FALSE,
+                0,
+                CaptureContext->DataCallback,
+                NULL,
+                CaptureContext->CloseCallback,
+                CaptureContext->Context,
+                TRUE,
+                &Channel));
+    }
+    else
+    {
+        ZpServerChannel_ReleaseReservation(CaptureContext->Connection);
+    }
+    if (!ZpStatus_IsSuccess(Status) && ChannelId != 0)
+    {
+        ZpServerConnection_RejectChannel(CaptureContext->Connection,
+                                         ChannelId,
+                                         Status);
+    }
+    CaptureContext->OpenCallback(Request,
+                                 Status,
+                                 ZpStatus_IsSuccess(Status) ? (ZP_CHANNEL_HANDLE)Channel : NULL,
+                                 CaptureContext->Context);
+    if (Channel != NULL)
+    {
+        ChannelStatus = ZpServerChannel_SendWindow(Channel,
+                                                   ZP_SERVER_DEFAULT_CHANNEL_WINDOW_SIZE);
+        if (!NT_SUCCESS(ChannelStatus))
+        {
+            ZpServerChannel_Abort(Channel,
+                                  ZpStatus_FromNtStatus(ChannelStatus));
+        }
+        ZpChannel_Close((ZP_CHANNEL_HANDLE)Channel);
+    }
+    Mem_Free(CaptureContext);
+}
+
+NTSTATUS
+NTAPI
+ZpServer_OpenWindowCapture(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ PCZP_WINDOW_CAPTURE_OPTIONS Options,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_WINDOW_CAPTURE_CONTEXT CaptureContext;
+    BYTE Payload[sizeof(ULONGLONG) + 4 * sizeof(ULONG) + 2 * sizeof(USHORT)];
+    ULONG PayloadLength;
+    NTSTATUS Status;
+    LOGICAL Reserved = FALSE;
+
+    if (OpenCallback == NULL || DataCallback == NULL || CloseCallback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpWindow_EncodeCaptureRequest(Options,
+                                           Payload,
+                                           sizeof(Payload),
+                                           &PayloadLength);
+    CaptureContext = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*CaptureContext)) : NULL;
+    if (NT_SUCCESS(Status) && CaptureContext == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpServerChannel_Reserve(Connection);
+        Reserved = NT_SUCCESS(Status);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        CaptureContext->Connection = Connection;
+        CaptureContext->OpenCallback = OpenCallback;
+        CaptureContext->DataCallback = DataCallback;
+        CaptureContext->CloseCallback = CloseCallback;
+        CaptureContext->Context = Context;
+        Status = ZpServer_SendRequest(Connection,
+                                      ZP_WINDOW_MODULE_ID,
+                                      ZP_WINDOW_OPERATION_OPEN_CAPTURE,
+                                      TimeoutMilliseconds,
+                                      Payload,
+                                      PayloadLength,
+                                      ZpWindow_OpenCaptureComplete,
+                                      CaptureContext,
+                                      Request);
+        if (NT_SUCCESS(Status))
+        {
+            Reserved = FALSE;
+        }
+        else
+        {
+            Mem_Free(CaptureContext);
+        }
+    }
+    if (Reserved) ZpServerChannel_ReleaseReservation(Connection);
+    return Status;
 }

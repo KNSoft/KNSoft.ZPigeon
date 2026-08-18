@@ -538,11 +538,82 @@ NTSTATUS
 NTAPI
 ZpServer_CaptureWindow(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ ULONGLONG Handle,
-    _In_ ULONG ProcessId,
-    _In_ ULONG ThreadId,
+    _In_ PCZP_WINDOW_CAPTURE_OPTIONS Options,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_WINDOW_CAPTURE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_OpenWindowCapture(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ PCZP_WINDOW_CAPTURE_OPTIONS Options,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateAudioDevices(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_AUDIO_DEVICES_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateAudioSessions(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_AUDIO_SESSIONS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ControlAudioEndpoint(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_AUDIO_FLOW Flow,
+    _In_ ZP_AUDIO_ENDPOINT_CONTROL Control,
+    _In_ ULONG Value,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ControlAudioSession(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_AUDIO_SESSION_CONTROL Control,
+    _In_ ULONG Value,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(SessionIdLength) PCWCH SessionId,
+    _In_ ULONG SessionIdLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_OpenAudioStream(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_AUDIO_FLOW Flow,
+    _In_reads_opt_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_AUDIO_STREAM_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 

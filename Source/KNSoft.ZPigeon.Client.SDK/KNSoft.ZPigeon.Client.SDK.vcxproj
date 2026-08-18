@@ -100,6 +100,9 @@
     <ClCompile Include="..\Modules\Terminal\Client.c"><ObjectFileName>$(IntDir)Modules\Terminal\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Tunnel\Client.c"><ObjectFileName>$(IntDir)Modules\Tunnel\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Window\Client.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Window\Capture.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Audio\Client.c"><ObjectFileName>$(IntDir)Modules\Audio\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Audio\Stream.c"><ObjectFileName>$(IntDir)Modules\Audio\</ObjectFileName></ClCompile>
     <ClCompile Include="Transport\Main.c" />
     <ClCompile Include="Transport\Quic.c" />
   </ItemGroup>
@@ -129,6 +132,8 @@
     <ClInclude Include="..\Modules\Terminal\Client.h" />
     <ClInclude Include="..\Modules\Tunnel\Client.h" />
     <ClInclude Include="..\Modules\Window\Client.h" />
+    <ClInclude Include="..\Modules\Window\Capture.h" />
+    <ClInclude Include="..\Modules\Audio\Client.h" />
     <ClInclude Include="..\Network\Config.inl" />
     <ClInclude Include="..\Network\Authentication.inl" />
     <ClInclude Include="..\Network\Connection.h" />

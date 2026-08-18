@@ -193,15 +193,36 @@ internal static class ManagementWebApi
             }
         });
         app.MapPost("/api/windows", async () => await server.EnumerateWindowsAsync());
+        app.MapPost("/api/audio/devices", async () => await server.EnumerateAudioDevicesAsync());
+        app.MapPost("/api/audio/sessions", async () => await server.EnumerateAudioSessionsAsync());
+        app.MapPost("/api/audio/endpoint", async (AudioEndpointRequest request) =>
+        {
+            if (!Enum.IsDefined(request.Flow) || !Enum.IsDefined(request.Control)) return Results.BadRequest();
+            await server.ControlAudioEndpointAsync(request.Flow, request.Control, request.Value, request.DeviceId);
+            return Results.NoContent();
+        });
+        app.MapPost("/api/audio/session", async (AudioSessionRequest request) =>
+        {
+            if (!Enum.IsDefined(request.Control)) return Results.BadRequest();
+            await server.ControlAudioSessionAsync(request.Control,
+                                                   request.Value,
+                                                   request.DeviceId,
+                                                   request.SessionId);
+            return Results.NoContent();
+        });
+        app.Map("/api/audio/stream", context => AudioWebSocket.RunAsync(context, server));
         app.MapPost("/api/window/info", async (WindowIdentityRequest request) =>
             await server.QueryWindowAsync(ulong.Parse(request.Handle), request.ProcessId, request.ThreadId));
-        app.MapPost("/api/window/image", async (WindowIdentityRequest request) =>
+        app.MapPost("/api/window/image", async (WindowCaptureRequest request) =>
             Results.File(
                 await server.CaptureWindowAsync(
                     ulong.Parse(request.Handle),
                     request.ProcessId,
-                    request.ThreadId),
-                "image/bmp"));
+                    request.ThreadId,
+                    request.Options),
+                "image/jpeg"));
+        app.Map("/api/window/stream", context =>
+            WindowCaptureWebSocket.RunAsync(context, server));
         app.MapPost("/api/window/control", async (WindowControlRequest request) =>
         {
             if (!Enum.IsDefined(request.Control))
@@ -446,6 +467,28 @@ internal sealed record ProcessControlRequest(
     uint Value);
 internal sealed record ProcessDumpRequest(uint ProcessId, string CreateTime, uint DumpType);
 internal sealed record WindowIdentityRequest(string Handle, uint ProcessId, uint ThreadId);
+internal sealed record AudioEndpointRequest(
+    AudioFlow Flow,
+    AudioEndpointControl Control,
+    uint Value,
+    string DeviceId);
+internal sealed record AudioSessionRequest(
+    AudioSessionControl Control,
+    uint Value,
+    string DeviceId,
+    string SessionId);
+internal sealed record WindowCaptureRequest(
+    string Handle,
+    uint ProcessId,
+    uint ThreadId,
+    bool CaptureCursor,
+    uint MaxDimension,
+    ushort FrameRate,
+    ushort ImageQuality)
+{
+    internal WindowCaptureOptions Options =>
+        new(CaptureCursor, MaxDimension, FrameRate, ImageQuality);
+}
 internal sealed record WindowControlRequest(
     string Handle,
     uint ProcessId,
