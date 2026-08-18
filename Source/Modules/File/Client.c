@@ -1137,6 +1137,47 @@ ZpFile_SetAttributes(
 
 static
 NTSTATUS
+ZpFile_WriteRange(
+    _In_ PCZP_FILE_WRITE_RANGE_VIEW Request)
+{
+    FILE_STANDARD_INFORMATION Information;
+    IO_STATUS_BLOCK IoStatusBlock;
+    LARGE_INTEGER Offset;
+    HANDLE File;
+    ULONG BytesWritten;
+    NTSTATUS Status;
+
+    Status = ZpFile_OpenForControl(&Request->Path,
+                                   FILE_READ_ATTRIBUTES | FILE_WRITE_DATA,
+                                   &File);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = NtQueryInformationFile(File,
+                                    &IoStatusBlock,
+                                    &Information,
+                                    sizeof(Information),
+                                    FileStandardInformation);
+    if (NT_SUCCESS(Status) &&
+        (Request->Offset > (ULONGLONG)Information.EndOfFile.QuadPart ||
+         Request->Data.Length > (ULONGLONG)Information.EndOfFile.QuadPart - Request->Offset))
+    {
+        Status = STATUS_END_OF_FILE;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Offset.QuadPart = Request->Offset;
+        Status = IO_WriteFile(File,
+                              &Offset,
+                              (PVOID)Request->Data.Buffer,
+                              Request->Data.Length,
+                              &BytesWritten);
+        if (NT_SUCCESS(Status) && BytesWritten != Request->Data.Length) Status = STATUS_UNSUCCESSFUL;
+    }
+    NtClose(File);
+    return Status;
+}
+
+static
+NTSTATUS
 ZpFile_EncodeStringResponse(
     _In_ PCUNICODE_STRING Value,
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
@@ -1961,6 +2002,7 @@ ZpFile_Execute(
     _Outptr_result_maybenull_ PZP_CLIENT_FILE_CHANNEL* Channel)
 {
     ZP_STRING_VIEW Path, NewPath;
+    ZP_FILE_WRITE_RANGE_VIEW WriteRange;
     ZP_FILE_HASH_ALGORITHM Algorithm;
     PZP_CLIENT_FILE_CHANNEL FileChannel = NULL;
     ULONGLONG FileSize, Offset, EnumerationId;
@@ -2023,6 +2065,10 @@ ZpFile_Execute(
                                                    &Attributes);
         return NT_SUCCESS(Status) ?
                    ZpFile_SetAttributes(&Path, Attributes) : Status;
+
+    case ZP_FILE_OPERATION_WRITE_RANGE:
+        Status = ZpFile_DecodeWriteRangeRequest(Request, RequestLength, &WriteRange);
+        return NT_SUCCESS(Status) ? ZpFile_WriteRange(&WriteRange) : Status;
 
     case ZP_FILE_OPERATION_QUERY_VOLUME:
         Status = ZpFile_DecodePath(Request, RequestLength, &Path);

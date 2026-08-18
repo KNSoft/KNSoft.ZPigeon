@@ -12,6 +12,7 @@ public sealed partial class NativeServer
     private static readonly NativeMethods.ProcessListCallback ProcessListCallback = CompleteProcessList;
     private static readonly NativeMethods.ProcessInfoCallback ProcessInfoCallback = CompleteProcessInfo;
     private static readonly NativeMethods.ProcessDumpCallback ProcessDumpCallback = CompleteProcessDump;
+    private static readonly NativeMethods.ProcessMemoryCallback ProcessMemoryCallback = CompleteProcessMemory;
     private static readonly NativeMethods.WindowListCallback WindowListCallback = CompleteWindowList;
     private static readonly NativeMethods.WindowInfoCallback WindowInfoCallback = CompleteWindowInfo;
     private static readonly NativeMethods.WindowCaptureCallback WindowCaptureCallback = CompleteWindowCapture;
@@ -95,6 +96,30 @@ public sealed partial class NativeServer
             callback,
             context));
 
+    public unsafe Task WriteFileRangeAsync(string path, ulong offset, byte[] data)
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = GCHandle.Alloc(completion);
+        int status;
+        fixed (byte* pointer = data)
+        {
+            status = NativeMethods.WriteFileRange(
+                path,
+                (uint)path.Length,
+                offset,
+                (nint)pointer,
+                (uint)data.Length,
+                StatusCallback,
+                GCHandle.ToIntPtr(handle));
+        }
+        if (status < 0)
+        {
+            handle.Free();
+            ThrowIfFailed(status);
+        }
+        return completion.Task;
+    }
+
     public Task<FileVolumeInfo> QueryFileVolumeAsync(string path) =>
         RunManagementAsync<FileVolumeInfo>(context => NativeMethods.QueryFileVolume(
             path,
@@ -126,6 +151,38 @@ public sealed partial class NativeServer
     public Task<string> CreateProcessDumpAsync(uint processId, ulong createTime, uint dumpType) =>
         RunManagementAsync<string>((context) =>
             NativeMethods.CreateProcessDump(processId, createTime, dumpType, ProcessDumpCallback, context));
+
+    public Task<byte[]> ReadProcessMemoryAsync(uint processId, ulong createTime, ulong address, uint length) =>
+        RunManagementAsync<byte[]>(context => NativeMethods.ReadProcessMemory(
+            processId,
+            createTime,
+            address,
+            length,
+            ProcessMemoryCallback,
+            context));
+
+    public unsafe Task WriteProcessMemoryAsync(uint processId, ulong createTime, ulong address, byte[] data)
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = GCHandle.Alloc(completion);
+        int status;
+        fixed (byte* pointer = data)
+        {
+            status = NativeMethods.WriteProcessMemory(processId,
+                                                      createTime,
+                                                      address,
+                                                      (nint)pointer,
+                                                      (uint)data.Length,
+                                                      StatusCallback,
+                                                      GCHandle.ToIntPtr(handle));
+        }
+        if (status < 0)
+        {
+            handle.Free();
+            ThrowIfFailed(status);
+        }
+        return completion.Task;
+    }
 
     public Task<WindowRecord[]> EnumerateWindowsAsync() =>
         RunManagementAsync<WindowRecord[]>((context) =>
@@ -560,6 +617,19 @@ public sealed partial class NativeServer
         completion.SetResult(result);
     }
 
+    private static void CompleteProcessMemory(ZpStatus status, nint data, uint dataLength, nint context)
+    {
+        var completion = GetCompletion<byte[]>(context);
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        var result = new byte[dataLength];
+        Marshal.Copy(data, result, 0, result.Length);
+        completion.SetResult(result);
+    }
+
     private static void CompleteServiceList(
         ZpStatus status,
         nint records,
@@ -922,6 +992,9 @@ internal static partial class NativeMethods
     internal delegate void ProcessDumpCallback(ZpStatus status, nint path, uint pathLength, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void ProcessMemoryCallback(ZpStatus status, nint data, uint dataLength, nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void WindowListCallback(ZpStatus status, nint records, uint recordCount, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
@@ -1222,6 +1295,18 @@ internal static partial class NativeMethods
         StatusCallback callback,
         nint context);
 
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_WriteFileRange",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int WriteFileRange(
+        string path,
+        uint pathLength,
+        ulong offset,
+        nint data,
+        uint dataLength,
+        StatusCallback callback,
+        nint context);
+
     [LibraryImport(Library, EntryPoint = "ZpNative_EnumerateProcesses")]
     internal static partial int EnumerateProcesses(ProcessListCallback callback, nint context);
 
@@ -1247,6 +1332,25 @@ internal static partial class NativeMethods
         ulong createTime,
         uint dumpType,
         ProcessDumpCallback callback,
+        nint context);
+
+    [LibraryImport(Library, EntryPoint = "ZpNative_ReadProcessMemory")]
+    internal static partial int ReadProcessMemory(
+        uint processId,
+        ulong createTime,
+        ulong address,
+        uint length,
+        ProcessMemoryCallback callback,
+        nint context);
+
+    [LibraryImport(Library, EntryPoint = "ZpNative_WriteProcessMemory")]
+    internal static partial int WriteProcessMemory(
+        uint processId,
+        ulong createTime,
+        ulong address,
+        nint data,
+        uint dataLength,
+        StatusCallback callback,
         nint context);
 
     [LibraryImport(Library, EntryPoint = "ZpNative_EnumerateWindows")]

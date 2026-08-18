@@ -17,10 +17,13 @@ EXTERN_C_START
 #define ZP_REGISTRY_OPERATION_RENAME_VALUE 9
 #define ZP_REGISTRY_OPERATION_QUERY_SECURITY 10
 #define ZP_REGISTRY_OPERATION_SET_SECURITY 11
+#define ZP_REGISTRY_OPERATION_QUERY_VALUE_RANGE 12
+#define ZP_REGISTRY_OPERATION_WRITE_VALUE_RANGE 13
 #define ZP_REGISTRY_PAGE_MAX_COUNT 4096
 #define ZP_REGISTRY_PATH_MAX_LENGTH 32767
 #define ZP_REGISTRY_DATA_MAX_LENGTH 0x00100000UL
 #define ZP_REGISTRY_VALUE_PREVIEW_MAX_LENGTH 256
+#define ZP_REGISTRY_RANGE_MAX_LENGTH 0x00010000UL
 
 typedef enum _ZP_REGISTRY_ROOT
 {
@@ -50,6 +53,28 @@ typedef struct _ZP_REGISTRY_VALUE_REQUEST_VIEW
 } ZP_REGISTRY_VALUE_REQUEST_VIEW, *PZP_REGISTRY_VALUE_REQUEST_VIEW;
 
 typedef const ZP_REGISTRY_VALUE_REQUEST_VIEW* PCZP_REGISTRY_VALUE_REQUEST_VIEW;
+
+typedef struct _ZP_REGISTRY_RANGE_REQUEST_VIEW
+{
+    ZP_REGISTRY_ROOT Root;
+    ULONG Offset;
+    ULONG Length;
+    ZP_STRING_VIEW Path;
+    ZP_STRING_VIEW ValueName;
+} ZP_REGISTRY_RANGE_REQUEST_VIEW, *PZP_REGISTRY_RANGE_REQUEST_VIEW;
+
+typedef const ZP_REGISTRY_RANGE_REQUEST_VIEW* PCZP_REGISTRY_RANGE_REQUEST_VIEW;
+
+typedef struct _ZP_REGISTRY_RANGE_WRITE_VIEW
+{
+    ZP_REGISTRY_ROOT Root;
+    ULONG Offset;
+    ZP_STRING_VIEW Path;
+    ZP_STRING_VIEW ValueName;
+    ZP_BUFFER_VIEW Data;
+} ZP_REGISTRY_RANGE_WRITE_VIEW, *PZP_REGISTRY_RANGE_WRITE_VIEW;
+
+typedef const ZP_REGISTRY_RANGE_WRITE_VIEW* PCZP_REGISTRY_RANGE_WRITE_VIEW;
 
 typedef struct _ZP_REGISTRY_SET_VALUE_VIEW
 {
@@ -154,6 +179,14 @@ typedef struct _ZP_REGISTRY_VALUE_VIEW
 
 typedef const ZP_REGISTRY_VALUE_VIEW* PCZP_REGISTRY_VALUE_VIEW;
 
+typedef struct _ZP_REGISTRY_RANGE_VIEW
+{
+    ULONG TotalLength;
+    ZP_BUFFER_VIEW Data;
+} ZP_REGISTRY_RANGE_VIEW, *PZP_REGISTRY_RANGE_VIEW;
+
+typedef const ZP_REGISTRY_RANGE_VIEW* PCZP_REGISTRY_RANGE_VIEW;
+
 NTSTATUS
 ZpRegistry_EncodeEnumerateRequest(
     _In_ ZP_REGISTRY_ROOT Root,
@@ -237,6 +270,45 @@ ZpRegistry_DecodeValueRequest(
     _Out_ PZP_REGISTRY_VALUE_REQUEST_VIEW Request);
 
 NTSTATUS
+ZpRegistry_EncodeRangeRequest(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(ValueNameLength) PCWCH ValueName,
+    _In_ ULONG ValueNameLength,
+    _In_ ULONG Offset,
+    _In_ ULONG Length,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpRegistry_DecodeRangeRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_REGISTRY_RANGE_REQUEST_VIEW Request);
+
+NTSTATUS
+ZpRegistry_EncodeRangeWriteRequest(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(ValueNameLength) PCWCH ValueName,
+    _In_ ULONG ValueNameLength,
+    _In_ ULONG Offset,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpRegistry_DecodeRangeWriteRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_REGISTRY_RANGE_WRITE_VIEW Request);
+
+NTSTATUS
 ZpRegistry_EncodeValue(
     _In_ ULONG Type,
     _In_reads_bytes_opt_(DataLength) const VOID* Data,
@@ -250,6 +322,21 @@ ZpRegistry_DecodeValue(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_REGISTRY_VALUE_VIEW Value);
+
+NTSTATUS
+ZpRegistry_EncodeRange(
+    _In_ ULONG TotalLength,
+    _In_reads_bytes_opt_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpRegistry_DecodeRange(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_REGISTRY_RANGE_VIEW Range);
 
 NTSTATUS
 ZpRegistry_EncodeSetValueRequest(

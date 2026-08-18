@@ -10,6 +10,8 @@ public sealed partial class NativeServer
         RegistryValuePageCallback = CompleteRegistryValuePage;
     private static readonly NativeMethods.RegistryValueCallback
         RegistryValueCallback = CompleteRegistryValue;
+    private static readonly NativeMethods.RegistryRangeCallback
+        RegistryRangeCallback = CompleteRegistryRange;
 
     public Task<RegistryPage<RegistryKeyRecord>> EnumerateRegistryKeysPageAsync(
         RegistryRoot root,
@@ -62,6 +64,67 @@ public sealed partial class NativeServer
             (uint)name.Length,
             RegistryValueCallback,
             GCHandle.ToIntPtr(handle));
+        if (status < 0)
+        {
+            handle.Free();
+            ThrowIfFailed(status);
+        }
+        return completion.Task;
+    }
+
+    public Task<RegistryRange> QueryRegistryValueRangeAsync(
+        RegistryRoot root,
+        string path,
+        string name,
+        uint offset,
+        uint length)
+    {
+        var completion = new TaskCompletionSource<RegistryRange>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = GCHandle.Alloc(completion);
+        var status = NativeMethods.QueryRegistryValueRange(
+            root,
+            path,
+            (uint)path.Length,
+            name,
+            (uint)name.Length,
+            offset,
+            length,
+            RegistryRangeCallback,
+            GCHandle.ToIntPtr(handle));
+        if (status < 0)
+        {
+            handle.Free();
+            ThrowIfFailed(status);
+        }
+        return completion.Task;
+    }
+
+    public unsafe Task WriteRegistryValueRangeAsync(
+        RegistryRoot root,
+        string path,
+        string name,
+        uint offset,
+        byte[] data)
+    {
+        var completion = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = GCHandle.Alloc(completion);
+        int status;
+        fixed (byte* pointer = data)
+        {
+            status = NativeMethods.WriteRegistryValueRange(
+                root,
+                path,
+                (uint)path.Length,
+                name,
+                (uint)name.Length,
+                offset,
+                (nint)pointer,
+                (uint)data.Length,
+                StatusCallback,
+                GCHandle.ToIntPtr(handle));
+        }
         if (status < 0)
         {
             handle.Free();
@@ -310,6 +373,26 @@ public sealed partial class NativeServer
         }
         completion.SetResult(new RegistryValue(type, result));
     }
+
+    private static void CompleteRegistryRange(
+        ZpStatus status,
+        uint totalLength,
+        nint data,
+        uint dataLength,
+        nint context)
+    {
+        var handle = GCHandle.FromIntPtr(context);
+        var completion = (TaskCompletionSource<RegistryRange>)handle.Target!;
+        handle.Free();
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        var result = new byte[dataLength];
+        if (dataLength != 0) Marshal.Copy(data, result, 0, (int)dataLength);
+        completion.SetResult(new RegistryRange(totalLength, result));
+    }
 }
 
 public enum RegistryRoot : ushort
@@ -331,6 +414,7 @@ public sealed record RegistryValueRecord(
     uint DataLength,
     byte[] Preview);
 public sealed record RegistryValue(uint Type, byte[] Data);
+public sealed record RegistryRange(uint TotalLength, byte[] Data);
 public sealed record RegistryPage<T>(bool HasMore, string NextCursor, T[] Records);
 
 internal static partial class NativeMethods
@@ -349,6 +433,14 @@ internal static partial class NativeMethods
     internal delegate void RegistryValueCallback(
         ZpStatus status,
         uint type,
+        nint data,
+        uint dataLength,
+        nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void RegistryRangeCallback(
+        ZpStatus status,
+        uint totalLength,
         nint data,
         uint dataLength,
         nint context);
@@ -410,6 +502,35 @@ internal static partial class NativeMethods
         string? name,
         uint nameLength,
         RegistryValueCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_QueryRegistryValueRange",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int QueryRegistryValueRange(
+        RegistryRoot root,
+        string path,
+        uint pathLength,
+        string? name,
+        uint nameLength,
+        uint offset,
+        uint length,
+        RegistryRangeCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_WriteRegistryValueRange",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int WriteRegistryValueRange(
+        RegistryRoot root,
+        string path,
+        uint pathLength,
+        string? name,
+        uint nameLength,
+        uint offset,
+        nint data,
+        uint dataLength,
+        StatusCallback callback,
         nint context);
 
     [LibraryImport(Library,

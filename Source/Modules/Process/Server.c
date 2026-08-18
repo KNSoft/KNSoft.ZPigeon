@@ -7,6 +7,7 @@ typedef union _ZP_PROCESS_CALLBACK
     ZP_PROCESS_ENUMERATE_CALLBACK Enumerate;
     ZP_PROCESS_QUERY_CALLBACK Query;
     ZP_PROCESS_DUMP_CALLBACK Dump;
+    ZP_PROCESS_MEMORY_CALLBACK Memory;
     ZP_REQUEST_STATUS_CALLBACK Status;
 } ZP_PROCESS_CALLBACK;
 
@@ -110,6 +111,30 @@ ZpProcess_DumpComplete(
                                   Status,
                                   ZpStatus_IsSuccess(Status) ? &Path : NULL,
                                   ProcessContext->Context);
+    Mem_Free(ProcessContext);
+}
+
+static
+VOID
+NTAPI
+ZpProcess_MemoryComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_PROCESS_CONTEXT ProcessContext = Context;
+    ZP_BUFFER_VIEW Data;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(
+            ZpProcess_DecodeMemoryData(Payload->Buffer, Payload->Length, &Data));
+    }
+    ProcessContext->Callback.Memory(Request,
+                                    Status,
+                                    ZpStatus_IsSuccess(Status) ? &Data : NULL,
+                                    ProcessContext->Context);
     Mem_Free(ProcessContext);
 }
 
@@ -297,4 +322,101 @@ ZpServer_CreateProcessDump(
                               Context,
                               Request) :
                Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_ReadProcessMemory(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONGLONG Address,
+    _In_ ULONG Length,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PROCESS_MEMORY_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_PROCESS_CALLBACK ProcessCallback;
+    BYTE Payload[2 * sizeof(ULONGLONG) + 2 * sizeof(ULONG)];
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    ProcessCallback.Memory = Callback;
+    Status = ZpProcess_EncodeMemoryRead(ProcessId,
+                                        CreateTime,
+                                        Address,
+                                        Length,
+                                        Payload,
+                                        sizeof(Payload),
+                                        &PayloadLength);
+    return NT_SUCCESS(Status) ?
+               ZpProcess_Send(Connection,
+                              ZP_PROCESS_OPERATION_READ_MEMORY,
+                              TimeoutMilliseconds,
+                              Payload,
+                              PayloadLength,
+                              ZpProcess_MemoryComplete,
+                              ProcessCallback,
+                              Context,
+                              Request) : Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_WriteProcessMemory(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONGLONG Address,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_PROCESS_CALLBACK ProcessCallback;
+    PBYTE Payload;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Status = ZpProcess_EncodeMemoryWrite(ProcessId,
+                                         CreateTime,
+                                         Address,
+                                         Data,
+                                         DataLength,
+                                         NULL,
+                                         0,
+                                         &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpProcess_EncodeMemoryWrite(ProcessId,
+                                             CreateTime,
+                                             Address,
+                                             Data,
+                                             DataLength,
+                                             Payload,
+                                             PayloadLength,
+                                             &PayloadLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        ProcessCallback.Status = Callback;
+        Status = ZpProcess_Send(Connection,
+                                ZP_PROCESS_OPERATION_WRITE_MEMORY,
+                                TimeoutMilliseconds,
+                                Payload,
+                                PayloadLength,
+                                ZpProcess_StatusComplete,
+                                ProcessCallback,
+                                Context,
+                                Request);
+    }
+    Mem_Free(Payload);
+    return Status;
 }

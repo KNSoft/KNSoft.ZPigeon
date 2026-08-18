@@ -25,6 +25,39 @@ internal static class RegistryWebApi
             await server.QueryRegistryValueAsync(request.Root,
                                                  request.Path,
                                                  request.Name));
+        registry.MapPost("/value/range", async (RegistryRangeRequest request) =>
+        {
+            if (!uint.TryParse(request.Offset, out var offset) || request.Length is 0 or > 0x10000)
+            {
+                return Results.BadRequest();
+            }
+            var range = await server.QueryRegistryValueRangeAsync(
+                request.Root,
+                request.Path,
+                request.Name,
+                offset,
+                request.Length);
+            return Results.Ok(new
+            {
+                Size = range.TotalLength.ToString(),
+                Offset = request.Offset,
+                range.Data
+            });
+        });
+        registry.MapPost("/value/range/write", async (RegistryRangeWriteRequest request) =>
+        {
+            if (!uint.TryParse(request.Offset, out var offset) || request.Data.Length is 0 or > 0x10000)
+            {
+                return Results.BadRequest();
+            }
+            await server.WriteRegistryValueRangeAsync(
+                request.Root,
+                request.Path,
+                request.Name,
+                offset,
+                request.Data);
+            return Results.NoContent();
+        });
         registry.MapPost("/value/set", async (
             RegistrySetValueRequest request) =>
             await server.SetRegistryValueAsync(request.Root,
@@ -83,6 +116,18 @@ internal sealed record RegistryValueRequest(
     RegistryRoot Root,
     string Path,
     string Name);
+internal sealed record RegistryRangeRequest(
+    RegistryRoot Root,
+    string Path,
+    string Name,
+    string Offset,
+    uint Length);
+internal sealed record RegistryRangeWriteRequest(
+    RegistryRoot Root,
+    string Path,
+    string Name,
+    string Offset,
+    byte[] Data);
 internal sealed record RegistrySetValueRequest(
     RegistryRoot Root,
     string Path,

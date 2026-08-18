@@ -885,6 +885,66 @@ ZpServer_SetFileAttributes(
     return Status;
 }
 
+NTSTATUS
+NTAPI
+ZpServer_WriteFileRange(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG Offset,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_SERVER_FILE_CONTEXT FileContext;
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Status = ZpFile_EncodeWriteRangeRequest(Path,
+                                            PathLength,
+                                            Offset,
+                                            Data,
+                                            DataLength,
+                                            NULL,
+                                            0,
+                                            &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodeWriteRangeRequest(Path,
+                                                PathLength,
+                                                Offset,
+                                                Data,
+                                                DataLength,
+                                                Payload,
+                                                PayloadLength,
+                                                &PayloadLength);
+    }
+    FileContext = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*FileContext)) : NULL;
+    if (NT_SUCCESS(Status) && FileContext == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        FileContext->Callback.Status = Callback;
+        FileContext->Context = Context;
+        Status = ZpServerFile_Send(Connection,
+                                   ZP_FILE_OPERATION_WRITE_RANGE,
+                                   TimeoutMilliseconds,
+                                   Payload,
+                                   PayloadLength,
+                                   ZpServerFile_StatusComplete,
+                                   FileContext,
+                                   Request);
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
 static
 VOID
 NTAPI

@@ -12,8 +12,8 @@ public sealed partial class NativeServer
     private static readonly NativeMethods.FileWritableCallback FileWritableCallback = SignalFileWritable;
     private static readonly NativeMethods.FileCloseCallback FileCloseCallback = CompleteFileClose;
 
-    public Task<FileTransfer> OpenFileReadAsync(string path) =>
-        OpenFileAsync(path, 0, false, false);
+    public Task<FileTransfer> OpenFileReadAsync(string path, ulong offset = 0) =>
+        OpenFileAsync(path, offset, false, false);
 
     public Task<FileTransfer> OpenFileWriteAsync(string path, ulong fileSize, bool overwrite) =>
         OpenFileAsync(path, fileSize, overwrite, true);
@@ -35,6 +35,7 @@ public sealed partial class NativeServer
                                         context) :
             NativeMethods.OpenFileRead(path,
                                        (uint)path.Length,
+                                       fileSize,
                                        FileOpenCallback,
                                        FileDataCallback,
                                        FileCloseCallback,
@@ -214,6 +215,7 @@ internal static partial class NativeMethods
     internal static partial int OpenFileRead(
         string path,
         uint pathLength,
+        ulong offset,
         FileOpenCallback openCallback,
         FileDataCallback dataCallback,
         FileCloseCallback closeCallback,

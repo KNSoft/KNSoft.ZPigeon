@@ -563,6 +563,15 @@ VOID
     _In_ ULONG DataLength,
     _In_opt_ PVOID Context);
 
+typedef
+VOID
+(NTAPI *ZP_NATIVE_REGISTRY_RANGE_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_ ULONG TotalLength,
+    _In_reads_bytes_opt_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_opt_ PVOID Context);
+
 typedef struct _ZP_NATIVE_TERMINAL* ZP_NATIVE_TERMINAL_HANDLE;
 
 typedef
@@ -731,9 +740,30 @@ NTAPI
 ZpNative_OpenFileRead(
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
+    _In_ ULONGLONG Offset,
     _In_ ZP_NATIVE_FILE_OPEN_CALLBACK OpenCallback,
     _In_ ZP_NATIVE_FILE_DATA_CALLBACK DataCallback,
     _In_ ZP_NATIVE_FILE_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_PROCESS_MEMORY_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_bytes_opt_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_WriteFileRange(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG Offset,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
 __declspec(dllexport)
@@ -798,6 +828,29 @@ ZpNative_CreateProcessDump(
     _In_ ULONGLONG CreateTime,
     _In_ ULONG DumpType,
     _In_ ZP_NATIVE_PROCESS_DUMP_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_ReadProcessMemory(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONGLONG Address,
+    _In_ ULONG Length,
+    _In_ ZP_NATIVE_PROCESS_MEMORY_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_WriteProcessMemory(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONGLONG Address,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
 typedef struct _ZP_NATIVE_TUNNEL* ZP_NATIVE_TUNNEL_HANDLE;
@@ -1382,6 +1435,35 @@ ZpNative_QueryRegistryValue(
     _In_reads_opt_(NameLength) PCWCH Name,
     _In_ ULONG NameLength,
     _In_ ZP_NATIVE_REGISTRY_VALUE_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_QueryRegistryValueRange(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ULONG Offset,
+    _In_ ULONG Length,
+    _In_ ZP_NATIVE_REGISTRY_RANGE_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_WriteRegistryValueRange(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ULONG Offset,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
 __declspec(dllexport)

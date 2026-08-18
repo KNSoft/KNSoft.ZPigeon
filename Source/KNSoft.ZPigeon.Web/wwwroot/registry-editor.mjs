@@ -6,8 +6,8 @@ const TYPES=new Map([[0,'REG_NONE'],[1,'REG_SZ'],[2,'REG_EXPAND_SZ'],[3,'REG_BIN
 const EDIT_TYPES=[[1,'字符串值'],[2,'可扩充字符串值'],[3,'二进制值'],[4,'DWORD (32 位) 值'],[7,'多字符串值'],[11,'QWORD (64 位) 值']];
 
 export class RegistryEditor{
-  constructor(host,{call,notify,aclEditor}){
-    this.host=host;this.call=call;this.notify=notify;this.aclEditor=aclEditor;this.selected=null;this.values=[];this.valueRequest=0;
+  constructor(host,{call,notify,aclEditor,hexEditor}){
+    this.host=host;this.call=call;this.notify=notify;this.aclEditor=aclEditor;this.hexEditor=hexEditor;this.selected=null;this.values=[];this.valueRequest=0;
     host.innerHTML=`
       <div class="registry-toolbar">
         <div class="registry-address" data-role="address"></div>
@@ -113,6 +113,7 @@ export class RegistryEditor{
   }
   async editValue(value){
     if(!this.selected)return;if(!value.exists){this.openValueEditor(`编辑 ${value.name||'(默认)'}`,value,false);return}
+    if(value.type===3&&this.hexEditor){const scope=this.scope({path:this.selected.path,name:value.name});this.hexEditor.open({title:`REG_BINARY - ${value.name||'(默认)'}`,size:value.dataLength,read:(offset,length)=>this.call('/api/registry/value/range',{...scope,offset,length}),write:(offset,data)=>this.call('/api/registry/value/range/write',{...scope,offset,data:bytesBase64(data)})});return}
     try{const result=await this.call('/api/registry/value/query',this.scope({path:this.selected.path,name:value.name}));this.openValueEditor(`编辑 ${value.name||'(默认)'}`,{...value,type:result.type,data:base64Bytes(result.data)},false)}catch(error){this.notify(error)}
   }
 

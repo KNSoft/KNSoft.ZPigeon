@@ -402,3 +402,147 @@ ZpProcess_DecodeDumpPath(
     Status = ZpCodec_ReadString(&Reader, Path);
     return NT_SUCCESS(Status) && (Path->Length == 0 || Reader.Offset != PayloadLength) ? STATUS_DATA_ERROR : Status;
 }
+
+NTSTATUS
+ZpProcess_EncodeMemoryRead(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONGLONG Address,
+    _In_ ULONG Length,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+
+    if (ProcessId == 0 || CreateTime == 0 || Length == 0 || Length > ZP_PROCESS_MEMORY_MAX_LENGTH)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *BytesWritten = 2 * sizeof(ULONGLONG) + 2 * sizeof(ULONG);
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < *BytesWritten) return STATUS_BUFFER_TOO_SMALL;
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt32(&Writer, ProcessId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, CreateTime);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Address);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Length);
+    return Status;
+}
+
+NTSTATUS
+ZpProcess_DecodeMemoryRead(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONG ProcessId,
+    _Out_ PULONGLONG CreateTime,
+    _Out_ PULONGLONG Address,
+    _Out_ PULONG Length)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    if (PayloadLength != 2 * sizeof(ULONGLONG) + 2 * sizeof(ULONG)) return STATUS_DATA_ERROR;
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt32(&Reader, ProcessId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, CreateTime);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, Address);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, Length);
+    if (NT_SUCCESS(Status) && (*ProcessId == 0 || *CreateTime == 0 || *Length == 0 ||
+                              *Length > ZP_PROCESS_MEMORY_MAX_LENGTH))
+    {
+        Status = STATUS_DATA_ERROR;
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpProcess_EncodeMemoryWrite(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONGLONG Address,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+
+    if (ProcessId == 0 || CreateTime == 0 || Data == NULL || DataLength == 0 ||
+        DataLength > ZP_PROCESS_MEMORY_MAX_LENGTH)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *BytesWritten = 2 * sizeof(ULONGLONG) + 2 * sizeof(ULONG) + DataLength;
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < *BytesWritten) return STATUS_BUFFER_TOO_SMALL;
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt32(&Writer, ProcessId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, CreateTime);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Address);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByteString(&Writer, Data, DataLength);
+    return Status;
+}
+
+NTSTATUS
+ZpProcess_DecodeMemoryWrite(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_PROCESS_MEMORY_VIEW Memory)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt32(&Reader, &Memory->ProcessId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &Memory->CreateTime);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &Memory->Address);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByteString(&Reader, &Memory->Data);
+    if (!NT_SUCCESS(Status) || Memory->ProcessId == 0 || Memory->CreateTime == 0 ||
+        Memory->Data.Length == 0 || Memory->Data.Length > ZP_PROCESS_MEMORY_MAX_LENGTH ||
+        Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpProcess_EncodeMemoryData(
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+
+    if (Data == NULL || DataLength == 0 || DataLength > ZP_PROCESS_MEMORY_MAX_LENGTH)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *BytesWritten = sizeof(ULONG) + DataLength;
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < *BytesWritten) return STATUS_BUFFER_TOO_SMALL;
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    return ZpCodec_WriteByteString(&Writer, Data, DataLength);
+}
+
+NTSTATUS
+ZpProcess_DecodeMemoryData(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_BUFFER_VIEW Data)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadByteString(&Reader, Data);
+    return NT_SUCCESS(Status) &&
+           (Data->Length == 0 || Data->Length > ZP_PROCESS_MEMORY_MAX_LENGTH || Reader.Offset != PayloadLength) ?
+               STATUS_DATA_ERROR : Status;
+}

@@ -868,6 +868,113 @@ ZpRegistry_QueryValue(
 
 static
 NTSTATUS
+ZpRegistry_QueryValueRange(
+    _In_ PCZP_REGISTRY_RANGE_REQUEST_VIEW Request,
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    PKEY_VALUE_PARTIAL_INFORMATION Data;
+    UNICODE_STRING ValueName;
+    HANDLE Key;
+    PBYTE Buffer;
+    ULONG Length, RangeLength;
+    NTSTATUS Status;
+
+    Status = ZpRegistry_OpenKey(Request->Root, &Request->Path, KEY_QUERY_VALUE, &Key);
+    if (!NT_SUCCESS(Status)) return Status;
+    ZpRegistry_InitializeUnicodeString(&Request->ValueName, &ValueName);
+    Status = ZpRegistry_QueryValueData(Key, &ValueName, &Data);
+    NtClose(Key);
+    if (!NT_SUCCESS(Status)) return Status;
+    if (Data->Type != REG_BINARY)
+    {
+        Mem_Free(Data);
+        return STATUS_OBJECT_TYPE_MISMATCH;
+    }
+    if (Request->Offset > Data->DataLength)
+    {
+        Mem_Free(Data);
+        return STATUS_END_OF_FILE;
+    }
+    RangeLength = min(Request->Length, Data->DataLength - Request->Offset);
+    Status = ZpRegistry_EncodeRange(Data->DataLength,
+                                    Data->Data + Request->Offset,
+                                    RangeLength,
+                                    NULL,
+                                    0,
+                                    &Length);
+    Buffer = NT_SUCCESS(Status) ? Mem_Alloc(Length) : NULL;
+    if (NT_SUCCESS(Status) && Buffer == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpRegistry_EncodeRange(Data->DataLength,
+                                        Data->Data + Request->Offset,
+                                        RangeLength,
+                                        Buffer,
+                                        Length,
+                                        &Length);
+    }
+    Mem_Free(Data);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Buffer);
+        return Status;
+    }
+    *Response = Buffer;
+    *ResponseLength = Length;
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpRegistry_WriteValueRange(
+    _In_ PCZP_REGISTRY_RANGE_WRITE_VIEW Request)
+{
+    PKEY_VALUE_PARTIAL_INFORMATION Data;
+    UNICODE_STRING ValueName;
+    HANDLE Key;
+    NTSTATUS Status;
+
+    Status = ZpRegistry_OpenKey(Request->Root,
+                                &Request->Path,
+                                KEY_QUERY_VALUE | KEY_SET_VALUE,
+                                &Key);
+    if (!NT_SUCCESS(Status)) return Status;
+    ZpRegistry_InitializeUnicodeString(&Request->ValueName, &ValueName);
+    Status = ZpRegistry_QueryValueData(Key, &ValueName, &Data);
+    if (!NT_SUCCESS(Status))
+    {
+        NtClose(Key);
+        return Status;
+    }
+    if (Data->Type != REG_BINARY)
+    {
+        Status = STATUS_OBJECT_TYPE_MISMATCH;
+    }
+    else if (Request->Offset > Data->DataLength ||
+             Request->Data.Length > Data->DataLength - Request->Offset)
+    {
+        Status = STATUS_END_OF_FILE;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        RtlCopyMemory(Data->Data + Request->Offset,
+                      Request->Data.Buffer,
+                      Request->Data.Length);
+        Status = NtSetValueKey(Key,
+                               &ValueName,
+                               0,
+                               REG_BINARY,
+                               Data->Data,
+                               Data->DataLength);
+    }
+    Mem_Free(Data);
+    NtClose(Key);
+    return Status;
+}
+
+static
+NTSTATUS
 ZpRegistry_SetValue(
     _In_ PCZP_REGISTRY_SET_VALUE_VIEW Request)
 {
@@ -1104,6 +1211,8 @@ ZpRegistry_Execute(
 {
     ZP_REGISTRY_ENUMERATE_VIEW Enumerate;
     ZP_REGISTRY_VALUE_REQUEST_VIEW ValueRequest;
+    ZP_REGISTRY_RANGE_REQUEST_VIEW RangeRequest;
+    ZP_REGISTRY_RANGE_WRITE_VIEW RangeWrite;
     ZP_REGISTRY_SET_VALUE_VIEW SetValue;
     ZP_REGISTRY_KEY_REQUEST_VIEW KeyRequest;
     ZP_REGISTRY_RENAME_REQUEST_VIEW RenameRequest;
@@ -1152,6 +1261,16 @@ ZpRegistry_Execute(
     case ZP_REGISTRY_OPERATION_QUERY_VALUE:
         Status = ZpRegistry_DecodeValueRequest(Payload, PayloadLength, &ValueRequest);
         return NT_SUCCESS(Status) ? ZpRegistry_QueryValue(&ValueRequest, Response, ResponseLength) : Status;
+
+    case ZP_REGISTRY_OPERATION_QUERY_VALUE_RANGE:
+        Status = ZpRegistry_DecodeRangeRequest(Payload, PayloadLength, &RangeRequest);
+        return NT_SUCCESS(Status) ?
+                   ZpRegistry_QueryValueRange(&RangeRequest, Response, ResponseLength) : Status;
+
+    case ZP_REGISTRY_OPERATION_WRITE_VALUE_RANGE:
+        Status = ZpRegistry_DecodeRangeWriteRequest(Payload, PayloadLength, &RangeWrite);
+        if (NT_SUCCESS(Status)) Status = ZpRegistry_WriteValueRange(&RangeWrite);
+        break;
 
     case ZP_REGISTRY_OPERATION_SET_VALUE:
         Status = ZpRegistry_DecodeSetValueRequest(Payload, PayloadLength, &SetValue);

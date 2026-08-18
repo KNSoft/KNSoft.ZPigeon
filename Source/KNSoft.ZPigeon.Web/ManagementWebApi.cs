@@ -21,10 +21,58 @@ internal static class ManagementWebApi
             {
                 return Results.BadRequest();
             }
-            return Results.Ok(await server.EnumerateFilesPageAsync(request.Path, enumerationId));
+            var page = await server.EnumerateFilesPageAsync(request.Path, enumerationId);
+            return Results.Ok(new
+            {
+                page.EnumerationId,
+                Records = page.Records.Select(record => new
+                {
+                    record.Name,
+                    record.Attributes,
+                    Size = record.Size.ToString(),
+                    record.CreationTime,
+                    record.LastAccessTime,
+                    record.LastWriteTime,
+                    record.HasChildren
+                })
+            });
         });
         app.MapPost("/api/file/info", async (PathRequest request) =>
             await server.QueryFileAsync(request.Path));
+        app.MapPost("/api/file/range", async (FileRangeRequest request) =>
+        {
+            if (!ulong.TryParse(request.Offset, out var offset) || request.Length is 0 or > 0x10000)
+            {
+                return Results.BadRequest();
+            }
+            await using var transfer = await server.OpenFileReadAsync(request.Path, offset);
+            var length = (int)Math.Min(request.Length, transfer.FileSize - offset);
+            var data = GC.AllocateUninitializedArray<byte>(length);
+            var written = 0;
+            await foreach (var chunk in transfer.Output.ReadAllAsync())
+            {
+                var copy = Math.Min(chunk.Length, length - written);
+                chunk.Span[..copy].CopyTo(data.AsSpan(written));
+                written += copy;
+                if (written == length) break;
+            }
+            if (written != length)
+            {
+                var completion = await transfer.Completion;
+                if (!completion.Status.IsSuccess) throw new NativeException(completion.Status);
+                throw new EndOfStreamException();
+            }
+            return Results.Ok(new { Size = transfer.FileSize.ToString(), Offset = request.Offset, Data = data });
+        });
+        app.MapPost("/api/file/range/write", async (FileRangeWriteRequest request) =>
+        {
+            if (!ulong.TryParse(request.Offset, out var offset) || request.Data.Length is 0 or > 0x10000)
+            {
+                return Results.BadRequest();
+            }
+            await server.WriteFileRangeAsync(request.Path, offset, request.Data);
+            return Results.NoContent();
+        });
         app.MapPost("/api/file/security", async (PathRequest request) => new
         {
             Sddl = await server.QueryFileSecurityAsync(request.Path)
@@ -163,6 +211,29 @@ internal static class ManagementWebApi
                 ulong.Parse(request.CreateTime),
                 request.Control,
                 request.Value);
+            return Results.NoContent();
+        });
+        app.MapPost("/api/process/memory/read", async (ProcessMemoryReadRequest request) =>
+        {
+            if (!ulong.TryParse(request.CreateTime, out var createTime) ||
+                !ulong.TryParse(request.Address, out var address) || request.Length is 0 or > 0x10000)
+            {
+                return Results.BadRequest();
+            }
+            return Results.Ok(new
+            {
+                Address = request.Address,
+                Data = await server.ReadProcessMemoryAsync(request.ProcessId, createTime, address, request.Length)
+            });
+        });
+        app.MapPost("/api/process/memory/write", async (ProcessMemoryWriteRequest request) =>
+        {
+            if (!ulong.TryParse(request.CreateTime, out var createTime) ||
+                !ulong.TryParse(request.Address, out var address) || request.Data.Length is 0 or > 0x10000)
+            {
+                return Results.BadRequest();
+            }
+            await server.WriteProcessMemoryAsync(request.ProcessId, createTime, address, request.Data);
             return Results.NoContent();
         });
         app.MapPost("/api/process/dump", async (HttpContext context, ProcessDumpRequest request) =>
@@ -459,6 +530,10 @@ internal sealed record SecurityAccountRequest(string Value, bool Sid);
 internal sealed record FilePageRequest(string? Path, string? EnumerationId);
 internal sealed record FileRenameRequest(string Path, string NewPath);
 internal sealed record FileHashRequest(string Path, FileHashAlgorithm Algorithm);
+internal sealed record FileRangeRequest(string Path, string Offset, uint Length);
+internal sealed record FileRangeWriteRequest(string Path, string Offset, byte[] Data);
+internal sealed record ProcessMemoryReadRequest(uint ProcessId, string CreateTime, string Address, uint Length);
+internal sealed record ProcessMemoryWriteRequest(uint ProcessId, string CreateTime, string Address, byte[] Data);
 internal sealed record FileAttributesRequest(string Path, uint Attributes);
 internal sealed record FileVolumeLabelRequest(string Path, string Label);
 internal sealed record FileVolumeFormatRequest(string Path, string FileSystem, string Label, bool Quick);

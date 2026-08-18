@@ -430,6 +430,105 @@ ZpProcess_OpenVerified(
 
 static
 NTSTATUS
+ZpProcess_ValidateMemoryRange(
+    _In_ HANDLE Process,
+    _In_ ULONGLONG Address,
+    _In_ ULONG Length)
+{
+    MEMORY_BASIC_INFORMATION Information;
+    SIZE_T ResultLength;
+    ULONG_PTR Start = (ULONG_PTR)Address;
+    ULONG_PTR Base, End;
+    NTSTATUS Status;
+
+    if (Address != Start || MAXULONG_PTR - Start < Length) return STATUS_INVALID_ADDRESS;
+    Status = NtQueryVirtualMemory(Process,
+                                  (PVOID)Start,
+                                  MemoryBasicInformation,
+                                  &Information,
+                                  sizeof(Information),
+                                  &ResultLength);
+    if (!NT_SUCCESS(Status)) return Status;
+    Base = (ULONG_PTR)Information.BaseAddress;
+    End = Base + Information.RegionSize;
+    return Information.State == MEM_COMMIT && End >= Base && Start >= Base && Start + Length <= End ?
+               STATUS_SUCCESS : STATUS_CONFLICTING_ADDRESSES;
+}
+
+static
+NTSTATUS
+ZpProcess_ReadMemory(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONGLONG Address,
+    _In_ ULONG Length,
+    _Outptr_result_bytebuffer_(*PayloadLength) PBYTE* Payload,
+    _Out_ PULONG PayloadLength)
+{
+    SIZE_T BytesRead;
+    PBYTE Data;
+    HANDLE Process;
+    NTSTATUS Status;
+    ULONG EncodedLength;
+
+    Status = ZpProcess_OpenVerified(&Process, PROCESS_VM_READ, ProcessId, CreateTime);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = ZpProcess_ValidateMemoryRange(Process, Address, Length);
+    Data = NT_SUCCESS(Status) ? Mem_Alloc(Length) : NULL;
+    if (NT_SUCCESS(Status) && Data == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        Status = NtReadVirtualMemory(Process, (PVOID)(ULONG_PTR)Address, Data, Length, &BytesRead);
+        if (NT_SUCCESS(Status) && BytesRead != Length) Status = STATUS_PARTIAL_COPY;
+    }
+    NtClose(Process);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Data);
+        return Status;
+    }
+    Status = ZpProcess_EncodeMemoryData(Data, Length, NULL, 0, &EncodedLength);
+    *Payload = NT_SUCCESS(Status) ? Mem_Alloc(EncodedLength) : NULL;
+    if (NT_SUCCESS(Status) && *Payload == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpProcess_EncodeMemoryData(Data, Length, *Payload, EncodedLength, PayloadLength);
+    }
+    Mem_Free(Data);
+    if (!NT_SUCCESS(Status)) Mem_Free(*Payload);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpProcess_WriteMemory(
+    _In_ PCZP_PROCESS_MEMORY_VIEW Memory)
+{
+    SIZE_T BytesWritten;
+    HANDLE Process;
+    NTSTATUS Status;
+
+    Status = ZpProcess_OpenVerified(&Process,
+                                    PROCESS_VM_OPERATION | PROCESS_VM_WRITE,
+                                    Memory->ProcessId,
+                                    Memory->CreateTime);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = ZpProcess_ValidateMemoryRange(Process, Memory->Address, Memory->Data.Length);
+    if (NT_SUCCESS(Status))
+    {
+        Status = NtWriteVirtualMemory(Process,
+                                      (PVOID)(ULONG_PTR)Memory->Address,
+                                      (PVOID)Memory->Data.Buffer,
+                                      Memory->Data.Length,
+                                      &BytesWritten);
+        if (NT_SUCCESS(Status) && BytesWritten != Memory->Data.Length) Status = STATUS_PARTIAL_COPY;
+    }
+    NtClose(Process);
+    return Status;
+}
+
+static
+NTSTATUS
 ZpProcess_TerminateTree(
     _In_ ULONG ProcessId,
     _In_ ULONGLONG CreateTime)
@@ -704,6 +803,8 @@ ZpProcess_Execute(
     _Out_ PULONG ResponseLength)
 {
     ZP_PROCESS_CONTROL Control;
+    ZP_PROCESS_MEMORY_VIEW Memory;
+    ULONGLONG Address;
     ULONGLONG CreateTime;
     ULONG ProcessId, Value;
     NTSTATUS Status;
@@ -733,6 +834,32 @@ ZpProcess_Execute(
             return NT_SUCCESS(Status) ?
                        ZpProcess_CreateDump(ProcessId, CreateTime, Value, Response, ResponseLength) :
                        ZpStatus_FromNtStatus(Status);
+        case ZP_PROCESS_OPERATION_READ_MEMORY:
+            Status = ZpProcess_DecodeMemoryRead(Request,
+                                                RequestLength,
+                                                &ProcessId,
+                                                &CreateTime,
+                                                &Address,
+                                                &Value);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpProcess_ReadMemory(ProcessId,
+                                              CreateTime,
+                                              Address,
+                                              Value,
+                                              Response,
+                                              ResponseLength);
+            }
+            return ZpStatus_FromNtStatus(Status);
+        case ZP_PROCESS_OPERATION_WRITE_MEMORY:
+            Status = ZpProcess_DecodeMemoryWrite(Request, RequestLength, &Memory);
+            if (NT_SUCCESS(Status)) Status = ZpProcess_WriteMemory(&Memory);
+            if (NT_SUCCESS(Status))
+            {
+                *Response = NULL;
+                *ResponseLength = 0;
+            }
+            return ZpStatus_FromNtStatus(Status);
         default:
             return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
     }

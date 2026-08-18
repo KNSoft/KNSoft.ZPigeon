@@ -15,6 +15,12 @@ typedef struct _ZP_SERVER_REGISTRY_VALUE_CONTEXT
     PVOID Context;
 } ZP_SERVER_REGISTRY_VALUE_CONTEXT, *PZP_SERVER_REGISTRY_VALUE_CONTEXT;
 
+typedef struct _ZP_SERVER_REGISTRY_RANGE_CONTEXT
+{
+    ZP_REGISTRY_RANGE_CALLBACK Callback;
+    PVOID Context;
+} ZP_SERVER_REGISTRY_RANGE_CONTEXT, *PZP_SERVER_REGISTRY_RANGE_CONTEXT;
+
 typedef struct _ZP_SERVER_REGISTRY_STATUS_CONTEXT
 {
     ZP_REQUEST_STATUS_CALLBACK Callback;
@@ -221,6 +227,30 @@ ZpServer_RegistryValueComplete(
     Mem_Free(RegistryContext);
 }
 
+static
+VOID
+NTAPI
+ZpServer_RegistryRangeComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_SERVER_REGISTRY_RANGE_CONTEXT RegistryContext = Context;
+    ZP_REGISTRY_RANGE_VIEW Range;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(
+            ZpRegistry_DecodeRange(Payload->Buffer, Payload->Length, &Range));
+    }
+    RegistryContext->Callback(Request,
+                              Status,
+                              ZpStatus_IsSuccess(Status) ? &Range : NULL,
+                              RegistryContext->Context);
+    Mem_Free(RegistryContext);
+}
+
 NTSTATUS
 NTAPI
 ZpServer_QueryRegistryValue(
@@ -292,6 +322,74 @@ ZpServer_QueryRegistryValue(
         {
             Mem_Free(RegistryContext);
         }
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_QueryRegistryValueRange(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(ValueNameLength) PCWCH ValueName,
+    _In_ ULONG ValueNameLength,
+    _In_ ULONG Offset,
+    _In_ ULONG Length,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REGISTRY_RANGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_SERVER_REGISTRY_RANGE_CONTEXT RegistryContext;
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Status = ZpRegistry_EncodeRangeRequest(Root,
+                                           Path,
+                                           PathLength,
+                                           ValueName,
+                                           ValueNameLength,
+                                           Offset,
+                                           Length,
+                                           NULL,
+                                           0,
+                                           &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpRegistry_EncodeRangeRequest(Root,
+                                               Path,
+                                               PathLength,
+                                               ValueName,
+                                               ValueNameLength,
+                                               Offset,
+                                               Length,
+                                               Payload,
+                                               PayloadLength,
+                                               &PayloadLength);
+    }
+    RegistryContext = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*RegistryContext)) : NULL;
+    if (NT_SUCCESS(Status) && RegistryContext == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        RegistryContext->Callback = Callback;
+        RegistryContext->Context = Context;
+        Status = ZpServer_SendRequest(Connection,
+                                      ZP_REGISTRY_MODULE_ID,
+                                      ZP_REGISTRY_OPERATION_QUERY_VALUE_RANGE,
+                                      TimeoutMilliseconds,
+                                      Payload,
+                                      PayloadLength,
+                                      ZpServer_RegistryRangeComplete,
+                                      RegistryContext,
+                                      Request);
+        if (!NT_SUCCESS(Status)) Mem_Free(RegistryContext);
     }
     Mem_Free(Payload);
     return Status;
@@ -553,6 +651,70 @@ ZpServer_SetRegistryValue(
                      Callback,
                      Context,
                      Request);
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_WriteRegistryValueRange(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(ValueNameLength) PCWCH ValueName,
+    _In_ ULONG ValueNameLength,
+    _In_ ULONG Offset,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Status = ZpRegistry_EncodeRangeWriteRequest(Root,
+                                                Path,
+                                                PathLength,
+                                                ValueName,
+                                                ValueNameLength,
+                                                Offset,
+                                                Data,
+                                                DataLength,
+                                                NULL,
+                                                0,
+                                                &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpRegistry_EncodeRangeWriteRequest(Root,
+                                                    Path,
+                                                    PathLength,
+                                                    ValueName,
+                                                    ValueNameLength,
+                                                    Offset,
+                                                    Data,
+                                                    DataLength,
+                                                    Payload,
+                                                    PayloadLength,
+                                                    &PayloadLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpServer_SendRegistryStatusRequest(Connection,
+                                                    ZP_REGISTRY_OPERATION_WRITE_VALUE_RANGE,
+                                                    TimeoutMilliseconds,
+                                                    Payload,
+                                                    PayloadLength,
+                                                    Callback,
+                                                    Context,
+                                                    Request);
     }
     Mem_Free(Payload);
     return Status;

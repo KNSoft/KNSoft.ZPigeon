@@ -20,6 +20,8 @@ EXTERN_C_START
 #define ZP_FILE_OPERATION_SET_SECURITY 12
 #define ZP_FILE_OPERATION_RESOLVE_ACCOUNT 13
 #define ZP_FILE_OPERATION_RESOLVE_SID 14
+#define ZP_FILE_OPERATION_WRITE_RANGE 15
+#define ZP_FILE_RANGE_MAX_LENGTH 0x00010000UL
 #define ZP_FILE_CRC32_SIZE 4
 #define ZP_FILE_MD5_SIZE 16
 #define ZP_FILE_SHA1_SIZE 20
@@ -119,6 +121,15 @@ typedef struct _ZP_FILE_PAGE_VIEW
 
 typedef const ZP_FILE_PAGE_VIEW* PCZP_FILE_PAGE_VIEW;
 
+typedef struct _ZP_FILE_WRITE_RANGE_VIEW
+{
+    ZP_STRING_VIEW Path;
+    ULONGLONG Offset;
+    ZP_BUFFER_VIEW Data;
+} ZP_FILE_WRITE_RANGE_VIEW, *PZP_FILE_WRITE_RANGE_VIEW;
+
+typedef const ZP_FILE_WRITE_RANGE_VIEW* PCZP_FILE_WRITE_RANGE_VIEW;
+
 NTSTATUS
 ZpFile_EncodePath(
     _In_reads_(PathLength) PCWCH Path,
@@ -165,6 +176,23 @@ ZpFile_DecodeSetAttributesRequest(
     _In_ ULONG PayloadLength,
     _Out_ PZP_STRING_VIEW Path,
     _Out_ PULONG Attributes);
+
+NTSTATUS
+ZpFile_EncodeWriteRangeRequest(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG Offset,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeWriteRangeRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_WRITE_RANGE_VIEW Request);
 
 NTSTATUS
 ZpFile_EncodeEnumeratePageRequest(

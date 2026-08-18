@@ -296,6 +296,20 @@ ZpServer_SetFileAttributes(
 
 NTSTATUS
 NTAPI
+ZpServer_WriteFileRange(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG Offset,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_OpenFileRead(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_reads_(PathLength) PCWCH Path,
@@ -487,6 +501,33 @@ ZpServer_CreateProcessDump(
     _In_ ULONG DumpType,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_PROCESS_DUMP_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ReadProcessMemory(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONGLONG Address,
+    _In_ ULONG Length,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PROCESS_MEMORY_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_WriteProcessMemory(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONGLONG Address,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 
@@ -839,6 +880,22 @@ ZpServer_QueryRegistryValue(
 
 NTSTATUS
 NTAPI
+ZpServer_QueryRegistryValueRange(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(ValueNameLength) PCWCH ValueName,
+    _In_ ULONG ValueNameLength,
+    _In_ ULONG Offset,
+    _In_ ULONG Length,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REGISTRY_RANGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_QueryRegistrySecurity(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_REGISTRY_ROOT Root,
@@ -874,6 +931,23 @@ ZpServer_SetRegistryValue(
     _In_ ULONG ValueNameLength,
     _In_ ULONG Type,
     _In_reads_bytes_opt_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_WriteRegistryValueRange(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(ValueNameLength) PCWCH ValueName,
+    _In_ ULONG ValueNameLength,
+    _In_ ULONG Offset,
+    _In_reads_bytes_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,

@@ -10,6 +10,19 @@ EXTERN_C_START
 #define ZP_PROCESS_OPERATION_QUERY 2
 #define ZP_PROCESS_OPERATION_CONTROL 3
 #define ZP_PROCESS_OPERATION_DUMP 4
+#define ZP_PROCESS_OPERATION_READ_MEMORY 5
+#define ZP_PROCESS_OPERATION_WRITE_MEMORY 6
+#define ZP_PROCESS_MEMORY_MAX_LENGTH 0x00010000UL
+
+typedef struct _ZP_PROCESS_MEMORY_VIEW
+{
+    ULONG ProcessId;
+    ULONGLONG CreateTime;
+    ULONGLONG Address;
+    ZP_BUFFER_VIEW Data;
+} ZP_PROCESS_MEMORY_VIEW, *PZP_PROCESS_MEMORY_VIEW;
+
+typedef const ZP_PROCESS_MEMORY_VIEW* PCZP_PROCESS_MEMORY_VIEW;
 
 typedef USHORT ZP_PROCESS_CONTROL;
 #define ZpProcessControlTerminate ((ZP_PROCESS_CONTROL)1)
@@ -231,5 +244,55 @@ ZpProcess_DecodeDumpPath(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_STRING_VIEW Path);
+
+NTSTATUS
+ZpProcess_EncodeMemoryRead(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONGLONG Address,
+    _In_ ULONG Length,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpProcess_DecodeMemoryRead(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PULONG ProcessId,
+    _Out_ PULONGLONG CreateTime,
+    _Out_ PULONGLONG Address,
+    _Out_ PULONG Length);
+
+NTSTATUS
+ZpProcess_EncodeMemoryWrite(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONGLONG Address,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpProcess_DecodeMemoryWrite(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_PROCESS_MEMORY_VIEW Memory);
+
+NTSTATUS
+ZpProcess_EncodeMemoryData(
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpProcess_DecodeMemoryData(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_BUFFER_VIEW Data);
 
 EXTERN_C_END

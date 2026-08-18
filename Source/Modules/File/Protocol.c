@@ -177,6 +177,60 @@ ZpFile_DecodeSetAttributesRequest(
 }
 
 NTSTATUS
+ZpFile_EncodeWriteRangeRequest(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONGLONG Offset,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize;
+    NTSTATUS Status;
+
+    if (Path == NULL || PathLength == 0 || PathLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Data == NULL || DataLength == 0 || DataLength > ZP_FILE_RANGE_MAX_LENGTH)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = sizeof(ULONG) + (ULONGLONG)PathLength * sizeof(WCHAR) +
+                   sizeof(ULONGLONG) + sizeof(ULONG) + DataLength;
+    if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12) return STATUS_BUFFER_OVERFLOW;
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteString(&Writer, Path, PathLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Offset);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByteString(&Writer, Data, DataLength);
+    return Status;
+}
+
+NTSTATUS
+ZpFile_DecodeWriteRangeRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_WRITE_RANGE_VIEW Request)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadString(&Reader, &Request->Path);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &Request->Offset);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByteString(&Reader, &Request->Data);
+    if (!NT_SUCCESS(Status) || Request->Path.Length == 0 || Request->Data.Length == 0 ||
+        Request->Data.Length > ZP_FILE_RANGE_MAX_LENGTH || Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
 ZpFile_EncodeEnumeratePageRequest(
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
