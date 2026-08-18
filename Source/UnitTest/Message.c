@@ -1,6 +1,7 @@
 ﻿#include "UnitTest.h"
 
 #include <KNSoft/ZPigeon/Administration.h>
+#include <KNSoft/ZPigeon/Browser.h>
 #include <KNSoft/ZPigeon/EventLog.h>
 #include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Protocol.h>
@@ -216,6 +217,14 @@ TEST_FUNC(ProtocolMessage)
     ZP_ADMINISTRATION_LIST_VIEW AdministrationList;
     ZP_ADMINISTRATION_RECORD_VIEW AdministrationRecord;
     ZP_ADMINISTRATION_CONTROL_VIEW AdministrationControl;
+    ZP_STRING_VIEW AdministrationQuery;
+    ZP_BROWSER_RECORD BrowserRecords[] = {
+        { ZpBrowserKindHistory, ZpBrowserEdge, 1, 2, 3, 4, 5,
+          L"https://example.com", 19, L"Example", 7, L"https://example.com", 19, L"Detail", 6 }
+    };
+    ZP_BROWSER_PAGE_VIEW BrowserPage;
+    ZP_BROWSER_RECORD_VIEW BrowserRecord;
+    ZP_BROWSER_QUERY_VIEW BrowserQuery;
     ZP_REGISTRY_ENUMERATE_VIEW RegistryEnumerate;
     ZP_REGISTRY_VALUE_REQUEST_VIEW RegistryValueRequest;
     ZP_REGISTRY_SET_VALUE_VIEW RegistrySetValue;
@@ -1127,6 +1136,38 @@ TEST_FUNC(ProtocolMessage)
                                                        &AdministrationControl)) &&
             AdministrationControl.Action == ZpAdministrationActionCheck &&
             AdministrationControl.Identity.Length == 0);
+    TEST_OK(NT_SUCCESS(ZpAdministration_EncodeQuery(L"machine\nRoot\n0123",
+                                                     17,
+                                                     Buffer,
+                                                     sizeof(Buffer),
+                                                     &Length)) &&
+            NT_SUCCESS(ZpAdministration_DecodeQuery(Buffer, Length, &AdministrationQuery)) &&
+            AdministrationQuery.Length == 17 &&
+            ZpAdministration_DecodeQuery(Buffer, Length - 1, &AdministrationQuery) == STATUS_DATA_ERROR &&
+            ZpAdministration_EncodeQuery(NULL, 0, Buffer, sizeof(Buffer), &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpBrowser_EncodePage(BrowserRecords,
+                                            ARRAYSIZE(BrowserRecords),
+                                            3,
+                                            Buffer,
+                                            sizeof(Buffer),
+                                            &Length)) &&
+            NT_SUCCESS(ZpBrowser_DecodePage(Buffer, Length, &BrowserPage)) &&
+            BrowserPage.NextCursor == 3 && BrowserPage.Count == 1 &&
+            NT_SUCCESS(ZpBrowser_GetRecord(&BrowserPage, 0, &BrowserRecord)) &&
+            BrowserRecord.Kind == ZpBrowserKindHistory && BrowserRecord.Id == 3 &&
+            BrowserRecord.Name.Length == 7);
+    TEST_OK(NT_SUCCESS(ZpBrowser_EncodeQuery(ZpBrowserEdge,
+                                             ZpBrowserKindDownload,
+                                             L"Default",
+                                             7,
+                                             42,
+                                             100,
+                                             Buffer,
+                                             sizeof(Buffer),
+                                             &Length)) &&
+            NT_SUCCESS(ZpBrowser_DecodeQuery(Buffer, Length, &BrowserQuery)) &&
+            BrowserQuery.Browser == ZpBrowserEdge && BrowserQuery.Kind == ZpBrowserKindDownload &&
+            BrowserQuery.Cursor == 42 && BrowserQuery.Limit == 100 && BrowserQuery.Profile.Length == 7);
     TEST_OK(NT_SUCCESS(ZpRegistry_EncodeEnumerateRequest(
                            ZpRegistryLocalMachine,
                            32,

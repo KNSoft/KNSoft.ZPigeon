@@ -10,6 +10,16 @@ public sealed partial class NativeServer
         RunManagementAsync<AdministrationRecord[]>(context =>
             NativeMethods.EnumerateAdministration((ushort)operation, AdministrationCallback, context));
 
+    public Task<AdministrationRecord[]> QueryAdministrationAsync(
+        AdministrationOperation operation,
+        string identity) =>
+        RunManagementAsync<AdministrationRecord[]>(context => NativeMethods.QueryAdministration(
+            (ushort)operation,
+            identity,
+            (uint)identity.Length,
+            AdministrationCallback,
+            context));
+
     public Task ControlAdministrationAsync(
         AdministrationOperation operation,
         AdministrationAction action,
@@ -76,7 +86,10 @@ public enum AdministrationOperation : ushort
     EnumerateSystem,
     ControlSystem,
     EnumerateWlan,
-    ControlWlan
+    ControlWlan,
+    EnumerateCertificates,
+    QueryCertificate,
+    ControlCertificate
 }
 
 public enum AdministrationKind : ushort
@@ -99,7 +112,11 @@ public enum AdministrationKind : ushort
     WlanInterface,
     WlanNetwork,
     WlanProfile,
-    EnvironmentVariable
+    EnvironmentVariable,
+    CertificateStore,
+    Certificate,
+    CertificateDetails,
+    CertificateChain
 }
 
 public enum AdministrationAction : ushort
@@ -165,6 +182,16 @@ internal static partial class NativeMethods
     [LibraryImport(Library, EntryPoint = "ZpNative_EnumerateAdministration")]
     internal static partial int EnumerateAdministration(
         ushort operation,
+        AdministrationCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_QueryAdministration",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int QueryAdministration(
+        ushort operation,
+        string identity,
+        uint identityLength,
         AdministrationCallback callback,
         nint context);
 

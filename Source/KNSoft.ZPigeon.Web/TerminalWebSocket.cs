@@ -176,6 +176,7 @@ internal static class TerminalWebSocket
         ZpStatusType.Security => "Security",
         ZpStatusType.Quic => "QUIC",
         ZpStatusType.ProcessExit => "ProcessExit",
+        ZpStatusType.Sqlite => "SQLite",
         _ => "Unknown"
     };
 

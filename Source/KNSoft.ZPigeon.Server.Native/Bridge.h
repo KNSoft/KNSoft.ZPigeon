@@ -353,6 +353,36 @@ VOID
     _In_ ULONG RecordCount,
     _In_opt_ PVOID Context);
 
+typedef struct _ZP_NATIVE_BROWSER_RECORD
+{
+    USHORT Kind;
+    USHORT Browser;
+    ULONG State;
+    ULONG Flags;
+    ULONGLONG Id;
+    ULONGLONG Time;
+    ULONGLONG Value;
+    PCWCH Identity;
+    ULONG IdentityLength;
+    PCWCH Name;
+    ULONG NameLength;
+    PCWCH Location;
+    ULONG LocationLength;
+    PCWCH Detail;
+    ULONG DetailLength;
+} ZP_NATIVE_BROWSER_RECORD, *PZP_NATIVE_BROWSER_RECORD;
+
+typedef const ZP_NATIVE_BROWSER_RECORD* PCZP_NATIVE_BROWSER_RECORD;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_BROWSER_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_ ULONGLONG NextCursor,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_BROWSER_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
 typedef struct _ZP_NATIVE_REGISTRY_KEY_RECORD
 {
     PCWCH Name;
@@ -869,6 +899,16 @@ ZpNative_EnumerateAdministration(
 __declspec(dllexport)
 NTSTATUS
 NTAPI
+ZpNative_QueryAdministration(
+    _In_ USHORT OperationId,
+    _In_reads_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
+    _In_ ZP_NATIVE_ADMINISTRATION_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
 ZpNative_ControlAdministration(
     _In_ USHORT OperationId,
     _In_ USHORT Action,
@@ -879,6 +919,26 @@ ZpNative_ControlAdministration(
     _In_reads_opt_(SecretLength) PCWCH Secret,
     _In_ ULONG SecretLength,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateBrowsers(
+    _In_ ZP_NATIVE_BROWSER_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_QueryBrowser(
+    _In_ USHORT Browser,
+    _In_ USHORT Kind,
+    _In_reads_(ProfileLength) PCWCH Profile,
+    _In_ ULONG ProfileLength,
+    _In_ ULONGLONG Cursor,
+    _In_ ULONG Limit,
+    _In_ ZP_NATIVE_BROWSER_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
 __declspec(dllexport)

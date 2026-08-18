@@ -27,6 +27,9 @@ EXTERN_C_START
 #define ZP_ADMINISTRATION_OPERATION_CONTROL_SYSTEM 18
 #define ZP_ADMINISTRATION_OPERATION_ENUMERATE_WLAN 19
 #define ZP_ADMINISTRATION_OPERATION_CONTROL_WLAN 20
+#define ZP_ADMINISTRATION_OPERATION_ENUMERATE_CERTIFICATES 21
+#define ZP_ADMINISTRATION_OPERATION_QUERY_CERTIFICATE 22
+#define ZP_ADMINISTRATION_OPERATION_CONTROL_CERTIFICATE 23
 
 typedef USHORT ZP_ADMINISTRATION_KIND, *PZP_ADMINISTRATION_KIND;
 
@@ -49,6 +52,10 @@ typedef USHORT ZP_ADMINISTRATION_KIND, *PZP_ADMINISTRATION_KIND;
 #define ZpAdministrationKindWlanNetwork ((ZP_ADMINISTRATION_KIND)17)
 #define ZpAdministrationKindWlanProfile ((ZP_ADMINISTRATION_KIND)18)
 #define ZpAdministrationKindEnvironmentVariable ((ZP_ADMINISTRATION_KIND)19)
+#define ZpAdministrationKindCertificateStore ((ZP_ADMINISTRATION_KIND)20)
+#define ZpAdministrationKindCertificate ((ZP_ADMINISTRATION_KIND)21)
+#define ZpAdministrationKindCertificateDetails ((ZP_ADMINISTRATION_KIND)22)
+#define ZpAdministrationKindCertificateChain ((ZP_ADMINISTRATION_KIND)23)
 
 typedef USHORT ZP_ADMINISTRATION_ACTION, *PZP_ADMINISTRATION_ACTION;
 
@@ -165,5 +172,19 @@ ZpAdministration_DecodeControl(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_ADMINISTRATION_CONTROL_VIEW Control);
+
+NTSTATUS
+ZpAdministration_EncodeQuery(
+    _In_reads_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpAdministration_DecodeQuery(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW Identity);
 
 EXTERN_C_END

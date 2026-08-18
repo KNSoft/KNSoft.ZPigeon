@@ -1,5 +1,7 @@
 using KNSoft.ZPigeon.Server.Managed;
 using Microsoft.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
 namespace KNSoft.ZPigeon.Web;
@@ -206,6 +208,22 @@ internal static class ManagementWebApi
                 request.Control);
             return Results.NoContent();
         });
+        app.MapPost("/api/browsers", async () => await server.EnumerateBrowsersAsync());
+        app.MapPost("/api/browser/query", async (BrowserQueryRequest request) =>
+        {
+            if (!Enum.IsDefined(request.Browser) || !Enum.IsDefined(request.Kind) ||
+                request.Kind < BrowserKind.History || request.Profile.Length is 0 or >= 260 ||
+                request.Profile.IndexOfAny(['\\', '/', ':']) >= 0 ||
+                !ulong.TryParse(request.Cursor, out var cursor))
+            {
+                return Results.BadRequest();
+            }
+            return Results.Ok(await server.QueryBrowserAsync(
+                request.Browser,
+                request.Kind,
+                request.Profile,
+                cursor));
+        });
         app.MapPost("/api/services", async () => await server.EnumerateServicesAsync());
         app.MapPost("/api/service/info", async (ServiceRequest request) =>
             await server.QueryServiceAsync(request.ServiceName));
@@ -262,6 +280,48 @@ internal static class ManagementWebApi
                           AdministrationOperation.ControlSystem);
         MapAdministration(app, server, "wlan", AdministrationOperation.EnumerateWlan,
                           AdministrationOperation.ControlWlan);
+        MapAdministration(app, server, "certificates", AdministrationOperation.EnumerateCertificates,
+                          AdministrationOperation.ControlCertificate);
+        app.MapPost("/api/certificates/details", async (AdministrationIdentityRequest request) =>
+        {
+            var records = await server.QueryAdministrationAsync(
+                AdministrationOperation.QueryCertificate,
+                request.Identity);
+            var record = records.Single(value => value.Kind == AdministrationKind.CertificateDetails);
+            var rawData = Convert.FromBase64String(record.Detail);
+            using var certificate = X509CertificateLoader.LoadCertificate(rawData);
+            var usage = certificate.Extensions.OfType<X509EnhancedKeyUsageExtension>().FirstOrDefault();
+            return new
+            {
+                certificate.Subject,
+                certificate.Issuer,
+                SubjectName = certificate.GetNameInfo(X509NameType.SimpleName, false),
+                IssuerName = certificate.GetNameInfo(X509NameType.SimpleName, true),
+                certificate.SerialNumber,
+                certificate.Thumbprint,
+                certificate.Version,
+                NotBefore = certificate.NotBefore.ToUniversalTime(),
+                NotAfter = certificate.NotAfter.ToUniversalTime(),
+                SignatureAlgorithm = certificate.SignatureAlgorithm.FriendlyName ??
+                                     certificate.SignatureAlgorithm.Value,
+                PublicKeyAlgorithm = certificate.PublicKey.Oid.FriendlyName ??
+                                     certificate.PublicKey.Oid.Value,
+                record.Flags,
+                ChainError = record.State,
+                Purposes = usage?.EnhancedKeyUsages.Cast<Oid>()
+                    .Select(oid => oid.FriendlyName ?? oid.Value)
+                    .ToArray(),
+                Extensions = certificate.Extensions.Select(extension => new
+                {
+                    Oid = extension.Oid?.Value,
+                    Name = extension.Oid?.FriendlyName,
+                    extension.Critical,
+                    Value = extension.Format(false)
+                }).ToArray(),
+                RawData = record.Detail,
+                Chain = records.Where(value => value.Kind == AdministrationKind.CertificateChain).ToArray()
+            };
+        });
     }
 
     private static Task StartUpdateCheck(NativeServer server)
@@ -324,11 +384,17 @@ internal sealed record WindowControlRequest(
     uint ProcessId,
     uint ThreadId,
     WindowControl Control);
+internal sealed record BrowserQueryRequest(
+    BrowserType Browser,
+    BrowserKind Kind,
+    string Profile,
+    string Cursor);
 internal sealed record AdministrationControlRequest(
     AdministrationAction Action,
     string? Identity,
     string? Argument,
     string? Secret);
+internal sealed record AdministrationIdentityRequest(string Identity);
 internal sealed record ProcessWebRecord(
     uint ProcessId,
     uint ParentProcessId,

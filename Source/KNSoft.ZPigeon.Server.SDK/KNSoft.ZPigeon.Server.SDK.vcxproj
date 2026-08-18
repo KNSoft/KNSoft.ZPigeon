@@ -43,6 +43,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\Modules\Administration\Server.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Browser\Server.c"><ObjectFileName>$(IntDir)Modules\Browser\</ObjectFileName></ClCompile>
     <ClCompile Include="Core\Channel.c" />
     <ClCompile Include="Core\Connection.c" />
     <ClCompile Include="Core\Request.c" />

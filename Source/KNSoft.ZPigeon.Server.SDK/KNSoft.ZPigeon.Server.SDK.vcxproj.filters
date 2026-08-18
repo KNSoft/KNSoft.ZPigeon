@@ -8,6 +8,7 @@
     <Filter Include="Transport"><UniqueIdentifier>{80927879-e53a-453e-b207-3f31cc2baafc}</UniqueIdentifier></Filter>
     <Filter Include="Modules"><UniqueIdentifier>{3144764a-a2d8-45b1-aa42-b074b04da16e}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Administration"><UniqueIdentifier>{56aef99d-930d-4b8f-9287-5f3106632ebd}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Browser"><UniqueIdentifier>{8fdcfad4-ee70-4ac8-8372-05ef49ad29fc}</UniqueIdentifier></Filter>
     <Filter Include="Modules\EventLog"><UniqueIdentifier>{e6b4b6cf-b1eb-4136-9169-343e3677543e}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Execution"><UniqueIdentifier>{e31de256-d0ef-4c27-b72b-c6dd5e76b490}</UniqueIdentifier></Filter>
     <Filter Include="Modules\File"><UniqueIdentifier>{69b20314-060a-48a4-8ef2-02cb0535658e}</UniqueIdentifier></Filter>
@@ -21,6 +22,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Modules\Administration\Server.c"><Filter>Modules\Administration</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Browser\Server.c"><Filter>Modules\Browser</Filter></ClCompile>
     <ClCompile Include="Core\Channel.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="Core\Connection.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="Core\Request.c"><Filter>Core</Filter></ClCompile>

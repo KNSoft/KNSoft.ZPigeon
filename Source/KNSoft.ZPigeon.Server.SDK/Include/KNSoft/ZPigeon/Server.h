@@ -102,6 +102,30 @@ ZpServer_OpenTunnel(
 
 NTSTATUS
 NTAPI
+ZpServer_EnumerateBrowsers(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_BROWSER_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryBrowser(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_BROWSER_TYPE Browser,
+    _In_ ZP_BROWSER_KIND Kind,
+    _In_reads_(ProfileLength) PCWCH Profile,
+    _In_ ULONG ProfileLength,
+    _In_ ULONGLONG Cursor,
+    _In_ ULONG Limit,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_BROWSER_PAGE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_SendRequest(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ USHORT ModuleId,
@@ -465,6 +489,18 @@ NTAPI
 ZpServer_EnumerateAdministration(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ USHORT OperationId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_ADMINISTRATION_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryAdministration(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT OperationId,
+    _In_reads_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_ADMINISTRATION_ENUMERATE_CALLBACK Callback,
     _In_opt_ PVOID Context,

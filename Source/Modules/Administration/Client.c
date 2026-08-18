@@ -12,6 +12,7 @@ typedef struct _ZP_ADMINISTRATION_BUILDER
 {
     PZP_ADMINISTRATION_RECORD Records;
     ULONG Count;
+    ULONG Capacity;
 } ZP_ADMINISTRATION_BUILDER, *PZP_ADMINISTRATION_BUILDER;
 
 static
@@ -40,16 +41,21 @@ ZpAdministration_AddRecord(
     {
         return STATUS_QUOTA_EXCEEDED;
     }
-    Records = Mem_ReAlloc(Builder->Records, ((SIZE_T)Builder->Count + 1) * sizeof(*Records));
-    if (Records == NULL) return STATUS_NO_MEMORY;
+    if (Builder->Count == Builder->Capacity)
+    {
+        ULONG Capacity = Builder->Capacity == 0 ? 16 : min(Builder->Capacity * 2, ZP_CODEC_MAX_ELEMENT_COUNT);
+
+        Records = Mem_ReAlloc(Builder->Records, (SIZE_T)Capacity * sizeof(*Records));
+        if (Records == NULL) return STATUS_NO_MEMORY;
+        Builder->Records = Records;
+        Builder->Capacity = Capacity;
+    }
     Strings = Mem_Alloc(CharacterCount * sizeof(WCHAR));
     if (Strings == NULL)
     {
-        Builder->Records = Records;
         return STATUS_NO_MEMORY;
     }
-    Builder->Records = Records;
-    Record = &Records[Builder->Count++];
+    Record = &Builder->Records[Builder->Count++];
     Record->Kind = Kind;
     Record->State = State;
     Record->Flags = Flags;
@@ -152,6 +158,7 @@ typedef const VOID* PCVOID;
 #include "Power.inl"
 #include "System.inl"
 #include "Wlan.inl"
+#include "Certificate.inl"
 
 ZP_STATUS
 ZpAdministration_Execute(
@@ -162,6 +169,7 @@ ZpAdministration_Execute(
     _Out_ PULONG ResponseLength)
 {
     ZP_ADMINISTRATION_CONTROL_VIEW Control;
+    ZP_STRING_VIEW Identity;
     NTSTATUS Status;
 
     switch (OperationId)
@@ -215,6 +223,17 @@ ZpAdministration_Execute(
             return RequestLength == 0 ?
                        ZpAdministration_EnumerateWlan(Response, ResponseLength) :
                        ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_CERTIFICATES:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateCertificates(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
+        case ZP_ADMINISTRATION_OPERATION_QUERY_CERTIFICATE:
+            Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
+            return NT_SUCCESS(Status) ?
+                       ZpAdministration_QueryCertificate(&Identity, Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(Status);
     }
     Status = ZpAdministration_DecodeControl(Request, RequestLength, &Control);
     if (!NT_SUCCESS(Status)) return ZpStatus_FromNtStatus(Status);
@@ -249,6 +268,9 @@ ZpAdministration_Execute(
 
         case ZP_ADMINISTRATION_OPERATION_CONTROL_WLAN:
             return ZpAdministration_ControlWlan(&Control);
+
+        case ZP_ADMINISTRATION_OPERATION_CONTROL_CERTIFICATE:
+            return ZpAdministration_ControlCertificate(&Control);
     }
     return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
 }

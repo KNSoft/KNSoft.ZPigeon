@@ -113,7 +113,8 @@ ZpServer_EnumerateAdministration(
          OperationId != ZP_ADMINISTRATION_OPERATION_ENUMERATE_POWER &&
          OperationId != ZP_ADMINISTRATION_OPERATION_ENUMERATE_FEATURES &&
          OperationId != ZP_ADMINISTRATION_OPERATION_ENUMERATE_SYSTEM &&
-         OperationId != ZP_ADMINISTRATION_OPERATION_ENUMERATE_WLAN))
+         OperationId != ZP_ADMINISTRATION_OPERATION_ENUMERATE_WLAN &&
+         OperationId != ZP_ADMINISTRATION_OPERATION_ENUMERATE_CERTIFICATES))
     {
         return STATUS_INVALID_PARAMETER;
     }
@@ -127,6 +128,55 @@ ZpServer_EnumerateAdministration(
                                  AdministrationCallback,
                                  Context,
                                  Request);
+}
+
+NTSTATUS
+NTAPI
+ZpServer_QueryAdministration(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT OperationId,
+    _In_reads_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_ADMINISTRATION_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_ADMINISTRATION_CALLBACK AdministrationCallback;
+    PBYTE Payload;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL || OperationId != ZP_ADMINISTRATION_OPERATION_QUERY_CERTIFICATE)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpAdministration_EncodeQuery(Identity, IdentityLength, NULL, 0, &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (!NT_SUCCESS(Status) || Payload == NULL)
+    {
+        return NT_SUCCESS(Status) ? STATUS_NO_MEMORY : Status;
+    }
+    Status = ZpAdministration_EncodeQuery(Identity,
+                                           IdentityLength,
+                                           Payload,
+                                           PayloadLength,
+                                           &PayloadLength);
+    if (NT_SUCCESS(Status))
+    {
+        AdministrationCallback.Enumerate = Callback;
+        Status = ZpAdministration_Send(Connection,
+                                       OperationId,
+                                       TimeoutMilliseconds,
+                                       Payload,
+                                       PayloadLength,
+                                       ZpAdministration_EnumerateComplete,
+                                       AdministrationCallback,
+                                       Context,
+                                       Request);
+    }
+    Mem_Free(Payload);
+    return Status;
 }
 
 NTSTATUS
@@ -161,7 +211,8 @@ ZpServer_ControlAdministration(
          OperationId != ZP_ADMINISTRATION_OPERATION_CONTROL_POWER &&
          OperationId != ZP_ADMINISTRATION_OPERATION_CONTROL_FEATURE &&
          OperationId != ZP_ADMINISTRATION_OPERATION_CONTROL_SYSTEM &&
-         OperationId != ZP_ADMINISTRATION_OPERATION_CONTROL_WLAN))
+         OperationId != ZP_ADMINISTRATION_OPERATION_CONTROL_WLAN &&
+         OperationId != ZP_ADMINISTRATION_OPERATION_CONTROL_CERTIFICATE))
     {
         return STATUS_INVALID_PARAMETER;
     }

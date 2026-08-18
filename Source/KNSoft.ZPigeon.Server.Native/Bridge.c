@@ -30,6 +30,7 @@ typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
         ZP_NATIVE_SERVICE_LIST_CALLBACK ServiceList;
         ZP_NATIVE_SERVICE_INFO_CALLBACK ServiceInfo;
         ZP_NATIVE_ADMINISTRATION_CALLBACK Administration;
+        ZP_NATIVE_BROWSER_CALLBACK Browser;
         ZP_NATIVE_EVENT_LOG_CALLBACK EventLog;
         ZP_NATIVE_EVENT_LOG_CHANNELS_CALLBACK EventLogChannels;
         ZP_NATIVE_EVENT_LOG_CHANNEL_INFO_CALLBACK EventLogChannelInfo;
@@ -893,6 +894,60 @@ ZpNative_AdministrationCallback(
 static
 VOID
 NTAPI
+ZpNative_BrowserCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_BROWSER_PAGE_VIEW Page,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_BROWSER_RECORD Records = NULL;
+    ZP_BROWSER_RECORD_VIEW Record;
+    ULONG Index;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status) && Page->Count != 0)
+    {
+        Records = Mem_Alloc((SIZE_T)Page->Count * sizeof(*Records));
+        if (Records == NULL) Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Page->Count; Index++)
+    {
+        DecodeStatus = ZpBrowser_GetRecord(Page, Index, &Record);
+        if (!NT_SUCCESS(DecodeStatus))
+        {
+            Status = ZpStatus_FromNtStatus(DecodeStatus);
+            break;
+        }
+        Records[Index].Kind = Record.Kind;
+        Records[Index].Browser = Record.Browser;
+        Records[Index].State = Record.State;
+        Records[Index].Flags = Record.Flags;
+        Records[Index].Id = Record.Id;
+        Records[Index].Time = Record.Time;
+        Records[Index].Value = Record.Value;
+#define ZP_NATIVE_BROWSER_STRING(Field) \
+        Records[Index].Field = (PCWCH)Record.Field.Buffer; \
+        Records[Index].Field##Length = Record.Field.Length
+        ZP_NATIVE_BROWSER_STRING(Identity);
+        ZP_NATIVE_BROWSER_STRING(Name);
+        ZP_NATIVE_BROWSER_STRING(Location);
+        ZP_NATIVE_BROWSER_STRING(Detail);
+#undef ZP_NATIVE_BROWSER_STRING
+    }
+    CallbackContext->Callback.Browser(Status,
+                                      ZpStatus_IsSuccess(Status) ? Page->NextCursor : 0,
+                                      ZpStatus_IsSuccess(Status) ? Records : NULL,
+                                      ZpStatus_IsSuccess(Status) ? Page->Count : 0,
+                                      CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
 ZpNative_EventLogCallback(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
@@ -1361,7 +1416,8 @@ ZpNative_Start(
         { ZP_WINDOW_MODULE_ID, ZP_WINDOW_MODULE_VERSION },
         { ZP_ADMINISTRATION_MODULE_ID, ZP_ADMINISTRATION_MODULE_VERSION },
         { ZP_EXECUTION_MODULE_ID, ZP_EXECUTION_MODULE_VERSION },
-        { ZP_TUNNEL_MODULE_ID, ZP_TUNNEL_MODULE_VERSION }
+        { ZP_TUNNEL_MODULE_ID, ZP_TUNNEL_MODULE_VERSION },
+        { ZP_BROWSER_MODULE_ID, ZP_BROWSER_MODULE_VERSION }
     };
     ZP_LISTENER_ENDPOINT Listener = {
         ZpTransportQuic,
@@ -2949,6 +3005,41 @@ ZpNative_EnumerateAdministration(
 
 NTSTATUS
 NTAPI
+ZpNative_QueryAdministration(
+    _In_ USHORT OperationId,
+    _In_reads_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
+    _In_ ZP_NATIVE_ADMINISTRATION_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Administration = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_QueryAdministration(Connection,
+                                     OperationId,
+                                     Identity,
+                                     IdentityLength,
+                                     ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                     ZpNative_AdministrationCallback,
+                                     CallbackContext,
+                                     &Request));
+}
+
+NTSTATUS
+NTAPI
 ZpNative_ControlAdministration(
     _In_ USHORT OperationId,
     _In_ USHORT Action,
@@ -2993,6 +3084,76 @@ ZpNative_ControlAdministration(
                                        ZpNative_StatusCallback,
                                        CallbackContext,
                                        &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumerateBrowsers(
+    _In_ ZP_NATIVE_BROWSER_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Browser = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_EnumerateBrowsers(Connection,
+                                   ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                   ZpNative_BrowserCallback,
+                                   CallbackContext,
+                                   &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_QueryBrowser(
+    _In_ USHORT Browser,
+    _In_ USHORT Kind,
+    _In_reads_(ProfileLength) PCWCH Profile,
+    _In_ ULONG ProfileLength,
+    _In_ ULONGLONG Cursor,
+    _In_ ULONG Limit,
+    _In_ ZP_NATIVE_BROWSER_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Browser = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_QueryBrowser(Connection,
+                              Browser,
+                              Kind,
+                              Profile,
+                              ProfileLength,
+                              Cursor,
+                              Limit,
+                              ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                              ZpNative_BrowserCallback,
+                              CallbackContext,
+                              &Request));
 }
 
 NTSTATUS

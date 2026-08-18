@@ -1,6 +1,7 @@
 ﻿#include <KNSoft/MakeLifeEasier/IO/File.h>
 #include <KNSoft/ZPigeon/Client.h>
 #include <KNSoft/ZPigeon/Administration.h>
+#include <KNSoft/ZPigeon/Browser.h>
 #include <KNSoft/ZPigeon/EventLog.h>
 #include <KNSoft/ZPigeon/Execution.h>
 #include <KNSoft/ZPigeon/File.h>
@@ -80,6 +81,7 @@ ZpClient_GetModuleLogName(
         case ZP_TUNNEL_MODULE_ID: return L"tunnel.log";
         case ZP_REGISTRY_MODULE_ID: return L"registry.log";
         case ZP_WINDOW_MODULE_ID: return L"window.log";
+        case ZP_BROWSER_MODULE_ID: return L"browser.log";
         case ZP_ADMINISTRATION_MODULE_ID:
             return OperationId >= ZP_ADMINISTRATION_OPERATION_ENUMERATE_USERS &&
                    OperationId <= ZP_ADMINISTRATION_OPERATION_CONTROL_WLAN ?
@@ -344,7 +346,8 @@ wmain(VOID)
         { ZP_WINDOW_MODULE_ID, ZP_WINDOW_MODULE_VERSION },
         { ZP_ADMINISTRATION_MODULE_ID, ZP_ADMINISTRATION_MODULE_VERSION },
         { ZP_EXECUTION_MODULE_ID, ZP_EXECUTION_MODULE_VERSION },
-        { ZP_TUNNEL_MODULE_ID, ZP_TUNNEL_MODULE_VERSION }
+        { ZP_TUNNEL_MODULE_ID, ZP_TUNNEL_MODULE_VERSION },
+        { ZP_BROWSER_MODULE_ID, ZP_BROWSER_MODULE_VERSION }
     };
     static const ZP_ENDPOINT Endpoint = {
         ZpTransportQuic,

@@ -5,7 +5,7 @@ LOGICAL
 ZpAdministration_IsKindValid(
     _In_ ZP_ADMINISTRATION_KIND Kind)
 {
-    return Kind >= ZpAdministrationKindUser && Kind <= ZpAdministrationKindEnvironmentVariable;
+    return Kind >= ZpAdministrationKindUser && Kind <= ZpAdministrationKindCertificateChain;
 }
 
 static
@@ -201,4 +201,41 @@ ZpAdministration_DecodeControl(
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
     }
     return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpAdministration_EncodeQuery(
+    _In_reads_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+
+    if (!ZpAdministration_IsStringValid(Identity, IdentityLength) || IdentityLength == 0)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteString(&Writer, Identity, IdentityLength);
+    *BytesWritten = Writer.Offset;
+    return Status;
+}
+
+NTSTATUS
+ZpAdministration_DecodeQuery(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_STRING_VIEW Identity)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadString(&Reader, Identity);
+    return NT_SUCCESS(Status) && Reader.Offset == PayloadLength && Identity->Length != 0 ?
+               STATUS_SUCCESS :
+               NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
 }

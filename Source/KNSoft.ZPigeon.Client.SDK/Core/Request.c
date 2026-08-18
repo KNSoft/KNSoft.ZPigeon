@@ -1,5 +1,6 @@
 ﻿#include "../Client.inl"
 #include "../../Modules/Administration/Client.h"
+#include "../../Modules/Browser/Client.h"
 #include "../../Modules/EventLog/Client.h"
 #include "../../Modules/Execution/Client.h"
 #include "../../Modules/File/Client.h"
@@ -251,6 +252,15 @@ ZpClientInbound_RequestCallback(
                                           Request->PayloadLength,
                                           &AllocatedResponse,
                                           &PayloadLength);
+        Response = AllocatedResponse;
+    }
+    else if (Request->ModuleId == ZP_BROWSER_MODULE_ID)
+    {
+        Status = ZpBrowser_Execute(Request->OperationId,
+                                   Request->Payload,
+                                   Request->PayloadLength,
+                                   &AllocatedResponse,
+                                   &PayloadLength);
         Response = AllocatedResponse;
     }
     else

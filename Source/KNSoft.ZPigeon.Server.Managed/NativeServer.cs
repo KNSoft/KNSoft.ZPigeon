@@ -415,7 +415,8 @@ public enum ZpStatusType : ushort
     Security,
     Quic,
     ProcessExit,
-    ConfigurationManager
+    ConfigurationManager,
+    Sqlite
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -428,7 +429,8 @@ public readonly record struct ZpStatus(ZpStatusType Type, uint Code)
         ZpStatusType.HResult or
         ZpStatusType.Security or
         ZpStatusType.Quic => unchecked((int)Code) >= 0,
-        ZpStatusType.Win32 or ZpStatusType.Winsock or ZpStatusType.ConfigurationManager => Code == 0,
+        ZpStatusType.Win32 or ZpStatusType.Winsock or ZpStatusType.ConfigurationManager or
+        ZpStatusType.Sqlite => Code == 0,
         ZpStatusType.ProcessExit => true,
         _ => false
     };
