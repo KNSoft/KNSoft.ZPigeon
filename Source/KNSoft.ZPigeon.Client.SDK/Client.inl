@@ -16,7 +16,7 @@ typedef struct _ZP_CLIENT_OBJECT
     LIST_ENTRY InboundRequests;
     LIST_ENTRY LocalChannels;
     LIST_ENTRY ExecutionJobs;
-    PVOID FileEnumeration;
+    LIST_ENTRY FileEnumerations;
     ULONGLONG HighestInboundRequestId;
     ULONGLONG NextLocalChannelId;
     ULONGLONG NextFileEnumerationId;
@@ -25,6 +25,7 @@ typedef struct _ZP_CLIENT_OBJECT
     ULONGLONG InboundRequestPayloadBytes;
     ULONG LocalChannelCount;
     ULONG ExecutionJobCount;
+    ULONG FileEnumerationCount;
     ZP_CLIENT_CONFIG Config;
     PCZP_TRANSPORT_OPERATIONS TransportOperations[ZpTransportWss + 1];
     PVOID TransportContexts[ZpTransportWss + 1];

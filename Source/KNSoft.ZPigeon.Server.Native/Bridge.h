@@ -26,6 +26,14 @@ VOID
     _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context);
 
+typedef
+VOID
+(NTAPI *ZP_NATIVE_STRING_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(ValueLength) PCWCH Value,
+    _In_ ULONG ValueLength,
+    _In_opt_ PVOID Context);
+
 typedef struct _ZP_NATIVE_FILE_RECORD
 {
     ULONG Attributes;
@@ -482,6 +490,44 @@ ZpNative_QueryFile(
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
     _In_ ZP_NATIVE_FILE_INFO_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_QueryFileSecurity(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_NATIVE_STRING_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_SetFileSecurity(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(SddlLength) PCWCH Sddl,
+    _In_ ULONG SddlLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_ResolveAccountName(
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ZP_NATIVE_STRING_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_ResolveAccountSid(
+    _In_reads_(SidLength) PCWCH Sid,
+    _In_ ULONG SidLength,
+    _In_ ZP_NATIVE_STRING_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
 __declspec(dllexport)
@@ -1005,6 +1051,28 @@ ZpNative_QueryRegistryValue(
     _In_reads_opt_(NameLength) PCWCH Name,
     _In_ ULONG NameLength,
     _In_ ZP_NATIVE_REGISTRY_VALUE_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_QueryRegistrySecurity(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_NATIVE_REGISTRY_VALUE_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_SetRegistrySecurity(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(SddlLength) PCWCH Sddl,
+    _In_ ULONG SddlLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
 __declspec(dllexport)

@@ -1,4 +1,5 @@
 using KNSoft.ZPigeon.Server.Managed;
+using System.Text;
 
 namespace KNSoft.ZPigeon.Web;
 
@@ -56,6 +57,17 @@ internal static class RegistryWebApi
                                                   request.Path,
                                                   request.Name,
                                                   request.NewName));
+        registry.MapPost("/key/security", async (RegistryKeyRequest request) =>
+        {
+            var value = await server.QueryRegistrySecurityAsync(request.Root, request.Path);
+            if (value.Type != 1 || value.Data.Length % sizeof(char) != 0)
+            {
+                throw new InvalidDataException("The remote registry security descriptor is invalid.");
+            }
+            return new { Sddl = Encoding.Unicode.GetString(value.Data) };
+        });
+        registry.MapPost("/key/security/set", async (RegistrySecurityRequest request) =>
+            await server.SetRegistrySecurityAsync(request.Root, request.Path, request.Sddl));
     }
 }
 
@@ -82,3 +94,7 @@ internal sealed record RegistryRenameRequest(
     string Path,
     string Name,
     string NewName);
+internal sealed record RegistrySecurityRequest(
+    RegistryRoot Root,
+    string Path,
+    string Sddl);

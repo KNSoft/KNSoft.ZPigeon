@@ -982,3 +982,67 @@ ZpRegistry_DecodeRenameRequest(
     }
     return STATUS_SUCCESS;
 }
+
+NTSTATUS
+ZpRegistry_EncodeSecurityRequest(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(SddlLength) PCWCH Sddl,
+    _In_ ULONG SddlLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize;
+    NTSTATUS Status;
+
+    if (!ZpRegistry_IsScopeValid(Root) ||
+        !ZpRegistry_IsStringValid(Path, PathLength) ||
+        !ZpRegistry_IsStringValid(Sddl, SddlLength) ||
+        PathLength > ZP_REGISTRY_PATH_MAX_LENGTH ||
+        SddlLength > ZP_REGISTRY_PATH_MAX_LENGTH)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = sizeof(USHORT) + 2 * sizeof(ULONG) +
+                   ((ULONGLONG)PathLength + SddlLength) * sizeof(WCHAR);
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+    if (BufferSize < RequiredSize)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpRegistry_WriteScope(&Writer, Root);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Path, PathLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Sddl, SddlLength);
+    return Status;
+}
+
+NTSTATUS
+ZpRegistry_DecodeSecurityRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_REGISTRY_SECURITY_REQUEST_VIEW Request)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpRegistry_ReadScope(&Reader, &Request->Root);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Path);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Sddl);
+    if (!NT_SUCCESS(Status) ||
+        Request->Path.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
+        Request->Sddl.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
+        Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    return STATUS_SUCCESS;
+}

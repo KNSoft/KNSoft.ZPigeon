@@ -15,6 +15,8 @@ EXTERN_C_START
 #define ZP_REGISTRY_OPERATION_DELETE_KEY 7
 #define ZP_REGISTRY_OPERATION_RENAME_KEY 8
 #define ZP_REGISTRY_OPERATION_RENAME_VALUE 9
+#define ZP_REGISTRY_OPERATION_QUERY_SECURITY 10
+#define ZP_REGISTRY_OPERATION_SET_SECURITY 11
 #define ZP_REGISTRY_PAGE_MAX_COUNT 4096
 #define ZP_REGISTRY_PATH_MAX_LENGTH 32767
 #define ZP_REGISTRY_DATA_MAX_LENGTH 0x00100000UL
@@ -78,6 +80,16 @@ typedef struct _ZP_REGISTRY_RENAME_REQUEST_VIEW
 
 typedef const ZP_REGISTRY_RENAME_REQUEST_VIEW*
     PCZP_REGISTRY_RENAME_REQUEST_VIEW;
+
+typedef struct _ZP_REGISTRY_SECURITY_REQUEST_VIEW
+{
+    ZP_REGISTRY_ROOT Root;
+    ZP_STRING_VIEW Path;
+    ZP_STRING_VIEW Sddl;
+} ZP_REGISTRY_SECURITY_REQUEST_VIEW, *PZP_REGISTRY_SECURITY_REQUEST_VIEW;
+
+typedef const ZP_REGISTRY_SECURITY_REQUEST_VIEW*
+    PCZP_REGISTRY_SECURITY_REQUEST_VIEW;
 
 typedef struct _ZP_REGISTRY_KEY_RECORD
 {
@@ -292,5 +304,22 @@ ZpRegistry_DecodeRenameRequest(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_REGISTRY_RENAME_REQUEST_VIEW Request);
+
+NTSTATUS
+ZpRegistry_EncodeSecurityRequest(
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_opt_(SddlLength) PCWCH Sddl,
+    _In_ ULONG SddlLength,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpRegistry_DecodeSecurityRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_REGISTRY_SECURITY_REQUEST_VIEW Request);
 
 EXTERN_C_END

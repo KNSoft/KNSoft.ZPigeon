@@ -23,6 +23,17 @@ internal static class ManagementWebApi
         });
         app.MapPost("/api/file/info", async (PathRequest request) =>
             await server.QueryFileAsync(request.Path));
+        app.MapPost("/api/file/security", async (PathRequest request) => new
+        {
+            Sddl = await server.QueryFileSecurityAsync(request.Path)
+        });
+        app.MapPost("/api/file/security/set", async (SecurityDescriptorRequest request) =>
+            await server.SetFileSecurityAsync(request.Path, request.Sddl));
+        app.MapPost("/api/security/account", async (SecurityAccountRequest request) => new
+        {
+            Value = request.Sid ? await server.ResolveAccountSidAsync(request.Value) :
+                                  await server.ResolveAccountNameAsync(request.Value)
+        });
         app.MapPost("/api/file/hash", async (FileHashRequest request) =>
             await server.HashFileAsync(request.Path, request.Algorithm));
         app.MapPost("/api/file/delete", async (PathRequest request) =>
@@ -289,6 +300,8 @@ internal static class ManagementWebApi
 }
 
 internal sealed record PathRequest(string Path);
+internal sealed record SecurityDescriptorRequest(string Path, string Sddl);
+internal sealed record SecurityAccountRequest(string Value, bool Sid);
 internal sealed record FilePageRequest(string? Path, string? EnumerationId);
 internal sealed record FileRenameRequest(string Path, string NewPath);
 internal sealed record FileHashRequest(string Path, FileHashAlgorithm Algorithm);

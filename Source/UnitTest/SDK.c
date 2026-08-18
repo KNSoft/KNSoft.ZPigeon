@@ -1282,6 +1282,7 @@ TEST_FUNC(SDKContract)
     TEST_OK(SDKTest_AuthenticationRoundTrip());
     TEST_OK(SDKTest_OrderedConcurrentRequests());
     RtlInitializeSRWLock(&SystemLoopback.Client.FileEnumerationLock);
+    InitializeListHead(&SystemLoopback.Client.FileEnumerations);
     SystemLoopback.Client.NextFileEnumerationId = 1;
     SystemLoopback.Client.State = ZpClientStateReady;
     TEST_OK(NT_SUCCESS(ZpServerConnection_Initialize(
@@ -1474,8 +1475,8 @@ TEST_FUNC(SDKContract)
                 SDKTest_FilePageLoopbackCallback,
                 &SystemLoopback,
                 &Request)) &&
-            ZpStatus_IsSuccess(SystemLoopback.FileStatus) &&
-            SystemLoopback.Client.FileEnumeration != NULL);
+             ZpStatus_IsSuccess(SystemLoopback.FileStatus) &&
+             SystemLoopback.Client.FileEnumerationCount == 1);
     TEST_OK(NT_SUCCESS(ZpServer_EnumerateFilesPage(
                 (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
                 L"C:\\ZPigeon.Does.Not.Exist",
@@ -1485,10 +1486,11 @@ TEST_FUNC(SDKContract)
                 SDKTest_FilePageLoopbackCallback,
                 &SystemLoopback,
                 &Request)) &&
-            SDK_STATUS_IS(SystemLoopback.FileStatus,
-                          STATUS_OBJECT_NAME_NOT_FOUND) &&
-            SystemLoopback.Client.FileEnumeration == NULL);
+             SDK_STATUS_IS(SystemLoopback.FileStatus,
+                           STATUS_OBJECT_NAME_NOT_FOUND) &&
+             SystemLoopback.Client.FileEnumerationCount == 1);
     ZpFile_ResetEnumeration(&SystemLoopback.Client);
+    TEST_OK(SystemLoopback.Client.FileEnumerationCount == 0);
     ZpServerConnection_Close(&SystemLoopback.Connection,
                               ZpStatus_FromNtStatus(
                                   STATUS_CONNECTION_DISCONNECTED));

@@ -48,6 +48,7 @@ typedef USHORT ZP_ADMINISTRATION_KIND, *PZP_ADMINISTRATION_KIND;
 #define ZpAdministrationKindWlanInterface ((ZP_ADMINISTRATION_KIND)16)
 #define ZpAdministrationKindWlanNetwork ((ZP_ADMINISTRATION_KIND)17)
 #define ZpAdministrationKindWlanProfile ((ZP_ADMINISTRATION_KIND)18)
+#define ZpAdministrationKindEnvironmentVariable ((ZP_ADMINISTRATION_KIND)19)
 
 typedef USHORT ZP_ADMINISTRATION_ACTION, *PZP_ADMINISTRATION_ACTION;
 

@@ -20,6 +20,7 @@ TEST_FUNC(ProtocolMessage)
     static const WCHAR RegistryPath[] = L"Software\\KNSoft";
     static const WCHAR RegistryValueName[] = L"Enabled";
     static const WCHAR RegistryNewName[] = L"Active";
+    static const WCHAR RegistrySddl[] = L"D:P(A;;KA;;;BA)";
     static const BYTE RegistryData[] = { 1, 2, 3, 4 };
     ZP_MODULE_RECORD Modules[] = {
         { 1, 1 },
@@ -220,6 +221,7 @@ TEST_FUNC(ProtocolMessage)
     ZP_REGISTRY_SET_VALUE_VIEW RegistrySetValue;
     ZP_REGISTRY_KEY_REQUEST_VIEW RegistryKeyRequest;
     ZP_REGISTRY_RENAME_REQUEST_VIEW RegistryRenameRequest;
+    ZP_REGISTRY_SECURITY_REQUEST_VIEW RegistrySecurityRequest;
     ZP_REGISTRY_KEY_RECORD RegistryKeys[] = {
         { L"Alpha", 5, 100, FALSE },
         { L"Beta", 4, 200, TRUE }
@@ -1276,8 +1278,26 @@ TEST_FUNC(ProtocolMessage)
                 &RegistryRenameRequest)) &&
             RegistryRenameRequest.Name.Length ==
                 ARRAYSIZE(RegistryValueName) - 1 &&
-            RegistryRenameRequest.NewName.Length ==
-                ARRAYSIZE(RegistryNewName) - 1);
+             RegistryRenameRequest.NewName.Length ==
+                 ARRAYSIZE(RegistryNewName) - 1);
+    TEST_OK(NT_SUCCESS(ZpRegistry_EncodeSecurityRequest(
+                           ZpRegistryCurrentUser,
+                           RegistryPath,
+                           ARRAYSIZE(RegistryPath) - 1,
+                           RegistrySddl,
+                           ARRAYSIZE(RegistrySddl) - 1,
+                           Buffer,
+                           sizeof(Buffer),
+                           &Length)) &&
+            NT_SUCCESS(ZpRegistry_DecodeSecurityRequest(
+                Buffer,
+                Length,
+                &RegistrySecurityRequest)) &&
+            RegistrySecurityRequest.Root == ZpRegistryCurrentUser &&
+            RegistrySecurityRequest.Path.Length ==
+                ARRAYSIZE(RegistryPath) - 1 &&
+            RegistrySecurityRequest.Sddl.Length ==
+                ARRAYSIZE(RegistrySddl) - 1);
     TEST_OK(NT_SUCCESS(ZpTerminal_EncodeCreate(120,
                                                30,
                                                L"cmd.exe /Q",

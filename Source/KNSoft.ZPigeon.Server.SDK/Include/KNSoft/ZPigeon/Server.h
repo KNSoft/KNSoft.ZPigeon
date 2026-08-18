@@ -126,6 +126,52 @@ ZpServer_QueryFile(
 
 NTSTATUS
 NTAPI
+ZpServer_QueryFileSecurity(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_STRING_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_SetFileSecurity(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(SddlLength) PCWCH Sddl,
+    _In_ ULONG SddlLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ResolveAccountName(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_STRING_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ResolveAccountSid(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(SidLength) PCWCH Sid,
+    _In_ ULONG SidLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_STRING_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_EnumerateFilesPage(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_reads_opt_(PathLength) PCWCH Path,
@@ -619,6 +665,32 @@ ZpServer_QueryRegistryValue(
     _In_ ULONG ValueNameLength,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REGISTRY_VALUE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryRegistrySecurity(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REGISTRY_VALUE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_SetRegistrySecurity(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_REGISTRY_ROOT Root,
+    _In_reads_opt_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(SddlLength) PCWCH Sddl,
+    _In_ ULONG SddlLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 

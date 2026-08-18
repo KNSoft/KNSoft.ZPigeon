@@ -70,6 +70,37 @@ public sealed partial class NativeServer
         return completion.Task;
     }
 
+    public Task<RegistryValue> QueryRegistrySecurityAsync(
+        RegistryRoot root,
+        string path)
+    {
+        var completion = new TaskCompletionSource<RegistryValue>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = GCHandle.Alloc(completion);
+        var status = NativeMethods.QueryRegistrySecurity(
+            root,
+            path,
+            (uint)path.Length,
+            RegistryValueCallback,
+            GCHandle.ToIntPtr(handle));
+        if (status < 0)
+        {
+            handle.Free();
+            ThrowIfFailed(status);
+        }
+        return completion.Task;
+    }
+
+    public Task SetRegistrySecurityAsync(RegistryRoot root, string path, string sddl) =>
+        RunStatusAsync((callback, context) => NativeMethods.SetRegistrySecurity(
+            root,
+            path,
+            (uint)path.Length,
+            sddl,
+            (uint)sddl.Length,
+            callback,
+            context));
+
     public unsafe Task SetRegistryValueAsync(
         RegistryRoot root,
         string path,
@@ -379,6 +410,28 @@ internal static partial class NativeMethods
         string? name,
         uint nameLength,
         RegistryValueCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_QueryRegistrySecurity",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int QueryRegistrySecurity(
+        RegistryRoot root,
+        string path,
+        uint pathLength,
+        RegistryValueCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_SetRegistrySecurity",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int SetRegistrySecurity(
+        RegistryRoot root,
+        string path,
+        uint pathLength,
+        string sddl,
+        uint sddlLength,
+        StatusCallback callback,
         nint context);
 
     [LibraryImport(Library,

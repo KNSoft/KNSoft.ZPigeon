@@ -160,6 +160,14 @@ VOID
 
 typedef
 VOID
+(NTAPI *ZP_STRING_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_STRING_VIEW Value,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
 (NTAPI *ZP_FILE_VOLUME_CALLBACK)(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,

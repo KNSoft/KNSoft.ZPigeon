@@ -1,6 +1,7 @@
 ﻿#include "Client.h"
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
+#include "../../KNSoft.ZPigeon.Client.SDK/Core/Security.h"
 #include <stdlib.h>
 
 #define ZP_REGISTRY_SNAPSHOT_MAX_COUNT 65536
@@ -115,6 +116,87 @@ ZpRegistry_OpenKey(
         Status = Sys_RegOpenKey(Key, Access, &NativePath);
         Mem_Free(NativePath.Buffer);
     }
+    return Status;
+}
+
+static
+NTSTATUS
+ZpRegistry_QuerySecurity(
+    _In_ PCZP_REGISTRY_SECURITY_REQUEST_VIEW Request,
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    PUNICODE_STRING Sddl;
+    HANDLE Key;
+    NTSTATUS Status;
+
+    Status = ZpRegistry_OpenKey(Request->Root, &Request->Path, READ_CONTROL, &Key);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    Status = ZpSecurity_QueryDacl(Key, &Sddl);
+    NtClose(Key);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    Status = ZpRegistry_EncodeValue(REG_SZ,
+                                    Sddl->Buffer,
+                                    Sddl->Length,
+                                    NULL,
+                                    0,
+                                    ResponseLength);
+    if (!NT_SUCCESS(Status))
+    {
+        NT_FreeStringW(Sddl);
+        return Status;
+    }
+    *Response = Mem_Alloc(*ResponseLength);
+    if (*Response == NULL)
+    {
+        NT_FreeStringW(Sddl);
+        return STATUS_NO_MEMORY;
+    }
+    Status = ZpRegistry_EncodeValue(REG_SZ,
+                                    Sddl->Buffer,
+                                    Sddl->Length,
+                                    *Response,
+                                    *ResponseLength,
+                                    ResponseLength);
+    NT_FreeStringW(Sddl);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpRegistry_SetSecurity(
+    _In_ PCZP_REGISTRY_SECURITY_REQUEST_VIEW Request)
+{
+    PUNICODE_STRING Sddl;
+    HANDLE Key;
+    NTSTATUS Status;
+
+    if (Request->Sddl.Length > (MAXUSHORT - sizeof(WCHAR)) / sizeof(WCHAR))
+    {
+        return STATUS_NAME_TOO_LONG;
+    }
+    Sddl = NT_AllocStringW((USHORT)Request->Sddl.Length);
+    if (Sddl == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    RtlCopyMemory(Sddl->Buffer,
+                  Request->Sddl.Buffer,
+                  (SIZE_T)Request->Sddl.Length * sizeof(WCHAR));
+    Sddl->Buffer[Request->Sddl.Length] = UNICODE_NULL;
+    Status = ZpRegistry_OpenKey(Request->Root, &Request->Path, WRITE_DAC, &Key);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpSecurity_SetDacl(Key, Sddl->Buffer);
+        NtClose(Key);
+    }
+    NT_FreeStringW(Sddl);
     return Status;
 }
 
@@ -1025,6 +1107,7 @@ ZpRegistry_Execute(
     ZP_REGISTRY_SET_VALUE_VIEW SetValue;
     ZP_REGISTRY_KEY_REQUEST_VIEW KeyRequest;
     ZP_REGISTRY_RENAME_REQUEST_VIEW RenameRequest;
+    ZP_REGISTRY_SECURITY_REQUEST_VIEW SecurityRequest;
     PZP_REGISTRY_KEY_ENTRY KeyEntries;
     PZP_REGISTRY_VALUE_ENTRY ValueEntries;
     ULONG EntryCount, Start;
@@ -1109,6 +1192,25 @@ ZpRegistry_Execute(
         {
             Status = OperationId == ZP_REGISTRY_OPERATION_RENAME_KEY ? ZpRegistry_RenameKey(&RenameRequest) :
                                                                       ZpRegistry_RenameValue(&RenameRequest);
+        }
+        break;
+
+    case ZP_REGISTRY_OPERATION_QUERY_SECURITY:
+        Status = ZpRegistry_DecodeSecurityRequest(Payload,
+                                                  PayloadLength,
+                                                  &SecurityRequest);
+        return NT_SUCCESS(Status) ?
+                   ZpRegistry_QuerySecurity(&SecurityRequest,
+                                            Response,
+                                            ResponseLength) : Status;
+
+    case ZP_REGISTRY_OPERATION_SET_SECURITY:
+        Status = ZpRegistry_DecodeSecurityRequest(Payload,
+                                                  PayloadLength,
+                                                  &SecurityRequest);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpRegistry_SetSecurity(&SecurityRequest);
         }
         break;
 

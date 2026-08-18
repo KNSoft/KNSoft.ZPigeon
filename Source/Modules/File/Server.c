@@ -9,6 +9,7 @@ typedef union _ZP_SERVER_FILE_CALLBACK
     ZP_FILE_VOLUME_CALLBACK Volume;
     ZP_FILE_ENUMERATE_PAGE_CALLBACK Page;
     ZP_FILE_HASH_CALLBACK Hash;
+    ZP_STRING_CALLBACK String;
     ZP_REQUEST_STATUS_CALLBACK Status;
 } ZP_SERVER_FILE_CALLBACK;
 
@@ -17,6 +18,18 @@ typedef struct _ZP_SERVER_FILE_CONTEXT
     ZP_SERVER_FILE_CALLBACK Callback;
     PVOID Context;
 } ZP_SERVER_FILE_CONTEXT, *PZP_SERVER_FILE_CONTEXT;
+
+static
+NTSTATUS
+ZpServerFile_Send(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT OperationId,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _In_ ZP_REQUEST_COMPLETE_CALLBACK Complete,
+    _In_ PZP_SERVER_FILE_CONTEXT FileContext,
+    _Out_ ZP_REQUEST_HANDLE* Request);
 
 static
 VOID
@@ -57,6 +70,30 @@ ZpServerFile_StatusComplete(
         Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
     }
     FileContext->Callback.Status(Request, Status, FileContext->Context);
+    Mem_Free(FileContext);
+}
+
+static
+VOID
+NTAPI
+ZpServerFile_StringComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_SERVER_FILE_CONTEXT FileContext = Context;
+    ZP_STRING_VIEW Value;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(
+            ZpFile_DecodePath(Payload->Buffer, Payload->Length, &Value));
+    }
+    FileContext->Callback.String(Request,
+                                 Status,
+                                 ZpStatus_IsSuccess(Status) ? &Value : NULL,
+                                 FileContext->Context);
     Mem_Free(FileContext);
 }
 
@@ -189,6 +226,120 @@ ZpServerFile_EncodePath(
 
 static
 NTSTATUS
+ZpServerFile_SendStringRequest(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT OperationId,
+    _In_reads_(ValueLength) PCWCH Value,
+    _In_ ULONG ValueLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_STRING_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_SERVER_FILE_CONTEXT FileContext;
+    PBYTE Payload;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpServerFile_EncodePath(Value,
+                                     ValueLength,
+                                     &Payload,
+                                     &PayloadLength);
+    FileContext = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*FileContext)) : NULL;
+    if (NT_SUCCESS(Status) && FileContext == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        FileContext->Callback.String = Callback;
+        FileContext->Context = Context;
+        Status = ZpServerFile_Send(Connection,
+                                   OperationId,
+                                   TimeoutMilliseconds,
+                                   Payload,
+                                   PayloadLength,
+                                   ZpServerFile_StringComplete,
+                                   FileContext,
+                                   Request);
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpServerFile_SendPairStatusRequest(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ USHORT OperationId,
+    _In_reads_(FirstLength) PCWCH First,
+    _In_ ULONG FirstLength,
+    _In_reads_(SecondLength) PCWCH Second,
+    _In_ ULONG SecondLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_SERVER_FILE_CONTEXT FileContext;
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Status = ZpFile_EncodeRenameRequest(First,
+                                        FirstLength,
+                                        Second,
+                                        SecondLength,
+                                        NULL,
+                                        0,
+                                        &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodeRenameRequest(First,
+                                            FirstLength,
+                                            Second,
+                                            SecondLength,
+                                            Payload,
+                                            PayloadLength,
+                                            &PayloadLength);
+    }
+    FileContext = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*FileContext)) : NULL;
+    if (NT_SUCCESS(Status) && FileContext == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        FileContext->Callback.Status = Callback;
+        FileContext->Context = Context;
+        Status = ZpServerFile_Send(Connection,
+                                   OperationId,
+                                   TimeoutMilliseconds,
+                                   Payload,
+                                   PayloadLength,
+                                   ZpServerFile_StatusComplete,
+                                   FileContext,
+                                   Request);
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+static
+NTSTATUS
 ZpServerFile_Send(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ USHORT OperationId,
@@ -262,6 +413,94 @@ ZpServer_QueryFile(
     }
     Mem_Free(Payload);
     return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_QueryFileSecurity(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_STRING_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    return ZpServerFile_SendStringRequest(Connection,
+                                          ZP_FILE_OPERATION_QUERY_SECURITY,
+                                          Path,
+                                          PathLength,
+                                          TimeoutMilliseconds,
+                                          Callback,
+                                          Context,
+                                          Request);
+}
+
+NTSTATUS
+NTAPI
+ZpServer_SetFileSecurity(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_reads_(SddlLength) PCWCH Sddl,
+    _In_ ULONG SddlLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    return ZpServerFile_SendPairStatusRequest(Connection,
+                                              ZP_FILE_OPERATION_SET_SECURITY,
+                                              Path,
+                                              PathLength,
+                                              Sddl,
+                                              SddlLength,
+                                              TimeoutMilliseconds,
+                                              Callback,
+                                              Context,
+                                              Request);
+}
+
+NTSTATUS
+NTAPI
+ZpServer_ResolveAccountName(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_STRING_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    return ZpServerFile_SendStringRequest(Connection,
+                                          ZP_FILE_OPERATION_RESOLVE_ACCOUNT,
+                                          Name,
+                                          NameLength,
+                                          TimeoutMilliseconds,
+                                          Callback,
+                                          Context,
+                                          Request);
+}
+
+NTSTATUS
+NTAPI
+ZpServer_ResolveAccountSid(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(SidLength) PCWCH Sid,
+    _In_ ULONG SidLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_STRING_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    return ZpServerFile_SendStringRequest(Connection,
+                                          ZP_FILE_OPERATION_RESOLVE_SID,
+                                          Sid,
+                                          SidLength,
+                                          TimeoutMilliseconds,
+                                          Callback,
+                                          Context,
+                                          Request);
 }
 
 NTSTATUS

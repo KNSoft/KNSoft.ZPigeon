@@ -6,14 +6,14 @@ const TYPES=new Map([[0,'REG_NONE'],[1,'REG_SZ'],[2,'REG_EXPAND_SZ'],[3,'REG_BIN
 const EDIT_TYPES=[[1,'字符串值'],[2,'可扩充字符串值'],[3,'二进制值'],[4,'DWORD (32 位) 值'],[7,'多字符串值'],[11,'QWORD (64 位) 值']];
 
 export class RegistryEditor{
-  constructor(host,{call,notify}){
-    this.host=host;this.call=call;this.notify=notify;this.selected=null;this.values=[];this.valueRequest=0;
+  constructor(host,{call,notify,aclEditor}){
+    this.host=host;this.call=call;this.notify=notify;this.aclEditor=aclEditor;this.selected=null;this.values=[];this.valueRequest=0;
     host.innerHTML=`
       <div class="registry-toolbar">
         <div class="registry-address" data-role="address"></div>
       </div>
       <div class="registry-body"><aside class="registry-tree" tabindex="0"><ul data-role="tree"></ul></aside><div class="registry-list" tabindex="0"><table><thead><tr><th>名称</th><th>类型</th><th>数据</th></tr></thead><tbody data-role="values"></tbody></table><button class="registry-more" data-action="more" hidden>加载更多</button><div class="registry-empty" data-role="empty">请选择左侧注册表项</div></div></div>
-      <div class="context-menu" data-role="key-menu" hidden><button data-action="key-new">新建项</button><button data-action="key-rename">重命名</button><button data-action="key-delete" class="danger">删除</button></div>
+      <div class="context-menu" data-role="key-menu" hidden><button data-action="key-new">新建项</button><button data-action="key-rename">重命名</button><button data-action="key-delete" class="danger">删除</button><hr><button data-action="key-security">权限</button></div>
       <div class="context-menu" data-role="value-menu" hidden><button data-action="value-modify">修改</button><button data-action="value-new-1">新建字符串值</button><button data-action="value-new-2">新建可扩充字符串值</button><button data-action="value-new-3">新建二进制值</button><button data-action="value-new-4">新建 DWORD 值</button><button data-action="value-new-7">新建多字符串值</button><button data-action="value-new-11">新建 QWORD 值</button><button data-action="value-rename">重命名</button><button data-action="value-delete" class="danger">删除</button><button data-action="value-refresh">刷新</button></div>
       <dialog data-role="name-dialog"><form method="dialog"><h2 data-role="name-title"></h2><input data-role="name-input" class="dialog-input" maxlength="32767" required autocomplete="off"><div class="dialog-actions"><button value="cancel" formnovalidate>取消</button><button value="ok">确定</button></div></form></dialog>
       <dialog data-role="value-dialog"><form method="dialog"><h2 data-role="value-title"></h2><label>数值名称</label><input data-role="value-name" class="dialog-input" maxlength="32767" autocomplete="off"><label>数值类型</label><select data-role="value-type"></select><label data-role="base-label">基数</label><select data-role="value-base"><option value="16">十六进制</option><option value="10">十进制</option></select><label>数值数据</label><textarea data-role="value-data" class="registry-value-data" spellcheck="false"></textarea><p data-role="value-hint" class="status"></p><div class="dialog-actions"><button value="cancel">取消</button><button value="save">确定</button></div></form></dialog>`;
@@ -26,7 +26,7 @@ export class RegistryEditor{
   action(name){return this.host.querySelector(`[data-action="${name}"]`)}
   bind(){
     this.more.onclick=()=>this.loadValues(true);
-    this.action('key-new').onclick=()=>{this.hideMenus();this.newKey()};this.action('key-rename').onclick=()=>{this.hideMenus();this.renameKey()};this.action('key-delete').onclick=()=>{this.hideMenus();this.deleteKey()};
+    this.action('key-new').onclick=()=>{this.hideMenus();this.newKey()};this.action('key-rename').onclick=()=>{this.hideMenus();this.renameKey()};this.action('key-delete').onclick=()=>{this.hideMenus();this.deleteKey()};this.action('key-security').onclick=()=>{this.hideMenus();this.security()};
     this.action('value-modify').onclick=()=>{const value=this.contextValue;this.hideMenus();if(value)this.editValue(value)};for(const [type] of EDIT_TYPES)this.action(`value-new-${type}`).onclick=()=>{this.hideMenus();this.newValue(type)};this.action('value-rename').onclick=()=>{const value=this.contextValue;this.hideMenus();if(value)this.renameValue(value)};this.action('value-delete').onclick=()=>{const value=this.contextValue;this.hideMenus();if(value)this.deleteValue(value)};this.action('value-refresh').onclick=()=>{this.hideMenus();this.loadValues()};
     this.nameDialog.addEventListener('close',()=>this.finishName());this.valueDialog.addEventListener('close',()=>this.finishValue());this.$('value-type').onchange=()=>this.updateValueEditor();
     this.host.addEventListener('pointerdown',event=>{if(!event.target.closest('.context-menu'))this.hideMenus()});
@@ -105,6 +105,8 @@ export class RegistryEditor{
     const node=this.selected;if(!node?.parent||!confirm(`确定永久删除“${node.name}”及其所有子项和值吗？`))return;
     try{await this.call('/api/registry/key/delete',this.scope({path:node.path}));const parent=node.parent;this.select(parent);parent.loaded=false;await this.loadChildren(parent)}catch(error){this.notify(error)}
   }
+
+  security(){const node=this.selected;if(!node||!this.aclEditor)return;const scope={root:node.root,path:node.path};this.aclEditor.open({title:`${this.address.textContent} 的权限`,objectType:'registry',container:true,load:()=>this.call('/api/registry/key/security',scope),save:sddl=>this.call('/api/registry/key/security/set',{...scope,sddl})})}
 
   async newValue(type=1){
     if(!this.selected)return;const value={name:'新值 #1',type,data:new Uint8Array(),exists:false};this.openValueEditor('新建值',value,true);

@@ -124,6 +124,7 @@ ZpClient_Create(
     InitializeListHead(&Object->InboundRequests);
     InitializeListHead(&Object->LocalChannels);
     InitializeListHead(&Object->ExecutionJobs);
+    InitializeListHead(&Object->FileEnumerations);
     Object->NextLocalChannelId = 1;
     Object->NextFileEnumerationId = 1;
     Object->NextExecutionJobId = 1;

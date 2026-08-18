@@ -22,6 +22,7 @@
     <ClCompile Include="..\Modules\Administration\Client.c"><Filter>Modules\Administration</Filter></ClCompile>
     <ClCompile Include="Core\Channel.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="Core\Account.c"><Filter>Core</Filter></ClCompile>
+    <ClCompile Include="Core\Security.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="Core\Request.c"><Filter>Core</Filter></ClCompile>
     <ClCompile Include="..\Network\Connection.c"><Filter>Network</Filter></ClCompile>
     <ClCompile Include="Transport\Main.c"><Filter>Transport</Filter></ClCompile>
@@ -50,6 +51,7 @@
     <ClInclude Include="..\Modules\Administration\Wlan.inl"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="Core\Channel.h"><Filter>Core</Filter></ClInclude>
     <ClInclude Include="Core\Account.h"><Filter>Core</Filter></ClInclude>
+    <ClInclude Include="Core\Security.h"><Filter>Core</Filter></ClInclude>
     <ClInclude Include="..\Network\Authentication.inl"><Filter>Network</Filter></ClInclude>
     <ClInclude Include="..\Network\Config.inl"><Filter>Network</Filter></ClInclude>
     <ClInclude Include="..\Network\Connection.h"><Filter>Network</Filter></ClInclude>

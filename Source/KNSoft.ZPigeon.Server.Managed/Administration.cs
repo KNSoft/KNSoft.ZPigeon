@@ -98,7 +98,8 @@ public enum AdministrationKind : ushort
     SystemInformation,
     WlanInterface,
     WlanNetwork,
-    WlanProfile
+    WlanProfile,
+    EnvironmentVariable
 }
 
 public enum AdministrationAction : ushort

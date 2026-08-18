@@ -83,6 +83,7 @@
     <ClCompile Include="..\Modules\Administration\Client.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
     <ClCompile Include="Core\Channel.c" />
     <ClCompile Include="Core\Account.c" />
+    <ClCompile Include="Core\Security.c" />
     <ClCompile Include="Core\Request.c" />
     <ClCompile Include="..\Network\Connection.c">
       <ObjectFileName>$(IntDir)Network\</ObjectFileName>
@@ -113,6 +114,7 @@
     <ClInclude Include="..\Modules\Administration\Wlan.inl" />
     <ClInclude Include="Core\Channel.h" />
     <ClInclude Include="Core\Account.h" />
+    <ClInclude Include="Core\Security.h" />
     <ClInclude Include="..\Modules\EventLog\Client.h" />
     <ClInclude Include="..\Modules\Execution\Client.h" />
     <ClInclude Include="..\Modules\File\Client.h" />

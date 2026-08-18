@@ -2,6 +2,9 @@
 
 #define ZP_SYSTEM_INFORMATION_EDITABLE 0x00000001
 #define ZP_SYSTEM_INFORMATION_RESTART_REQUIRED 0x00000002
+#define ZP_ENVIRONMENT_USER 0x00000100
+#define ZP_ENVIRONMENT_SYSTEM 0x00000200
+#define ZP_ENVIRONMENT_EXPAND 0x00000400
 
 typedef struct _ZP_SYSTEM_REGISTRY_RECORD
 {
@@ -22,6 +25,9 @@ static const UNICODE_STRING ZpSystemProcessorKey = RTL_CONSTANT_STRING(
     L"\\Registry\\Machine\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0");
 static const UNICODE_STRING ZpSystemSecureBootKey = RTL_CONSTANT_STRING(
     L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control\\SecureBoot\\State");
+static const UNICODE_STRING ZpSystemEnvironmentKey = RTL_CONSTANT_STRING(
+    L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment");
+static const UNICODE_STRING ZpUserEnvironmentKey = RTL_CONSTANT_STRING(L"Environment");
 
 static
 NTSTATUS
@@ -153,6 +159,149 @@ ZpAdministration_AddSystemDword(
 }
 
 static
+NTSTATUS
+ZpAdministration_OpenEnvironment(
+    _In_ BOOLEAN User,
+    _In_ ACCESS_MASK Access,
+    _Out_ PHANDLE Key)
+{
+    HANDLE CurrentUser;
+    NTSTATUS Status;
+
+    if (!User)
+    {
+        return Sys_RegOpenKey(Key, Access, &ZpSystemEnvironmentKey);
+    }
+    Status = RtlOpenCurrentUser(KEY_READ, &CurrentUser);
+    if (NT_SUCCESS(Status))
+    {
+        Status = Sys_RegOpenKeyEx(Key, CurrentUser, Access, &ZpUserEnvironmentKey);
+        NtClose(CurrentUser);
+    }
+    return Status;
+}
+
+static
+NTSTATUS
+ZpAdministration_AddEnvironment(
+    _Inout_ PZP_ADMINISTRATION_BUILDER Builder,
+    _In_ BOOLEAN User)
+{
+    PKEY_VALUE_FULL_INFORMATION Information = NULL;
+    HANDLE Key;
+    PWSTR Identity = NULL, Name = NULL, Value = NULL;
+    PKEY_VALUE_FULL_INFORMATION NewInformation;
+    SIZE_T IdentitySize;
+    ULONG Index = 0, Length = 1024, Required, NameLength, ValueLength;
+    NTSTATUS Status;
+
+    Status = ZpAdministration_OpenEnvironment(User, KEY_QUERY_VALUE, &Key);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    Information = Mem_Alloc(Length);
+    if (Information == NULL)
+    {
+        NtClose(Key);
+        return STATUS_NO_MEMORY;
+    }
+    for (;; Index++)
+    {
+        for (;;)
+        {
+            Status = NtEnumerateValueKey(Key,
+                                         Index,
+                                         KeyValueFullInformation,
+                                         Information,
+                                         Length,
+                                         &Required);
+            if (Status != STATUS_BUFFER_OVERFLOW && Status != STATUS_BUFFER_TOO_SMALL)
+            {
+                break;
+            }
+            NewInformation = Mem_ReAlloc(Information, Required);
+            if (NewInformation == NULL)
+            {
+                Status = STATUS_NO_MEMORY;
+                break;
+            }
+            Information = NewInformation;
+            Length = Required;
+        }
+        if (Status == STATUS_NO_MORE_ENTRIES)
+        {
+            Status = STATUS_SUCCESS;
+            break;
+        }
+        if (!NT_SUCCESS(Status))
+        {
+            break;
+        }
+        if ((Information->Type != REG_SZ && Information->Type != REG_EXPAND_SZ) ||
+            Information->NameLength % sizeof(WCHAR) != 0 ||
+            Information->DataLength % sizeof(WCHAR) != 0)
+        {
+            continue;
+        }
+        NameLength = Information->NameLength / sizeof(WCHAR);
+        ValueLength = Information->DataLength / sizeof(WCHAR);
+        while (ValueLength != 0 &&
+               ((PCWCHAR)Add2Ptr(Information, Information->DataOffset))[ValueLength - 1] == UNICODE_NULL)
+        {
+            ValueLength--;
+        }
+        IdentitySize = ((SIZE_T)NameLength + 20) * sizeof(WCHAR);
+        Identity = Mem_Alloc(IdentitySize);
+        Name = Mem_Alloc(((SIZE_T)NameLength + 1) * sizeof(WCHAR));
+        Value = Mem_Alloc(((SIZE_T)ValueLength + 1) * sizeof(WCHAR));
+        if (Identity == NULL || Name == NULL || Value == NULL)
+        {
+            Status = STATUS_NO_MEMORY;
+            break;
+        }
+        _snwprintf_s(Identity,
+                     IdentitySize / sizeof(WCHAR),
+                     _TRUNCATE,
+                     User ? L"environment:user:%.*s" : L"environment:system:%.*s",
+                     NameLength,
+                     Information->Name);
+        RtlCopyMemory(Value,
+                      Add2Ptr(Information, Information->DataOffset),
+                      (SIZE_T)ValueLength * sizeof(WCHAR));
+        Value[ValueLength] = UNICODE_NULL;
+        RtlCopyMemory(Name, Information->Name, Information->NameLength);
+        Name[NameLength] = UNICODE_NULL;
+        Status = ZpAdministration_AddRecord(
+            Builder,
+            ZpAdministrationKindEnvironmentVariable,
+            Information->Type,
+            ZP_SYSTEM_INFORMATION_EDITABLE |
+                (User ? ZP_ENVIRONMENT_USER : ZP_ENVIRONMENT_SYSTEM) |
+                (Information->Type == REG_EXPAND_SZ ? ZP_ENVIRONMENT_EXPAND : 0),
+            0,
+            Identity,
+            Name,
+            User ? L"用户环境变量" : L"系统环境变量",
+            Value);
+        Mem_Free(Value);
+        Mem_Free(Name);
+        Mem_Free(Identity);
+        Value = Name = Identity = NULL;
+        if (!NT_SUCCESS(Status))
+        {
+            break;
+        }
+    }
+    Mem_Free(Value);
+    Mem_Free(Name);
+    Mem_Free(Identity);
+    Mem_Free(Information);
+    NtClose(Key);
+    return Status;
+}
+
+static
 ZP_STATUS
 ZpAdministration_EnumerateSystem(
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
@@ -256,7 +405,7 @@ ZpAdministration_EnumerateSystem(
                                                  L"时区",
                                                  L"区域",
                                                  TimeZone.TimeZoneKeyName,
-                                                 0,
+                                                 ZP_SYSTEM_INFORMATION_EDITABLE,
                                                  0);
     }
     if (NT_SUCCESS(Status))
@@ -267,7 +416,13 @@ ZpAdministration_EnumerateSystem(
             ZpAdministration_FreeBuilder(&Builder);
             return ZpStatus_FromCode(ZpStatusWin32, Error);
         }
-        Status = ZpAdministration_AddSystemValue(&Builder, L"locale", L"系统区域", L"区域", Buffer, 0, 0);
+        Status = ZpAdministration_AddSystemValue(&Builder,
+                                                 L"locale",
+                                                 L"系统区域",
+                                                 L"区域",
+                                                 Buffer,
+                                                 ZP_SYSTEM_INFORMATION_EDITABLE,
+                                                 0);
     }
     if (NT_SUCCESS(Status))
     {
@@ -328,6 +483,8 @@ ZpAdministration_EnumerateSystem(
                                                  L"固件",
                                                  FALSE);
     }
+    if (NT_SUCCESS(Status)) Status = ZpAdministration_AddEnvironment(&Builder, TRUE);
+    if (NT_SUCCESS(Status)) Status = ZpAdministration_AddEnvironment(&Builder, FALSE);
     if (NT_SUCCESS(Status)) Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
     ZpAdministration_FreeBuilder(&Builder);
     return ZpStatus_FromNtStatus(Status);
@@ -341,12 +498,15 @@ ZpAdministration_ControlSystem(
     static const UNICODE_STRING RegisteredOwner = RTL_CONSTANT_STRING(L"RegisteredOwner");
     static const UNICODE_STRING RegisteredOrganization = RTL_CONSTANT_STRING(L"RegisteredOrganization");
     PCUNICODE_STRING ValueName;
+    UNICODE_STRING EnvironmentName;
+    BOOLEAN User;
     PWSTR Identity, Argument;
     HANDLE Key;
     NTSTATUS Status;
     DWORD Error;
 
-    if (Control->Action != ZpAdministrationActionConfigure)
+    if (Control->Action != ZpAdministrationActionConfigure &&
+        Control->Action != ZpAdministrationActionDelete)
     {
         return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
     }
@@ -365,7 +525,37 @@ ZpAdministration_ControlSystem(
         Mem_Free(Identity);
         return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
-    if (wcscmp(Identity, L"computerName") == 0)
+    if (wcsncmp(Identity, L"environment:user:", 17) == 0 ||
+        wcsncmp(Identity, L"environment:system:", 19) == 0)
+    {
+        User = Identity[12] == L'u';
+        RtlInitUnicodeString(&EnvironmentName, Identity + (User ? 17 : 19));
+        if (EnvironmentName.Length == 0)
+        {
+            Status = STATUS_INVALID_PARAMETER;
+        }
+        else
+        {
+            Status = ZpAdministration_OpenEnvironment(User, KEY_SET_VALUE, &Key);
+            if (NT_SUCCESS(Status))
+            {
+                Status = Control->Action == ZpAdministrationActionDelete ?
+                             NtDeleteValueKey(Key, &EnvironmentName) :
+                             NtSetValueKey(Key,
+                                           &EnvironmentName,
+                                           0,
+                                           Control->Secret.Length != 0 ? REG_EXPAND_SZ : REG_SZ,
+                                           Argument,
+                                           (Control->Argument.Length + 1) * sizeof(WCHAR));
+                NtClose(Key);
+            }
+        }
+    }
+    else if (Control->Action != ZpAdministrationActionConfigure)
+    {
+        Status = STATUS_NOT_SUPPORTED;
+    }
+    else if (wcscmp(Identity, L"computerName") == 0)
     {
         if (!SetComputerNameExW(ComputerNamePhysicalDnsHostname, Argument))
         {
@@ -375,6 +565,44 @@ ZpAdministration_ControlSystem(
             return ZpStatus_FromCode(ZpStatusWin32, Error);
         }
         Status = STATUS_SUCCESS;
+    }
+    else if (wcscmp(Identity, L"locale") == 0)
+    {
+        LCID Locale;
+
+        Status = RtlLocaleNameToLcid(Argument, &Locale, 0);
+        if (NT_SUCCESS(Status))
+        {
+            Status = NtSetDefaultLocale(FALSE, Locale);
+        }
+    }
+    else if (wcscmp(Identity, L"timeZone") == 0)
+    {
+        DYNAMIC_TIME_ZONE_INFORMATION TimeZone;
+        DWORD Index = 0;
+
+        for (;; Index++)
+        {
+            Error = EnumDynamicTimeZoneInformation(Index, &TimeZone);
+            if (Error != ERROR_SUCCESS)
+            {
+                Status = Error == ERROR_NO_MORE_ITEMS ? STATUS_OBJECT_NAME_NOT_FOUND :
+                                                        NTSTATUS_FROM_WIN32(Error);
+                break;
+            }
+            if (_wcsicmp(TimeZone.TimeZoneKeyName, Argument) == 0)
+            {
+                if (!SetDynamicTimeZoneInformation(&TimeZone))
+                {
+                    Error = GetLastError();
+                    Mem_Free(Argument);
+                    Mem_Free(Identity);
+                    return ZpStatus_FromCode(ZpStatusWin32, Error);
+                }
+                Status = STATUS_SUCCESS;
+                break;
+            }
+        }
     }
     else
     {

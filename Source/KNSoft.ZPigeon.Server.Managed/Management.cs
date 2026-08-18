@@ -8,6 +8,7 @@ public sealed partial class NativeServer
     private static readonly NativeMethods.FileInfoCallback FileInfoCallback = CompleteFileInfo;
     private static readonly NativeMethods.FileHashCallback FileHashCallback = CompleteFileHash;
     private static readonly NativeMethods.FileVolumeCallback FileVolumeCallback = CompleteFileVolume;
+    private static readonly NativeMethods.StringCallback StringCallback = CompleteString;
     private static readonly NativeMethods.ProcessListCallback ProcessListCallback = CompleteProcessList;
     private static readonly NativeMethods.ProcessInfoCallback ProcessInfoCallback = CompleteProcessInfo;
     private static readonly NativeMethods.ProcessDumpCallback ProcessDumpCallback = CompleteProcessDump;
@@ -29,6 +30,36 @@ public sealed partial class NativeServer
             path,
             (uint)path.Length,
             FileInfoCallback,
+            context));
+
+    public Task<string> QueryFileSecurityAsync(string path) =>
+        RunManagementAsync<string>(context => NativeMethods.QueryFileSecurity(
+            path,
+            (uint)path.Length,
+            StringCallback,
+            context));
+
+    public Task SetFileSecurityAsync(string path, string sddl) =>
+        RunStatusAsync((callback, context) => NativeMethods.SetFileSecurity(
+            path,
+            (uint)path.Length,
+            sddl,
+            (uint)sddl.Length,
+            callback,
+            context));
+
+    public Task<string> ResolveAccountNameAsync(string name) =>
+        RunManagementAsync<string>(context => NativeMethods.ResolveAccountName(
+            name,
+            (uint)name.Length,
+            StringCallback,
+            context));
+
+    public Task<string> ResolveAccountSidAsync(string sid) =>
+        RunManagementAsync<string>(context => NativeMethods.ResolveAccountSid(
+            sid,
+            (uint)sid.Length,
+            StringCallback,
             context));
 
     public Task<FileHash> HashFileAsync(string path, FileHashAlgorithm algorithm) =>
@@ -253,6 +284,17 @@ public sealed partial class NativeServer
                                           FileTime(creationTime),
                                           FileTime(lastAccessTime),
                                           FileTime(lastWriteTime)));
+    }
+
+    private static void CompleteString(ZpStatus status, nint value, uint valueLength, nint context)
+    {
+        var completion = GetCompletion<string>(context);
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        completion.SetResult(Marshal.PtrToStringUni(value, (int)valueLength) ?? string.Empty);
     }
 
     private static void CompleteFileHash(
@@ -768,6 +810,9 @@ internal static partial class NativeMethods
         nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void StringCallback(ZpStatus status, nint value, uint valueLength, nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void ProcessListCallback(ZpStatus status, nint records, uint recordCount, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
@@ -969,6 +1014,44 @@ internal static partial class NativeMethods
         EntryPoint = "ZpNative_QueryFile",
         StringMarshalling = StringMarshalling.Utf16)]
     internal static partial int QueryFile(string path, uint pathLength, FileInfoCallback callback, nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_QueryFileSecurity",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int QueryFileSecurity(
+        string path,
+        uint pathLength,
+        StringCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_SetFileSecurity",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int SetFileSecurity(
+        string path,
+        uint pathLength,
+        string sddl,
+        uint sddlLength,
+        StatusCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_ResolveAccountName",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int ResolveAccountName(
+        string name,
+        uint nameLength,
+        StringCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_ResolveAccountSid",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int ResolveAccountSid(
+        string sid,
+        uint sidLength,
+        StringCallback callback,
+        nint context);
 
     [LibraryImport(Library,
         EntryPoint = "ZpNative_QueryFileVolume",
