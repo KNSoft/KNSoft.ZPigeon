@@ -4,12 +4,14 @@
 #define ZP_WLAN_NETWORK_HAS_PROFILE 0x00000002
 #define ZP_WLAN_NETWORK_CONNECTABLE 0x00000004
 #define ZP_WLAN_NETWORK_SECURE 0x00000008
+#define ZP_WLAN_NETWORK_PLAINTEXT_SUPPORTED 0x00000010
 
 typedef DWORD (WINAPI* ZP_WLAN_OPEN_HANDLE)(DWORD, PVOID, PDWORD, PHANDLE);
 typedef DWORD (WINAPI* ZP_WLAN_CLOSE_HANDLE)(HANDLE, PVOID);
 typedef DWORD (WINAPI* ZP_WLAN_ENUM_INTERFACES)(HANDLE, PVOID, PWLAN_INTERFACE_INFO_LIST*);
 typedef DWORD (WINAPI* ZP_WLAN_GET_NETWORKS)(HANDLE, const GUID*, DWORD, PVOID, PWLAN_AVAILABLE_NETWORK_LIST*);
 typedef DWORD (WINAPI* ZP_WLAN_GET_PROFILES)(HANDLE, const GUID*, PVOID, PWLAN_PROFILE_INFO_LIST*);
+typedef DWORD (WINAPI* ZP_WLAN_GET_PROFILE)(HANDLE, const GUID*, LPCWSTR, PVOID, LPWSTR*, PDWORD, PDWORD);
 typedef DWORD (WINAPI* ZP_WLAN_CONNECT)(HANDLE, const GUID*, const WLAN_CONNECTION_PARAMETERS*, PVOID);
 typedef DWORD (WINAPI* ZP_WLAN_DISCONNECT)(HANDLE, const GUID*, PVOID);
 typedef DWORD (WINAPI* ZP_WLAN_DELETE_PROFILE)(HANDLE, const GUID*, LPCWSTR, PVOID);
@@ -23,6 +25,7 @@ typedef struct _ZP_WLAN_API
     ZP_WLAN_ENUM_INTERFACES EnumInterfaces;
     ZP_WLAN_GET_NETWORKS GetNetworks;
     ZP_WLAN_GET_PROFILES GetProfiles;
+    ZP_WLAN_GET_PROFILE GetProfile;
     ZP_WLAN_CONNECT Connect;
     ZP_WLAN_DISCONNECT Disconnect;
     ZP_WLAN_DELETE_PROFILE DeleteProfile;
@@ -41,6 +44,7 @@ ZpAdministration_LoadWlan(
     Api->EnumInterfaces = (ZP_WLAN_ENUM_INTERFACES)GetProcAddress(Api->Module, "WlanEnumInterfaces");
     Api->GetNetworks = (ZP_WLAN_GET_NETWORKS)GetProcAddress(Api->Module, "WlanGetAvailableNetworkList");
     Api->GetProfiles = (ZP_WLAN_GET_PROFILES)GetProcAddress(Api->Module, "WlanGetProfileList");
+    Api->GetProfile = (ZP_WLAN_GET_PROFILE)GetProcAddress(Api->Module, "WlanGetProfile");
     Api->Connect = (ZP_WLAN_CONNECT)GetProcAddress(Api->Module, "WlanConnect");
     Api->Disconnect = (ZP_WLAN_DISCONNECT)GetProcAddress(Api->Module, "WlanDisconnect");
     Api->DeleteProfile = (ZP_WLAN_DELETE_PROFILE)GetProcAddress(Api->Module, "WlanDeleteProfile");
@@ -147,7 +151,8 @@ ZpAdministration_AddWlanNetworks(
         Flags = (Network->dwFlags & WLAN_AVAILABLE_NETWORK_CONNECTED ? ZP_WLAN_NETWORK_CONNECTED : 0) |
                 (Network->dwFlags & WLAN_AVAILABLE_NETWORK_HAS_PROFILE ? ZP_WLAN_NETWORK_HAS_PROFILE : 0) |
                 (Network->bNetworkConnectable ? ZP_WLAN_NETWORK_CONNECTABLE : 0) |
-                (Network->bSecurityEnabled ? ZP_WLAN_NETWORK_SECURE : 0);
+                (Network->bSecurityEnabled ? ZP_WLAN_NETWORK_SECURE : 0) |
+                (Api->GetProfile != NULL ? ZP_WLAN_NETWORK_PLAINTEXT_SUPPORTED : 0);
         Status = ZpAdministration_AddRecord(
             Builder,
             ZpAdministrationKindWlanNetwork,
@@ -260,6 +265,103 @@ CleanupModule:
     FreeLibrary(Api.Module);
     if (Error != ERROR_SUCCESS) return ZpStatus_FromCode(ZpStatusWin32, Error);
     return ZpStatus_FromNtStatus(Status);
+}
+
+static
+VOID
+ZpAdministration_DecodeXmlText(
+    _Inout_ PWSTR Text)
+{
+    PWSTR Read = Text, Write = Text;
+
+    while (*Read != UNICODE_NULL)
+    {
+        if (*Read == L'&')
+        {
+            if (wcsncmp(Read, L"&amp;", 5) == 0) { *Write++ = L'&'; Read += 5; continue; }
+            if (wcsncmp(Read, L"&lt;", 4) == 0) { *Write++ = L'<'; Read += 4; continue; }
+            if (wcsncmp(Read, L"&gt;", 4) == 0) { *Write++ = L'>'; Read += 4; continue; }
+            if (wcsncmp(Read, L"&quot;", 6) == 0) { *Write++ = L'"'; Read += 6; continue; }
+            if (wcsncmp(Read, L"&apos;", 6) == 0) { *Write++ = L'\''; Read += 6; continue; }
+        }
+        *Write++ = *Read++;
+    }
+    *Write = UNICODE_NULL;
+}
+
+static
+ZP_STATUS
+ZpAdministration_QueryWlanProfile(
+    _In_ PCZP_STRING_VIEW IdentityView,
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    ZP_ADMINISTRATION_BUILDER Builder = { 0 };
+    ZP_WLAN_API Api;
+    UNICODE_STRING GuidString;
+    PWSTR Identity, Profile, Xml, Start, End;
+    HANDLE Handle;
+    GUID InterfaceGuid;
+    DWORD Version, Flags = WLAN_PROFILE_GET_PLAINTEXT_KEY, Access, Error, CleanupError;
+    NTSTATUS Status;
+
+    Identity = ZpAdministration_CopyView(IdentityView);
+    if (Identity == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    Profile = wcschr(Identity, L'|');
+    if (Profile != NULL) *Profile++ = UNICODE_NULL;
+    RtlInitUnicodeString(&GuidString, Identity);
+    Status = RtlGUIDFromString(&GuidString, &InterfaceGuid);
+    if (!NT_SUCCESS(Status) || Profile == NULL || *Profile == UNICODE_NULL)
+    {
+        Mem_Free(Identity);
+        return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+    }
+    Error = ZpAdministration_LoadWlan(&Api);
+    if (Error != ERROR_SUCCESS) goto CleanupIdentity;
+    if (Api.GetProfile == NULL)
+    {
+        Error = ERROR_NOT_SUPPORTED;
+        goto CleanupModule;
+    }
+    Error = Api.OpenHandle(2, NULL, &Version, &Handle);
+    if (Error != ERROR_SUCCESS) goto CleanupModule;
+    Error = Api.GetProfile(Handle, &InterfaceGuid, Profile, NULL, &Xml, &Flags, &Access);
+    if (Error == ERROR_SUCCESS)
+    {
+        Start = wcsstr(Xml, L"<keyMaterial>");
+        Start = Start != NULL ? Start + ARRAYSIZE(L"<keyMaterial>") - 1 : NULL;
+        End = Start != NULL ? wcsstr(Start, L"</keyMaterial>") : NULL;
+        if (End == NULL)
+        {
+            Error = ERROR_NOT_FOUND;
+        }
+        else
+        {
+            *End = UNICODE_NULL;
+            ZpAdministration_DecodeXmlText(Start);
+            Profile[-1] = L'|';
+            Status = ZpAdministration_AddRecord(&Builder,
+                                                  ZpAdministrationKindWlanProfile,
+                                                  0,
+                                                  0,
+                                                  0,
+                                                  Identity,
+                                                  Profile,
+                                                  NULL,
+                                                  Start);
+            if (NT_SUCCESS(Status)) Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
+            if (!NT_SUCCESS(Status)) Error = RtlNtStatusToDosError(Status);
+        }
+        Api.FreeMemory(Xml);
+    }
+    ZpAdministration_FreeBuilder(&Builder);
+    CleanupError = Api.CloseHandle(Handle, NULL);
+    if (Error == ERROR_SUCCESS && CleanupError != ERROR_SUCCESS) Error = CleanupError;
+CleanupModule:
+    FreeLibrary(Api.Module);
+CleanupIdentity:
+    Mem_Free(Identity);
+    return ZpStatus_FromCode(ZpStatusWin32, Error);
 }
 
 static

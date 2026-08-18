@@ -150,7 +150,8 @@ ZpServer_QueryAdministration(
 
     if (Callback == NULL ||
         (OperationId != ZP_ADMINISTRATION_OPERATION_QUERY_CERTIFICATE &&
-         OperationId != ZP_ADMINISTRATION_OPERATION_WAIT_CLIPBOARD))
+         OperationId != ZP_ADMINISTRATION_OPERATION_WAIT_CLIPBOARD &&
+         OperationId != ZP_ADMINISTRATION_OPERATION_QUERY_WLAN_PROFILE))
     {
         return STATUS_INVALID_PARAMETER;
     }

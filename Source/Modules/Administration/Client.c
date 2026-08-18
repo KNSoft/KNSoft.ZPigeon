@@ -246,6 +246,12 @@ ZpAdministration_Execute(
             return NT_SUCCESS(Status) ?
                        ZpAdministration_WaitClipboard(&Identity, Response, ResponseLength) :
                        ZpStatus_FromNtStatus(Status);
+
+        case ZP_ADMINISTRATION_OPERATION_QUERY_WLAN_PROFILE:
+            Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
+            return NT_SUCCESS(Status) ?
+                       ZpAdministration_QueryWlanProfile(&Identity, Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(Status);
     }
     Status = ZpAdministration_DecodeControl(Request, RequestLength, &Control);
     if (!NT_SUCCESS(Status)) return ZpStatus_FromNtStatus(Status);

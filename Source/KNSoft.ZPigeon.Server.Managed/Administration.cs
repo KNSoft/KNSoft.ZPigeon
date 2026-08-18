@@ -92,7 +92,8 @@ public enum AdministrationOperation : ushort
     ControlCertificate,
     EnumerateClipboard,
     ControlClipboard,
-    WaitClipboard
+    WaitClipboard,
+    QueryWlanProfile
 }
 
 public enum AdministrationKind : ushort
