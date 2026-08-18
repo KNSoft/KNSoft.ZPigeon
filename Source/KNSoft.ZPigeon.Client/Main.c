@@ -87,6 +87,11 @@ ZpClient_GetModuleLogName(
         case ZP_BROWSER_MODULE_ID: return L"browser.log";
         case ZP_WMI_MODULE_ID: return L"wmi.log";
         case ZP_ADMINISTRATION_MODULE_ID:
+            if (OperationId >= ZP_ADMINISTRATION_OPERATION_ENUMERATE_CLIPBOARD &&
+                OperationId <= ZP_ADMINISTRATION_OPERATION_WAIT_CLIPBOARD)
+            {
+                return L"clipboard.log";
+            }
             return OperationId >= ZP_ADMINISTRATION_OPERATION_ENUMERATE_USERS &&
                    OperationId <= ZP_ADMINISTRATION_OPERATION_CONTROL_WLAN ?
                        AdministrationLogs[(OperationId - 1) / 2] : L"administration.log";

@@ -360,6 +360,10 @@ internal static class ManagementWebApi
                           AdministrationOperation.ControlWlan);
         MapAdministration(app, server, "certificates", AdministrationOperation.EnumerateCertificates,
                           AdministrationOperation.ControlCertificate);
+        MapAdministration(app, server, "clipboard", AdministrationOperation.EnumerateClipboard,
+                          AdministrationOperation.ControlClipboard);
+        app.MapPost("/api/clipboard/wait", async (AdministrationIdentityRequest request) =>
+            await server.QueryAdministrationAsync(AdministrationOperation.WaitClipboard, request.Identity));
         app.MapPost("/api/certificates/details", async (AdministrationIdentityRequest request) =>
         {
             var records = await server.QueryAdministrationAsync(

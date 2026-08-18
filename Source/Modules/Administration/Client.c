@@ -1,6 +1,6 @@
 ﻿#include "Client.h"
 
-#include <KNSoft/MakeLifeEasier/Memory/Core.h>
+#include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 #define COBJMACROS
 #include <netfw.h>
 #include <oleauto.h>
@@ -159,6 +159,7 @@ typedef const VOID* PCVOID;
 #include "System.inl"
 #include "Wlan.inl"
 #include "Certificate.inl"
+#include "Clipboard.inl"
 
 ZP_STATUS
 ZpAdministration_Execute(
@@ -229,10 +230,21 @@ ZpAdministration_Execute(
                        ZpAdministration_EnumerateCertificates(Response, ResponseLength) :
                        ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
 
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_CLIPBOARD:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateClipboard(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
         case ZP_ADMINISTRATION_OPERATION_QUERY_CERTIFICATE:
             Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
             return NT_SUCCESS(Status) ?
                        ZpAdministration_QueryCertificate(&Identity, Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(Status);
+
+        case ZP_ADMINISTRATION_OPERATION_WAIT_CLIPBOARD:
+            Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
+            return NT_SUCCESS(Status) ?
+                       ZpAdministration_WaitClipboard(&Identity, Response, ResponseLength) :
                        ZpStatus_FromNtStatus(Status);
     }
     Status = ZpAdministration_DecodeControl(Request, RequestLength, &Control);
@@ -271,6 +283,9 @@ ZpAdministration_Execute(
 
         case ZP_ADMINISTRATION_OPERATION_CONTROL_CERTIFICATE:
             return ZpAdministration_ControlCertificate(&Control);
+
+        case ZP_ADMINISTRATION_OPERATION_CONTROL_CLIPBOARD:
+            return ZpAdministration_ControlClipboard(&Control);
     }
     return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
 }

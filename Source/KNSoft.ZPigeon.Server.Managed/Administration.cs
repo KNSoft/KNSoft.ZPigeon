@@ -89,7 +89,10 @@ public enum AdministrationOperation : ushort
     ControlWlan,
     EnumerateCertificates,
     QueryCertificate,
-    ControlCertificate
+    ControlCertificate,
+    EnumerateClipboard,
+    ControlClipboard,
+    WaitClipboard
 }
 
 public enum AdministrationKind : ushort
@@ -116,7 +119,9 @@ public enum AdministrationKind : ushort
     CertificateStore,
     Certificate,
     CertificateDetails,
-    CertificateChain
+    CertificateChain,
+    ClipboardFormat,
+    ClipboardState
 }
 
 public enum AdministrationAction : ushort
