@@ -1201,7 +1201,8 @@ SDKIntegration_DeleteCertificateKey(
 
 static
 USHORT
-SDKIntegration_GetFreePort(VOID)
+SDKIntegration_GetFreePort(
+    _In_ ZP_TRANSPORT_TYPE Transport)
 {
     WSADATA WinsockData;
     SOCKADDR_IN Address = { 0 };
@@ -1213,7 +1214,9 @@ SDKIntegration_GetFreePort(VOID)
     {
         return 0;
     }
-    Socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    Socket = socket(AF_INET,
+                    Transport == ZpTransportTcp ? SOCK_STREAM : SOCK_DGRAM,
+                    Transport == ZpTransportTcp ? IPPROTO_TCP : IPPROTO_UDP);
     if (Socket == INVALID_SOCKET)
     {
         goto Cleanup;
@@ -1236,7 +1239,11 @@ Cleanup:
     return Port;
 }
 
-TEST_FUNC(SDKQuicIntegration)
+static
+VOID
+SDKIntegration_Run(
+    _Inout_ UNITTEST_RESULT* TEST_PARAMETER_RESULT,
+    _In_ ZP_TRANSPORT_TYPE Transport)
 {
     static const WCHAR ServerName[] = L"localhost";
     static const WCHAR MissingServiceName[] =
@@ -1267,8 +1274,8 @@ TEST_FUNC(SDKQuicIntegration)
         { ZP_EVENT_LOG_MODULE_ID, ZP_EVENT_LOG_MODULE_VERSION },
         { ZP_REGISTRY_MODULE_ID, ZP_REGISTRY_MODULE_VERSION }
     };
-    ZP_ENDPOINT Endpoint = { ZpTransportQuic, L"127.0.0.1", 0, ServerName, NULL };
-    ZP_LISTENER_ENDPOINT Listener = { ZpTransportQuic, L"127.0.0.1", 0, NULL };
+    ZP_ENDPOINT Endpoint = { Transport, L"127.0.0.1", 0, ServerName, NULL };
+    ZP_LISTENER_ENDPOINT Listener = { Transport, L"127.0.0.1", 0, NULL };
     ZP_SERVER_DEPLOYMENT Deployment = { ServerName, NULL };
     ZP_CLIENT_CONFIG ClientConfig = { 0 };
     ZP_SERVER_CONFIG ServerConfig = { 0 };
@@ -1384,7 +1391,7 @@ TEST_FUNC(SDKQuicIntegration)
     }
 
     Certificate = SDKIntegration_CreateCertificate(&CertificateStore);
-    Endpoint.Port = Listener.Port = SDKIntegration_GetFreePort();
+    Endpoint.Port = Listener.Port = SDKIntegration_GetFreePort(Transport);
     if (Certificate == NULL || Endpoint.Port == 0)
     {
         goto Cleanup;
@@ -1439,7 +1446,7 @@ TEST_FUNC(SDKQuicIntegration)
     {
         goto Cleanup;
     }
-    ((PZP_CLIENT_OBJECT)Client)->QuicTransport.ExternalKey = IdentityKey;
+    ((PZP_CLIENT_OBJECT)Client)->ExternalIdentityKey = IdentityKey;
     Status = ZpClient_Start(Client);
     if (!NT_SUCCESS(Status))
     {
@@ -1462,6 +1469,11 @@ TEST_FUNC(SDKQuicIntegration)
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         TestContext.ClientPongToken != 0x0102030405060708)
     {
+        goto Cleanup;
+    }
+    if (Transport == ZpTransportTcp)
+    {
+        Result = TRUE;
         goto Cleanup;
     }
 
@@ -2755,4 +2767,25 @@ Cleanup:
         }
     }
     TEST_OK(Result);
+}
+
+TEST_FUNC(SDKQuicIntegration)
+{
+    UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGC);
+    UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGV);
+    SDKIntegration_Run(TEST_PARAMETER_RESULT, ZpTransportQuic);
+}
+
+TEST_FUNC(SDKTcpIntegration)
+{
+    UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGC);
+    UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGV);
+    SDKIntegration_Run(TEST_PARAMETER_RESULT, ZpTransportTcp);
+}
+
+TEST_FUNC(SDKUdpIntegration)
+{
+    UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGC);
+    UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGV);
+    SDKIntegration_Run(TEST_PARAMETER_RESULT, ZpTransportUdp);
 }

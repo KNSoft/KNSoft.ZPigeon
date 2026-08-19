@@ -104,5 +104,5 @@ LOGICAL
 ZpConfig_IsTransportValid(
     _In_ ZP_TRANSPORT_TYPE Transport)
 {
-    return Transport >= ZpTransportQuic && Transport <= ZpTransportWss;
+    return Transport >= ZpTransportQuic && Transport < ZpTransportCount;
 }

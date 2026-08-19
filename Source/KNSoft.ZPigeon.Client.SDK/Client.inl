@@ -5,6 +5,8 @@
 
 #include "../Network/Transport.h"
 #include "Transport/Quic.h"
+#include "Transport/Tcp.h"
+#include "Transport/Udp.h"
 
 typedef struct _ZP_CLIENT_OBJECT
 {
@@ -26,9 +28,11 @@ typedef struct _ZP_CLIENT_OBJECT
     ULONG LocalChannelCount;
     ULONG ExecutionJobCount;
     ULONG FileEnumerationCount;
+    ZP_MODULE_RECORD ActiveModules[ZP_MODULE_MAX_COUNT];
+    USHORT ActiveModuleCount;
     ZP_CLIENT_CONFIG Config;
-    PCZP_TRANSPORT_OPERATIONS TransportOperations[ZpTransportWss + 1];
-    PVOID TransportContexts[ZpTransportWss + 1];
+    PCZP_TRANSPORT_OPERATIONS TransportOperations[ZpTransportCount];
+    PVOID TransportContexts[ZpTransportCount];
     ZP_TRANSPORT_TYPE ActiveTransport;
     ULONG EndpointIndex;
     ULONG NextEndpointIndex;
@@ -38,7 +42,10 @@ typedef struct _ZP_CLIENT_OBJECT
     LOGICAL StartPending;
     LOGICAL RetryPending;
     ULONG RetryDelay;
+    NCRYPT_KEY_HANDLE ExternalIdentityKey;
     ZP_CLIENT_QUIC_TRANSPORT QuicTransport;
+    ZP_CLIENT_TCP_TRANSPORT TcpTransport;
+    ZP_CLIENT_UDP_TRANSPORT UdpTransport;
 } ZP_CLIENT_OBJECT, *PZP_CLIENT_OBJECT;
 
 NTSTATUS

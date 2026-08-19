@@ -169,6 +169,8 @@ ZpClient_Create(
                   Config->DeploymentRootCertificate,
                   Config->DeploymentRootCertificateLength);
     ZpClientQuic_Configure(Object);
+    ZpClientTcp_Configure(Object);
+    ZpClientUdp_Configure(Object);
     *Client = (ZP_CLIENT_HANDLE)Object;
     return STATUS_SUCCESS;
 }
@@ -617,6 +619,7 @@ ZpClient_NotifyState(
     if (State == ZpClientStateAuthenticating)
     {
         Object->HighestInboundRequestId = 0;
+        Object->ActiveModuleCount = 0;
     }
     else if (State == ZpClientStateReady)
     {
@@ -722,6 +725,8 @@ ZpClient_Close(
         Object->RetryTimer = NULL;
     }
     ZpClientQuic_Uninitialize(&Object->QuicTransport);
+    ZpClientTcp_Uninitialize(&Object->TcpTransport);
+    ZpClientUdp_Uninitialize(&Object->UdpTransport);
     ZpExecution_Cleanup(Object);
     Mem_Free(Object);
     return STATUS_SUCCESS;

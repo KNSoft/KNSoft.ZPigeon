@@ -18,8 +18,10 @@ typedef struct _ZP_CHANNEL_OBJECT* ZP_CHANNEL_HANDLE;
 typedef enum _ZP_TRANSPORT_TYPE
 {
     ZpTransportQuic = 1,
-    ZpTransportTlsTcp = 2,
-    ZpTransportWss = 3
+    ZpTransportTcp,
+    ZpTransportUdp,
+    ZpTransportWss,
+    ZpTransportCount
 } ZP_TRANSPORT_TYPE, *PZP_TRANSPORT_TYPE;
 
 typedef enum _ZP_CONNECTION_PHASE

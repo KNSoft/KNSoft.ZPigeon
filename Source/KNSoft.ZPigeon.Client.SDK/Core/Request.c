@@ -110,9 +110,9 @@ ZpClientInbound_HasModule(
 {
     USHORT Index;
 
-    for (Index = 0; Index < Object->QuicTransport.ModuleCount; Index++)
+    for (Index = 0; Index < Object->ActiveModuleCount; Index++)
     {
-        if (Object->QuicTransport.Modules[Index].ModuleId == ModuleId)
+        if (Object->ActiveModules[Index].ModuleId == ModuleId)
         {
             return TRUE;
         }

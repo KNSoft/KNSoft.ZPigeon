@@ -48,9 +48,18 @@
     <ClCompile Include="Core\Channel.c" />
     <ClCompile Include="Core\Connection.c" />
     <ClCompile Include="Core\Request.c" />
+    <ClCompile Include="Core\Session.c" />
     <ClCompile Include="..\Network\Connection.c">
       <ObjectFileName>$(IntDir)Network\</ObjectFileName>
     </ClCompile>
+    <ClCompile Include="..\Network\Tls.c">
+      <ObjectFileName>$(IntDir)Network\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\Network\Tcp.c">
+      <ObjectFileName>$(IntDir)Network\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="..\Network\Dtls.c"><ObjectFileName>$(IntDir)Network\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Network\Udp.c"><ObjectFileName>$(IntDir)Network\</ObjectFileName></ClCompile>
     <ClCompile Include="..\SDK\Channel.c"><ObjectFileName>$(IntDir)SDK\</ObjectFileName></ClCompile>
     <ClCompile Include="..\SDK\Request.c"><ObjectFileName>$(IntDir)SDK\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\EventLog\Server.c"><ObjectFileName>$(IntDir)Modules\EventLog\</ObjectFileName></ClCompile>
@@ -66,20 +75,29 @@
     <ClCompile Include="..\Modules\Audio\Server.c"><ObjectFileName>$(IntDir)Modules\Audio\</ObjectFileName></ClCompile>
     <ClCompile Include="Transport\Main.c" />
     <ClCompile Include="Transport\Quic.c" />
+    <ClCompile Include="Transport\Tcp.c" />
+    <ClCompile Include="Transport\Udp.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Core\Channel.h" />
     <ClInclude Include="Core\Connection.h" />
+    <ClInclude Include="Core\Session.h" />
     <ClInclude Include="..\Network\Config.inl" />
     <ClInclude Include="..\Network\Authentication.inl" />
     <ClInclude Include="..\Network\Connection.h" />
     <ClInclude Include="..\Network\Quic.inl" />
     <ClInclude Include="..\Network\Transport.h" />
+    <ClInclude Include="..\Network\Tls.h" />
+    <ClInclude Include="..\Network\Tcp.h" />
+    <ClInclude Include="..\Network\Dtls.h" />
+    <ClInclude Include="..\Network\Udp.h" />
     <ClInclude Include="..\SDK\Channel.h" />
     <ClInclude Include="..\SDK\Request.h" />
     <ClInclude Include="..\Include\KNSoft\ZPigeon\SDK.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Server.h" />
     <ClInclude Include="Transport\Quic.h" />
+    <ClInclude Include="Transport\Tcp.h" />
+    <ClInclude Include="Transport\Udp.h" />
     <ClInclude Include="Server.inl" />
   </ItemGroup>
   <ItemGroup>
