@@ -32,6 +32,7 @@ typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
         ZP_NATIVE_WINDOW_CAPTURE_CALLBACK WindowCapture;
         ZP_NATIVE_AUDIO_DEVICES_CALLBACK AudioDevices;
         ZP_NATIVE_AUDIO_SESSIONS_CALLBACK AudioSessions;
+        ZP_NATIVE_VIDEO_DEVICES_CALLBACK VideoDevices;
         ZP_NATIVE_SERVICE_LIST_CALLBACK ServiceList;
         ZP_NATIVE_SERVICE_INFO_CALLBACK ServiceInfo;
         ZP_NATIVE_ADMINISTRATION_CALLBACK Administration;
@@ -116,6 +117,19 @@ typedef struct _ZP_NATIVE_AUDIO_STREAM
     ZP_NATIVE_AUDIO_STREAM_CLOSE_CALLBACK CloseCallback;
     PVOID Context;
 } ZP_NATIVE_AUDIO_STREAM, *PZP_NATIVE_AUDIO_STREAM;
+
+typedef struct _ZP_NATIVE_VIDEO_STREAM
+{
+    RTL_SRWLOCK Lock;
+    volatile LONG ReferenceCount;
+    volatile LONG CallerClosed;
+    ZP_CONNECTION_HANDLE Connection;
+    ZP_CHANNEL_HANDLE Channel;
+    ZP_NATIVE_VIDEO_STREAM_OPEN_CALLBACK OpenCallback;
+    ZP_NATIVE_VIDEO_STREAM_DATA_CALLBACK DataCallback;
+    ZP_NATIVE_VIDEO_STREAM_CLOSE_CALLBACK CloseCallback;
+    PVOID Context;
+} ZP_NATIVE_VIDEO_STREAM, *PZP_NATIVE_VIDEO_STREAM;
 
 static RTL_SRWLOCK ZpNativeLock = RTL_SRWLOCK_INIT;
 static ZP_SERVER_HANDLE ZpNativeServer;
@@ -936,6 +950,130 @@ ZpNative_AudioStreamCloseCallback(
     Stream->CloseCallback(Status, Stream->Context);
     ZpChannel_Close(Channel);
     ZpNative_ReleaseAudioStream(Stream);
+}
+
+static
+VOID
+NTAPI
+ZpNative_VideoDevicesCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_VIDEO_DEVICE_LIST_VIEW Devices,
+    _In_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_VIDEO_DEVICE_RECORD Records = NULL;
+    ZP_VIDEO_DEVICE_VIEW Device;
+    ULONG Count = 0, Index, Offset = 0;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        if (Devices == NULL)
+        {
+            Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
+        }
+        else
+        {
+            Count = Devices->Count;
+            Records = Count != 0 ? Mem_Alloc((SIZE_T)Count * sizeof(*Records)) : NULL;
+            if (Count != 0 && Records == NULL)
+            {
+                Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+            }
+            else
+            {
+                for (Index = 0; Index < Count; Index++)
+                {
+                    DecodeStatus = ZpVideo_GetNextDevice(Devices, &Offset, &Device);
+                    if (!NT_SUCCESS(DecodeStatus))
+                    {
+                        Status = ZpStatus_FromNtStatus(DecodeStatus);
+                        break;
+                    }
+                    Records[Index].Id = (PCWCH)Device.Id.Buffer;
+                    Records[Index].IdLength = Device.Id.Length;
+                    Records[Index].Name = (PCWCH)Device.Name.Buffer;
+                    Records[Index].NameLength = Device.Name.Length;
+                }
+            }
+        }
+    }
+    CallbackContext->Callback.VideoDevices(Status,
+                                            ZpStatus_IsSuccess(Status) ? Records : NULL,
+                                            ZpStatus_IsSuccess(Status) ? Count : 0,
+                                            CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+ZpNative_ReleaseVideoStream(
+    _In_ PZP_NATIVE_VIDEO_STREAM Stream)
+{
+    if (InterlockedDecrement(&Stream->ReferenceCount) == 0)
+    {
+        ZpConnection_Release(Stream->Connection);
+        Mem_Free(Stream);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_VideoStreamOpenCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_ PVOID Context)
+{
+    PZP_NATIVE_VIDEO_STREAM Stream = Context;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Stream->Channel = Channel;
+        Stream->ReferenceCount = 2;
+    }
+    Stream->OpenCallback(Status, ZpStatus_IsSuccess(Status) ? Stream : NULL, Stream->Context);
+    ZpRequest_Close(Request);
+    if (!ZpStatus_IsSuccess(Status))
+    {
+        ZpConnection_Release(Stream->Connection);
+        Mem_Free(Stream);
+    }
+}
+
+static
+VOID
+NTAPI
+ZpNative_VideoStreamDataCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ PCZP_BUFFER_VIEW Data,
+    _In_ PVOID Context)
+{
+    PZP_NATIVE_VIDEO_STREAM Stream = Context;
+
+    if (!Stream->DataCallback(Data->Buffer, Data->Length, Stream->Context)) ZpChannel_Cancel(Channel);
+}
+
+static
+VOID
+NTAPI
+ZpNative_VideoStreamCloseCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ZP_STATUS Status,
+    _In_ PVOID Context)
+{
+    PZP_NATIVE_VIDEO_STREAM Stream = Context;
+
+    RtlAcquireSRWLockExclusive(&Stream->Lock);
+    Stream->Channel = NULL;
+    RtlReleaseSRWLockExclusive(&Stream->Lock);
+    Stream->CloseCallback(Status, Stream->Context);
+    ZpChannel_Close(Channel);
+    ZpNative_ReleaseVideoStream(Stream);
 }
 
 static
@@ -1823,7 +1961,8 @@ ZpNative_Start(
         { ZP_TUNNEL_MODULE_ID, ZP_TUNNEL_MODULE_VERSION },
         { ZP_BROWSER_MODULE_ID, ZP_BROWSER_MODULE_VERSION },
         { ZP_WMI_MODULE_ID, ZP_WMI_MODULE_VERSION },
-        { ZP_AUDIO_MODULE_ID, ZP_AUDIO_MODULE_VERSION }
+        { ZP_AUDIO_MODULE_ID, ZP_AUDIO_MODULE_VERSION },
+        { ZP_VIDEO_MODULE_ID, ZP_VIDEO_MODULE_VERSION }
     };
     ZP_LISTENER_ENDPOINT Listener = {
         ZpTransportQuic,
@@ -3576,6 +3715,106 @@ ZpNative_CloseAudioStream(
     RtlReleaseSRWLockExclusive(&Stream->Lock);
     Status = Channel != NULL ? ZpChannel_Cancel(Channel) : STATUS_SUCCESS;
     ZpNative_ReleaseAudioStream(Stream);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumerateVideoDevices(
+    _In_ ZP_NATIVE_VIDEO_DEVICES_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.VideoDevices = Callback;
+    return ZpNative_SendStatusRequest(CallbackContext,
+                                      ZpServer_EnumerateVideoDevices(Connection,
+                                                                     ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                                                     ZpNative_VideoDevicesCallback,
+                                                                     CallbackContext,
+                                                                     &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_OpenVideoStream(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_ ULONG MaxDimension,
+    _In_ USHORT FrameRate,
+    _In_ USHORT Quality,
+    _In_ ZP_NATIVE_VIDEO_STREAM_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_VIDEO_STREAM_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_VIDEO_STREAM_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_VIDEO_STREAM Stream;
+    ZP_REQUEST_HANDLE Request;
+    NTSTATUS Status;
+
+    if (OpenCallback == NULL || DataCallback == NULL || CloseCallback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    Stream = Mem_Alloc(sizeof(*Stream));
+    if (Stream == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(Stream, sizeof(*Stream));
+    Stream->Connection = Connection;
+    Stream->OpenCallback = OpenCallback;
+    Stream->DataCallback = DataCallback;
+    Stream->CloseCallback = CloseCallback;
+    Stream->Context = Context;
+    Status = ZpServer_OpenVideoStream(Connection,
+                                      DeviceId,
+                                      DeviceIdLength,
+                                      MaxDimension,
+                                      FrameRate,
+                                      Quality,
+                                      ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                      ZpNative_VideoStreamOpenCallback,
+                                      ZpNative_VideoStreamDataCallback,
+                                      ZpNative_VideoStreamCloseCallback,
+                                      Stream,
+                                      &Request);
+    if (!NT_SUCCESS(Status))
+    {
+        ZpConnection_Release(Connection);
+        Mem_Free(Stream);
+    }
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_CloseVideoStream(
+    _In_ ZP_NATIVE_VIDEO_STREAM_HANDLE Stream)
+{
+    ZP_CHANNEL_HANDLE Channel;
+    NTSTATUS Status;
+
+    if (Stream == NULL) return STATUS_INVALID_HANDLE;
+    if (InterlockedExchange(&Stream->CallerClosed, TRUE)) return STATUS_INVALID_DEVICE_STATE;
+    RtlAcquireSRWLockExclusive(&Stream->Lock);
+    Channel = Stream->Channel;
+    Stream->Channel = NULL;
+    RtlReleaseSRWLockExclusive(&Stream->Lock);
+    Status = Channel != NULL ? ZpChannel_Cancel(Channel) : STATUS_SUCCESS;
+    ZpNative_ReleaseVideoStream(Stream);
     return Status;
 }
 

@@ -660,6 +660,31 @@ ZpServer_OpenAudioStream(
 
 NTSTATUS
 NTAPI
+ZpServer_EnumerateVideoDevices(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_VIDEO_DEVICES_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_OpenVideoStream(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_ ULONG MaxDimension,
+    _In_ USHORT FrameRate,
+    _In_ USHORT Quality,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_VIDEO_STREAM_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_EnumerateAdministration(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ USHORT OperationId,

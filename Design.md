@@ -449,7 +449,7 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 
 ## 9. 功能模块
 
-当前协议包含 14 个 Version 1 模块：
+当前协议包含 15 个 Version 1 模块：
 
 - `System`（ModuleId 1）：系统基础信息。
 - `Process`（ModuleId 2）：进程枚举、查询、控制、转储和内存读写。
@@ -465,6 +465,7 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 - `Browser`（ModuleId 12）：Edge/Chrome 探测、配置文件、浏览数据和 CDP 会话。
 - `Wmi`（ModuleId 13）：命名空间、类、实例和 WQL 查询。
 - `Audio`（ModuleId 14）：音频设备、会话、音量及输入输出流。
+- `Video`（ModuleId 15）：摄像头枚举、Media Foundation 采集、JPEG 编码和带背压的实时画面流。
 
 模块契约遵循以下规则：
 
@@ -518,6 +519,6 @@ QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接�
 
 ### 12.1 发布前仍需固定的规格
 
-1. 将 14 个现有模块公共头文件和 Codec 中已经实现的 Operation/Payload 契约整理为稳定 API 参考；
+1. 将 15 个现有模块公共头文件和 Codec 中已经实现的 Operation/Payload 契约整理为稳定 API 参考；
 2. 确定第一版 ABI 版本和后续结构扩展规则；
 3. 根据压力测试调整两端资源限制默认值及全局配额。

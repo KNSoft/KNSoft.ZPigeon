@@ -14,8 +14,25 @@
 #include <KNSoft/ZPigeon/System.h>
 #include <KNSoft/ZPigeon/Tunnel.h>
 #include <KNSoft/ZPigeon/Window.h>
+#include <KNSoft/ZPigeon/Video.h>
 
 EXTERN_C_START
+
+typedef
+VOID
+(NTAPI *ZP_VIDEO_DEVICES_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_VIDEO_DEVICE_LIST_VIEW Devices,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_VIDEO_STREAM_OPEN_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_opt_ PVOID Context);
 
 typedef
 VOID

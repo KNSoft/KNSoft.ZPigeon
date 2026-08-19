@@ -282,6 +282,8 @@ internal static class ManagementWebApi
             return Results.NoContent();
         });
         app.Map("/api/audio/stream", context => AudioWebSocket.RunAsync(context, server));
+        app.MapPost("/api/video/devices", async () => await server.EnumerateVideoDevicesAsync());
+        app.Map("/api/video/stream", context => VideoWebSocket.RunAsync(context, server));
         app.MapPost("/api/window/info", async (WindowIdentityRequest request) =>
             await server.QueryWindowAsync(ulong.Parse(request.Handle), request.ProcessId, request.ThreadId));
         app.MapPost("/api/window/image", async (WindowCaptureRequest request) =>

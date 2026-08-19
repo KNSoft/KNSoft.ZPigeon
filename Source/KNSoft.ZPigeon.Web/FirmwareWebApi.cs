@@ -13,6 +13,9 @@ internal static class FirmwareWebApi
 
     internal static void MapFirmwareApi(this WebApplication app, NativeServer server)
     {
+        app.MapPost("/api/firmware/bios", async () =>
+            (await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateSystem))
+                .Where(record => record.Identity is "firmware" or "secureBoot" || record.Description == "固件"));
         app.MapPost("/api/firmware/variables", async () =>
             await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateFirmwareVariables));
         app.MapPost("/api/firmware/cpuid", async () =>

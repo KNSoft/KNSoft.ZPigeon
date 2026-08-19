@@ -13,6 +13,7 @@
 #include "../../Modules/Terminal/Client.h"
 #include "../../Modules/Tunnel/Client.h"
 #include "../../Modules/Window/Client.h"
+#include "../../Modules/Video/Client.h"
 
 typedef struct _ZP_CLIENT_INBOUND_REQUEST
 {
@@ -137,6 +138,7 @@ ZpClientInbound_RequestCallback(
     PZP_CLIENT_TUNNEL_CHANNEL TunnelChannel = NULL;
     PZP_CLIENT_WINDOW_CAPTURE_CHANNEL WindowChannel = NULL;
     PZP_CLIENT_AUDIO_CHANNEL AudioChannel = NULL;
+    PZP_CLIENT_VIDEO_CHANNEL VideoChannel = NULL;
     ULONG PayloadLength = 0;
     NTSTATUS ModuleStatus, SendStatus = STATUS_CANCELLED;
     ZP_STATUS Status;
@@ -251,6 +253,17 @@ ZpClientInbound_RequestCallback(
                                  &AudioChannel);
         Response = AllocatedResponse;
     }
+    else if (Request->ModuleId == ZP_VIDEO_MODULE_ID)
+    {
+        Status = ZpVideo_Execute(Object,
+                                 Request->OperationId,
+                                 Request->Payload,
+                                 Request->PayloadLength,
+                                 &AllocatedResponse,
+                                 &PayloadLength,
+                                 &VideoChannel);
+        Response = AllocatedResponse;
+    }
     else if (Request->ModuleId == ZP_TUNNEL_MODULE_ID)
     {
         Status = ZpTunnel_Execute(Object,
@@ -346,6 +359,11 @@ ZpClientInbound_RequestCallback(
     if (AudioChannel != NULL)
     {
         ZpAudio_CommitChannel(AudioChannel,
+                              Respond && NT_SUCCESS(SendStatus));
+    }
+    if (VideoChannel != NULL)
+    {
+        ZpVideo_CommitChannel(VideoChannel,
                               Respond && NT_SUCCESS(SendStatus));
     }
     if (AllocatedResponse != NULL)

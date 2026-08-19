@@ -275,6 +275,46 @@ typedef const ZP_NATIVE_AUDIO_SESSION_RECORD* PCZP_NATIVE_AUDIO_SESSION_RECORD;
 
 typedef struct _ZP_NATIVE_AUDIO_STREAM* ZP_NATIVE_AUDIO_STREAM_HANDLE;
 
+typedef struct _ZP_NATIVE_VIDEO_DEVICE_RECORD
+{
+    PCWCH Id;
+    ULONG IdLength;
+    PCWCH Name;
+    ULONG NameLength;
+} ZP_NATIVE_VIDEO_DEVICE_RECORD, *PZP_NATIVE_VIDEO_DEVICE_RECORD;
+
+typedef const ZP_NATIVE_VIDEO_DEVICE_RECORD* PCZP_NATIVE_VIDEO_DEVICE_RECORD;
+
+typedef struct _ZP_NATIVE_VIDEO_STREAM* ZP_NATIVE_VIDEO_STREAM_HANDLE;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_VIDEO_DEVICES_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_VIDEO_DEVICE_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_VIDEO_STREAM_OPEN_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_NATIVE_VIDEO_STREAM_HANDLE Stream,
+    _In_opt_ PVOID Context);
+
+typedef
+BOOLEAN
+(NTAPI *ZP_NATIVE_VIDEO_STREAM_DATA_CALLBACK)(
+    _In_reads_bytes_(DataLength) const BYTE* Data,
+    _In_ ULONG DataLength,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_VIDEO_STREAM_CLOSE_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_opt_ PVOID Context);
+
 typedef
 VOID
 (NTAPI *ZP_NATIVE_AUDIO_DEVICES_CALLBACK)(
@@ -1094,6 +1134,33 @@ NTSTATUS
 NTAPI
 ZpNative_CloseAudioStream(
     _In_ ZP_NATIVE_AUDIO_STREAM_HANDLE Stream);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateVideoDevices(
+    _In_ ZP_NATIVE_VIDEO_DEVICES_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_OpenVideoStream(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_ ULONG MaxDimension,
+    _In_ USHORT FrameRate,
+    _In_ USHORT Quality,
+    _In_ ZP_NATIVE_VIDEO_STREAM_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_VIDEO_STREAM_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_VIDEO_STREAM_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_CloseVideoStream(
+    _In_ ZP_NATIVE_VIDEO_STREAM_HANDLE Stream);
 
 __declspec(dllexport)
 NTSTATUS
