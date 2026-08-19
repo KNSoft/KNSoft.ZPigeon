@@ -429,6 +429,21 @@ internal static class ManagementWebApi
                           AdministrationOperation.ControlSystem);
         MapAdministration(app, server, "wlan", AdministrationOperation.EnumerateWlan,
                           AdministrationOperation.ControlWlan);
+        MapAdministration(app, server, "network-shares/published",
+                          AdministrationOperation.EnumeratePublishedShares,
+                          AdministrationOperation.ControlPublishedShare);
+        MapAdministration(app, server, "network-shares/connections",
+                          AdministrationOperation.EnumerateNetworkConnections,
+                          AdministrationOperation.ControlNetworkConnection);
+        app.MapPost("/api/network-shares/published/query", async (AdministrationIdentityRequest request) =>
+            await server.QueryAdministrationAsync(AdministrationOperation.QueryPublishedShare, request.Identity));
+        MapAdministration(app, server, "network-adapters",
+                          AdministrationOperation.EnumerateNetworkAdapters,
+                          AdministrationOperation.ControlNetworkAdapter);
+        app.MapPost("/api/network-routes", async () =>
+            await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateNetworkRoutes));
+        app.MapPost("/api/network-endpoints", async () =>
+            await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateNetworkEndpoints));
         MapAdministration(app, server, "certificates", AdministrationOperation.EnumerateCertificates,
                           AdministrationOperation.ControlCertificate);
         app.MapPost("/api/credentials", async (HttpContext context) =>
@@ -490,6 +505,7 @@ internal static class ManagementWebApi
                 request.Secret);
             return Results.NoContent();
         });
+        app.MapFirmwareApi(server);
         MapAdministration(app, server, "clipboard", AdministrationOperation.EnumerateClipboard,
                           AdministrationOperation.ControlClipboard);
         app.MapPost("/api/clipboard/wait", async (AdministrationIdentityRequest request) =>

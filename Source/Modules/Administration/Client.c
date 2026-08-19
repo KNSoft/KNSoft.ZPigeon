@@ -2,6 +2,7 @@
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 #define COBJMACROS
+#include <ws2ipdef.h>
 #include <netfw.h>
 #include <oleauto.h>
 #include <powrprof.h>
@@ -9,6 +10,8 @@
 #include <windows.security.credentials.h>
 #include <wincred.h>
 #include <wlanapi.h>
+#include <KNSoft/FirmwareSpec/CPUID.Decode.h>
+#include <KNSoft/NDK/NT/Ex/Boot.h>
 #include <KNSoft/NDK/NT/Win32K/Win32KApi.h>
 
 typedef struct _ZP_ADMINISTRATION_BUILDER
@@ -164,6 +167,9 @@ typedef const VOID* PCVOID;
 #include "Certificate.inl"
 #include "Clipboard.inl"
 #include "Credential.inl"
+#include "Firmware.inl"
+#include "NetworkShare.inl"
+#include "NetworkStatus.inl"
 
 ZP_STATUS
 ZpAdministration_Execute(
@@ -244,6 +250,36 @@ ZpAdministration_Execute(
                        ZpAdministration_EnumerateCredentials(Response, ResponseLength) :
                        ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
 
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_FIRMWARE_VARIABLES:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateFirmwareVariables(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_PUBLISHED_SHARES:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumeratePublishedShares(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_NETWORK_CONNECTIONS:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateNetworkConnections(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_NETWORK_ADAPTERS:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateNetworkAdapters(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_NETWORK_ROUTES:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateNetworkRoutes(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_NETWORK_ENDPOINTS:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateNetworkEndpoints(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
         case ZP_ADMINISTRATION_OPERATION_QUERY_CERTIFICATE:
             Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
             return NT_SUCCESS(Status) ?
@@ -266,6 +302,18 @@ ZpAdministration_Execute(
             Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
             return NT_SUCCESS(Status) ?
                        ZpAdministration_QueryCredential(&Identity, Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(Status);
+
+        case ZP_ADMINISTRATION_OPERATION_QUERY_FIRMWARE:
+            Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
+            return NT_SUCCESS(Status) ?
+                       ZpAdministration_QueryFirmware(&Identity, Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(Status);
+
+        case ZP_ADMINISTRATION_OPERATION_QUERY_PUBLISHED_SHARE:
+            Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
+            return NT_SUCCESS(Status) ?
+                       ZpAdministration_QueryPublishedShare(&Identity, Response, ResponseLength) :
                        ZpStatus_FromNtStatus(Status);
     }
     Status = ZpAdministration_DecodeControl(Request, RequestLength, &Control);
@@ -310,6 +358,18 @@ ZpAdministration_Execute(
 
         case ZP_ADMINISTRATION_OPERATION_CONTROL_CREDENTIAL:
             return ZpAdministration_ControlCredential(&Control);
+
+        case ZP_ADMINISTRATION_OPERATION_CONTROL_FIRMWARE:
+            return ZpAdministration_ControlFirmware(&Control);
+
+        case ZP_ADMINISTRATION_OPERATION_CONTROL_PUBLISHED_SHARE:
+            return ZpAdministration_ControlPublishedShare(&Control);
+
+        case ZP_ADMINISTRATION_OPERATION_CONTROL_NETWORK_CONNECTION:
+            return ZpAdministration_ControlNetworkConnection(&Control);
+
+        case ZP_ADMINISTRATION_OPERATION_CONTROL_NETWORK_ADAPTER:
+            return ZpAdministration_ControlNetworkAdapter(&Control);
     }
     return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
 }

@@ -101,6 +101,21 @@ ZpClient_GetModuleLogName(
             {
                 return L"credential.log";
             }
+            if (OperationId >= ZP_ADMINISTRATION_OPERATION_ENUMERATE_FIRMWARE_VARIABLES &&
+                OperationId <= ZP_ADMINISTRATION_OPERATION_CONTROL_FIRMWARE)
+            {
+                return L"firmware.log";
+            }
+            if (OperationId >= ZP_ADMINISTRATION_OPERATION_ENUMERATE_PUBLISHED_SHARES &&
+                OperationId <= ZP_ADMINISTRATION_OPERATION_CONTROL_NETWORK_CONNECTION)
+            {
+                return L"network-share.log";
+            }
+            if (OperationId >= ZP_ADMINISTRATION_OPERATION_ENUMERATE_NETWORK_ADAPTERS &&
+                OperationId <= ZP_ADMINISTRATION_OPERATION_ENUMERATE_NETWORK_ENDPOINTS)
+            {
+                return L"network.log";
+            }
             return OperationId >= ZP_ADMINISTRATION_OPERATION_ENUMERATE_USERS &&
                    OperationId <= ZP_ADMINISTRATION_OPERATION_CONTROL_WLAN ?
                        AdministrationLogs[(OperationId - 1) / 2] : L"administration.log";

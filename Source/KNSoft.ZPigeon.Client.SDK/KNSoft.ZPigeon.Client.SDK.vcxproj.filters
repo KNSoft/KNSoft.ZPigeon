@@ -56,6 +56,9 @@
     <ClInclude Include="..\Modules\Administration\User.inl"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\Wlan.inl"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\Credential.inl"><Filter>Modules\Administration</Filter></ClInclude>
+    <ClInclude Include="..\Modules\Administration\Firmware.inl"><Filter>Modules\Administration</Filter></ClInclude>
+    <ClInclude Include="..\Modules\Administration\NetworkShare.inl"><Filter>Modules\Administration</Filter></ClInclude>
+    <ClInclude Include="..\Modules\Administration\NetworkStatus.inl"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="Core\Channel.h"><Filter>Core</Filter></ClInclude>
     <ClInclude Include="Core\Account.h"><Filter>Core</Filter></ClInclude>
     <ClInclude Include="Core\Security.h"><Filter>Core</Filter></ClInclude>

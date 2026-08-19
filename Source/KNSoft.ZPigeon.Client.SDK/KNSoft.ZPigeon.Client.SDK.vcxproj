@@ -120,6 +120,9 @@
     <ClInclude Include="..\Modules\Administration\User.inl" />
     <ClInclude Include="..\Modules\Administration\Wlan.inl" />
     <ClInclude Include="..\Modules\Administration\Credential.inl" />
+    <ClInclude Include="..\Modules\Administration\Firmware.inl" />
+    <ClInclude Include="..\Modules\Administration\NetworkShare.inl" />
+    <ClInclude Include="..\Modules\Administration\NetworkStatus.inl" />
     <ClInclude Include="Core\Channel.h" />
     <ClInclude Include="Core\Account.h" />
     <ClInclude Include="Core\Security.h" />
@@ -156,6 +159,7 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
+    <Import Project="..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets" Condition="Exists('..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets')" />
     <Import Project="..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets" Condition="Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" />
     <Import Project="..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets" Condition="Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" />
     <Import Project="..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets" Condition="Exists('..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets')" />
@@ -164,6 +168,7 @@
     <PropertyGroup>
       <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
     </PropertyGroup>
+    <Error Condition="!Exists('..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets'))" />
     <Error Condition="!Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets'))" />
     <Error Condition="!Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets'))" />
     <Error Condition="!Exists('..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets'))" />

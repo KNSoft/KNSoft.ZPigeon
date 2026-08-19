@@ -5,7 +5,7 @@ LOGICAL
 ZpAdministration_IsKindValid(
     _In_ ZP_ADMINISTRATION_KIND Kind)
 {
-    return Kind >= ZpAdministrationKindUser && Kind <= ZpAdministrationKindWebCredential;
+    return Kind >= ZpAdministrationKindUser && Kind <= ZpAdministrationKindUdpEndpoint;
 }
 
 static
@@ -13,7 +13,7 @@ LOGICAL
 ZpAdministration_IsActionValid(
     _In_ ZP_ADMINISTRATION_ACTION Action)
 {
-    return Action >= ZpAdministrationActionCreate && Action <= ZpAdministrationActionDisconnect;
+    return Action >= ZpAdministrationActionCreate && Action <= ZpAdministrationActionSetPermissions;
 }
 
 static

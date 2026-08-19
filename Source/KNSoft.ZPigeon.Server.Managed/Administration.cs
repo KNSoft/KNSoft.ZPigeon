@@ -96,7 +96,19 @@ public enum AdministrationOperation : ushort
     QueryWlanProfile,
     EnumerateCredentials,
     QueryCredential,
-    ControlCredential
+    ControlCredential,
+    EnumerateFirmwareVariables,
+    QueryFirmware,
+    ControlFirmware,
+    EnumeratePublishedShares,
+    QueryPublishedShare,
+    ControlPublishedShare,
+    EnumerateNetworkConnections,
+    ControlNetworkConnection,
+    EnumerateNetworkAdapters,
+    ControlNetworkAdapter,
+    EnumerateNetworkRoutes,
+    EnumerateNetworkEndpoints
 }
 
 public enum AdministrationKind : ushort
@@ -127,7 +139,19 @@ public enum AdministrationKind : ushort
     ClipboardFormat,
     ClipboardState,
     WindowsCredential,
-    WebCredential
+    WebCredential,
+    FirmwareVariable,
+    FirmwareBootEntry,
+    CpuidSnapshot,
+    SmbiosTable,
+    AcpiTable,
+    PublishedShare,
+    NetworkConnection,
+    NetworkAdapter,
+    NetworkAdapterAddress,
+    NetworkRoute,
+    TcpEndpoint,
+    UdpEndpoint
 }
 
 public enum CredentialStore : ushort
@@ -162,7 +186,8 @@ public enum AdministrationAction : ushort
     Firmware,
     Configure,
     Connect,
-    Disconnect
+    Disconnect,
+    SetPermissions
 }
 
 public sealed record AdministrationRecord(

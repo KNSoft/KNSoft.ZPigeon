@@ -1,6 +1,8 @@
 const DIRECTORY=0x10;
 const WELL_KNOWN=new Map([['SY','SYSTEM'],['BA','BUILTIN\\Administrators'],['BU','BUILTIN\\Users'],['WD','Everyone'],['AU','Authenticated Users'],['LS','LOCAL SERVICE'],['NS','NETWORK SERVICE'],['CO','CREATOR OWNER'],['CG','CREATOR GROUP'],['OW','OWNER RIGHTS'],['RC','RESTRICTED'],['AC','APPLICATION PACKAGE AUTHORITY\\ALL APPLICATION PACKAGES']]);
-const RIGHTS={file:[['0x001F01FF','完全控制'],['0x001301BF','修改'],['0x001200A9','读取和执行'],['0x00120089','读取'],['0x00120116','写入']],registry:[['KA','完全控制'],['KR','读取'],['KW','写入']]};
+const FILE_RIGHTS=[['0x001F01FF','完全控制'],['0x001301BF','修改'],['0x001200A9','读取和执行'],
+                   ['0x00120089','读取'],['0x00120116','写入']];
+const RIGHTS={file:FILE_RIGHTS,registry:[['KA','完全控制'],['KR','读取'],['KW','写入']],share:FILE_RIGHTS};
 
 export class RemoteFilePicker{
   constructor({call,notify}){
@@ -36,7 +38,7 @@ export class AclEditor{
 function parseSddl(value){const sections={};let current=null,start=0,depth=0;for(let index=0;index<value.length-1;index++){const character=value[index];if(character==='(')depth++;else if(character===')')depth--;if(depth===0&&'OGDS'.includes(character)&&value[index+1]===':'){if(current)sections[current]=value.slice(start,index);current=character;start=index+2;index++}}if(current)sections[current]=value.slice(start);const dacl=sections.D||'',first=dacl.indexOf('('),flags=first<0?dacl:dacl.slice(0,first),aces=[];for(const raw of splitAces(first<0?'':dacl.slice(first))){const fields=raw.slice(1,-1).split(';');aces.push({type:fields[0]||'',flags:fields[1]||'',rights:fields[2]||'',object:fields[3]||'',inheritObject:fields[4]||'',sid:fields[5]||'',extra:fields.slice(6),raw})}return{owner:sections.O||'',group:sections.G||'',daclFlags:flags,aces}}
 function splitAces(value){const result=[];let start=-1,depth=0;for(let index=0;index<value.length;index++){if(value[index]==='('){if(depth++===0)start=index}else if(value[index]===')'){if(--depth<0)throw new Error('DACL 格式无效');if(depth===0)result.push(value.slice(start,index+1))}else if(depth===0&&!/\s/.test(value[index]))throw new Error('DACL 格式无效')}if(depth!==0)throw new Error('DACL 格式无效');return result}
 function buildDacl(value){return`D:${value.daclFlags}${value.aces.map(ace=>ace.modified?`(${[ace.type,ace.flags,ace.rights,ace.object,ace.inheritObject,ace.sid,...ace.extra].join(';')})`:ace.raw).join('')}`}
-function rightName(type,value){const aliases=type==='file'?{FA:'完全控制',GA:'完全控制',FR:'读取',FW:'写入',GXGR:'读取和执行',GRGX:'读取和执行',FRFX:'读取和执行'}:{GA:'完全控制',GR:'读取',GW:'写入'};return aliases[value.toUpperCase()]||RIGHTS[type].find(item=>sameRight(item[0],value))?.[1]||value}
+function rightName(type,value){const aliases=type==='registry'?{GA:'完全控制',GR:'读取',GW:'写入'}:{FA:'完全控制',GA:'完全控制',FR:'读取',FW:'写入',GXGR:'读取和执行',GRGX:'读取和执行',FRFX:'读取和执行'};return aliases[value.toUpperCase()]||RIGHTS[type].find(item=>sameRight(item[0],value))?.[1]||value}
 function sameRight(left,right){if(!left||!right)return false;const a=left.toUpperCase(),b=right.toUpperCase();return a===b||a.startsWith('0X')&&b.startsWith('0X')&&Number.parseInt(a,16)===Number.parseInt(b,16)}
 function inheritName(type,flags){if(flags.includes('ID'))return'从父对象继承';const object=flags.includes('OI'),container=flags.includes('CI'),only=flags.includes('IO');if(type==='registry')return container?(only?'仅子项':'此项和子项'):'仅此项';if(object&&container)return only?'仅子文件夹和文件':'此对象、子文件夹和文件';if(container)return only?'仅子文件夹':'此对象和子文件夹';if(object)return only?'仅文件':'此对象和文件';return'仅此对象'}
 function normalizePath(value){const path=(value||'').trim().replace(/\//g,'\\').replace(/\\+$/,'');return/^[A-Za-z]:$/.test(path)?`${path}\\`:path}
