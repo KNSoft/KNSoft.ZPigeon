@@ -1,211 +1,90 @@
 # KNSoft.ZPigeon
 
-KNSoft.ZPigeon 是面向 Windows 10 及以上系统的远程管理项目。原生 SDK 使用纯 C；第一版使用 QUIC 与 TLS 1.3，提供持久化客户端身份、模块协商、异步 Request、流式 Channel，以及 System、Process、Service、File、Terminal、EventLog 和 Registry 模块。
+KNSoft.ZPigeon 是面向 Windows 10 及以上系统的远程管理平台。项目通过原生 Windows 能力提供覆盖系统、网络、存储、任务、硬件、软件和远程访问的统一 Web 管理界面。
 
-同一个 Solution 直接输出：
+## 项目优势
 
-- `KNSoft.ZPigeon.Protocol`：Transport 无关的帧、消息和模块 Codec；
-- `KNSoft.ZPigeon.Client.SDK`：被控端连接、重试、请求执行和本机管理操作；
-- `KNSoft.ZPigeon.Server.SDK`：管理端监听、认证、连接持有和异步操作发起。
-- `KNSoft.ZPigeon.Client.exe`：启动 Client SDK，连接本地 Server，并把网络及各模块日志分别写入同目录 `logs`；
-- `KNSoft.ZPigeon.Server.Native.dll`：供托管程序直接调用 Server SDK 的 C ABI 桥；
-- `KNSoft.ZPigeon.Server.Managed`：封装 Native DLL 的可复用 .NET Server SDK 与 Terminal 会话 API；
-- `KNSoft.ZPigeon.Web`：只负责本地回环 WebSocket 和 UI 的 C# Web 管理端。
+- 高效传输：以 QUIC 与 TLS 1.3 为主要传输路径，支持异步 Request、流式 Channel、背压控制、KeepAlive 和大文件分块传输。
+- 清晰架构：Transport、Connection、Protocol 和业务模块严格分层，Client 只负责执行，Server 统一发起控制。
+- 原生实现：核心使用纯 C，优先采用 KNSoft.NDK、NT 层接口和 KNSoft.MakeLifeEasier，减少不必要的包装与转换。
+- 安全优先：严格验证 Server 身份，Client 使用持久化 CNG 实例密钥；远程错误保留 NTSTATUS、Win32、Winsock、HRESULT、QUIC 等原始类型和代码。
+- 极简高效：不背负旧系统、未发布协议和历史兼容路径，直接使用 Windows 10 及以上系统能力。
+- 功能全面：通过同一管理端覆盖 Windows 主要管理能力，并提供可复用的 ACL、文件选择和十六进制编辑组件。
+- 易于部署：同一 Solution 构建原生 SDK、Client、Server 桥接层和 C# Web 管理端。
 
-ZPigeon 本身不生成 NuGet 包；三个原生依赖仍由现有 `packages.config` 提供。
+## 架构
 
-完整协议与安全模型见 [Design.md](Design.md)，当前实现状态见 [Progress.md](Progress.md)，第一版交付门槛见 [Release.md](Release.md)。
+- Protocol：定义传输无关的 Frame、消息、状态和模块 Codec。
+- Client SDK：运行于被控端，维护连接并执行 Server 下发的本机操作。
+- Server SDK：维护已认证 Client 连接并发起管理请求。
+- Server Native：向托管程序提供稳定的 C ABI。
+- Server Managed：封装可复用的 .NET 管理能力。
+- Web：提供本地回环管理 API 和可视化控制界面。
+- Transport：按 QUIC、TLS/TCP 和 WSS 边界设计；当前完整闭环以 QUIC 为主。
 
-> 产品角色固定为 Client 运行在被控主机、Server 作为管理端。所有现有管理模块均由 Server 发起、Client 本机执行；Client 不发起管理业务 Request。当前状态和后续入口见 [Handoff.md](Handoff.md)。
+Client 主动连接 Server，并接受 Server 的统一管理。
 
-## 构建与测试
+## 功能模块
 
-需要 Visual Studio 2026 C++ 工具链、Windows SDK 10.0.26100.0、.NET 10 SDK，以及项目 `packages.config` 中声明的 KNSoft.MakeLifeEasier、KNSoft.NDK 和 KNSoft.Quic 原生依赖。
+- 系统管理
+  - 系统信息：查看 Windows、计算机、系统配置和环境变量，并修改可编辑项目。
+  - 注册表：以树形界面浏览和管理注册表项、注册表值、ACL 及二进制数据。
+  - 用户：查看和管理本地用户账户。
+  - WMI：浏览命名空间、类和实例，并执行 WQL 查询。
+  - 更新：查看更新状态和安装历史，并可立即检查更新。
+  - 证书：管理当前用户和本地计算机证书存储。
+  - 凭据：管理 Windows 凭据和 Web 凭据。
+  - 事件查看器：浏览频道和事件，管理日志状态、属性和清除操作，并支持增量流式导出。
 
-在 Visual Studio Developer PowerShell 中执行：
+- 网络
+  - 端口转发：管理 TCP、UDP 及 RDP、CDP、WinDbg 等内置转发规则。
+  - 网络共享：管理本机发布的共享和连接到其他主机的共享。
+  - 网络适配器：查看接口状态、地址、速率和统计信息，并支持启用或禁用。
+  - 路由表：显示 IPv4 和 IPv6 路由、下一跃点、接口、跃点数及来源。
+  - 网络连接：显示 TCP、UDP、IPv4、IPv6 端点、连接状态和所属 PID。
+  - WLAN：查看无线网络和配置文件，执行连接管理并读取受支持的已保存密码。
+  - 防火墙：管理网络配置文件、入站规则和出站规则。
 
-```powershell
-msbuild Source\KNSoft.ZPigeon.slnx /t:Restore
-msbuild Source\KNSoft.ZPigeon.slnx /t:Rebuild /p:Configuration=Debug /p:Platform=x64 /m
-Source\OutDir\x64\Debug\UnitTest.exe -Run
-```
+- 存储管理
+  - 文件：提供接近资源管理器的目录树、分页浏览、搜索、传输、哈希、属性、ACL 和二进制编辑。
+  - 剪贴板：读取、编辑并监听用户剪贴板内容和格式变化。
 
-当前改动已通过 x64 Debug/Release 全 Solution Rebuild；Debug 332/332、Release 331/331 测试及两个配置的 ConsumerTest 均通过，并完成 x64 Debug 的 Web、Managed/Native Server、QUIC、Client 实际 localhost 冒烟。Debug 比 Release 多一项仅验证 Debug 5 秒重连间隔的断言。
+- 任务管理
+  - 进程：查看实时资源状态，控制进程、优先级和挂起状态，并支持内存读写及转储。
+  - 窗口：以桌面为根显示窗口树，查看属性、控制窗口并获取静态图像或视频流。
+  - 服务：查看服务状态、配置、依存关系和恢复设置，并执行常用控制操作。
+  - 任务计划：以树形界面浏览和管理计划任务。
 
-## 本地试用
+- 硬件管理
+  - 硬件信息：查看处理器、内存、主板和设备基础信息。
+  - 设备管理：以树形界面查看设备并执行启用、禁用、重启和卸载等操作。
+  - 固件：按需读取 CPUID、SMBIOS 和 ACPI，并管理受支持的 UEFI 变量和启动项。
+  - 音频：管理输入输出设备、合成器和音量，并获取输入或输出音频流。
+  - 电源：管理电源计划，并执行锁屏、注销、睡眠、休眠、关机、重启和固件启动。
 
-1. 运行 `Source\OutDir\x64\Debug\KNSoft.ZPigeon.Web.exe`；首次运行会在同目录生成仅供本地试用的根证书与 Server 证书。
-2. 运行同目录的 `KNSoft.ZPigeon.Client.exe`。
-3. 打开 `http://127.0.0.1:5080`。Web 和 Server 仅监听本地回环；Client 连接 `127.0.0.1:4433`。
+- 软件管理
+  - 已安装程序：管理传统程序、Windows App 和 Windows 可选功能。
+  - 浏览器：管理 Edge 和 Chrome，读取浏览数据、配置文件和版本，并提供 CDP 调试入口。
 
-当前页面可探测远端主机上的 `cmd`、Windows PowerShell 和 PowerShell，新建/关闭多个 Shell、切换标签并进行完整 ConPTY 命令交互；也提供文件、进程、服务和注册表可视化管理。文件页支持分页浏览、可修改属性、CRC32/MD5/SHA-1/SHA-256、流式上传/下载、重命名和删除；进程页支持实时 CPU/内存等信息、映像路径和命令行详情及结束进程，并在页面不活跃时停止刷新；服务页支持属性、启动和停止。EventLog 支持 Bookmark 分页查询、频道启停、清除和按视图增量流式下载，不建立实时事件订阅。
+- 远程访问
+  - 远程终端：基于系统 ConPTY 提供多会话 Shell、脚本执行和完整交互。
+  - 远程执行：运行本机或下发的程序、脚本及安装包，并反馈 PID、状态和退出码。
+  - 远程桌面：通过受控端口转发建立到被控端的 RDP 连接。
 
-Client 的 `network.log` 与各业务模块日志位于同目录 `logs`。试用 EXE 使用当前用户范围的持久 CNG 身份密钥；SDK 默认仍使用机器范围，服务化部署不改变原安全边界。
+## 本地运行
 
-Web 固定监听本机回环。对外访问必须经过本机反向代理并由代理完成鉴权；代理应移除外部请求携带的转发头，写入原始地址和已认证用户。默认用户头为 `X-Forwarded-User`，可用 `ReverseProxy__UserHeader` 修改。端口转发页面统一管理 RDP、CDP、WinDbg 和通用 TCP/UDP 规则，默认只允许创建入口的原始地址连接。TCP 仅在没有活动连接时计算空闲超时；UDP 按来源 IP 和端口建立独立映射及 Client 侧 connected socket，按最后一次收发重新计时。目标系统身份验证仍由 RDP NLA、浏览器调试会话或调试器负责。WinDbg 可连接被控端的进程服务器，或通过调试器服务器接管已有的用户态/内核调试会话；KDNET 本身不依赖 Client 转发。
+1. 启动 `KNSoft.ZPigeon.Web.exe`。
+2. 启动 `KNSoft.ZPigeon.Client.exe`。
+3. 打开 `http://127.0.0.1:5080`。
 
-## 最小 Server 生命周期
+Web 仅监听本机回环。对外访问应通过本机反向代理并由代理完成 HTTPS 和身份验证。
 
-下面示例只展示 SDK 入口。`Certificate` 必须是包含可用私钥的 Server 证书；其名称需覆盖 `ServerName`。`Start` 和 `Stop` 是异步状态转换，应用应在状态回调中等待 Running/Stopped，再进入下一阶段。
+## 文档
 
-```c
-#include <KNSoft/ZPigeon/Server.h>
-#include <KNSoft/ZPigeon/File.h>
-#include <KNSoft/ZPigeon/System.h>
-
-static
-VOID
-NTAPI
-ServerStateCallback(
-    ZP_SERVER_HANDLE Server,
-    ZP_SERVER_STATE State,
-    ZP_STATUS Status,
-    PVOID Context)
-{
-    UNREFERENCED_PARAMETER(Server);
-    UNREFERENCED_PARAMETER(State);
-    UNREFERENCED_PARAMETER(Status);
-    UNREFERENCED_PARAMETER(Context);
-}
-
-static
-VOID
-NTAPI
-ServerConnectionCallback(
-    ZP_SERVER_HANDLE Server,
-    ZP_CONNECTION_HANDLE Connection,
-    ZP_CONNECTION_PHASE Phase,
-    ZP_STATUS Status,
-    PVOID Context)
-{
-    UNREFERENCED_PARAMETER(Server);
-    UNREFERENCED_PARAMETER(Connection);
-    UNREFERENCED_PARAMETER(Phase);
-    UNREFERENCED_PARAMETER(Status);
-    UNREFERENCED_PARAMETER(Context);
-}
-
-ZP_STATUS
-StartServer(
-    PCCERT_CONTEXT Certificate,
-    ZP_SERVER_HANDLE* Server)
-{
-    static const ZP_MODULE_RECORD Modules[] = {
-        { ZP_SYSTEM_MODULE_ID, ZP_SYSTEM_MODULE_VERSION },
-        { ZP_FILE_MODULE_ID, ZP_FILE_MODULE_VERSION }
-    };
-    static const ZP_LISTENER_ENDPOINT Listener = {
-        ZpTransportQuic, L"0.0.0.0", 4433, NULL
-    };
-    ZP_SERVER_DEPLOYMENT Deployment = {
-        L"server.example", Certificate
-    };
-    ZP_SERVER_CONFIG Config = { 0 };
-    NTSTATUS Status;
-
-    Config.Size = sizeof(Config);
-    Config.Listeners = &Listener;
-    Config.ListenerCount = 1;
-    Config.Deployments = &Deployment;
-    Config.DeploymentCount = 1;
-    Config.Modules = Modules;
-    Config.ModuleCount = ARRAYSIZE(Modules);
-    Config.StateCallback = ServerStateCallback;
-    Config.ConnectionCallback = ServerConnectionCallback;
-
-    Status = ZpServer_Create(&Config, Server);
-    return NT_SUCCESS(Status) ?
-               ZpServer_Start(*Server) :
-               ZpStatus_FromNtStatus(Status);
-}
-```
-
-连接进入 `ZpConnectionPhaseReady` 后，Server 应调用 `ZpConnection_AddRef` 持有连接，并通过 `ZpServer_*` API 对该 Client 发起操作；收到 Closed 后释放持有的连接。通过部署根认证的 Server 对 Client 拥有完整管理能力，不再建立操作级 Read/Control 授权层。
-
-停止顺序为 `ZpServer_Stop`，等待 `ZpServerStateStopped`，最后调用 `ZpServer_Close`。
-
-## 最小 Client 生命周期
-
-Client 配置接收 Deployment 根证书的 DER Buffer，而不是证书句柄。`ServerName` 同时参与 SNI 和证书名称验证；`Host` 可为实际 IP 或 DNS 名称。`ClientKeyName = NULL` 时使用默认持久化 P-256 身份键名。
-
-```c
-#include <KNSoft/ZPigeon/Client.h>
-
-static
-VOID
-NTAPI
-ClientStateCallback(
-    ZP_CLIENT_HANDLE Client,
-    ZP_CLIENT_STATE State,
-    ZP_STATUS Status,
-    PVOID Context)
-{
-    UNREFERENCED_PARAMETER(Client);
-    UNREFERENCED_PARAMETER(State);
-    UNREFERENCED_PARAMETER(Status);
-    UNREFERENCED_PARAMETER(Context);
-}
-
-NTSTATUS
-StartClient(
-    const BYTE* RootCertificateDer,
-    ULONG RootCertificateDerLength,
-    ZP_CLIENT_HANDLE* Client)
-{
-    static const ZP_MODULE_RECORD Modules[] = {
-        { ZP_SYSTEM_MODULE_ID, ZP_SYSTEM_MODULE_VERSION },
-        { ZP_FILE_MODULE_ID, ZP_FILE_MODULE_VERSION }
-    };
-    static const ZP_ENDPOINT Endpoint = {
-        ZpTransportQuic,
-        L"127.0.0.1",
-        4433,
-        L"server.example",
-        NULL
-    };
-    ZP_CLIENT_CONFIG Config = { 0 };
-    NTSTATUS Status;
-
-    Config.Size = sizeof(Config);
-    Config.Endpoints = &Endpoint;
-    Config.EndpointCount = 1;
-    Config.DeploymentRootCertificate = RootCertificateDer;
-    Config.DeploymentRootCertificateLength = RootCertificateDerLength;
-    Config.Modules = Modules;
-    Config.ModuleCount = ARRAYSIZE(Modules);
-    Config.StateCallback = ClientStateCallback;
-
-    Status = ZpClient_Create(&Config, Client);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpClient_Start(*Client);
-    }
-    return Status;
-}
-```
-
-`ZpClientStateReady` 表示被控端已可接收并执行 Server 请求；Client 不发起管理业务请求。停止顺序为 `ZpClient_Stop`，等待 `ZpClientStateStopped`，最后调用 `ZpClient_Close`。
-
-异步操作、连接状态和 Channel 结束均使用自然对齐的 `ZP_STATUS`：`Type` 为 16 位，原始 `Code` 为 32 位。线上按字段编码为 6 字节，不传结构体填充。当前类型包括 NTSTATUS、Win32、Winsock、HRESULT、Security、QUIC 和 ProcessExit；SDK 不把来源码映射成另一套错误码。同步的本地参数、Handle 和提交错误仍直接返回 `NTSTATUS`。
-
-## 异步 Handle 与 Buffer 规则
-
-- 异步 API 的输出 Handle 只在函数返回成功时有效；同步拒绝不会触发完成回调。调用方不得读取失败调用留下的输出值。
-- `ZpServer_*` 请求 API 成功返回时会交付 `ZP_REQUEST_HANDLE`；调用方不再需要取消或查询它时调用 `ZpRequest_Close` 释放自己的引用。
-- 完成回调可能在发起 API 返回前同步发生；回调可直接 `ZpRequest_Close`，应用不得依赖“函数先返回、回调后发生”的时序。
-- Request 回调恰好完成一次。超时在 Server 本地完成为 `STATUS_IO_TIMEOUT`，并尽力向 Client 发送 Cancel。
-- 回调参数中的 View/Buffer 只在当前回调返回前有效；需要长期持有时由应用自行复制。
-- 回调可能来自任意 SDK 工作线程或 Transport 回调线程；不同连接和对象可并发回调。SDK 不在对象锁内调用应用回调，应用仍应避免长期阻塞并自行同步共享状态。
-- Client/Server 的 `Close` 不能在其回调栈内执行，此时会返回 `STATUS_DEVICE_BUSY`；Request、Channel 的调用方引用可以在对应回调中通过各自 `Close` 释放，释放后不得再次使用该 Handle。
-- Channel 使用引用计数 Handle；本地取消与远端结束只产生一次终止回调，最迟在终止回调返回后调用 `ZpChannel_Close` 释放调用方引用。
-- `ZpChannel_Send` 不做隐藏排队；额度不足时返回 `STATUS_RETRY`，应等待 Writable 回调后重试。
-
-## 第一版资源边界
-
-- Frame Body 最大 16 MiB，ChannelData 单帧最大 1 MiB；
-- 每连接默认最多 64 个 Request、64 MiB Request Payload 和 16 个 Channel；
-- File 与 Registry 排序快照有明确条目数和内存上限；
-- 达到对应连接侧配额通常返回 `STATUS_QUOTA_EXCEEDED`，不因单个合法但超限的请求终止连接。
+- [Design.md](Design.md)：架构、协议与安全模型。
+- [Handoff.md](Handoff.md)：项目原则与交接说明。
+- [Progress.md](Progress.md)：当前实现状态。
+- [Release.md](Release.md)：发布前检查清单。
 
 ## License
 

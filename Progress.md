@@ -1,52 +1,43 @@
 # KNSoft.ZPigeon 实施进度
 
-更新时间：2026-08-14
+更新时间：2026-08-19
 
 ## 当前阶段
 
-首版错误的 C/S 方向已经完成纠正。Server 是唯一管理控制端，Client 是被控端执行器；所有现有业务模块均沿 `ZpServer_* -> Request -> Client Execute -> Response/Channel` 路径运行。当前优先形成可直接试用的本地闭环。
+Client 主动连接 Server 并接受统一管理。协议、Client 执行器、Server 控制 API、Native/Managed 桥接层和 Web 管理端已经形成可直接试用的完整闭环。
 
-## 本轮已完成
+当前仅保留 x64，最低支持 Windows 10。项目不承担未发布协议、旧系统或错误历史设计的兼容负担。
 
-- 将 System、Process、Service、Registry、File、Terminal、EventLog 的 Windows 原生操作全部放入 `Modules/<Name>/Client.c`；Server 控制入口和回调解码位于对应 `Server.c`，模块 Codec 位于 `Protocol.c`。
-- 删除 Client 主动管理 Request/API、Server 本机业务执行器、旧 EventLog/Terminal QUIC 私有实现、Read/Control 授权层和派生 ClientId。
-- 将 Protocol Core、Client Core、Server Core、模块、SDK Handle 与 Transport 分离；Client/Server 私有 `Network` 目录改名为 `Transport`，根部只保留唯一共享 `Network`。
-- Request 只允许 Server 创建；Channel 只允许 Client 创建。所有 ID 改为普通非零单调序列，不再按奇偶区分方向或预留未来路径。
-- 增加 Client 入站 Request 数量/Payload 配额及两端 Channel 配额；Server 对资源创建先预留名额，同步超额不向 Client 发请求。
-- 保留 Channel 的零初始额度和显式 Window 背压；已结束/已拒绝 ID 的迟到 Window/Close 幂等处理，不增加 tombstone 表。
-- RequestId 改用连接内单调水位做 O(1) 重放校验；重复/倒序 Request 被拒绝，取消或超时后的迟到 Response/Cancel 幂等忽略。
-- 修正连接正常关闭时未完成业务对象被伪报成功的问题；未完成对象统一以 `STATUS_CONNECTION_DISCONNECTED` 完成。
-- 模块协商改为版本完全相等才选择，删除“取较小版本”的隐式兼容行为。
-- 删除从未被模块读取的 Capabilities 字段，以及没有任何产品发送路径的 Disconnect 死协议。
-- 删除未读取的连接 Status、QUIC Listener Index、Connection Role 存储、状态只读包装及内部未使用类型别名。
-- Registry 使用 NT Registry 路径，实现默认值、命名值和空名称游标分页；修复空名称传入 ordinal 比较函数后被误判相等的问题。
-- File 保持有界快照、SHA-256、断点下载和同目录临时文件原子上传。
-- Terminal 在 Client 使用系统 ConPTY 与两个 NT 异步单向管道，专用输出线程同时等待管道和根进程；支持双向窗口、Resize、进程退出码、Cancel 和最终输出排空。
-- EventLog 保留严格 Bookmark 分页查询、频道启停和清除，已删除实时订阅及全部 Subscription 对象。
-- Solution 新增 Client EXE、Server Native DLL、独立 Managed SDK 和本地回环 Web 管理端；Web 仅负责 WebSocket/UI 适配，可复用的 Shell 探测、会话、输入、输出、Resize、关闭和退出状态均位于 Managed SDK。
-- Web 终端使用本地 vendored xterm.js，支持探测并选择 `cmd`、Windows PowerShell、PowerShell，支持一键新建、完整 Shell 名称标签、多标签会话、交互输入、仅活动终端自动 Resize 和主动关闭；Shell 默认从 Client 用户配置文件目录启动，会话结束按原始 `ZP_STATUS` 类型或 WebSocket 分类显示。
-- Web 增加文件、进程和服务管理页。文件页支持目录分页、属性、SHA-256、流式上传/下载、重命名和删除；进程页显示 CPU、内存、线程、句柄、会话及映像路径/命令行详情，并可结束进程；服务页支持枚举、属性、启动和停止。
-- 进程页仅在页面处于当前导航、浏览器可见且窗口具有焦点时每秒刷新；离开页面、切到后台、最小化或 Client 断开后立即停止，不在 Web 后台持续查询远端。
-- 文件传输复用 SDK Channel 的双向窗口与流式传输，不把整个文件载入 Web 或 Managed 内存；上传先写同目录随机临时文件，完成后原子替换目标。
-- 进程累计时间和内存等 64 位值在 Web API 中使用十进制字符串，避免 JavaScript 数字精度损失；进程详情的映像路径与命令行各自保留 NTSTATUS 可用性状态；详情与结束操作均以 PID 和创建时间核对进程身份，避免 PID 复用竞态。
-- Client QUIC 启用 20 秒 KeepAlive，空闲终端连接不会再被默认空闲超时关闭。
-- 重构远程错误体系为自然对齐的 `ZP_STATUS`，16 位 Type 与 32 位原始 Code 在线上固定编码为 6 字节；Response、ChannelClose、状态和完成回调不再把 Win32、Winsock、HRESULT、Security、QUIC 或 ProcessExit 映射、强转成 NTSTATUS。
-- Client EXE 使用当前用户范围 CNG 身份键，网络与各模块分别写日志；SDK 的默认机器范围身份不变。
-- 经 Owner 允许，在父级 MLE 本地增加 `Mem_ReAlloc`、`IO_CreatePipe` 并同步当前引用副本；不提交父级 MLE。`MLE_Todo.md` 保留完整参考实现与 `PS_CreateProcessEx` 方案供 Owner 审核。
+## 已完成
+
+- 核心架构：Transport、Connection、Protocol、SDK 和业务模块已经分层，Request 只由 Server 创建，业务 Channel 只由 Client 创建。
+- 网络核心：QUIC、TLS 1.3、SNI、专属根证书验证、客户端持久身份、KeepAlive、重连、Request 和带背压的流式 Channel 已接通。
+- 错误体系：`ZP_STATUS` 保留 NTSTATUS、Win32、Winsock、HRESULT、Security、QUIC、ProcessExit 等来源类型及原始 32 位代码。
+- 系统管理：系统信息、注册表、用户、WMI、更新、证书、凭据和事件查看器已经接入 Web。
+- 网络管理：端口转发、网络共享、网络适配器、路由表、网络连接、WLAN 和防火墙已经接入 Web。
+- 存储管理：文件浏览、分页、搜索、传输、哈希、属性、ACL、十六进制编辑和剪贴板监听已经接入 Web。
+- 任务管理：进程、窗口、服务和任务计划已经接入 Web；进程支持内存读写，窗口支持静态捕获和视频流。
+- 硬件管理：硬件信息、设备管理、固件、音频和电源已经接入 Web；固件数据按 CPUID、SMBIOS 和 ACPI 按需读取。
+- 软件管理：传统程序、Windows App、Windows 可选功能以及 Edge/Chrome 管理和 CDP 入口已经接入 Web。
+- 远程访问：ConPTY 终端、脚本执行、远程执行、通用 TCP/UDP 转发和 RDP 转发入口已经接入 Web。
+- 通用组件：ACL 编辑器、远程文件选择器和虚拟十六进制编辑器已经在多个模块复用。
+- 日志与错误反馈：Client 按网络和模块拆分日志；Web 保留远端原始错误域，不将 Win32、QUIC 等状态强转为 NTSTATUS。
 
 ## 当前验证
 
-- Visual Studio 2026 下 x64 Debug/Release 全 Solution Rebuild 均为零警告、零错误，直接产出三个 `.lib`、Client `.exe`、Server Native `.dll`、Managed SDK 和 C# Web；构建固定使用本机完整的 Windows SDK 10.0.26100.0，x86 配置已删除，ARM64 后续按需加入。
-- x64 Debug UnitTest 为 332/332、Release 为 331/331 通过，均包含真实 localhost QUIC 集成；Debug 比 Release 多一项仅验证 Debug 5 秒重连间隔的断言，两个配置的 ConsumerTest 均通过。
-- 已实际启动 VS2026 构建的 Web 与 Client，验证文件上传/下载内容一致、重命名、删除、属性和哈希，进程实时刷新/切页停止/命令行详情/结束测试进程，以及服务列表、属性和 Win32 错误透传。
-- 父级 MLE x64 Debug 全 Solution Build 及 43/43 测试通过。
+- Visual Studio 2026 x64 Debug 全 Solution 构建通过。
+- UnitTest 为 374/374，通过真实 localhost QUIC 集成路径。
+- Web、Managed、Native、Client 和 QUIC 本地闭环通过。
+- 网络适配器、IPv4/IPv6 路由表、TCP/UDP 端点和网络共享完成真实只读联调。
+- NetworkStatus 新增 Client 实现通过静态分析；其他模块仍有既有静态分析告警需要独立处理。
+- 网卡控制、固件写入、磁盘格式化等可能影响开发机状态的功能未执行破坏性测试。
 
 ## 下一步
 
-1. 由 Owner 试用本地 Web/Client 闭环，修正发现的真实问题。
-2. 审计剩余模块内部冗余、重复 Encode/Allocate 模式和可抽到 MLE 的候选；涉及 MLE 先询问 Owner。
-3. 保持 QUIC/TLS-TCP/WSS 边界，不在当前试用版扩展新功能。
+1. 按实际试用反馈修正功能完整性和交互一致性。
+2. 完成当前代码的 x64 Release、干净环境和普通用户权限验证。
+3. 继续审计冗余、资源边界和 MLE 复用候选；修改 MLE 前先取得 Owner 确认。
 
 ## 阻塞
 
-当前没有架构或环境阻塞；统一使用 Visual Studio 2026 构建原生项目与 .NET 10 Web。
+当前没有外部阻塞。
