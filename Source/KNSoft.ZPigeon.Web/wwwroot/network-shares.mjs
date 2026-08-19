@@ -22,7 +22,7 @@ export class NetworkShareManager{
     root.innerHTML=`
       <div class="manager-toolbar">
         <nav class="property-tabs network-share-tabs">
-          <button data-view="published" class="active">共享出去</button>
+          <button data-view="published" class="active">本机共享</button>
           <button data-view="connections">连接的共享</button>
         </nav>
         <input data-role="filter" placeholder="筛选网络共享">

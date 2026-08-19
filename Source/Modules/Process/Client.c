@@ -348,6 +348,8 @@ ZpProcess_Query(
     PVOID SystemInfo;
     PBYTE Buffer;
     HANDLE Process;
+    PROCESS_BASIC_INFORMATION BasicInformation;
+    PVOID ImageBase;
     NTSTATUS Status;
     ULONG Length;
 
@@ -373,6 +375,29 @@ ZpProcess_Query(
     Info.KernelTime = Record.KernelTime;
     Info.WorkingSetBytes = Record.WorkingSetBytes;
     Info.PrivateBytes = Record.PrivateBytes;
+    Info.ImageBaseStatus = PS_OpenProcess(&Process,
+                                          PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+                                          ProcessId);
+    if (NT_SUCCESS(Info.ImageBaseStatus))
+    {
+        Info.ImageBaseStatus = NtQueryInformationProcess(Process,
+                                                         ProcessBasicInformation,
+                                                         &BasicInformation,
+                                                         sizeof(BasicInformation),
+                                                         NULL);
+        if (NT_SUCCESS(Info.ImageBaseStatus))
+        {
+            Info.ImageBaseStatus = NtReadVirtualMemory(Process,
+                                                       Add2Ptr(BasicInformation.PebBaseAddress,
+                                                               FIELD_OFFSET(PEB, ImageBaseAddress)),
+                                                       &ImageBase,
+                                                       sizeof(ImageBase),
+                                                       NULL);
+            if (NT_SUCCESS(Info.ImageBaseStatus)) Info.ImageBase = (ULONGLONG)ImageBase;
+        }
+        NtClose(Process);
+    }
+    if (!NT_SUCCESS(Info.ImageBaseStatus)) Info.ImageBase = 0;
     Info.ImageName = Record.ImageName;
     Info.ImageNameLength = Record.ImageNameLength;
     Info.UserName = Record.UserName;

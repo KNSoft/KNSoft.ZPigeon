@@ -505,6 +505,8 @@ public sealed partial class NativeServer
             value.KernelTime,
             value.WorkingSetBytes,
             value.PrivateBytes,
+            value.ImageBaseStatus,
+            value.ImageBase,
             String(value.ImageName),
             String(value.UserName),
             value.ImagePathStatus,
@@ -774,6 +776,8 @@ public sealed record ProcessInfo(
     ulong KernelTime,
     ulong WorkingSetBytes,
     ulong PrivateBytes,
+    int ImageBaseStatus,
+    ulong ImageBase,
     string ImageName,
     string UserName,
     int ImagePathStatus,
@@ -1072,6 +1076,8 @@ internal static partial class NativeMethods
         internal readonly ulong KernelTime;
         internal readonly ulong WorkingSetBytes;
         internal readonly ulong PrivateBytes;
+        internal readonly int ImageBaseStatus;
+        internal readonly ulong ImageBase;
         internal readonly StringView ImageName;
         internal readonly StringView UserName;
         internal readonly int ImagePathStatus;

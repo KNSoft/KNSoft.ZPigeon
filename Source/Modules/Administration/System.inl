@@ -4,7 +4,6 @@
 #define ZP_SYSTEM_INFORMATION_RESTART_REQUIRED 0x00000002
 #define ZP_ENVIRONMENT_USER 0x00000100
 #define ZP_ENVIRONMENT_SYSTEM 0x00000200
-#define ZP_ENVIRONMENT_EXPAND 0x00000400
 
 typedef struct _ZP_SYSTEM_REGISTRY_RECORD
 {
@@ -28,6 +27,13 @@ static const UNICODE_STRING ZpSystemSecureBootKey = RTL_CONSTANT_STRING(
 static const UNICODE_STRING ZpSystemEnvironmentKey = RTL_CONSTANT_STRING(
     L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment");
 static const UNICODE_STRING ZpUserEnvironmentKey = RTL_CONSTANT_STRING(L"Environment");
+static const UNICODE_STRING ZpRemoteDesktopKey = RTL_CONSTANT_STRING(
+    L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server");
+static const UNICODE_STRING ZpRemoteDesktopPortKey = RTL_CONSTANT_STRING(
+    L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp");
+static const UNICODE_STRING ZpRemoteDesktopEnabledValue = RTL_CONSTANT_STRING(L"fDenyTSConnections");
+static const UNICODE_STRING ZpRemoteDesktopPortValue = RTL_CONSTANT_STRING(L"PortNumber");
+
 
 static
 NTSTATUS
@@ -49,6 +55,96 @@ ZpAdministration_AddSystemValue(
                                       Name,
                                       Group,
                                       Value);
+}
+
+static
+NTSTATUS
+ZpAdministration_AddDisplays(
+    _Inout_ PZP_ADMINISTRATION_BUILDER Builder)
+{
+    DISPLAY_DEVICEW Adapter = { sizeof(Adapter) }, Monitor = { sizeof(Monitor) };
+    DEVMODEW Mode = { 0 };
+    WCHAR Name[32], Detail[512];
+    NTSTATUS Status = STATUS_SUCCESS;
+    DWORD AdapterIndex, MonitorIndex, Number = 0;
+
+    Mode.dmSize = sizeof(Mode);
+    for (AdapterIndex = 0; NT_SUCCESS(Status) && EnumDisplayDevicesW(NULL, AdapterIndex, &Adapter, 0);
+         AdapterIndex++)
+    {
+        if (!(Adapter.StateFlags & DISPLAY_DEVICE_ACTIVE)) continue;
+        for (MonitorIndex = 0;
+             NT_SUCCESS(Status) && EnumDisplayDevicesW(Adapter.DeviceName, MonitorIndex, &Monitor, 0);
+             MonitorIndex++)
+        {
+            if (!(Monitor.StateFlags & DISPLAY_DEVICE_ACTIVE)) continue;
+            Number++;
+            _snwprintf_s(Name, ARRAYSIZE(Name), _TRUNCATE, L"显示器 %lu", Number);
+            if (EnumDisplaySettingsExW(Adapter.DeviceName, ENUM_CURRENT_SETTINGS, &Mode, 0))
+            {
+                _snwprintf_s(Detail,
+                             ARRAYSIZE(Detail),
+                             _TRUNCATE,
+                             L"%s · %lu × %lu · %lu Hz · %s",
+                             Monitor.DeviceString,
+                             Mode.dmPelsWidth,
+                             Mode.dmPelsHeight,
+                             Mode.dmDisplayFrequency,
+                             Adapter.DeviceName);
+            }
+            else
+            {
+                _snwprintf_s(Detail,
+                             ARRAYSIZE(Detail),
+                             _TRUNCATE,
+                             L"%s · %s",
+                             Monitor.DeviceString,
+                             Adapter.DeviceName);
+            }
+            Status = ZpAdministration_AddSystemValue(
+                Builder, Monitor.DeviceID, Name, L"显示器", Detail, 0, 0);
+        }
+    }
+    return Status;
+}
+
+static
+NTSTATUS
+ZpAdministration_AddRemoteDesktop(
+    _Inout_ PZP_ADMINISTRATION_BUILDER Builder)
+{
+    HANDLE Key;
+    ULONG Value;
+    WCHAR Port[16];
+    NTSTATUS Status;
+
+    Status = Sys_RegOpenKey(&Key, KEY_QUERY_VALUE, &ZpRemoteDesktopKey);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = Sys_RegQueryDword(Key, &ZpRemoteDesktopEnabledValue, &Value);
+    NtClose(Key);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = ZpAdministration_AddSystemValue(Builder,
+                                             L"remoteDesktopEnabled",
+                                             L"允许远程桌面连接",
+                                             L"远程桌面",
+                                             Value == 0 ? L"已启用" : L"已禁用",
+                                             ZP_SYSTEM_INFORMATION_EDITABLE,
+                                             Value == 0);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = Sys_RegOpenKey(&Key, KEY_QUERY_VALUE, &ZpRemoteDesktopPortKey);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = Sys_RegQueryDword(Key, &ZpRemoteDesktopPortValue, &Value);
+    NtClose(Key);
+    if (!NT_SUCCESS(Status)) return Status;
+    _ultow_s(Value, Port, ARRAYSIZE(Port), 10);
+    return ZpAdministration_AddSystemValue(Builder,
+                                           L"remoteDesktopPort",
+                                           L"监听端口",
+                                           L"远程桌面",
+                                           Port,
+                                           ZP_SYSTEM_INFORMATION_EDITABLE |
+                                               ZP_SYSTEM_INFORMATION_RESTART_REQUIRED,
+                                           Value);
 }
 
 static
@@ -324,8 +420,7 @@ ZpAdministration_AddEnvironment(
             ZpAdministrationKindEnvironmentVariable,
             Information->Type,
             ZP_SYSTEM_INFORMATION_EDITABLE |
-                (User ? ZP_ENVIRONMENT_USER : ZP_ENVIRONMENT_SYSTEM) |
-                (Information->Type == REG_EXPAND_SZ ? ZP_ENVIRONMENT_EXPAND : 0),
+                (User ? ZP_ENVIRONMENT_USER : ZP_ENVIRONMENT_SYSTEM),
             0,
             Identity,
             Name,
@@ -533,6 +628,8 @@ ZpAdministration_EnumerateSystem(
                                                  L"固件",
                                                  FALSE);
     }
+    if (NT_SUCCESS(Status)) Status = ZpAdministration_AddDisplays(&Builder);
+    if (NT_SUCCESS(Status)) Status = ZpAdministration_AddRemoteDesktop(&Builder);
     if (NT_SUCCESS(Status)) Status = ZpAdministration_AddEnvironment(&Builder, TRUE);
     if (NT_SUCCESS(Status)) Status = ZpAdministration_AddEnvironment(&Builder, FALSE);
     if (NT_SUCCESS(Status)) Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
@@ -594,7 +691,7 @@ ZpAdministration_ControlSystem(
                              NtSetValueKey(Key,
                                            &EnvironmentName,
                                            0,
-                                           Control->Secret.Length != 0 ? REG_EXPAND_SZ : REG_SZ,
+                                           REG_SZ,
                                            Argument,
                                            (Control->Argument.Length + 1) * sizeof(WCHAR));
                 NtClose(Key);
@@ -651,6 +748,44 @@ ZpAdministration_ControlSystem(
                 }
                 Status = STATUS_SUCCESS;
                 break;
+            }
+        }
+    }
+    else if (wcscmp(Identity, L"remoteDesktopEnabled") == 0 ||
+             wcscmp(Identity, L"remoteDesktopPort") == 0)
+    {
+        UNICODE_STRING Number;
+        ULONG Value;
+
+        RtlInitUnicodeString(&Number, Argument);
+        Status = RtlUnicodeStringToInteger(&Number, 10, &Value);
+        if (NT_SUCCESS(Status) && wcscmp(Identity, L"remoteDesktopEnabled") == 0 && Value > 1)
+        {
+            Status = STATUS_INVALID_PARAMETER;
+        }
+        if (NT_SUCCESS(Status) && wcscmp(Identity, L"remoteDesktopPort") == 0 &&
+            (Value == 0 || Value > MAXUSHORT))
+        {
+            Status = STATUS_INVALID_PARAMETER;
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = Sys_RegOpenKey(&Key,
+                                    KEY_SET_VALUE,
+                                    wcscmp(Identity, L"remoteDesktopEnabled") == 0 ?
+                                        &ZpRemoteDesktopKey : &ZpRemoteDesktopPortKey);
+            if (NT_SUCCESS(Status))
+            {
+                if (wcscmp(Identity, L"remoteDesktopEnabled") == 0) Value = !Value;
+                Status = NtSetValueKey(Key,
+                                       wcscmp(Identity, L"remoteDesktopEnabled") == 0 ?
+                                           (PUNICODE_STRING)&ZpRemoteDesktopEnabledValue :
+                                           (PUNICODE_STRING)&ZpRemoteDesktopPortValue,
+                                       0,
+                                       REG_DWORD,
+                                       &Value,
+                                       sizeof(Value));
+                NtClose(Key);
             }
         }
     }

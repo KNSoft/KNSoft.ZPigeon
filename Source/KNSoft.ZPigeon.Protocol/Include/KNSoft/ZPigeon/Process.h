@@ -110,6 +110,8 @@ typedef struct _ZP_PROCESS_INFO
     ULONGLONG KernelTime;
     ULONGLONG WorkingSetBytes;
     ULONGLONG PrivateBytes;
+    NTSTATUS ImageBaseStatus;
+    ULONGLONG ImageBase;
     PCWCH ImageName;
     ULONG ImageNameLength;
     PCWCH UserName;
@@ -139,6 +141,8 @@ typedef struct _ZP_PROCESS_INFO_VIEW
     ULONGLONG KernelTime;
     ULONGLONG WorkingSetBytes;
     ULONGLONG PrivateBytes;
+    NTSTATUS ImageBaseStatus;
+    ULONGLONG ImageBase;
     ZP_STRING_VIEW ImageName;
     ZP_STRING_VIEW UserName;
     NTSTATUS ImagePathStatus;

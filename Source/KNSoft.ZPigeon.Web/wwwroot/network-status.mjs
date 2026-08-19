@@ -100,11 +100,12 @@ export class NetworkAdapterManager extends NetworkSnapshotManager{
     root.innerHTML=`
       <div class="manager-toolbar">
         <input data-role="filter" placeholder="筛选网络适配器">
+        <label><input type="checkbox" data-role="hidden">显示隐藏适配器</label>
         <span class="status" data-role="summary"></span><span class="spacer"></span>
         <button data-action="refresh">刷新</button>
       </div>
       <div class="manager-table"><table>
-        <thead><tr><th>名称</th><th>状态</th><th>类型</th><th>IP 地址</th><th>速度</th><th>描述</th></tr></thead>
+        <thead><tr><th>名称</th><th>状态</th><th>网络配置文件</th><th>类型</th><th>IP 地址</th><th>速度</th><th>描述</th></tr></thead>
         <tbody></tbody></table><div class="manager-empty">Client 未连接</div>
       </div>
       <div class="context-menu administration-menu" data-role="menu" hidden></div>
@@ -113,6 +114,7 @@ export class NetworkAdapterManager extends NetworkSnapshotManager{
         <div class="dialog-actions"><button value="close">关闭</button></div>
       </form></dialog>`;
     this.filter=root.querySelector('[data-role=filter]');
+    this.showHidden=root.querySelector('[data-role=hidden]');
     this.summary=root.querySelector('[data-role=summary]');
     this.refresh=root.querySelector('[data-action=refresh]');
     this.empty=root.querySelector('.manager-empty');
@@ -120,6 +122,7 @@ export class NetworkAdapterManager extends NetworkSnapshotManager{
     this.menu=root.querySelector('[data-role=menu]');
     this.dialog=root.querySelector('[data-role=properties]');
     this.filter.oninput=()=>this.render();
+    this.showHidden.onchange=()=>this.render();
     this.refresh.onclick=()=>this.load();
     this.body.ondblclick=event=>{
       const row=event.target.closest('tr');
@@ -149,15 +152,15 @@ export class NetworkAdapterManager extends NetworkSnapshotManager{
   }
 
   render(){
-    const all=(this.records||[]).filter(record=>record.kind===ADAPTER);
-    const records=this.visible(all).sort((left,right)=>left.name.localeCompare(right.name));
+    const all=(this.records||[]).filter(record=>record.kind===ADAPTER),visible=all.filter(record=>this.showHidden.checked||!(record.state&0x80000000));
+    const records=this.visible(visible).sort((left,right)=>left.name.localeCompare(right.name));
     this.body.replaceChildren(...records.map(record=>this.row(record)));
-    this.finishRender(records,all.length);
+    this.finishRender(records,visible.length);
   }
 
   row(record){
-    const row=document.createElement('tr'),admin=record.state>>>16,addresses=this.addresses(record.identity);
-    const values=[record.name,admin===2?'已禁用':operStatus(record.state&0xffff),adapterType(record.flags),
+    const row=document.createElement('tr'),admin=(record.state>>>16)&0xffff,addresses=this.addresses(record.identity),category=Number((record.detail||'').split('\n')[10]);
+    const values=[record.name,admin===2?'已禁用':operStatus(record.state&0xffff),category===0?'公用网络':category===1?'专用网络':category===2?'域网络':'—',adapterType(record.flags),
                   addresses.map(address=>`${address.name}/${address.value}`).join(', '),
                   formatBits(record.value),record.description];
     row.record=record;
@@ -170,13 +173,16 @@ export class NetworkAdapterManager extends NetworkSnapshotManager{
   }
 
   openMenu(event,record){
-    const disabled=(record.state>>>16)===2;
-    const actions=[[disabled?'启用':'禁用',()=>this.setEnabled(record,disabled)],
+    const disabled=((record.state>>>16)&0xffff)===2;
+    const category=Number((record.detail||'').split('\n')[10]),actions=[[disabled?'启用':'禁用',()=>this.setEnabled(record,disabled)],
+                   ['设为公用网络',()=>this.setCategory(record,0),false,category===0||category===2||!Number.isInteger(category)],
+                   ['设为专用网络',()=>this.setCategory(record,1),false,category===1||category===2||!Number.isInteger(category)],
                    ['属性',()=>this.properties(record)]];
-    this.menu.replaceChildren(...actions.map(([name,action])=>{
+    this.menu.replaceChildren(...actions.map(([name,action,danger,actionDisabled])=>{
       const button=document.createElement('button');
       button.textContent=name;
       button.classList.toggle('danger',!disabled&&name==='禁用');
+      button.disabled=actionDisabled===true;
       button.onclick=()=>{
         this.menu.hidden=true;
         action();
@@ -200,17 +206,20 @@ export class NetworkAdapterManager extends NetworkSnapshotManager{
     }
   }
 
+  async setCategory(record,category){try{await this.call('/api/network-adapters/control',{action:23,identity:record.identity,argument:String(category)});this.notify(category?'已设为专用网络':'已设为公用网络');await this.load()}catch(error){this.notify(error)}}
+
   properties(record){
     const detail=(record.detail||'').split('\n'),addresses=this.addresses(record.identity);
     const ipv4=addresses.filter(item=>item.state===IPV4).map(item=>`${item.name}/${item.value}`).join('\n')||'—';
     const ipv6=addresses.filter(item=>item.state===IPV6).map(item=>`${item.name}/${item.value}`).join('\n')||'—';
     const fields=[['名称',record.name],['描述',record.description],['接口索引',record.identity],
-                  ['管理状态',(record.state>>>16)===2?'已禁用':'已启用'],
+                  ['管理状态',((record.state>>>16)&0xffff)===2?'已禁用':'已启用'],
                   ['运行状态',operStatus(record.state&0xffff)],['类型',adapterType(record.flags)],
                   ['MAC 地址',detail[0]||'—'],['MTU',detail[1]||'—'],['发送速度',formatBits(record.value)],
                   ['接收速度',formatBits(detail[2])],['接收流量',formatBytes(detail[3])],
                   ['发送流量',formatBytes(detail[4])],['接收错误',detail[5]||'0'],
                   ['发送错误',detail[6]||'0'],['发送队列',detail[7]||'0'],['IPv4',ipv4],['IPv6',ipv6]];
+    fields.splice(6,0,['网络配置文件',Number(detail[10])===0?'公用网络':Number(detail[10])===1?'专用网络':Number(detail[10])===2?'域网络':'—']);
     this.dialog.querySelector('dl').replaceChildren(...fields.flatMap(([name,value])=>{
       const term=document.createElement('dt'),description=document.createElement('dd');
       term.textContent=name;
@@ -235,20 +244,32 @@ export class NetworkRouteManager extends NetworkSnapshotManager{
       <div class="manager-toolbar">
         <input data-role="filter" placeholder="筛选路由">
         <span class="status" data-role="summary"></span><span class="spacer"></span>
+        <button data-action="new">新建</button>
         <button data-action="refresh">刷新</button>
       </div>
       <div class="manager-table"><table>
         <thead><tr><th>目标</th><th>下一跃点</th><th>接口</th><th>索引</th><th>地址族</th>
           <th>跃点数</th><th>协议</th><th>来源</th></tr></thead><tbody></tbody>
         </table><div class="manager-empty">Client 未连接</div>
-      </div>`;
+      </div>
+      <div class="context-menu administration-menu" data-role="menu" hidden><button data-action="edit">修改跃点数</button><button data-action="delete" class="danger">删除</button></div>
+      <dialog data-role="route"><form><h2 data-role="title"></h2><label>地址族<select data-field="family"><option value="2">IPv4</option><option value="23">IPv6</option></select></label><label>目标前缀<input data-field="destination" required placeholder="0.0.0.0/0"></label><label>下一跃点<input data-field="next-hop" required placeholder="0.0.0.0"></label><label>接口索引<input data-field="interface" type="number" min="1" required></label><label>跃点数<input data-field="metric" type="number" min="0" required></label><div class="dialog-actions"><button type="submit">保存</button><button type="button" data-action="cancel">取消</button></div></form></dialog>`;
     this.filter=root.querySelector('[data-role=filter]');
     this.summary=root.querySelector('[data-role=summary]');
     this.refresh=root.querySelector('[data-action=refresh]');
     this.empty=root.querySelector('.manager-empty');
     this.body=root.querySelector('tbody');
+    this.menu=root.querySelector('[data-role=menu]');
+    this.dialog=root.querySelector('[data-role=route]');
     this.filter.oninput=()=>this.render();
     this.refresh.onclick=()=>this.load();
+    root.querySelector('[data-action=new]').onclick=()=>this.edit();
+    this.dialog.querySelector('[data-action=cancel]').onclick=()=>this.dialog.close();
+    this.dialog.querySelector('form').onsubmit=event=>{event.preventDefault();this.save()};
+    this.body.oncontextmenu=event=>{const row=event.target.closest('tr');if(!row)return;event.preventDefault();this.selected=row.record;this.menu.hidden=false;const box=this.menu.getBoundingClientRect();this.menu.style.left=`${Math.max(6,Math.min(event.clientX,innerWidth-box.width-6))}px`;this.menu.style.top=`${Math.max(6,Math.min(event.clientY,innerHeight-box.height-6))}px`};
+    this.menu.querySelector('[data-action=edit]').onclick=()=>{this.menu.hidden=true;this.edit(this.selected)};
+    this.menu.querySelector('[data-action=delete]').onclick=()=>{this.menu.hidden=true;this.remove(this.selected)};
+    addEventListener('pointerdown',event=>{if(!this.menu.contains(event.target))this.menu.hidden=true});
     this.render();
   }
 
@@ -256,8 +277,8 @@ export class NetworkRouteManager extends NetworkSnapshotManager{
     const all=this.records||[];
     const records=this.visible().sort((left,right)=>left.state-right.state||left.name.localeCompare(right.name));
     this.body.replaceChildren(...records.map(record=>{
-      const row=document.createElement('tr'),protocol=record.flags&0xffff,origin=record.flags>>>16;
-      const values=[record.name,record.description,record.detail||'—',record.identity,familyName(record.state),
+      const row=document.createElement('tr'),protocol=record.flags&0xffff,origin=record.flags>>>16,index=record.identity.split('|')[1]||'';
+      row.record=record;const values=[record.name,record.description,record.detail||'—',index,familyName(record.state),
                     record.value,routeProtocol(protocol),routeOrigin(origin)];
       for(const value of values){
         const cell=row.insertCell();
@@ -268,6 +289,12 @@ export class NetworkRouteManager extends NetworkSnapshotManager{
     }));
     this.finishRender(records,all.length);
   }
+
+  edit(record=null){this.editing=record;const field=name=>this.dialog.querySelector(`[data-field="${name}"]`),parts=record?.identity.split('|');this.dialog.querySelector('[data-role=title]').textContent=record?'修改路由':'新建路由';field('family').value=String(record?.state||2);field('destination').value=record?.name||(record?.state===IPV6?'::/0':'0.0.0.0/0');field('next-hop').value=record?.description||(record?.state===IPV6?'::':'0.0.0.0');field('interface').value=parts?.[1]||'';field('metric').value=record?.value||0;for(const name of ['family','destination','next-hop','interface'])field(name).disabled=!!record;this.dialog.showModal();field(record?'metric':'destination').focus()}
+
+  async save(){const field=name=>this.dialog.querySelector(`[data-field="${name}"]`).value,identity=this.editing?.identity||`${field('family')}|${field('interface')}|${field('destination')}|${field('next-hop')}`;try{await this.call('/api/network-routes/control',{action:this.editing?23:1,identity,argument:field('metric')});this.dialog.close();this.notify('路由已保存');await this.load()}catch(error){this.notify(error)}}
+
+  async remove(record){if(!confirm(`确定删除路由 ${record.name}？`))return;try{await this.call('/api/network-routes/control',{action:2,identity:record.identity});this.notify('路由已删除');await this.load()}catch(error){this.notify(error)}}
 }
 
 const tcpState=value=>({

@@ -83,6 +83,8 @@ TEST_FUNC(ProtocolMessage)
         300,
         400,
         500,
+        STATUS_SUCCESS,
+        0x140000000ULL,
         L"example.exe",
         11,
         L"TEST\\User",
@@ -217,7 +219,7 @@ TEST_FUNC(ProtocolMessage)
     ZP_EVENT_LOG_RETENTION_MODE EventLogRetentionMode;
     ULONGLONG EventLogMaximumSize;
     ZP_ADMINISTRATION_RECORD AdministrationRecords[] = {
-        { ZpAdministrationKindDevice, 1, 2, 3, L"ID", 2, L"Device", 6, NULL, 0, L"Class", 5 }
+        { ZpAdministrationKindLogonSession, 1, 2, 3, L"ID", 2, L"Device", 6, NULL, 0, L"Class", 5 }
     };
     ZP_ADMINISTRATION_LIST_VIEW AdministrationList;
     ZP_ADMINISTRATION_RECORD_VIEW AdministrationRecord;
@@ -518,7 +520,7 @@ TEST_FUNC(ProtocolMessage)
                                             Buffer,
                                             sizeof(Buffer),
                                             &Length)) &&
-            Length == 194 &&
+            Length == 206 &&
             NT_SUCCESS(ZpProcess_DecodeInfo(Buffer, Length, &ProcessInfoView)) &&
             ProcessInfoView.ProcessId == ProcessInfo.ProcessId &&
             ProcessInfoView.ParentProcessId == ProcessInfo.ParentProcessId &&
@@ -527,6 +529,8 @@ TEST_FUNC(ProtocolMessage)
             ProcessInfoView.PrivateBytes == ProcessInfo.PrivateBytes &&
             ProcessInfoView.Flags == ProcessInfo.Flags &&
             ProcessInfoView.MachineType == ProcessInfo.MachineType &&
+            ProcessInfoView.ImageBaseStatus == STATUS_SUCCESS &&
+            ProcessInfoView.ImageBase == ProcessInfo.ImageBase &&
             ProcessInfoView.ImageName.Length == ProcessInfo.ImageNameLength &&
             ProcessInfoView.UserName.Length == ProcessInfo.UserNameLength &&
             ProcessInfoView.ImagePathStatus == STATUS_SUCCESS &&
@@ -1147,7 +1151,7 @@ TEST_FUNC(ProtocolMessage)
             NT_SUCCESS(ZpAdministration_GetRecord(&AdministrationList,
                                                    0,
                                                    &AdministrationRecord)) &&
-            AdministrationRecord.Kind == ZpAdministrationKindDevice &&
+            AdministrationRecord.Kind == ZpAdministrationKindLogonSession &&
             AdministrationRecord.Identity.Length == 2 &&
             AdministrationRecord.Name.Length == 6 &&
             AdministrationRecord.Description.Length == 0 &&

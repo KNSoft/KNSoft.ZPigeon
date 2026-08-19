@@ -1,6 +1,155 @@
 ﻿#include <lm.h>
 
+#include <wtsapi32.h>
+
 #pragma comment(lib, "Netapi32.lib")
+#pragma comment(lib, "Secur32.lib")
+#pragma comment(lib, "Wtsapi32.lib")
+
+static
+NTSTATUS
+ZpAdministration_AddSessions(
+    _Inout_ PZP_ADMINISTRATION_BUILDER Builder)
+{
+    PWTS_SESSION_INFOW Sessions;
+    PWSTR User, Domain;
+    WCHAR Identity[32], Name[512], Detail[64];
+    DWORD Count, Index, Length, Error;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    if (!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &Sessions, &Count))
+    {
+        return NTSTATUS_FROM_WIN32(GetLastError());
+    }
+    for (Index = 0; Index < Count && NT_SUCCESS(Status); Index++)
+    {
+        Error = ERROR_SUCCESS;
+        User = Domain = NULL;
+        if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE,
+                                         Sessions[Index].SessionId,
+                                         WTSUserName,
+                                         &User,
+                                         &Length))
+        {
+            Error = GetLastError();
+        }
+        if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE,
+                                         Sessions[Index].SessionId,
+                                         WTSDomainName,
+                                         &Domain,
+                                         &Length))
+        {
+            if (Error == ERROR_SUCCESS) Error = GetLastError();
+        }
+        _snwprintf_s(Identity,
+                     ARRAYSIZE(Identity),
+                     _TRUNCATE,
+                     L"session:%lu",
+                     Sessions[Index].SessionId);
+        _snwprintf_s(Name,
+                     ARRAYSIZE(Name),
+                     _TRUNCATE,
+                     Domain != NULL && *Domain != UNICODE_NULL ? L"%s\\%s" : L"%s%s",
+                     Domain == NULL ? L"" : Domain,
+                     User == NULL ? L"" : User);
+        if (Error != ERROR_SUCCESS)
+        {
+            _snwprintf_s(Detail, ARRAYSIZE(Detail), _TRUNCATE, L"部分信息不可用，Win32: 0x%08lX", Error);
+        }
+        Status = ZpAdministration_AddRecord(Builder,
+                                             ZpAdministrationKindSession,
+                                             Sessions[Index].State,
+                                             Error == ERROR_SUCCESS ? 0 : ZP_ADMINISTRATION_FLAG_PARTIAL,
+                                             Sessions[Index].SessionId,
+                                             Identity,
+                                             Name,
+                                             Sessions[Index].pWinStationName,
+                                             Error == ERROR_SUCCESS ? NULL : Detail);
+        if (Domain != NULL) WTSFreeMemory(Domain);
+        if (User != NULL) WTSFreeMemory(User);
+    }
+    WTSFreeMemory(Sessions);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpAdministration_AddLogonSessions(
+    _Inout_ PZP_ADMINISTRATION_BUILDER Builder)
+{
+    PSECURITY_LOGON_SESSION_DATA Data;
+    PLUID Sessions;
+    WCHAR Identity[32], User[512], Domain[512], Detail[1024];
+    ULONG Count, Index;
+    NTSTATUS Status;
+
+    Status = LsaEnumerateLogonSessions(&Count, &Sessions);
+    if (!NT_SUCCESS(Status)) return Status;
+    for (Index = 0; Index < Count; Index++)
+    {
+        Status = LsaGetLogonSessionData(&Sessions[Index], &Data);
+        if (!NT_SUCCESS(Status))
+        {
+            _snwprintf_s(Identity,
+                         ARRAYSIZE(Identity),
+                         _TRUNCATE,
+                         L"logon:%08lX%08lX",
+                         Sessions[Index].HighPart,
+                         Sessions[Index].LowPart);
+            _snwprintf_s(Detail, ARRAYSIZE(Detail), _TRUNCATE, L"NTSTATUS: 0x%08lX", Status);
+            Status = ZpAdministration_AddRecord(Builder,
+                                                 ZpAdministrationKindLogonSession,
+                                                 0,
+                                                 ZP_ADMINISTRATION_FLAG_PARTIAL,
+                                                 0,
+                                                 Identity,
+                                                 NULL,
+                                                 NULL,
+                                                 Detail);
+            if (!NT_SUCCESS(Status)) break;
+            continue;
+        }
+        if (Data == NULL) continue;
+        _snwprintf_s(Identity,
+                     ARRAYSIZE(Identity),
+                     _TRUNCATE,
+                     L"logon:%08lX%08lX",
+                     Sessions[Index].HighPart,
+                     Sessions[Index].LowPart);
+        _snwprintf_s(User,
+                     ARRAYSIZE(User),
+                     _TRUNCATE,
+                     L"%.*s",
+                     (INT)(Data->UserName.Length / sizeof(WCHAR)),
+                     Data->UserName.Buffer == NULL ? L"" : Data->UserName.Buffer);
+        _snwprintf_s(Domain,
+                     ARRAYSIZE(Domain),
+                     _TRUNCATE,
+                     L"%.*s",
+                     (INT)(Data->LogonDomain.Length / sizeof(WCHAR)),
+                     Data->LogonDomain.Buffer == NULL ? L"" : Data->LogonDomain.Buffer);
+        _snwprintf_s(Detail,
+                     ARRAYSIZE(Detail),
+                     _TRUNCATE,
+                     L"会话 %lu · %.*s",
+                     Data->Session,
+                     (INT)(Data->AuthenticationPackage.Length / sizeof(WCHAR)),
+                     Data->AuthenticationPackage.Buffer == NULL ? L"" : Data->AuthenticationPackage.Buffer);
+        Status = ZpAdministration_AddRecord(Builder,
+                                             ZpAdministrationKindLogonSession,
+                                             Data->LogonType,
+                                             0,
+                                             Data->LogonTime.QuadPart,
+                                             Identity,
+                                             User,
+                                             Domain,
+                                             Detail);
+        LsaFreeReturnBuffer(Data);
+        if (!NT_SUCCESS(Status)) break;
+    }
+    LsaFreeReturnBuffer(Sessions);
+    return Status;
+}
 
 static
 ZP_STATUS
@@ -10,6 +159,7 @@ ZpAdministration_EnumerateUsers(
 {
     ZP_ADMINISTRATION_BUILDER Builder = { 0 };
     PUSER_INFO_2 Users;
+    PUSER_INFO_0 Names;
     DWORD EntriesRead, TotalEntries, Resume = 0, Result;
     NTSTATUS Status = STATUS_SUCCESS;
     ULONG Index;
@@ -40,6 +190,36 @@ ZpAdministration_EnumerateUsers(
         NetApiBufferFree(Users);
         if (!NT_SUCCESS(Status)) break;
     } while (Result == ERROR_MORE_DATA);
+    if (Result == ERROR_ACCESS_DENIED && Builder.Count == 0)
+    {
+        Resume = 0;
+        do
+        {
+            Result = NetUserEnum(NULL,
+                                 0,
+                                 FILTER_NORMAL_ACCOUNT,
+                                 (PBYTE*)&Names,
+                                 MAX_PREFERRED_LENGTH,
+                                 &EntriesRead,
+                                 &TotalEntries,
+                                 &Resume);
+            if (Result != NERR_Success && Result != ERROR_MORE_DATA) break;
+            for (Index = 0; NT_SUCCESS(Status) && Index < EntriesRead; Index++)
+            {
+                Status = ZpAdministration_AddRecord(&Builder,
+                                                     ZpAdministrationKindUser,
+                                                     ERROR_ACCESS_DENIED,
+                                                     ZP_ADMINISTRATION_FLAG_PARTIAL,
+                                                     0,
+                                                     Names[Index].usri0_name,
+                                                     NULL,
+                                                     L"详细信息不可用，Win32: 0x00000005",
+                                                     NULL);
+            }
+            NetApiBufferFree(Names);
+            if (!NT_SUCCESS(Status)) break;
+        } while (Result == ERROR_MORE_DATA);
+    }
     if (Result == NERR_Success && NT_SUCCESS(Status))
     {
         Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
@@ -48,6 +228,34 @@ ZpAdministration_EnumerateUsers(
     return Result == NERR_Success ?
                ZpStatus_FromNtStatus(Status) :
                ZpStatus_FromCode(ZpStatusWin32, Result);
+}
+
+static
+ZP_STATUS
+ZpAdministration_EnumerateSessions(
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    ZP_ADMINISTRATION_BUILDER Builder = { 0 };
+    NTSTATUS Status = ZpAdministration_AddSessions(&Builder);
+
+    if (NT_SUCCESS(Status)) Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
+    ZpAdministration_FreeBuilder(&Builder);
+    return ZpStatus_FromNtStatus(Status);
+}
+
+static
+ZP_STATUS
+ZpAdministration_EnumerateLogonSessions(
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    ZP_ADMINISTRATION_BUILDER Builder = { 0 };
+    NTSTATUS Status = ZpAdministration_AddLogonSessions(&Builder);
+
+    if (NT_SUCCESS(Status)) Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
+    ZpAdministration_FreeBuilder(&Builder);
+    return ZpStatus_FromNtStatus(Status);
 }
 
 static
@@ -62,6 +270,33 @@ ZpAdministration_ControlUser(
     USER_INFO_1008 Flags;
     PWSTR Identity, Argument = NULL, Secret = NULL;
     DWORD Result, ParameterError;
+
+    if ((Control->Action == ZpAdministrationActionDisconnect ||
+         Control->Action == ZpAdministrationActionSignOut) &&
+        Control->Identity.Length > 8)
+    {
+        UNICODE_STRING Number;
+        ULONG SessionId;
+        NTSTATUS Status;
+
+        Identity = ZpAdministration_CopyView(&Control->Identity);
+        if (Identity == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+        if (wcsncmp(Identity, L"session:", 8) != 0)
+        {
+            Mem_Free(Identity);
+            return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+        }
+        RtlInitUnicodeString(&Number, Identity + 8);
+        Status = RtlUnicodeStringToInteger(&Number, 10, &SessionId);
+        Mem_Free(Identity);
+        if (!NT_SUCCESS(Status)) return ZpStatus_FromNtStatus(Status);
+        Result = Control->Action == ZpAdministrationActionDisconnect ?
+                     (WTSDisconnectSession(WTS_CURRENT_SERVER_HANDLE, SessionId, FALSE) ? ERROR_SUCCESS :
+                                                                                       GetLastError()) :
+                     (WTSLogoffSession(WTS_CURRENT_SERVER_HANDLE, SessionId, FALSE) ? ERROR_SUCCESS :
+                                                                                   GetLastError());
+        return ZpStatus_FromCode(ZpStatusWin32, Result);
+    }
 
     Identity = ZpAdministration_CopyView(&Control->Identity);
     if (Control->Argument.Length != 0) Argument = ZpAdministration_CopyView(&Control->Argument);

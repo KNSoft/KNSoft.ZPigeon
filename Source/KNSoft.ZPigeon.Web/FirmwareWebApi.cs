@@ -31,7 +31,12 @@ internal static class FirmwareWebApi
                 snapshot.VendorId,
                 GetProcessorName(snapshot),
                 snapshot.Records.ToArray(),
-                CpuidFeatures.All.Where(snapshot.IsSupported).Select(feature => feature.Name).ToArray()));
+                CpuidFeatures.All.Where(snapshot.IsSupported).Select(feature => new CpuidFeatureWebRecord(
+                    feature.Leaf,
+                    feature.SubLeaf,
+                    feature.Register.ToString(),
+                    feature.Bit,
+                    feature.Name)).ToArray()));
         });
         app.MapPost("/api/firmware/smbios", async () =>
         {
@@ -56,6 +61,7 @@ internal static class FirmwareWebApi
                     structure.Length,
                     structure.Data.Length,
                     structure.Offset,
+                    structure.Offset + 8,
                     structure.Fields.Select(field =>
                         new FirmwareFieldWebRecord(field.Name, FormatSmbiosField(structure, field))).ToArray()))
                     .ToArray()));
@@ -102,22 +108,29 @@ internal static class FirmwareWebApi
         app.MapPost("/api/firmware/data", async (HttpContext context, FirmwareDataRequest request) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            if (!ulong.TryParse(request.Offset, out var offset) || request.Length is 0 or > MaximumRangeLength)
+            if (!ulong.TryParse(request.Offset, out var offset) || request.Length is 0 or > MaximumRangeLength ||
+                !ulong.TryParse(request.BaseOffset ?? "0", out var baseOffset))
             {
                 return Results.BadRequest();
             }
             var records = await server.QueryAdministrationAsync(
                 AdministrationOperation.QueryFirmware,
                 request.Identity);
-            if (records.Length != 1 || !TryDecodeData(records[0], out var data) || offset > (ulong)data.Length)
+            if (records.Length != 1 || !TryDecodeData(records[0], out var data) ||
+                baseOffset > (ulong)data.Length ||
+                !ulong.TryParse(request.ViewLength ??
+                                    (data.Length - (int)baseOffset).ToString(CultureInfo.InvariantCulture),
+                                out var viewLength) ||
+                viewLength > (ulong)data.Length - baseOffset ||
+                offset > viewLength)
             {
                 return Results.BadRequest();
             }
-            var length = Math.Min(request.Length, (uint)(data.Length - (int)offset));
+            var length = Math.Min(request.Length, (uint)(viewLength - offset));
             return Results.Ok(new
             {
-                Size = data.Length.ToString(CultureInfo.InvariantCulture),
-                Data = data.AsSpan((int)offset, (int)length).ToArray()
+                Size = viewLength.ToString(CultureInfo.InvariantCulture),
+                Data = data.AsSpan((int)(baseOffset + offset), (int)length).ToArray()
             });
         });
         app.MapPost("/api/firmware/variable/write", async (FirmwareVariableWriteRequest request) =>
@@ -267,7 +280,9 @@ internal sealed record CpuidWebRecord(
     string VendorId,
     string ProcessorName,
     CpuidRecord[] Records,
-    string[] Features);
+    CpuidFeatureWebRecord[] Features);
+
+internal sealed record CpuidFeatureWebRecord(uint Leaf, uint SubLeaf, string Register, int Bit, string Name);
 
 internal sealed record SmbiosWebRecord(
     byte MajorVersion,
@@ -282,6 +297,7 @@ internal sealed record SmbiosStructureWebRecord(
     byte FormattedLength,
     int TotalLength,
     int Offset,
+    int RawOffset,
     FirmwareFieldWebRecord[] Fields);
 
 internal sealed record AcpiTableWebRecord(
@@ -296,7 +312,12 @@ internal sealed record AcpiTableWebRecord(
     FirmwareFieldWebRecord[] Fields);
 
 internal sealed record FirmwareFieldWebRecord(string Name, string Value);
-internal sealed record FirmwareDataRequest(string Identity, string Offset, uint Length);
+internal sealed record FirmwareDataRequest(
+    string Identity,
+    string Offset,
+    uint Length,
+    string? BaseOffset = null,
+    string? ViewLength = null);
 internal sealed record FirmwareVariableWriteRequest(
     AdministrationAction Action,
     string? Identity,

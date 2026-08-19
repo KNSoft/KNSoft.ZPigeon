@@ -4,6 +4,8 @@
 #define COBJMACROS
 #include <ws2ipdef.h>
 #include <netfw.h>
+#include <netcon.h>
+#include <netlistmgr.h>
 #include <oleauto.h>
 #include <powrprof.h>
 #include <roapi.h>
@@ -230,6 +232,16 @@ ZpAdministration_Execute(
                        ZpAdministration_EnumerateSystem(Response, ResponseLength) :
                        ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
 
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_SESSIONS:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateSessions(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_LOGON_SESSIONS:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateLogonSessions(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
         case ZP_ADMINISTRATION_OPERATION_ENUMERATE_WLAN:
             return RequestLength == 0 ?
                        ZpAdministration_EnumerateWlan(Response, ResponseLength) :
@@ -370,6 +382,9 @@ ZpAdministration_Execute(
 
         case ZP_ADMINISTRATION_OPERATION_CONTROL_NETWORK_ADAPTER:
             return ZpAdministration_ControlNetworkAdapter(&Control);
+
+        case ZP_ADMINISTRATION_OPERATION_CONTROL_NETWORK_ROUTE:
+            return ZpAdministration_ControlNetworkRoute(&Control);
     }
     return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
 }

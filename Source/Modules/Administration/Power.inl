@@ -340,6 +340,22 @@ ZpAdministration_ControlPower(
             Mem_Free(Identity);
             return ZpStatus_FromCode(ZpStatusWin32, Error);
 
+        case ZpAdministrationActionTurnOffDisplay:
+        {
+            DWORD_PTR Result;
+
+            Error = SendMessageTimeoutW(HWND_BROADCAST,
+                                        WM_SYSCOMMAND,
+                                        SC_MONITORPOWER,
+                                        2,
+                                        SMTO_ABORTIFHUNG,
+                                        1000,
+                                        &Result) ?
+                        ERROR_SUCCESS : GetLastError();
+            Mem_Free(Identity);
+            return ZpStatus_FromCode(ZpStatusWin32, Error);
+        }
+
         default:
             Status = STATUS_NOT_SUPPORTED;
             break;

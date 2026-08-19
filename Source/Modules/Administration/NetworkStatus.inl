@@ -2,6 +2,8 @@
 
 #pragma comment(lib, "Iphlpapi.lib")
 
+#define ZP_NETWORK_ADAPTER_HIDDEN 0x80000000
+
 static
 NTSTATUS
 ZpNetwork_FormatAddress(
@@ -78,7 +80,8 @@ static
 NTSTATUS
 ZpNetwork_AddAdapter(
     _Inout_ PZP_ADMINISTRATION_BUILDER Builder,
-    _In_ const MIB_IF_ROW2* Row)
+    _In_ const MIB_IF_ROW2* Row,
+    _In_ LONG Category)
 {
     WCHAR Identity[16], Physical[IF_MAX_PHYS_ADDRESS_LENGTH * 3], Detail[384];
 
@@ -87,7 +90,7 @@ ZpNetwork_AddAdapter(
     _snwprintf_s(Detail,
                  ARRAYSIZE(Detail),
                  _TRUNCATE,
-                 L"%s\n%lu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%u\n%u",
+                 L"%s\n%lu\n%llu\n%llu\n%llu\n%llu\n%llu\n%llu\n%u\n%u\n%ld",
                  Physical,
                  Row->Mtu,
                  Row->ReceiveLinkSpeed,
@@ -97,10 +100,12 @@ ZpNetwork_AddAdapter(
                  Row->OutErrors,
                  Row->OutQLen,
                  Row->MediaType,
-                 Row->PhysicalMediumType);
+                 Row->PhysicalMediumType,
+                 Category);
     return ZpAdministration_AddRecord(Builder,
                                       ZpAdministrationKindNetworkAdapter,
-                                      Row->OperStatus | ((ULONG)Row->AdminStatus << 16),
+                                      Row->OperStatus | ((ULONG)Row->AdminStatus << 16) |
+                                          (Category == -2 ? ZP_NETWORK_ADAPTER_HIDDEN : 0),
                                       Row->Type,
                                       Row->TransmitLinkSpeed,
                                       Identity,
@@ -134,6 +139,107 @@ ZpNetwork_AddAdapterAddress(
 }
 
 static
+VOID
+ZpNetwork_GetAdapterCategories(
+    _In_ const MIB_IF_TABLE2* Interfaces,
+    _Out_writes_(Interfaces->NumEntries) PLONG Categories)
+{
+    INetworkListManager* Manager = NULL;
+    IEnumNetworkConnections* Connections = NULL;
+    INetworkConnection* Connection = NULL;
+    INetwork* Network = NULL;
+    INetConnectionManager* ConnectionManager = NULL;
+    IEnumNetConnection* NetConnections = NULL;
+    INetConnection* NetConnection = NULL;
+    NETCON_PROPERTIES* Properties = NULL;
+    NLM_NETWORK_CATEGORY Category;
+    GUID Adapter;
+    HRESULT Result, ItemResult, InitializeResult;
+    ULONG Index, Fetched;
+
+    for (Index = 0; Index < Interfaces->NumEntries; Index++) Categories[Index] = -1;
+    InitializeResult = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (FAILED(InitializeResult)) return;
+    Result = CoCreateInstance(&CLSID_ConnectionManager,
+                              NULL,
+                              CLSCTX_LOCAL_SERVER,
+                              &IID_INetConnectionManager,
+                              (PVOID*)&ConnectionManager);
+    if (SUCCEEDED(Result))
+    {
+        Result = INetConnectionManager_EnumConnections(ConnectionManager,
+                                                        NCME_DEFAULT,
+                                                        &NetConnections);
+    }
+    if (SUCCEEDED(Result))
+    {
+        for (Index = 0; Index < Interfaces->NumEntries; Index++) Categories[Index] = -2;
+        while (IEnumNetConnection_Next(NetConnections, 1, &NetConnection, &Fetched) == S_OK)
+        {
+            ItemResult = INetConnection_GetProperties(NetConnection, &Properties);
+            if (SUCCEEDED(ItemResult))
+            {
+                for (Index = 0; Index < Interfaces->NumEntries; Index++)
+                {
+                    if (IsEqualGUID(&Properties->guidId, &Interfaces->Table[Index].InterfaceGuid))
+                    {
+                        Categories[Index] = -1;
+                        break;
+                    }
+                }
+                CoTaskMemFree(Properties->pszwName);
+                CoTaskMemFree(Properties->pszwDeviceName);
+                CoTaskMemFree(Properties);
+                Properties = NULL;
+            }
+            INetConnection_Release(NetConnection);
+            NetConnection = NULL;
+        }
+    }
+    if (Properties != NULL)
+    {
+        CoTaskMemFree(Properties->pszwName);
+        CoTaskMemFree(Properties->pszwDeviceName);
+        CoTaskMemFree(Properties);
+    }
+    if (NetConnection != NULL) INetConnection_Release(NetConnection);
+    if (NetConnections != NULL) IEnumNetConnection_Release(NetConnections);
+    if (ConnectionManager != NULL) INetConnectionManager_Release(ConnectionManager);
+    Result = CoCreateInstance(&CLSID_NetworkListManager,
+                              NULL,
+                              CLSCTX_INPROC_SERVER,
+                              &IID_INetworkListManager,
+                              (PVOID*)&Manager);
+    if (SUCCEEDED(Result)) Result = INetworkListManager_GetNetworkConnections(Manager, &Connections);
+    while (SUCCEEDED(Result) && IEnumNetworkConnections_Next(Connections, 1, &Connection, &Fetched) == S_OK)
+    {
+        ItemResult = INetworkConnection_GetAdapterId(Connection, &Adapter);
+        if (SUCCEEDED(ItemResult)) ItemResult = INetworkConnection_GetNetwork(Connection, &Network);
+        if (SUCCEEDED(ItemResult)) ItemResult = INetwork_GetCategory(Network, &Category);
+        if (SUCCEEDED(ItemResult))
+        {
+            for (Index = 0; Index < Interfaces->NumEntries; Index++)
+            {
+                if (IsEqualGUID(&Adapter, &Interfaces->Table[Index].InterfaceGuid))
+                {
+                    Categories[Index] = Category;
+                    break;
+                }
+            }
+        }
+        if (Network != NULL) INetwork_Release(Network);
+        Network = NULL;
+        INetworkConnection_Release(Connection);
+        Connection = NULL;
+    }
+    if (Connection != NULL) INetworkConnection_Release(Connection);
+    if (Network != NULL) INetwork_Release(Network);
+    if (Connections != NULL) IEnumNetworkConnections_Release(Connections);
+    if (Manager != NULL) INetworkListManager_Release(Manager);
+    CoUninitialize();
+}
+
+static
 ZP_STATUS
 ZpAdministration_EnumerateNetworkAdapters(
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
@@ -144,6 +250,7 @@ ZpAdministration_EnumerateNetworkAdapters(
     PMIB_UNICASTIPADDRESS_TABLE Addresses = NULL;
     NETIO_STATUS Result;
     NTSTATUS Status = STATUS_SUCCESS;
+    PLONG Categories = NULL;
     ULONG Index;
 
     Result = GetIfTable2(&Interfaces);
@@ -153,10 +260,15 @@ ZpAdministration_EnumerateNetworkAdapters(
     }
     if (Result == NO_ERROR)
     {
+        Categories = Mem_Alloc((SIZE_T)Interfaces->NumEntries * sizeof(*Categories));
+        if (Categories == NULL) Result = ERROR_NOT_ENOUGH_MEMORY;
+        else ZpNetwork_GetAdapterCategories(Interfaces, Categories);
+    }
+    if (Result == NO_ERROR)
+    {
         for (Index = 0; NT_SUCCESS(Status) && Index < Interfaces->NumEntries; Index++)
         {
-            if (Interfaces->Table[Index].InterfaceAndOperStatusFlags.FilterInterface) continue;
-            Status = ZpNetwork_AddAdapter(&Builder, &Interfaces->Table[Index]);
+            Status = ZpNetwork_AddAdapter(&Builder, &Interfaces->Table[Index], Categories[Index]);
         }
         for (Index = 0; NT_SUCCESS(Status) && Index < Addresses->NumEntries; Index++)
         {
@@ -169,10 +281,59 @@ ZpAdministration_EnumerateNetworkAdapters(
     }
     if (Addresses != NULL) FreeMibTable(Addresses);
     if (Interfaces != NULL) FreeMibTable(Interfaces);
+    Mem_Free(Categories);
     ZpAdministration_FreeBuilder(&Builder);
     return Result == NO_ERROR ?
                ZpStatus_FromNtStatus(Status) :
                ZpStatus_FromCode(ZpStatusWin32, Result);
+}
+
+static
+ZP_STATUS
+ZpNetwork_SetAdapterCategory(
+    _In_ NET_IFINDEX InterfaceIndex,
+    _In_ NLM_NETWORK_CATEGORY Category)
+{
+    INetworkListManager* Manager = NULL;
+    IEnumNetworkConnections* Connections = NULL;
+    INetworkConnection* Connection = NULL;
+    INetwork* Network = NULL;
+    MIB_IF_ROW2 Row = { 0 };
+    GUID Adapter;
+    HRESULT Result, ItemResult, InitializeResult;
+    ULONG Fetched;
+    NETIO_STATUS NetResult;
+
+    Row.InterfaceIndex = InterfaceIndex;
+    NetResult = GetIfEntry2(&Row);
+    if (NetResult != NO_ERROR) return ZpStatus_FromCode(ZpStatusWin32, NetResult);
+    InitializeResult = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (FAILED(InitializeResult)) return ZpStatus_FromCode(ZpStatusHResult, InitializeResult);
+    Result = CoCreateInstance(&CLSID_NetworkListManager,
+                              NULL,
+                              CLSCTX_INPROC_SERVER,
+                              &IID_INetworkListManager,
+                              (PVOID*)&Manager);
+    if (SUCCEEDED(Result)) Result = INetworkListManager_GetNetworkConnections(Manager, &Connections);
+    while (SUCCEEDED(Result) && IEnumNetworkConnections_Next(Connections, 1, &Connection, &Fetched) == S_OK)
+    {
+        ItemResult = INetworkConnection_GetAdapterId(Connection, &Adapter);
+        if (SUCCEEDED(ItemResult) && IsEqualGUID(&Adapter, &Row.InterfaceGuid))
+        {
+            Result = INetworkConnection_GetNetwork(Connection, &Network);
+            if (SUCCEEDED(Result)) Result = INetwork_SetCategory(Network, Category);
+            break;
+        }
+        INetworkConnection_Release(Connection);
+        Connection = NULL;
+    }
+    if (Network == NULL && SUCCEEDED(Result)) Result = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    if (Connection != NULL) INetworkConnection_Release(Connection);
+    if (Network != NULL) INetwork_Release(Network);
+    if (Connections != NULL) IEnumNetworkConnections_Release(Connections);
+    if (Manager != NULL) INetworkListManager_Release(Manager);
+    CoUninitialize();
+    return ZpStatus_FromCode(ZpStatusHResult, Result);
 }
 
 static
@@ -182,15 +343,36 @@ ZpAdministration_ControlNetworkAdapter(
 {
     MIB_IFROW Row = { 0 };
     PWSTR Identity = ZpAdministration_CopyView(&Control->Identity), End;
-    DWORD Result;
+    PWSTR Argument;
+    DWORD Result, Category;
 
     if (Identity == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
     Row.dwIndex = wcstoul(Identity, &End, 10);
     if (End == Identity || *End != UNICODE_NULL || Row.dwIndex == 0 ||
         (Control->Action != ZpAdministrationActionEnable &&
-         Control->Action != ZpAdministrationActionDisable))
+         Control->Action != ZpAdministrationActionDisable &&
+         Control->Action != ZpAdministrationActionConfigure))
     {
         Result = ERROR_INVALID_PARAMETER;
+    }
+    else if (Control->Action == ZpAdministrationActionConfigure)
+    {
+        Argument = ZpAdministration_CopyView(&Control->Argument);
+        if (Argument == NULL)
+        {
+            Mem_Free(Identity);
+            return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+        }
+        Category = wcstoul(Argument, &End, 10);
+        if (*End != UNICODE_NULL || Category > NLM_NETWORK_CATEGORY_PRIVATE)
+        {
+            Mem_Free(Argument);
+            Mem_Free(Identity);
+            return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+        }
+        Mem_Free(Argument);
+        Mem_Free(Identity);
+        return ZpNetwork_SetAdapterCategory(Row.dwIndex, (NLM_NETWORK_CATEGORY)Category);
     }
     else
     {
@@ -227,14 +409,21 @@ ZpNetwork_AddRoute(
     _In_ const MIB_IPFORWARD_ROW2* Row,
     _In_ const MIB_IF_TABLE2* Interfaces)
 {
-    WCHAR Identity[16], Destination[96], NextHop[80];
+    WCHAR Identity[256], Destination[96], NextHop[80];
     NTSTATUS Status;
 
     Status = ZpNetwork_FormatPrefix(&Row->DestinationPrefix, Destination, ARRAYSIZE(Destination));
     if (!NT_SUCCESS(Status)) return Status;
     Status = ZpNetwork_FormatAddress(&Row->NextHop, 0, NextHop, ARRAYSIZE(NextHop));
     if (!NT_SUCCESS(Status)) return Status;
-    _ultow_s(Row->InterfaceIndex, Identity, ARRAYSIZE(Identity), 10);
+    _snwprintf_s(Identity,
+                 ARRAYSIZE(Identity),
+                 _TRUNCATE,
+                 L"%u|%lu|%s|%s",
+                 Row->DestinationPrefix.Prefix.si_family,
+                 Row->InterfaceIndex,
+                 Destination,
+                 NextHop);
     return ZpAdministration_AddRecord(Builder,
                                       ZpAdministrationKindNetworkRoute,
                                       Row->DestinationPrefix.Prefix.si_family,
@@ -244,6 +433,116 @@ ZpNetwork_AddRoute(
                                       Destination,
                                       NextHop,
                                       ZpNetwork_FindInterfaceAlias(Interfaces, Row->InterfaceIndex));
+}
+
+static
+NTSTATUS
+ZpNetwork_ParseRoute(
+    _Inout_ PWSTR Identity,
+    _Out_ PMIB_IPFORWARD_ROW2 Row)
+{
+    PWSTR Context, FamilyText, InterfaceText, Destination, NextHop, PrefixText;
+    ULONG Family, PrefixLength;
+    USHORT Port;
+    NTSTATUS Status;
+
+    FamilyText = wcstok_s(Identity, L"|", &Context);
+    InterfaceText = wcstok_s(NULL, L"|", &Context);
+    Destination = wcstok_s(NULL, L"|", &Context);
+    NextHop = wcstok_s(NULL, L"|", &Context);
+    if (FamilyText == NULL || InterfaceText == NULL || Destination == NULL || NextHop == NULL ||
+        wcstok_s(NULL, L"|", &Context) != NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Family = wcstoul(FamilyText, &Context, 10);
+    if (*Context != UNICODE_NULL || (Family != AF_INET && Family != AF_INET6))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    InitializeIpForwardEntry(Row);
+    Row->InterfaceIndex = wcstoul(InterfaceText, &Context, 10);
+    if (*Context != UNICODE_NULL || Row->InterfaceIndex == 0) return STATUS_INVALID_PARAMETER;
+    PrefixText = wcsrchr(Destination, L'/');
+    if (PrefixText == NULL) return STATUS_INVALID_PARAMETER;
+    *PrefixText++ = UNICODE_NULL;
+    PrefixLength = wcstoul(PrefixText, &Context, 10);
+    if (*Context != UNICODE_NULL || PrefixLength > (Family == AF_INET ? 32UL : 128UL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Row->DestinationPrefix.Prefix.si_family = Row->NextHop.si_family = (ADDRESS_FAMILY)Family;
+    Row->DestinationPrefix.PrefixLength = (UINT8)PrefixLength;
+    if (Family == AF_INET)
+    {
+        Status = RtlIpv4StringToAddressExW(Destination,
+                                           TRUE,
+                                           &Row->DestinationPrefix.Prefix.Ipv4.sin_addr,
+                                           &Port);
+        if (NT_SUCCESS(Status))
+        {
+            Status = RtlIpv4StringToAddressExW(NextHop, TRUE, &Row->NextHop.Ipv4.sin_addr, &Port);
+        }
+    }
+    else
+    {
+        Status = RtlIpv6StringToAddressExW(Destination,
+                                           &Row->DestinationPrefix.Prefix.Ipv6.sin6_addr,
+                                           &Row->DestinationPrefix.Prefix.Ipv6.sin6_scope_id,
+                                           &Port);
+        if (NT_SUCCESS(Status))
+        {
+            Status = RtlIpv6StringToAddressExW(NextHop,
+                                               &Row->NextHop.Ipv6.sin6_addr,
+                                               &Row->NextHop.Ipv6.sin6_scope_id,
+                                               &Port);
+        }
+    }
+    return Status;
+}
+
+static
+ZP_STATUS
+ZpAdministration_ControlNetworkRoute(
+    _In_ PCZP_ADMINISTRATION_CONTROL_VIEW Control)
+{
+    MIB_IPFORWARD_ROW2 Row;
+    UNICODE_STRING MetricText;
+    PWSTR Identity, Argument;
+    ULONG Metric;
+    NTSTATUS Status;
+    NETIO_STATUS Result;
+
+    if (Control->Action != ZpAdministrationActionCreate &&
+        Control->Action != ZpAdministrationActionConfigure &&
+        Control->Action != ZpAdministrationActionDelete)
+    {
+        return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
+    }
+    Identity = ZpAdministration_CopyView(&Control->Identity);
+    if (Identity == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    Status = ZpNetwork_ParseRoute(Identity, &Row);
+    if (NT_SUCCESS(Status) && Control->Action != ZpAdministrationActionDelete)
+    {
+        Argument = ZpAdministration_CopyView(&Control->Argument);
+        if (Argument == NULL)
+        {
+            Mem_Free(Identity);
+            return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+        }
+        RtlInitUnicodeString(&MetricText, Argument);
+        Status = RtlUnicodeStringToInteger(&MetricText, 10, &Metric);
+        Mem_Free(Argument);
+        if (NT_SUCCESS(Status)) Row.Metric = Metric;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Result = Control->Action == ZpAdministrationActionCreate ? CreateIpForwardEntry2(&Row) :
+                     Control->Action == ZpAdministrationActionConfigure ? SetIpForwardEntry2(&Row) :
+                                                                          DeleteIpForwardEntry2(&Row);
+    }
+    Mem_Free(Identity);
+    return NT_SUCCESS(Status) ? ZpStatus_FromCode(ZpStatusWin32, Result) : ZpStatus_FromNtStatus(Status);
 }
 
 static

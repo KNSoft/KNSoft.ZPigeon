@@ -402,6 +402,10 @@ internal static class ManagementWebApi
         });
         MapAdministration(app, server, "users", AdministrationOperation.EnumerateUsers,
                           AdministrationOperation.ControlUser);
+        app.MapPost("/api/sessions", async () =>
+            await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateSessions));
+        app.MapPost("/api/logon-sessions", async () =>
+            await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateLogonSessions));
         MapAdministration(app, server, "software", AdministrationOperation.EnumerateSoftware,
                           AdministrationOperation.ControlSoftware);
         MapAdministration(app, server, "hardware", AdministrationOperation.EnumerateHardware,
@@ -440,8 +444,9 @@ internal static class ManagementWebApi
         MapAdministration(app, server, "network-adapters",
                           AdministrationOperation.EnumerateNetworkAdapters,
                           AdministrationOperation.ControlNetworkAdapter);
-        app.MapPost("/api/network-routes", async () =>
-            await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateNetworkRoutes));
+        MapAdministration(app, server, "network-routes",
+                          AdministrationOperation.EnumerateNetworkRoutes,
+                          AdministrationOperation.ControlNetworkRoute);
         app.MapPost("/api/network-endpoints", async () =>
             await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateNetworkEndpoints));
         MapAdministration(app, server, "certificates", AdministrationOperation.EnumerateCertificates,
@@ -736,6 +741,8 @@ internal sealed record ProcessInfoWebRecord(
     string KernelTime,
     string WorkingSetBytes,
     string PrivateBytes,
+    int ImageBaseStatus,
+    string ImageBase,
     string ImageName,
     string UserName,
     int ImagePathStatus,
@@ -757,6 +764,8 @@ internal sealed record ProcessInfoWebRecord(
             value.KernelTime.ToString(),
             value.WorkingSetBytes.ToString(),
             value.PrivateBytes.ToString(),
+            value.ImageBaseStatus,
+            value.ImageBase.ToString(),
             value.ImageName,
             value.UserName,
             value.ImagePathStatus,

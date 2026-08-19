@@ -2,7 +2,7 @@ const CHUNK=0x10000,ROW=16,VIRTUAL_ROWS=200000;
 
 export class HexEditor{
   constructor({notify}){
-    this.notify=notify;this.cache=new Map();this.dirty=new Map();this.generation=0;
+    this.notify=notify;this.cache=new Map();this.dirty=new Map();this.generation=this.renderToken=0;
     this.dialog=document.createElement('dialog');this.dialog.className='hex-dialog';this.dialog.innerHTML='<header><h2 data-role="title">十六进制编辑</h2><span data-role="position"></span></header><div class="hex-head"><span>偏移</span><span>十六进制</span><span>文本</span></div><div class="hex-scroll"><div class="hex-spacer"></div><div class="hex-rows"></div></div><footer><span data-role="status">未加载</span><span class="spacer"></span><button data-action="reload">重新读取</button><button data-action="close">关闭</button><button data-action="save">保存</button></footer>';
     document.body.append(this.dialog);this.scroll=this.dialog.querySelector('.hex-scroll');this.spacer=this.dialog.querySelector('.hex-spacer');this.rows=this.dialog.querySelector('.hex-rows');this.status=this.dialog.querySelector('[data-role=status]');this.position=this.dialog.querySelector('[data-role=position]');this.saveButton=this.dialog.querySelector('[data-action=save]');this.scroll.onscroll=()=>this.schedule();this.dialog.querySelector('[data-action=close]').onclick=()=>this.close();this.dialog.querySelector('[data-action=reload]').onclick=()=>this.reload();this.saveButton.onclick=()=>this.save();
   }

@@ -268,28 +268,6 @@ CleanupModule:
 }
 
 static
-VOID
-ZpAdministration_DecodeXmlText(
-    _Inout_ PWSTR Text)
-{
-    PWSTR Read = Text, Write = Text;
-
-    while (*Read != UNICODE_NULL)
-    {
-        if (*Read == L'&')
-        {
-            if (wcsncmp(Read, L"&amp;", 5) == 0) { *Write++ = L'&'; Read += 5; continue; }
-            if (wcsncmp(Read, L"&lt;", 4) == 0) { *Write++ = L'<'; Read += 4; continue; }
-            if (wcsncmp(Read, L"&gt;", 4) == 0) { *Write++ = L'>'; Read += 4; continue; }
-            if (wcsncmp(Read, L"&quot;", 6) == 0) { *Write++ = L'"'; Read += 6; continue; }
-            if (wcsncmp(Read, L"&apos;", 6) == 0) { *Write++ = L'\''; Read += 6; continue; }
-        }
-        *Write++ = *Read++;
-    }
-    *Write = UNICODE_NULL;
-}
-
-static
 ZP_STATUS
 ZpAdministration_QueryWlanProfile(
     _In_ PCZP_STRING_VIEW IdentityView,
@@ -299,7 +277,7 @@ ZpAdministration_QueryWlanProfile(
     ZP_ADMINISTRATION_BUILDER Builder = { 0 };
     ZP_WLAN_API Api;
     UNICODE_STRING GuidString;
-    PWSTR Identity, Profile, Xml, Start, End;
+    PWSTR Identity, Profile, Xml;
     HANDLE Handle;
     GUID InterfaceGuid;
     DWORD Version, Flags = WLAN_PROFILE_GET_PLAINTEXT_KEY, Access, Error, CleanupError;
@@ -328,30 +306,18 @@ ZpAdministration_QueryWlanProfile(
     Error = Api.GetProfile(Handle, &InterfaceGuid, Profile, NULL, &Xml, &Flags, &Access);
     if (Error == ERROR_SUCCESS)
     {
-        Start = wcsstr(Xml, L"<keyMaterial>");
-        Start = Start != NULL ? Start + ARRAYSIZE(L"<keyMaterial>") - 1 : NULL;
-        End = Start != NULL ? wcsstr(Start, L"</keyMaterial>") : NULL;
-        if (End == NULL)
-        {
-            Error = ERROR_NOT_FOUND;
-        }
-        else
-        {
-            *End = UNICODE_NULL;
-            ZpAdministration_DecodeXmlText(Start);
-            Profile[-1] = L'|';
-            Status = ZpAdministration_AddRecord(&Builder,
-                                                  ZpAdministrationKindWlanProfile,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  Identity,
-                                                  Profile,
-                                                  NULL,
-                                                  Start);
-            if (NT_SUCCESS(Status)) Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
-            if (!NT_SUCCESS(Status)) Error = RtlNtStatusToDosError(Status);
-        }
+        Profile[-1] = L'|';
+        Status = ZpAdministration_AddRecord(&Builder,
+                                             ZpAdministrationKindWlanProfile,
+                                             0,
+                                             0,
+                                             0,
+                                             Identity,
+                                             Profile,
+                                             NULL,
+                                             Xml);
+        if (NT_SUCCESS(Status)) Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
+        if (!NT_SUCCESS(Status)) Error = RtlNtStatusToDosError(Status);
         Api.FreeMemory(Xml);
     }
     ZpAdministration_FreeBuilder(&Builder);

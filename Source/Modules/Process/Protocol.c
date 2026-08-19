@@ -205,7 +205,7 @@ ZpProcess_EncodeInfo(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 12 * sizeof(ULONG) + 2 * sizeof(USHORT) + 5 * sizeof(ULONGLONG) +
+    RequiredSize = 13 * sizeof(ULONG) + 2 * sizeof(USHORT) + 6 * sizeof(ULONGLONG) +
                    ((ULONGLONG)Info->ImageNameLength + Info->UserNameLength + Info->ImagePathLength +
                     Info->CommandLineLength) * sizeof(WCHAR);
     if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12) return STATUS_BUFFER_OVERFLOW;
@@ -226,6 +226,8 @@ ZpProcess_EncodeInfo(
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->KernelTime);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->WorkingSetBytes);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->PrivateBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->ImageBaseStatus);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->ImageBase);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Info->ImageName, Info->ImageNameLength);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Info->UserName, Info->UserNameLength);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->ImagePathStatus);
@@ -245,7 +247,7 @@ ZpProcess_DecodeInfo(
     ULONG Value;
     NTSTATUS Status;
 
-    if (PayloadLength < 12 * sizeof(ULONG) + 2 * sizeof(USHORT) + 5 * sizeof(ULONGLONG))
+    if (PayloadLength < 13 * sizeof(ULONG) + 2 * sizeof(USHORT) + 6 * sizeof(ULONGLONG))
     {
         return STATUS_DATA_ERROR;
     }
@@ -263,6 +265,9 @@ ZpProcess_DecodeInfo(
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &View->KernelTime);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &View->WorkingSetBytes);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &View->PrivateBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Value);
+    if (NT_SUCCESS(Status)) View->ImageBaseStatus = (NTSTATUS)Value;
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &View->ImageBase);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &View->ImageName);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &View->UserName);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Value);

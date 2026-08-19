@@ -108,7 +108,10 @@ public enum AdministrationOperation : ushort
     EnumerateNetworkAdapters,
     ControlNetworkAdapter,
     EnumerateNetworkRoutes,
-    EnumerateNetworkEndpoints
+    EnumerateNetworkEndpoints,
+    ControlNetworkRoute,
+    EnumerateSessions,
+    EnumerateLogonSessions
 }
 
 public enum AdministrationKind : ushort
@@ -151,7 +154,9 @@ public enum AdministrationKind : ushort
     NetworkAdapterAddress,
     NetworkRoute,
     TcpEndpoint,
-    UdpEndpoint
+    UdpEndpoint,
+    Session,
+    LogonSession
 }
 
 public enum CredentialStore : ushort
@@ -187,7 +192,8 @@ public enum AdministrationAction : ushort
     Configure,
     Connect,
     Disconnect,
-    SetPermissions
+    SetPermissions,
+    TurnOffDisplay
 }
 
 public sealed record AdministrationRecord(
