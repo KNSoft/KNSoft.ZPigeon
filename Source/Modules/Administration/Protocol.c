@@ -5,7 +5,7 @@ LOGICAL
 ZpAdministration_IsKindValid(
     _In_ ZP_ADMINISTRATION_KIND Kind)
 {
-    return Kind >= ZpAdministrationKindUser && Kind <= ZpAdministrationKindClipboardState;
+    return Kind >= ZpAdministrationKindUser && Kind <= ZpAdministrationKindWebCredential;
 }
 
 static

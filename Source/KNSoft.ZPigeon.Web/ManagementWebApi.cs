@@ -431,6 +431,65 @@ internal static class ManagementWebApi
                           AdministrationOperation.ControlWlan);
         MapAdministration(app, server, "certificates", AdministrationOperation.EnumerateCertificates,
                           AdministrationOperation.ControlCertificate);
+        app.MapPost("/api/credentials", async (HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            return await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateCredentials);
+        });
+        app.MapPost("/api/credentials/secret", async (HttpContext context, AdministrationIdentityRequest request) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var records = await server.QueryAdministrationAsync(
+                AdministrationOperation.QueryCredential,
+                request.Identity);
+            return Results.Ok(new { Secret = records.Single().Detail });
+        });
+        app.MapPost("/api/credentials/control", async (CredentialControlRequest request) =>
+        {
+            if (!Enum.IsDefined(request.Store) ||
+                request.Action is not (AdministrationAction.Create or AdministrationAction.Configure or
+                    AdministrationAction.Delete))
+            {
+                return Results.BadRequest();
+            }
+            string identity;
+            if (request.Action == AdministrationAction.Create)
+            {
+                if (string.IsNullOrEmpty(request.Target) || string.IsNullOrEmpty(request.UserName) ||
+                    request.Target.Length > 32767 || request.UserName.Length > 513 ||
+                    request.Target.Contains('\0') || request.UserName.Contains('\0') || request.Secret is null ||
+                    request.Secret.Contains('\0') || request.Secret.Length > 32767 ||
+                    request.Store == CredentialStore.Windows && request.Type is not (1 or 2))
+                {
+                    return Results.BadRequest();
+                }
+                identity = request.Store == CredentialStore.Windows ?
+                               $"W{request.Type}:{request.Target}" :
+                               $"V{request.Target.Length}:{request.Target}{request.UserName}";
+            }
+            else
+            {
+                var prefix = request.Store == CredentialStore.Windows ? 'W' : 'V';
+                if (string.IsNullOrEmpty(request.Identity) || request.Identity[0] != prefix ||
+                    request.Identity.Length > 65535 ||
+                    (request.Store == CredentialStore.Windows &&
+                     request.Action == AdministrationAction.Configure &&
+                     string.IsNullOrEmpty(request.UserName)) ||
+                    (request.Action != AdministrationAction.Delete && request.Secret is null) ||
+                    (request.Secret?.Contains('\0') ?? false) || request.Secret is { Length: > 32767 })
+                {
+                    return Results.BadRequest();
+                }
+                identity = request.Identity;
+            }
+            await server.ControlAdministrationAsync(
+                AdministrationOperation.ControlCredential,
+                request.Action,
+                identity,
+                request.UserName,
+                request.Secret);
+            return Results.NoContent();
+        });
         MapAdministration(app, server, "clipboard", AdministrationOperation.EnumerateClipboard,
                           AdministrationOperation.ControlClipboard);
         app.MapPost("/api/clipboard/wait", async (AdministrationIdentityRequest request) =>
@@ -600,6 +659,14 @@ internal sealed record AdministrationControlRequest(
     string? Argument,
     string? Secret);
 internal sealed record AdministrationIdentityRequest(string Identity);
+internal sealed record CredentialControlRequest(
+    AdministrationAction Action,
+    CredentialStore Store,
+    uint Type,
+    string? Identity,
+    string? Target,
+    string? UserName,
+    string? Secret);
 internal sealed record ProcessWebRecord(
     uint ProcessId,
     uint ParentProcessId,

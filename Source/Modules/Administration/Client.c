@@ -5,6 +5,9 @@
 #include <netfw.h>
 #include <oleauto.h>
 #include <powrprof.h>
+#include <roapi.h>
+#include <windows.security.credentials.h>
+#include <wincred.h>
 #include <wlanapi.h>
 #include <KNSoft/NDK/NT/Win32K/Win32KApi.h>
 
@@ -160,6 +163,7 @@ typedef const VOID* PCVOID;
 #include "Wlan.inl"
 #include "Certificate.inl"
 #include "Clipboard.inl"
+#include "Credential.inl"
 
 ZP_STATUS
 ZpAdministration_Execute(
@@ -235,6 +239,11 @@ ZpAdministration_Execute(
                        ZpAdministration_EnumerateClipboard(Response, ResponseLength) :
                        ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
 
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_CREDENTIALS:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateCredentials(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
         case ZP_ADMINISTRATION_OPERATION_QUERY_CERTIFICATE:
             Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
             return NT_SUCCESS(Status) ?
@@ -251,6 +260,12 @@ ZpAdministration_Execute(
             Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
             return NT_SUCCESS(Status) ?
                        ZpAdministration_QueryWlanProfile(&Identity, Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(Status);
+
+        case ZP_ADMINISTRATION_OPERATION_QUERY_CREDENTIAL:
+            Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
+            return NT_SUCCESS(Status) ?
+                       ZpAdministration_QueryCredential(&Identity, Response, ResponseLength) :
                        ZpStatus_FromNtStatus(Status);
     }
     Status = ZpAdministration_DecodeControl(Request, RequestLength, &Control);
@@ -292,6 +307,9 @@ ZpAdministration_Execute(
 
         case ZP_ADMINISTRATION_OPERATION_CONTROL_CLIPBOARD:
             return ZpAdministration_ControlClipboard(&Control);
+
+        case ZP_ADMINISTRATION_OPERATION_CONTROL_CREDENTIAL:
+            return ZpAdministration_ControlCredential(&Control);
     }
     return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
 }

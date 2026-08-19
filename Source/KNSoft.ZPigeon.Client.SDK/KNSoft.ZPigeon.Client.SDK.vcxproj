@@ -119,6 +119,7 @@
     <ClInclude Include="..\Modules\Administration\Update.inl" />
     <ClInclude Include="..\Modules\Administration\User.inl" />
     <ClInclude Include="..\Modules\Administration\Wlan.inl" />
+    <ClInclude Include="..\Modules\Administration\Credential.inl" />
     <ClInclude Include="Core\Channel.h" />
     <ClInclude Include="Core\Account.h" />
     <ClInclude Include="Core\Security.h" />

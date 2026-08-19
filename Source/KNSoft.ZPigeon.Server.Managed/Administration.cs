@@ -93,7 +93,10 @@ public enum AdministrationOperation : ushort
     EnumerateClipboard,
     ControlClipboard,
     WaitClipboard,
-    QueryWlanProfile
+    QueryWlanProfile,
+    EnumerateCredentials,
+    QueryCredential,
+    ControlCredential
 }
 
 public enum AdministrationKind : ushort
@@ -122,7 +125,15 @@ public enum AdministrationKind : ushort
     CertificateDetails,
     CertificateChain,
     ClipboardFormat,
-    ClipboardState
+    ClipboardState,
+    WindowsCredential,
+    WebCredential
+}
+
+public enum CredentialStore : ushort
+{
+    Windows = 1,
+    Web
 }
 
 public enum AdministrationAction : ushort

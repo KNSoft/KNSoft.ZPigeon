@@ -96,6 +96,11 @@ ZpClient_GetModuleLogName(
             {
                 return L"wlan.log";
             }
+            if (OperationId >= ZP_ADMINISTRATION_OPERATION_ENUMERATE_CREDENTIALS &&
+                OperationId <= ZP_ADMINISTRATION_OPERATION_CONTROL_CREDENTIAL)
+            {
+                return L"credential.log";
+            }
             return OperationId >= ZP_ADMINISTRATION_OPERATION_ENUMERATE_USERS &&
                    OperationId <= ZP_ADMINISTRATION_OPERATION_CONTROL_WLAN ?
                        AdministrationLogs[(OperationId - 1) / 2] : L"administration.log";
