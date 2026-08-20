@@ -14,6 +14,7 @@
 #include "../../Modules/Tunnel/Client.h"
 #include "../../Modules/Window/Client.h"
 #include "../../Modules/Video/Client.h"
+#include "../../Modules/Rtc/Client.h"
 
 typedef struct _ZP_CLIENT_INBOUND_REQUEST
 {
@@ -264,6 +265,16 @@ ZpClientInbound_RequestCallback(
                                  &AllocatedResponse,
                                  &PayloadLength,
                                  &VideoChannel);
+        Response = AllocatedResponse;
+    }
+    else if (Request->ModuleId == ZP_RTC_MODULE_ID)
+    {
+        Status = ZpRtc_Execute(Object,
+                               Request->OperationId,
+                               Request->Payload,
+                               Request->PayloadLength,
+                               &AllocatedResponse,
+                               &PayloadLength);
         Response = AllocatedResponse;
     }
     else if (Request->ModuleId == ZP_TUNNEL_MODULE_ID)

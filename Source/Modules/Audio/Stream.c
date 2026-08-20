@@ -1,6 +1,7 @@
 ﻿#define COBJMACROS
 
 #include "Client.h"
+#include "../Rtc/Client.h"
 
 #include "../../KNSoft.ZPigeon.Client.SDK/Client.inl"
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Channel.h"
@@ -39,6 +40,7 @@ struct _ZP_CLIENT_AUDIO_CHANNEL
     HANDLE CreditEvent;
     HANDLE StopEvent;
     ZP_AUDIO_FLOW Flow;
+    ULONG DirectStreamId;
     ULONG DeviceIdLength;
     WCHAR DeviceId[ANYSIZE_ARRAY];
 };
@@ -95,6 +97,10 @@ ZpAudio_SendBytes(
     NTSTATUS Status = STATUS_SUCCESS;
     LOGICAL Pending, Removed;
 
+    if (Channel->DirectStreamId != 0)
+    {
+        return ZpRtc_Send(Object, Channel->DirectStreamId, Data, Length);
+    }
     Body = Mem_Alloc(sizeof(ULONG) + ZP_AUDIO_CHANNEL_CHUNK_SIZE);
     if (Body == NULL) return STATUS_NO_MEMORY;
     while (Offset < Length)
@@ -517,6 +523,7 @@ ZpAudio_CreateStreamChannel(
     if (AudioChannel == NULL) return STATUS_NO_MEMORY;
     RtlZeroMemory(AudioChannel, FIELD_OFFSET(ZP_CLIENT_AUDIO_CHANNEL, DeviceId));
     AudioChannel->Flow = Request->Flow;
+    AudioChannel->DirectStreamId = Request->DirectStreamId;
     AudioChannel->DeviceIdLength = Request->DeviceId.Length;
     if (Request->DeviceId.Length != 0)
     {

@@ -220,7 +220,7 @@ ZpWindow_EncodeCaptureRequest(
     NTSTATUS Status;
 
     if (!ZpWindow_IsCaptureOptionsValid(Options)) return STATUS_INVALID_PARAMETER;
-    *BytesWritten = sizeof(ULONGLONG) + 4 * sizeof(ULONG) + 2 * sizeof(USHORT);
+    *BytesWritten = sizeof(ULONGLONG) + 5 * sizeof(ULONG) + 2 * sizeof(USHORT);
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < *BytesWritten) return STATUS_BUFFER_TOO_SMALL;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
@@ -231,6 +231,7 @@ ZpWindow_EncodeCaptureRequest(
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Options->MaxDimension);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, Options->FrameRate);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, Options->Quality);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Options->DirectStreamId);
     return Status;
 }
 
@@ -243,7 +244,7 @@ ZpWindow_DecodeCaptureRequest(
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
-    if (PayloadLength != sizeof(ULONGLONG) + 4 * sizeof(ULONG) + 2 * sizeof(USHORT))
+    if (PayloadLength != sizeof(ULONGLONG) + 5 * sizeof(ULONG) + 2 * sizeof(USHORT))
     {
         return STATUS_DATA_ERROR;
     }
@@ -255,6 +256,7 @@ ZpWindow_DecodeCaptureRequest(
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Options->MaxDimension);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(&Reader, &Options->FrameRate);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(&Reader, &Options->Quality);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Options->DirectStreamId);
     return NT_SUCCESS(Status) && ZpWindow_IsCaptureOptionsValid(Options) ? STATUS_SUCCESS : STATUS_DATA_ERROR;
 }
 

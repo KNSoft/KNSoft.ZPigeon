@@ -20,7 +20,8 @@ public sealed partial class NativeServer
         string deviceId,
         uint maxDimension,
         ushort frameRate,
-        ushort quality)
+        ushort quality,
+        uint directStreamId)
     {
         var creation = new VideoStreamCreation();
         creation.Handle = GCHandle.Alloc(creation);
@@ -29,6 +30,7 @@ public sealed partial class NativeServer
                                                    maxDimension,
                                                    frameRate,
                                                    quality,
+                                                   directStreamId,
                                                    VideoStreamOpenCallback,
                                                    VideoStreamDataCallback,
                                                    VideoStreamCloseCallback,
@@ -176,6 +178,7 @@ internal static partial class NativeMethods
         uint maxDimension,
         ushort frameRate,
         ushort quality,
+        uint directStreamId,
         VideoStreamOpenCallback openCallback,
         VideoStreamDataCallback dataCallback,
         VideoStreamCloseCallback closeCallback,

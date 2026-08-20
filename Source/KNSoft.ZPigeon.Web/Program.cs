@@ -13,6 +13,7 @@ var tcpForwards = new TcpForwardManager(server);
 var udpForwards = new UdpForwardManager(server);
 var cdpSessions = new CdpSessionManager(server, tcpForwards);
 var proxyUserHeader = builder.Configuration["ReverseProxy:UserHeader"] ?? "X-Forwarded-User";
+var iceServers = builder.Configuration.GetSection("P2p:IceServers").Get<string[]>() ?? [];
 builder.Services.AddSingleton(server);
 builder.Services.AddSingleton(terminalSessions);
 builder.Services.AddSingleton(eventLogStreams);
@@ -142,6 +143,7 @@ app.MapPost("/api/terminal/session/rename", (TerminalRenameRequest request) =>
 });
 app.Map("/api/terminal", context =>
     TerminalWebSocket.RunAsync(context, terminalSessions));
+app.Map("/api/rtc", context => RtcWebSocket.RunAsync(context, server, iceServers));
 app.MapRegistryApi(server);
 app.MapManagementApi(server);
 app.MapExecutionApi(server, terminalSessions);

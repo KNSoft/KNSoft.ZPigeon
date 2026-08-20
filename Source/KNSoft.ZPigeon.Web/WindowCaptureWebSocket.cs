@@ -14,7 +14,8 @@ internal static class WindowCaptureWebSocket
             !bool.TryParse(context.Request.Query["captureCursor"], out var captureCursor) ||
             !uint.TryParse(context.Request.Query["maxDimension"], out var maxDimension) ||
             !ushort.TryParse(context.Request.Query["frameRate"], out var frameRate) ||
-            !ushort.TryParse(context.Request.Query["imageQuality"], out var imageQuality))
+            !ushort.TryParse(context.Request.Query["imageQuality"], out var imageQuality) ||
+            !uint.TryParse(context.Request.Query["directStreamId"], out var directStreamId))
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             return;
@@ -26,8 +27,18 @@ internal static class WindowCaptureWebSocket
                 handle,
                 processId,
                 threadId,
-                new(captureCursor, maxDimension, frameRate, imageQuality));
-            await foreach (var data in capture.Output.ReadAllAsync(context.RequestAborted))
+                new(captureCursor, maxDimension, frameRate, imageQuality),
+                directStreamId);
+            if (directStreamId != 0)
+            {
+                if (await Task.WhenAny(capture.Completion,
+                                       StreamWebSocket.WaitForCloseAsync(socket, context.RequestAborted)) !=
+                    capture.Completion)
+                {
+                    return;
+                }
+            }
+            else await foreach (var data in capture.Output.ReadAllAsync(context.RequestAborted))
             {
                 await socket.SendAsync(data,
                                        WebSocketMessageType.Binary,

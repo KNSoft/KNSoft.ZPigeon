@@ -1067,6 +1067,7 @@ ZpNative_OpenWindowCapture(
     _In_ ULONG MaxDimension,
     _In_ USHORT FrameRate,
     _In_ USHORT Quality,
+    _In_ ULONG DirectStreamId,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_DATA_CALLBACK DataCallback,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_CLOSE_CALLBACK CloseCallback,
@@ -1122,6 +1123,7 @@ NTSTATUS
 NTAPI
 ZpNative_OpenAudioStream(
     _In_ USHORT Flow,
+    _In_ ULONG DirectStreamId,
     _In_reads_opt_(DeviceIdLength) PCWCH DeviceId,
     _In_ ULONG DeviceIdLength,
     _In_ ZP_NATIVE_AUDIO_STREAM_OPEN_CALLBACK OpenCallback,
@@ -1151,6 +1153,7 @@ ZpNative_OpenVideoStream(
     _In_ ULONG MaxDimension,
     _In_ USHORT FrameRate,
     _In_ USHORT Quality,
+    _In_ ULONG DirectStreamId,
     _In_ ZP_NATIVE_VIDEO_STREAM_OPEN_CALLBACK OpenCallback,
     _In_ ZP_NATIVE_VIDEO_STREAM_DATA_CALLBACK DataCallback,
     _In_ ZP_NATIVE_VIDEO_STREAM_CLOSE_CALLBACK CloseCallback,
@@ -1161,6 +1164,26 @@ NTSTATUS
 NTAPI
 ZpNative_CloseVideoStream(
     _In_ ZP_NATIVE_VIDEO_STREAM_HANDLE Stream);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_OpenRtc(
+    _In_reads_(ZP_RTC_SESSION_ID_SIZE) const BYTE* SessionId,
+    _In_reads_(OfferLength) PCWCH Offer,
+    _In_ ULONG OfferLength,
+    _In_reads_opt_(IceServersLength) PCWCH IceServers,
+    _In_ ULONG IceServersLength,
+    _In_ ZP_NATIVE_STRING_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_CloseRtc(
+    _In_reads_(ZP_RTC_SESSION_ID_SIZE) const BYTE* SessionId,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
 
 __declspec(dllexport)
 NTSTATUS

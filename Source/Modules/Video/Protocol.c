@@ -93,6 +93,7 @@ ZpVideo_EncodeStreamRequest(
     _In_ ULONG MaxDimension,
     _In_ USHORT FrameRate,
     _In_ USHORT Quality,
+    _In_ ULONG DirectStreamId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
@@ -105,6 +106,7 @@ ZpVideo_EncodeStreamRequest(
         FrameRate > ZP_VIDEO_MAX_FRAME_RATE || Quality == 0 || Quality > 100) return STATUS_INVALID_PARAMETER;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpCodec_WriteUInt32(&Writer, MaxDimension);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, DirectStreamId);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, FrameRate);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, Quality);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, DeviceId, DeviceIdLength);
@@ -123,6 +125,7 @@ ZpVideo_DecodeStreamRequest(
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadUInt32(&Reader, &Request->MaxDimension);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Request->DirectStreamId);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(&Reader, &Request->FrameRate);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(&Reader, &Request->Quality);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->DeviceId);

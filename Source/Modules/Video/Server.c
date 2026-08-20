@@ -135,6 +135,7 @@ ZpServer_OpenVideoStream(
     _In_ ULONG MaxDimension,
     _In_ USHORT FrameRate,
     _In_ USHORT Quality,
+    _In_ ULONG DirectStreamId,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_VIDEO_STREAM_OPEN_CALLBACK OpenCallback,
     _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
@@ -154,6 +155,7 @@ ZpServer_OpenVideoStream(
                                          MaxDimension,
                                          FrameRate,
                                          Quality,
+                                         DirectStreamId,
                                          NULL,
                                          0,
                                          &PayloadLength);
@@ -170,6 +172,7 @@ ZpServer_OpenVideoStream(
                                          MaxDimension,
                                          FrameRate,
                                          Quality,
+                                         DirectStreamId,
                                          Payload,
                                          PayloadLength,
                                          &PayloadLength);

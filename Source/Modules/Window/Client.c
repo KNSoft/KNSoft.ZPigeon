@@ -1,6 +1,7 @@
 ﻿#include "Client.h"
 
 #include "Capture.h"
+#include "../Rtc/Client.h"
 
 #include "../../KNSoft.ZPigeon.Client.SDK/Client.inl"
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Channel.h"
@@ -505,6 +506,10 @@ ZpWindowCapture_SendBytes(
     NTSTATUS Status = STATUS_SUCCESS;
     LOGICAL Pending, Removed;
 
+    if (Channel->Options.DirectStreamId != 0)
+    {
+        return ZpRtc_Send(Object, Channel->Options.DirectStreamId, Data, Length);
+    }
     Body = Mem_Alloc(sizeof(ULONG) + ZP_WINDOW_CAPTURE_CHUNK_SIZE);
     if (Body == NULL) return STATUS_NO_MEMORY;
     while (Offset < Length)

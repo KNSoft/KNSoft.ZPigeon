@@ -1962,7 +1962,8 @@ ZpNative_Start(
         { ZP_BROWSER_MODULE_ID, ZP_BROWSER_MODULE_VERSION },
         { ZP_WMI_MODULE_ID, ZP_WMI_MODULE_VERSION },
         { ZP_AUDIO_MODULE_ID, ZP_AUDIO_MODULE_VERSION },
-        { ZP_VIDEO_MODULE_ID, ZP_VIDEO_MODULE_VERSION }
+        { ZP_VIDEO_MODULE_ID, ZP_VIDEO_MODULE_VERSION },
+        { ZP_RTC_MODULE_ID, ZP_RTC_MODULE_VERSION }
     };
     ZP_LISTENER_ENDPOINT Listener = {
         ZpTransportQuic,
@@ -3442,6 +3443,7 @@ ZpNative_OpenWindowCapture(
     _In_ ULONG MaxDimension,
     _In_ USHORT FrameRate,
     _In_ USHORT Quality,
+    _In_ ULONG DirectStreamId,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_DATA_CALLBACK DataCallback,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_CLOSE_CALLBACK CloseCallback,
@@ -3454,7 +3456,8 @@ ZpNative_OpenWindowCapture(
         Flags,
         MaxDimension,
         FrameRate,
-        Quality
+        Quality,
+        DirectStreamId
     };
     ZP_CONNECTION_HANDLE Connection;
     PZP_NATIVE_WINDOW_CAPTURE_STREAM Stream;
@@ -3652,6 +3655,7 @@ NTSTATUS
 NTAPI
 ZpNative_OpenAudioStream(
     _In_ USHORT Flow,
+    _In_ ULONG DirectStreamId,
     _In_reads_opt_(DeviceIdLength) PCWCH DeviceId,
     _In_ ULONG DeviceIdLength,
     _In_ ZP_NATIVE_AUDIO_STREAM_OPEN_CALLBACK OpenCallback,
@@ -3681,6 +3685,7 @@ ZpNative_OpenAudioStream(
     Stream->Context = Context;
     Status = ZpServer_OpenAudioStream(Connection,
                                       Flow,
+                                      DirectStreamId,
                                       DeviceId,
                                       DeviceIdLength,
                                       ZP_NATIVE_TIMEOUT_MILLISECONDS,
@@ -3752,6 +3757,7 @@ ZpNative_OpenVideoStream(
     _In_ ULONG MaxDimension,
     _In_ USHORT FrameRate,
     _In_ USHORT Quality,
+    _In_ ULONG DirectStreamId,
     _In_ ZP_NATIVE_VIDEO_STREAM_OPEN_CALLBACK OpenCallback,
     _In_ ZP_NATIVE_VIDEO_STREAM_DATA_CALLBACK DataCallback,
     _In_ ZP_NATIVE_VIDEO_STREAM_CLOSE_CALLBACK CloseCallback,
@@ -3783,6 +3789,7 @@ ZpNative_OpenVideoStream(
                                       MaxDimension,
                                       FrameRate,
                                       Quality,
+                                      DirectStreamId,
                                       ZP_NATIVE_TIMEOUT_MILLISECONDS,
                                       ZpNative_VideoStreamOpenCallback,
                                       ZpNative_VideoStreamDataCallback,
@@ -3814,6 +3821,95 @@ ZpNative_CloseVideoStream(
     Status = Channel != NULL ? ZpChannel_Cancel(Channel) : STATUS_SUCCESS;
     ZpNative_ReleaseVideoStream(Stream);
     return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_OpenRtc(
+    _In_reads_(ZP_RTC_SESSION_ID_SIZE) const BYTE* SessionId,
+    _In_reads_(OfferLength) PCWCH Offer,
+    _In_ ULONG OfferLength,
+    _In_reads_opt_(IceServersLength) PCWCH IceServers,
+    _In_ ULONG IceServersLength,
+    _In_ ZP_NATIVE_STRING_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_RTC_ICE_SERVER Servers[ZP_RTC_MAX_ICE_SERVERS];
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+    ULONG Index, Start = 0, Count = 0;
+    NTSTATUS Status;
+
+    if (Callback == NULL || SessionId == NULL || Offer == NULL ||
+        (IceServersLength != 0 && IceServers == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    for (Index = 0; Index <= IceServersLength; Index++)
+    {
+        if (Index != IceServersLength && IceServers[Index] != L'\n') continue;
+        if (Index != Start)
+        {
+            if (Count == ARRAYSIZE(Servers)) return STATUS_INVALID_PARAMETER;
+            Servers[Count].Url = IceServers + Start;
+            Servers[Count].UrlLength = Index - Start;
+            Count++;
+        }
+        Start = Index + 1;
+    }
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.String = Callback;
+    Status = ZpServer_OpenRtc(Connection,
+                              SessionId,
+                              Offer,
+                              OfferLength,
+                              Servers,
+                              Count,
+                              ZP_NATIVE_LONG_OPERATION_TIMEOUT_MILLISECONDS,
+                              ZpNative_StringCallback,
+                              CallbackContext,
+                              &Request);
+    if (!NT_SUCCESS(Status)) ZpNative_FreeCallbackContext(CallbackContext);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_CloseRtc(
+    _In_reads_(ZP_RTC_SESSION_ID_SIZE) const BYTE* SessionId,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL || SessionId == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_CloseRtc(Connection,
+                          SessionId,
+                          ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                          ZpNative_StatusCallback,
+                          CallbackContext,
+                          &Request));
 }
 
 NTSTATUS

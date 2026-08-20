@@ -27,7 +27,8 @@ public sealed partial class NativeServer
         ulong handle,
         uint processId,
         uint threadId,
-        WindowCaptureOptions options)
+        WindowCaptureOptions options,
+        uint directStreamId)
     {
         ValidateWindowCaptureOptions(options);
         var creation = new WindowCaptureCreation();
@@ -39,6 +40,7 @@ public sealed partial class NativeServer
                                                      options.MaxDimension,
                                                      options.FrameRate,
                                                      options.ImageQuality,
+                                                     directStreamId,
                                                      WindowCaptureOpenCallback,
                                                      WindowCaptureDataCallback,
                                                      WindowCaptureCloseCallback,
@@ -160,6 +162,7 @@ internal static partial class NativeMethods
         uint maxDimension,
         ushort frameRate,
         ushort quality,
+        uint directStreamId,
         WindowCaptureOpenCallback openCallback,
         WindowCaptureDataCallback dataCallback,
         WindowCaptureCloseCallback closeCallback,

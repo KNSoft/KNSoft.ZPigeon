@@ -15,6 +15,7 @@
 #include <KNSoft/ZPigeon/Tunnel.h>
 #include <KNSoft/ZPigeon/Window.h>
 #include <KNSoft/ZPigeon/Video.h>
+#include <KNSoft/ZPigeon/Rtc.h>
 
 EXTERN_C_START
 

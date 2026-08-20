@@ -1,5 +1,6 @@
 ﻿#include "Client.h"
 #include "Capture.h"
+#include "../Rtc/Client.h"
 
 #include "../../KNSoft.ZPigeon.Client.SDK/Client.inl"
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Channel.h"
@@ -17,6 +18,7 @@ struct _ZP_CLIENT_VIDEO_CHANNEL
     HANDLE CreditEvent;
     HANDLE StopEvent;
     ULONG MaxDimension;
+    ULONG DirectStreamId;
     USHORT FrameRate;
     USHORT Quality;
     ULONG DeviceIdLength;
@@ -72,6 +74,10 @@ ZpVideo_SendBytes(
     NTSTATUS Status = STATUS_SUCCESS;
     LOGICAL Pending, Removed;
 
+    if (Channel->DirectStreamId != 0)
+    {
+        return ZpRtc_Send(Object, Channel->DirectStreamId, Data, Length);
+    }
     Body = Mem_Alloc(sizeof(ULONG) + ZP_VIDEO_CHANNEL_CHUNK_SIZE);
     if (Body == NULL) return STATUS_NO_MEMORY;
     while (Offset < Length)
@@ -292,6 +298,7 @@ ZpVideo_CreateStreamChannel(
     if (VideoChannel == NULL) return STATUS_NO_MEMORY;
     RtlZeroMemory(VideoChannel, FIELD_OFFSET(ZP_CLIENT_VIDEO_CHANNEL, DeviceId));
     VideoChannel->MaxDimension = Request->MaxDimension;
+    VideoChannel->DirectStreamId = Request->DirectStreamId;
     VideoChannel->FrameRate = Request->FrameRate;
     VideoChannel->Quality = Request->Quality;
     VideoChannel->DeviceIdLength = Request->DeviceId.Length;

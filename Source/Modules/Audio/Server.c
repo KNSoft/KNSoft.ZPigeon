@@ -353,6 +353,7 @@ NTAPI
 ZpServer_OpenAudioStream(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_AUDIO_FLOW Flow,
+    _In_ ULONG DirectStreamId,
     _In_reads_opt_(DeviceIdLength) PCWCH DeviceId,
     _In_ ULONG DeviceIdLength,
     _In_ ULONG TimeoutMilliseconds,
@@ -369,7 +370,13 @@ ZpServer_OpenAudioStream(
     LOGICAL Reserved = FALSE;
 
     if (OpenCallback == NULL || DataCallback == NULL || CloseCallback == NULL) return STATUS_INVALID_PARAMETER;
-    Status = ZpAudio_EncodeStreamRequest(Flow, DeviceId, DeviceIdLength, NULL, 0, &PayloadLength);
+    Status = ZpAudio_EncodeStreamRequest(Flow,
+                                         DirectStreamId,
+                                         DeviceId,
+                                         DeviceIdLength,
+                                         NULL,
+                                         0,
+                                         &PayloadLength);
     Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
     StreamContext = Payload != NULL ? Mem_Alloc(sizeof(*StreamContext)) : NULL;
     if (!NT_SUCCESS(Status) || Payload == NULL || StreamContext == NULL)
@@ -379,6 +386,7 @@ ZpServer_OpenAudioStream(
         return NT_SUCCESS(Status) ? STATUS_NO_MEMORY : Status;
     }
     Status = ZpAudio_EncodeStreamRequest(Flow,
+                                         DirectStreamId,
                                          DeviceId,
                                          DeviceIdLength,
                                          Payload,

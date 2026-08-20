@@ -85,11 +85,12 @@ public sealed partial class NativeServer
             callback,
             context));
 
-    public Task<AudioStream> OpenAudioStreamAsync(AudioFlow flow, string? deviceId)
+    public Task<AudioStream> OpenAudioStreamAsync(AudioFlow flow, string? deviceId, uint directStreamId)
     {
         var creation = new AudioStreamCreation();
         creation.Handle = GCHandle.Alloc(creation);
         var status = NativeMethods.OpenAudioStream(flow,
+                                                   directStreamId,
                                                    deviceId,
                                                    (uint)(deviceId?.Length ?? 0),
                                                    AudioStreamOpenCallback,
@@ -313,6 +314,7 @@ internal static partial class NativeMethods
         StringMarshalling = StringMarshalling.Utf16)]
     internal static partial int OpenAudioStream(
         AudioFlow flow,
+        uint directStreamId,
         string? deviceId,
         uint deviceIdLength,
         AudioStreamOpenCallback openCallback,

@@ -1,6 +1,7 @@
 ﻿#include "UnitTest.h"
 
 #include <KNSoft/ZPigeon/Protocol.h>
+#include <KNSoft/ZPigeon/Rtc.h>
 
 TEST_FUNC(ProtocolCodec)
 {
@@ -137,4 +138,38 @@ TEST_FUNC(ProtocolFrame)
                           Frame,
                           sizeof(Frame),
                           &FrameSize) == STATUS_DATA_ERROR);
+}
+
+TEST_FUNC(ProtocolRtc)
+{
+    static const BYTE SessionId[ZP_RTC_SESSION_ID_SIZE] = { 1, 2, 3, 4 };
+    static const ZP_RTC_ICE_SERVER Servers[] = { { L"stun:one", 8 }, { L"turn:two", 8 } };
+    BYTE Buffer[256];
+    ZP_RTC_OPEN_REQUEST_VIEW Request;
+    ZP_STRING_VIEW String;
+    const BYTE* DecodedSessionId;
+    ULONG Length;
+
+    TEST_OK(NT_SUCCESS(ZpRtc_EncodeOpenRequest(SessionId,
+                                               L"offer",
+                                               5,
+                                               Servers,
+                                               ARRAYSIZE(Servers),
+                                               Buffer,
+                                               sizeof(Buffer),
+                                               &Length)));
+    TEST_OK(NT_SUCCESS(ZpRtc_DecodeOpenRequest(Buffer, Length, &Request)) &&
+            Request.Offer.Length == 5 && Request.IceServerCount == ARRAYSIZE(Servers) &&
+            RtlCompareMemory(Request.SessionId, SessionId, sizeof(SessionId)) == sizeof(SessionId));
+    TEST_OK(NT_SUCCESS(ZpRtc_GetIceServer(&Request, 1, &String)) && String.Length == Servers[1].UrlLength &&
+            RtlCompareMemory(String.Buffer, Servers[1].Url, String.Length * sizeof(WCHAR)) ==
+                String.Length * sizeof(WCHAR));
+    TEST_OK(ZpRtc_GetIceServer(&Request, ARRAYSIZE(Servers), &String) == STATUS_INVALID_PARAMETER);
+    TEST_OK(ZpRtc_DecodeOpenRequest(Buffer, Length - 1, &Request) == STATUS_DATA_ERROR);
+
+    TEST_OK(NT_SUCCESS(ZpRtc_EncodeAnswer(L"answer", 6, Buffer, sizeof(Buffer), &Length)) &&
+            NT_SUCCESS(ZpRtc_DecodeAnswer(Buffer, Length, &String)) && String.Length == 6);
+    TEST_OK(NT_SUCCESS(ZpRtc_EncodeSessionId(SessionId, Buffer, sizeof(Buffer), &Length)) &&
+            NT_SUCCESS(ZpRtc_DecodeSessionId(Buffer, Length, &DecodedSessionId)) &&
+            RtlCompareMemory(DecodedSessionId, SessionId, sizeof(SessionId)) == sizeof(SessionId));
 }

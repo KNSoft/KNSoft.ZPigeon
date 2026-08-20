@@ -45,6 +45,7 @@ typedef const ZP_VIDEO_DEVICE_LIST_VIEW* PCZP_VIDEO_DEVICE_LIST_VIEW;
 typedef struct _ZP_VIDEO_STREAM_REQUEST_VIEW
 {
     ULONG MaxDimension;
+    ULONG DirectStreamId;
     USHORT FrameRate;
     USHORT Quality;
     ZP_STRING_VIEW DeviceId;
@@ -86,6 +87,7 @@ ZpVideo_EncodeStreamRequest(
     _In_ ULONG MaxDimension,
     _In_ USHORT FrameRate,
     _In_ USHORT Quality,
+    _In_ ULONG DirectStreamId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);

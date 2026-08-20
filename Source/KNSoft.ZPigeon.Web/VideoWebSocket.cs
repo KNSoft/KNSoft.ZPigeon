@@ -13,6 +13,7 @@ internal static class VideoWebSocket
             !uint.TryParse(context.Request.Query["maxDimension"], out var maxDimension) ||
             !ushort.TryParse(context.Request.Query["frameRate"], out var frameRate) ||
             !ushort.TryParse(context.Request.Query["quality"], out var quality) ||
+            !uint.TryParse(context.Request.Query["directStreamId"], out var directStreamId) ||
             maxDimension is 0 or > 3840 || frameRate is 0 or > 30 || quality is 0 or > 100)
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -29,12 +30,20 @@ internal static class VideoWebSocket
         var receive = ReceiveAsync(socket, cancellation);
         try
         {
-            await using var video = await server.OpenVideoStreamAsync(deviceId, maxDimension, frameRate, quality);
+            await using var video = await server.OpenVideoStreamAsync(deviceId,
+                                                                      maxDimension,
+                                                                      frameRate,
+                                                                      quality,
+                                                                      directStreamId);
             var header = new byte[12];
             var headerOffset = 0;
             byte[]? frame = null;
             var frameOffset = 0;
-            await foreach (var chunk in video.Output.ReadAllAsync(cancellation.Token))
+            if (directStreamId != 0)
+            {
+                if (await Task.WhenAny(video.Completion, receive) != video.Completion) return;
+            }
+            else await foreach (var chunk in video.Output.ReadAllAsync(cancellation.Token))
             {
                 var source = chunk;
                 while (!source.IsEmpty)

@@ -139,6 +139,7 @@ typedef struct _ZP_AUDIO_SESSION_CONTROL_VIEW
 typedef struct _ZP_AUDIO_STREAM_REQUEST_VIEW
 {
     ZP_AUDIO_FLOW Flow;
+    ULONG DirectStreamId;
     ZP_STRING_VIEW DeviceId;
 } ZP_AUDIO_STREAM_REQUEST_VIEW, *PZP_AUDIO_STREAM_REQUEST_VIEW;
 
@@ -231,6 +232,7 @@ ZpAudio_DecodeSessionControl(
 NTSTATUS
 ZpAudio_EncodeStreamRequest(
     _In_ ZP_AUDIO_FLOW Flow,
+    _In_ ULONG DirectStreamId,
     _In_reads_opt_(DeviceIdLength) PCWCH DeviceId,
     _In_ ULONG DeviceIdLength,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,

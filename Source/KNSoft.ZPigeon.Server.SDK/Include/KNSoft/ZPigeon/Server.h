@@ -648,6 +648,7 @@ NTAPI
 ZpServer_OpenAudioStream(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_AUDIO_FLOW Flow,
+    _In_ ULONG DirectStreamId,
     _In_reads_opt_(DeviceIdLength) PCWCH DeviceId,
     _In_ ULONG DeviceIdLength,
     _In_ ULONG TimeoutMilliseconds,
@@ -675,6 +676,7 @@ ZpServer_OpenVideoStream(
     _In_ ULONG MaxDimension,
     _In_ USHORT FrameRate,
     _In_ USHORT Quality,
+    _In_ ULONG DirectStreamId,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_VIDEO_STREAM_OPEN_CALLBACK OpenCallback,
     _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
@@ -1043,6 +1045,30 @@ ZpServer_RenameRegistryValue(
     _In_ ULONG NameLength,
     _In_reads_(NewNameLength) PCWCH NewName,
     _In_ ULONG NewNameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_OpenRtc(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ZP_RTC_SESSION_ID_SIZE) const BYTE* SessionId,
+    _In_reads_(OfferLength) PCWCH Offer,
+    _In_ ULONG OfferLength,
+    _In_reads_opt_(IceServerCount) PCZP_RTC_ICE_SERVER IceServers,
+    _In_ ULONG IceServerCount,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_STRING_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_CloseRtc(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(ZP_RTC_SESSION_ID_SIZE) const BYTE* SessionId,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,

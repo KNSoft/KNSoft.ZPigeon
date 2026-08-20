@@ -301,7 +301,7 @@ ZpServer_CaptureWindow(
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
     ZP_WINDOW_CALLBACK WindowCallback;
-    BYTE Payload[sizeof(ULONGLONG) + 4 * sizeof(ULONG) + 2 * sizeof(USHORT)];
+    BYTE Payload[sizeof(ULONGLONG) + 5 * sizeof(ULONG) + 2 * sizeof(USHORT)];
     ULONG PayloadLength;
     NTSTATUS Status;
 
@@ -404,7 +404,7 @@ ZpServer_OpenWindowCapture(
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
     PZP_WINDOW_CAPTURE_CONTEXT CaptureContext;
-    BYTE Payload[sizeof(ULONGLONG) + 4 * sizeof(ULONG) + 2 * sizeof(USHORT)];
+    BYTE Payload[sizeof(ULONGLONG) + 5 * sizeof(ULONG) + 2 * sizeof(USHORT)];
     ULONG PayloadLength;
     NTSTATUS Status;
     LOGICAL Reserved = FALSE;

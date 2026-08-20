@@ -9,7 +9,8 @@ internal static class AudioWebSocket
     {
         if (!context.WebSockets.IsWebSocketRequest ||
             !Enum.TryParse<AudioFlow>(context.Request.Query["flow"], true, out var flow) ||
-            !Enum.IsDefined(flow))
+            !Enum.IsDefined(flow) ||
+            !uint.TryParse(context.Request.Query["directStreamId"], out var directStreamId))
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             return;
@@ -23,8 +24,19 @@ internal static class AudioWebSocket
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
         try
         {
-            await using var audio = await server.OpenAudioStreamAsync(flow, string.IsNullOrEmpty(deviceId) ? null : deviceId);
-            await foreach (var data in audio.Output.ReadAllAsync(context.RequestAborted))
+            await using var audio = await server.OpenAudioStreamAsync(flow,
+                                                                      string.IsNullOrEmpty(deviceId) ? null : deviceId,
+                                                                      directStreamId);
+            if (directStreamId != 0)
+            {
+                if (await Task.WhenAny(audio.Completion,
+                                       StreamWebSocket.WaitForCloseAsync(socket, context.RequestAborted)) !=
+                    audio.Completion)
+                {
+                    return;
+                }
+            }
+            else await foreach (var data in audio.Output.ReadAllAsync(context.RequestAborted))
             {
                 await socket.SendAsync(data, WebSocketMessageType.Binary, true, context.RequestAborted);
             }

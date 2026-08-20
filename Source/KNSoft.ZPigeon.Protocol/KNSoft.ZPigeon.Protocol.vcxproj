@@ -54,6 +54,7 @@
     <ClInclude Include="Include\KNSoft\ZPigeon\Window.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Audio.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Video.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\Rtc.h" />
     <ClInclude Include="Core\Protocol.inl" />
   </ItemGroup>
   <ItemGroup>
@@ -75,6 +76,7 @@
     <ClCompile Include="..\Modules\Window\Protocol.c"><ObjectFileName>$(IntDir)Modules\Window\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Audio\Protocol.c"><ObjectFileName>$(IntDir)Modules\Audio\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Video\Protocol.c"><ObjectFileName>$(IntDir)Modules\Video\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Rtc\Protocol.c"><ObjectFileName>$(IntDir)Modules\Rtc\</ObjectFileName></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

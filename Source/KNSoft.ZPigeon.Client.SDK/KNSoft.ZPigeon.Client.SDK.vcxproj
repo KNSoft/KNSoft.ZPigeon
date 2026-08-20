@@ -115,6 +115,7 @@
     <ClCompile Include="..\Modules\Audio\Stream.c"><ObjectFileName>$(IntDir)Modules\Audio\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Video\Client.c"><ObjectFileName>$(IntDir)Modules\Video\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Video\Capture.c"><ObjectFileName>$(IntDir)Modules\Video\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Rtc\Client.cpp"><ObjectFileName>$(IntDir)Modules\Rtc\</ObjectFileName></ClCompile>
     <ClCompile Include="Transport\Main.c" />
     <ClCompile Include="Transport\Quic.c" />
     <ClCompile Include="Transport\Tcp.c" />
@@ -156,6 +157,7 @@
     <ClInclude Include="..\Modules\Audio\Client.h" />
     <ClInclude Include="..\Modules\Video\Client.h" />
     <ClInclude Include="..\Modules\Video\Capture.h" />
+    <ClInclude Include="..\Modules\Rtc\Client.h" />
     <ClInclude Include="..\Network\Config.inl" />
     <ClInclude Include="..\Network\Authentication.inl" />
     <ClInclude Include="..\Network\Connection.h" />
@@ -187,6 +189,7 @@
     <Import Project="..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets" Condition="Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" />
     <Import Project="..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets" Condition="Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" />
     <Import Project="..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets" Condition="Exists('..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets')" />
+    <Import Project="..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets" Condition="Exists('..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets')" />
   </ImportGroup>
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
@@ -196,5 +199,6 @@
     <Error Condition="!Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets'))" />
     <Error Condition="!Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets'))" />
     <Error Condition="!Exists('..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets'))" />
+    <Error Condition="!Exists('..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets'))" />
   </Target>
 </Project>

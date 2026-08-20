@@ -15,6 +15,7 @@
 #include <KNSoft/ZPigeon/Tunnel.h>
 #include <KNSoft/ZPigeon/Window.h>
 #include <KNSoft/ZPigeon/Video.h>
+#include <KNSoft/ZPigeon/Rtc.h>
 
 #include <stdio.h>
 
@@ -420,7 +421,8 @@ wmain(VOID)
         { ZP_BROWSER_MODULE_ID, ZP_BROWSER_MODULE_VERSION },
         { ZP_WMI_MODULE_ID, ZP_WMI_MODULE_VERSION },
         { ZP_AUDIO_MODULE_ID, ZP_AUDIO_MODULE_VERSION },
-        { ZP_VIDEO_MODULE_ID, ZP_VIDEO_MODULE_VERSION }
+        { ZP_VIDEO_MODULE_ID, ZP_VIDEO_MODULE_VERSION },
+        { ZP_RTC_MODULE_ID, ZP_RTC_MODULE_VERSION }
     };
     static const ZP_ENDPOINT Endpoint = {
         ZpTransportQuic,

@@ -2,6 +2,7 @@
 #include "../Core/Channel.h"
 #include "../../Modules/Execution/Client.h"
 #include "../../Modules/File/Client.h"
+#include "../../Modules/Rtc/Client.h"
 #include "../../Network/Config.inl"
 #include "Retry.inl"
 
@@ -685,6 +686,7 @@ ZpClient_TransportShutdown(
     RtlReleaseSRWLockExclusive(&Object->Lock);
 
     ZpClient_CloseInboundRequests(Client);
+    ZpRtc_Close(Object);
     ZpFile_ResetEnumeration(Object);
     ZpClientLocalChannel_CloseAll(Object, Status);
     if (State == ZpClientStateStopping)
