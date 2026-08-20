@@ -16,6 +16,7 @@
 #include <KNSoft/ZPigeon/Window.h>
 #include <KNSoft/ZPigeon/Video.h>
 #include <KNSoft/ZPigeon/Rtc.h>
+#include <KNSoft/ZPigeon/Serial.h>
 
 EXTERN_C_START
 
@@ -62,6 +63,22 @@ VOID
 typedef
 VOID
 (NTAPI *ZP_TUNNEL_OPEN_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_SERIAL_PORTS_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_SERIAL_PORT_LIST_VIEW Ports,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_SERIAL_OPEN_CALLBACK)(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
     _In_opt_ ZP_CHANNEL_HANDLE Channel,

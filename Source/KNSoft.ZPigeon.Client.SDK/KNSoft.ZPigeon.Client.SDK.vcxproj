@@ -116,6 +116,7 @@
     <ClCompile Include="..\Modules\Video\Client.c"><ObjectFileName>$(IntDir)Modules\Video\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Video\Capture.c"><ObjectFileName>$(IntDir)Modules\Video\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Rtc\Client.cpp"><ObjectFileName>$(IntDir)Modules\Rtc\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Serial\Client.c"><ObjectFileName>$(IntDir)Modules\Serial\</ObjectFileName></ClCompile>
     <ClCompile Include="Transport\Main.c" />
     <ClCompile Include="Transport\Quic.c" />
     <ClCompile Include="Transport\Tcp.c" />
@@ -158,6 +159,7 @@
     <ClInclude Include="..\Modules\Video\Client.h" />
     <ClInclude Include="..\Modules\Video\Capture.h" />
     <ClInclude Include="..\Modules\Rtc\Client.h" />
+    <ClInclude Include="..\Modules\Serial\Client.h" />
     <ClInclude Include="..\Network\Config.inl" />
     <ClInclude Include="..\Network\Authentication.inl" />
     <ClInclude Include="..\Network\Connection.h" />

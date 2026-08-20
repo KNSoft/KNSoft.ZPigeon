@@ -33,6 +33,7 @@ typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
         ZP_NATIVE_AUDIO_DEVICES_CALLBACK AudioDevices;
         ZP_NATIVE_AUDIO_SESSIONS_CALLBACK AudioSessions;
         ZP_NATIVE_VIDEO_DEVICES_CALLBACK VideoDevices;
+        ZP_NATIVE_SERIAL_PORTS_CALLBACK SerialPorts;
         ZP_NATIVE_SERVICE_LIST_CALLBACK ServiceList;
         ZP_NATIVE_SERVICE_INFO_CALLBACK ServiceInfo;
         ZP_NATIVE_ADMINISTRATION_CALLBACK Administration;
@@ -1010,6 +1011,59 @@ ZpNative_VideoDevicesCallback(
 
 static
 VOID
+NTAPI
+ZpNative_SerialPortsCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_SERIAL_PORT_LIST_VIEW Ports,
+    _In_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_SERIAL_PORT_RECORD Records = NULL;
+    ZP_SERIAL_PORT_VIEW Port;
+    ULONG Count = 0, Index, Offset = 0;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        if (Ports == NULL)
+        {
+            Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
+        }
+        else
+        {
+            Count = Ports->Count;
+            Records = Count != 0 ? Mem_Alloc((SIZE_T)Count * sizeof(*Records)) : NULL;
+            if (Count != 0 && Records == NULL)
+            {
+                Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+            }
+            else for (Index = 0; Index < Count; Index++)
+            {
+                DecodeStatus = ZpSerial_GetNextPort(Ports, &Offset, &Port);
+                if (!NT_SUCCESS(DecodeStatus))
+                {
+                    Status = ZpStatus_FromNtStatus(DecodeStatus);
+                    break;
+                }
+                Records[Index].Name = (PCWCH)Port.Name.Buffer;
+                Records[Index].NameLength = Port.Name.Length;
+                Records[Index].Device = (PCWCH)Port.Device.Buffer;
+                Records[Index].DeviceLength = Port.Device.Length;
+            }
+        }
+    }
+    CallbackContext->Callback.SerialPorts(Status,
+                                           ZpStatus_IsSuccess(Status) ? Records : NULL,
+                                           ZpStatus_IsSuccess(Status) ? Count : 0,
+                                           CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
 ZpNative_ReleaseVideoStream(
     _In_ PZP_NATIVE_VIDEO_STREAM Stream)
 {
@@ -1963,7 +2017,8 @@ ZpNative_Start(
         { ZP_WMI_MODULE_ID, ZP_WMI_MODULE_VERSION },
         { ZP_AUDIO_MODULE_ID, ZP_AUDIO_MODULE_VERSION },
         { ZP_VIDEO_MODULE_ID, ZP_VIDEO_MODULE_VERSION },
-        { ZP_RTC_MODULE_ID, ZP_RTC_MODULE_VERSION }
+        { ZP_RTC_MODULE_ID, ZP_RTC_MODULE_VERSION },
+        { ZP_SERIAL_MODULE_ID, ZP_SERIAL_MODULE_VERSION }
     };
     ZP_LISTENER_ENDPOINT Listener = {
         ZpTransportQuic,
@@ -4760,6 +4815,95 @@ ZpNative_OpenTunnel(
                                  ZpNative_TunnelCloseCallback,
                                  Tunnel,
                                  &Request);
+    if (!NT_SUCCESS(Status))
+    {
+        ZpConnection_Release(Connection);
+        Mem_Free(Tunnel);
+    }
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumerateSerialPorts(
+    _In_ ZP_NATIVE_SERIAL_PORTS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.SerialPorts = Callback;
+    return ZpNative_SendStatusRequest(CallbackContext,
+                                      ZpServer_EnumerateSerialPorts(Connection,
+                                                                    ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                                                    ZpNative_SerialPortsCallback,
+                                                                    CallbackContext,
+                                                                    &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_OpenSerialPort(
+    _In_reads_(PortLength) PCWCH Port,
+    _In_ ULONG PortLength,
+    _In_ ULONG BaudRate,
+    _In_ BYTE DataBits,
+    _In_ BYTE Parity,
+    _In_ BYTE StopBits,
+    _In_ BYTE FlowControl,
+    _In_ ZP_NATIVE_TUNNEL_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_TUNNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_TUNNEL_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_NATIVE_TUNNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_TUNNEL Tunnel;
+    ZP_REQUEST_HANDLE Request;
+    NTSTATUS Status;
+
+    if (Port == NULL || PortLength == 0 || OpenCallback == NULL || DataCallback == NULL ||
+        WritableCallback == NULL || CloseCallback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    Tunnel = Mem_Alloc(sizeof(*Tunnel));
+    if (Tunnel == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(Tunnel, sizeof(*Tunnel));
+    Tunnel->Connection = Connection;
+    Tunnel->OpenCallback = OpenCallback;
+    Tunnel->DataCallback = DataCallback;
+    Tunnel->WritableCallback = WritableCallback;
+    Tunnel->CloseCallback = CloseCallback;
+    Tunnel->Context = Context;
+    Status = ZpServer_OpenSerialPort(Connection,
+                                     Port,
+                                     PortLength,
+                                     BaudRate,
+                                     DataBits,
+                                     Parity,
+                                     StopBits,
+                                     FlowControl,
+                                     ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                     ZpNative_TunnelOpenCallback,
+                                     ZpNative_TunnelDataCallback,
+                                     ZpNative_TunnelWritableCallback,
+                                     ZpNative_TunnelCloseCallback,
+                                     Tunnel,
+                                     &Request);
     if (!NT_SUCCESS(Status))
     {
         ZpConnection_Release(Connection);

@@ -16,6 +16,7 @@
 #include <KNSoft/ZPigeon/Window.h>
 #include <KNSoft/ZPigeon/Video.h>
 #include <KNSoft/ZPigeon/Rtc.h>
+#include <KNSoft/ZPigeon/Serial.h>
 
 #include <stdio.h>
 
@@ -96,6 +97,7 @@ ZpClient_GetModuleLogName(
         case ZP_WINDOW_MODULE_ID: return L"window.log";
         case ZP_AUDIO_MODULE_ID: return L"audio.log";
         case ZP_VIDEO_MODULE_ID: return L"video.log";
+        case ZP_SERIAL_MODULE_ID: return L"serial.log";
         case ZP_BROWSER_MODULE_ID: return L"browser.log";
         case ZP_WMI_MODULE_ID: return L"wmi.log";
         case ZP_ADMINISTRATION_MODULE_ID:
@@ -422,7 +424,8 @@ wmain(VOID)
         { ZP_WMI_MODULE_ID, ZP_WMI_MODULE_VERSION },
         { ZP_AUDIO_MODULE_ID, ZP_AUDIO_MODULE_VERSION },
         { ZP_VIDEO_MODULE_ID, ZP_VIDEO_MODULE_VERSION },
-        { ZP_RTC_MODULE_ID, ZP_RTC_MODULE_VERSION }
+        { ZP_RTC_MODULE_ID, ZP_RTC_MODULE_VERSION },
+        { ZP_SERIAL_MODULE_ID, ZP_SERIAL_MODULE_VERSION }
     };
     static const ZP_ENDPOINT Endpoint = {
         ZpTransportQuic,

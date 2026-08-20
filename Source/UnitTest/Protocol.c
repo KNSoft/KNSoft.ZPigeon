@@ -2,6 +2,7 @@
 
 #include <KNSoft/ZPigeon/Protocol.h>
 #include <KNSoft/ZPigeon/Rtc.h>
+#include <KNSoft/ZPigeon/Serial.h>
 
 TEST_FUNC(ProtocolCodec)
 {
@@ -172,4 +173,47 @@ TEST_FUNC(ProtocolRtc)
     TEST_OK(NT_SUCCESS(ZpRtc_EncodeSessionId(SessionId, Buffer, sizeof(Buffer), &Length)) &&
             NT_SUCCESS(ZpRtc_DecodeSessionId(Buffer, Length, &DecodedSessionId)) &&
             RtlCompareMemory(DecodedSessionId, SessionId, sizeof(SessionId)) == sizeof(SessionId));
+}
+
+TEST_FUNC(ProtocolSerial)
+{
+    static const ZP_SERIAL_PORT Ports[] = {
+        { L"COM3", 4, L"\\Device\\Serial0", 15 },
+        { L"COM12", 5, L"\\Device\\VCP0", 12 }
+    };
+    BYTE Buffer[256];
+    ZP_SERIAL_PORT_LIST_VIEW List;
+    ZP_SERIAL_PORT_VIEW Port;
+    ZP_SERIAL_OPEN_REQUEST_VIEW Request;
+    ULONG Length, Offset = 0, ChannelId;
+
+    TEST_OK(NT_SUCCESS(ZpSerial_EncodePortList(Ports,
+                                               ARRAYSIZE(Ports),
+                                               Buffer,
+                                               sizeof(Buffer),
+                                               &Length)));
+    TEST_OK(NT_SUCCESS(ZpSerial_DecodePortList(Buffer, Length, &List)) &&
+            List.Count == ARRAYSIZE(Ports));
+    TEST_OK(NT_SUCCESS(ZpSerial_GetNextPort(&List, &Offset, &Port)) && Port.Name.Length == 4 &&
+            RtlCompareMemory(Port.Name.Buffer, L"COM3", 4 * sizeof(WCHAR)) == 4 * sizeof(WCHAR));
+    TEST_OK(NT_SUCCESS(ZpSerial_GetNextPort(&List, &Offset, &Port)) && Port.Device.Length == 12);
+    TEST_OK(ZpSerial_DecodePortList(Buffer, Length - 1, &List) == STATUS_DATA_ERROR);
+
+    TEST_OK(NT_SUCCESS(ZpSerial_EncodeOpenRequest(L"COM12",
+                                                  5,
+                                                  115200,
+                                                  8,
+                                                  ZP_SERIAL_PARITY_NONE,
+                                                  ZP_SERIAL_STOP_BITS_ONE,
+                                                  ZP_SERIAL_FLOW_RTS_CTS,
+                                                  Buffer,
+                                                  sizeof(Buffer),
+                                                  &Length)));
+    TEST_OK(NT_SUCCESS(ZpSerial_DecodeOpenRequest(Buffer, Length, &Request)) &&
+            Request.BaudRate == 115200 && Request.DataBits == 8 &&
+            Request.FlowControl == ZP_SERIAL_FLOW_RTS_CTS);
+    TEST_OK(ZpSerial_EncodeOpenRequest(L"\\Device", 7, 115200, 8, 0, 0, 0,
+                                      Buffer, sizeof(Buffer), &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpSerial_EncodeChannel(7, Buffer, sizeof(Buffer), &Length)) &&
+            NT_SUCCESS(ZpSerial_DecodeChannel(Buffer, Length, &ChannelId)) && ChannelId == 7);
 }

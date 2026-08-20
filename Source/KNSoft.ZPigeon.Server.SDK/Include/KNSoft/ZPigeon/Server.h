@@ -104,6 +104,34 @@ ZpServer_OpenTunnel(
 
 NTSTATUS
 NTAPI
+ZpServer_EnumerateSerialPorts(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_SERIAL_PORTS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_OpenSerialPort(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PortLength) PCWCH Port,
+    _In_ ULONG PortLength,
+    _In_ ULONG BaudRate,
+    _In_ BYTE DataBits,
+    _In_ BYTE Parity,
+    _In_ BYTE StopBits,
+    _In_ BYTE FlowControl,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_SERIAL_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_EnumerateBrowsers(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ULONG TimeoutMilliseconds,

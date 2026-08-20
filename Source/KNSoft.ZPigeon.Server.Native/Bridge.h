@@ -285,6 +285,16 @@ typedef struct _ZP_NATIVE_VIDEO_DEVICE_RECORD
 
 typedef const ZP_NATIVE_VIDEO_DEVICE_RECORD* PCZP_NATIVE_VIDEO_DEVICE_RECORD;
 
+typedef struct _ZP_NATIVE_SERIAL_PORT_RECORD
+{
+    PCWCH Name;
+    ULONG NameLength;
+    PCWCH Device;
+    ULONG DeviceLength;
+} ZP_NATIVE_SERIAL_PORT_RECORD, *PZP_NATIVE_SERIAL_PORT_RECORD;
+
+typedef const ZP_NATIVE_SERIAL_PORT_RECORD* PCZP_NATIVE_SERIAL_PORT_RECORD;
+
 typedef struct _ZP_NATIVE_VIDEO_STREAM* ZP_NATIVE_VIDEO_STREAM_HANDLE;
 
 typedef
@@ -292,6 +302,14 @@ VOID
 (NTAPI *ZP_NATIVE_VIDEO_DEVICES_CALLBACK)(
     _In_ ZP_STATUS Status,
     _In_reads_opt_(RecordCount) PCZP_NATIVE_VIDEO_DEVICE_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_SERIAL_PORTS_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_SERIAL_PORT_RECORD Records,
     _In_ ULONG RecordCount,
     _In_opt_ PVOID Context);
 
@@ -1407,6 +1425,30 @@ ZpNative_OpenTunnel(
     _In_ ULONG HostLength,
     _In_ USHORT Port,
     _In_ USHORT Protocol,
+    _In_ ZP_NATIVE_TUNNEL_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_TUNNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_TUNNEL_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_NATIVE_TUNNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateSerialPorts(
+    _In_ ZP_NATIVE_SERIAL_PORTS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_OpenSerialPort(
+    _In_reads_(PortLength) PCWCH Port,
+    _In_ ULONG PortLength,
+    _In_ ULONG BaudRate,
+    _In_ BYTE DataBits,
+    _In_ BYTE Parity,
+    _In_ BYTE StopBits,
+    _In_ BYTE FlowControl,
     _In_ ZP_NATIVE_TUNNEL_OPEN_CALLBACK OpenCallback,
     _In_ ZP_NATIVE_TUNNEL_DATA_CALLBACK DataCallback,
     _In_ ZP_NATIVE_TUNNEL_WRITABLE_CALLBACK WritableCallback,

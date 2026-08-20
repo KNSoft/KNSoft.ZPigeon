@@ -15,6 +15,7 @@
 #include "../../Modules/Window/Client.h"
 #include "../../Modules/Video/Client.h"
 #include "../../Modules/Rtc/Client.h"
+#include "../../Modules/Serial/Client.h"
 
 typedef struct _ZP_CLIENT_INBOUND_REQUEST
 {
@@ -142,6 +143,7 @@ ZpClientInbound_RequestCallback(
     PZP_CLIENT_WINDOW_CAPTURE_CHANNEL WindowChannel = NULL;
     PZP_CLIENT_AUDIO_CHANNEL AudioChannel = NULL;
     PZP_CLIENT_VIDEO_CHANNEL VideoChannel = NULL;
+    PZP_CLIENT_SERIAL_CHANNEL SerialChannel = NULL;
     ULONG PayloadLength = 0;
     NTSTATUS ModuleStatus, SendStatus = STATUS_CANCELLED;
     ZP_STATUS Status;
@@ -277,6 +279,17 @@ ZpClientInbound_RequestCallback(
                                &PayloadLength);
         Response = AllocatedResponse;
     }
+    else if (Request->ModuleId == ZP_SERIAL_MODULE_ID)
+    {
+        Status = ZpSerial_Execute(Object,
+                                  Request->OperationId,
+                                  Request->Payload,
+                                  Request->PayloadLength,
+                                  &AllocatedResponse,
+                                  &PayloadLength,
+                                  &SerialChannel);
+        Response = AllocatedResponse;
+    }
     else if (Request->ModuleId == ZP_TUNNEL_MODULE_ID)
     {
         Status = ZpTunnel_Execute(Object,
@@ -378,6 +391,11 @@ ZpClientInbound_RequestCallback(
     {
         ZpVideo_CommitChannel(VideoChannel,
                               Respond && NT_SUCCESS(SendStatus));
+    }
+    if (SerialChannel != NULL)
+    {
+        ZpSerial_CommitChannel(SerialChannel,
+                               Respond && NT_SUCCESS(SendStatus));
     }
     if (AllocatedResponse != NULL)
     {

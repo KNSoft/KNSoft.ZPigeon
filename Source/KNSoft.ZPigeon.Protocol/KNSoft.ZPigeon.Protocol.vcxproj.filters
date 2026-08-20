@@ -17,6 +17,7 @@
     <Filter Include="Modules\System"><UniqueIdentifier>{35df8140-a4aa-4aa1-a496-e358347953f5}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Terminal"><UniqueIdentifier>{8b305900-503c-4e8f-896b-b6cc7afb0bce}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Tunnel"><UniqueIdentifier>{dcbf767a-8584-4f14-abd7-3a06b2a65d31}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Serial"><UniqueIdentifier>{3733506f-f754-481e-b6fa-7d78c4927673}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Modules\Administration\Protocol.c"><Filter>Modules\Administration</Filter></ClCompile>
@@ -35,6 +36,7 @@
     <ClCompile Include="..\Modules\System\Protocol.c"><Filter>Modules\System</Filter></ClCompile>
     <ClCompile Include="..\Modules\Terminal\Protocol.c"><Filter>Modules\Terminal</Filter></ClCompile>
     <ClCompile Include="..\Modules\Tunnel\Protocol.c"><Filter>Modules\Tunnel</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Serial\Protocol.c"><Filter>Modules\Serial</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Include\KNSoft\ZPigeon\Administration.h"><Filter>Include</Filter></ClInclude>
@@ -52,6 +54,7 @@
     <ClInclude Include="Include\KNSoft\ZPigeon\System.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Terminal.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Tunnel.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Serial.h"><Filter>Include</Filter></ClInclude>
   </ItemGroup>
   <ItemGroup><None Include="packages.config" /></ItemGroup>
 </Project>

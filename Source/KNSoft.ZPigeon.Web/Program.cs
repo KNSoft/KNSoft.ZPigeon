@@ -144,6 +144,8 @@ app.MapPost("/api/terminal/session/rename", (TerminalRenameRequest request) =>
 app.Map("/api/terminal", context =>
     TerminalWebSocket.RunAsync(context, terminalSessions));
 app.Map("/api/rtc", context => RtcWebSocket.RunAsync(context, server, iceServers));
+app.MapPost("/api/serial/ports", async () => await server.EnumerateSerialPortsAsync());
+app.Map("/api/serial", context => SerialWebSocket.RunAsync(context, server));
 app.MapRegistryApi(server);
 app.MapManagementApi(server);
 app.MapExecutionApi(server, terminalSessions);

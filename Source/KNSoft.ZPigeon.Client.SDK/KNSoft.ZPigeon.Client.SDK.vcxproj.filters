@@ -19,6 +19,7 @@
     <Filter Include="Modules\System"><UniqueIdentifier>{88bbcefa-a517-49f0-a3c0-84d6c4ab526d}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Terminal"><UniqueIdentifier>{1047ad07-4b5f-484c-8f96-f74bd0b17434}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Tunnel"><UniqueIdentifier>{3b0243aa-5daf-42a4-85ca-23f7108f1660}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Serial"><UniqueIdentifier>{743738f0-eaa8-4515-a39e-0b51d7d5c9fd}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Modules\Administration\Client.c"><Filter>Modules\Administration</Filter></ClCompile>
@@ -41,6 +42,7 @@
     <ClCompile Include="..\Modules\System\Client.c"><Filter>Modules\System</Filter></ClCompile>
     <ClCompile Include="..\Modules\Terminal\Client.c"><Filter>Modules\Terminal</Filter></ClCompile>
     <ClCompile Include="..\Modules\Tunnel\Client.c"><Filter>Modules\Tunnel</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Serial\Client.c"><Filter>Modules\Serial</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Modules\Administration\Client.h"><Filter>Modules\Administration</Filter></ClInclude>
@@ -81,6 +83,7 @@
     <ClInclude Include="..\Modules\System\Client.h"><Filter>Modules\System</Filter></ClInclude>
     <ClInclude Include="..\Modules\Terminal\Client.h"><Filter>Modules\Terminal</Filter></ClInclude>
     <ClInclude Include="..\Modules\Tunnel\Client.h"><Filter>Modules\Tunnel</Filter></ClInclude>
+    <ClInclude Include="..\Modules\Serial\Client.h"><Filter>Modules\Serial</Filter></ClInclude>
     <ClInclude Include="Client.inl" />
   </ItemGroup>
   <ItemGroup><None Include="packages.config" /></ItemGroup>

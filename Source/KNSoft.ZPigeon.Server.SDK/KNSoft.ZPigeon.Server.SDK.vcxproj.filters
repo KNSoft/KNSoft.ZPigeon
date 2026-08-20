@@ -20,6 +20,7 @@
     <Filter Include="Modules\System"><UniqueIdentifier>{f07c758e-39bb-4f04-a06b-f886c991da15}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Terminal"><UniqueIdentifier>{fac428f7-a48c-4bbd-aa49-ef4acd2fa7a4}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Tunnel"><UniqueIdentifier>{ea599d7c-dbcd-45b1-bfac-0bb50a31ca27}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Serial"><UniqueIdentifier>{e96dc903-2662-474d-ab8d-1e1d771241c7}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Modules\Administration\Server.c"><Filter>Modules\Administration</Filter></ClCompile>
@@ -43,6 +44,7 @@
     <ClCompile Include="..\Modules\System\Server.c"><Filter>Modules\System</Filter></ClCompile>
     <ClCompile Include="..\Modules\Terminal\Server.c"><Filter>Modules\Terminal</Filter></ClCompile>
     <ClCompile Include="..\Modules\Tunnel\Server.c"><Filter>Modules\Tunnel</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Serial\Server.c"><Filter>Modules\Serial</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Core\Channel.h"><Filter>Core</Filter></ClInclude>
