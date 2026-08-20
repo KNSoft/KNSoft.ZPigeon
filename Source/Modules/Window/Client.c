@@ -1,6 +1,7 @@
 ﻿#include "Client.h"
 
 #include "Capture.h"
+#include "Shared.h"
 #include "../Rtc/Client.h"
 
 #include "../../KNSoft.ZPigeon.Client.SDK/Client.inl"
@@ -587,7 +588,7 @@ ZpWindowCapture_Worker(
     _In_ PVOID Context)
 {
     PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel = Context;
-    PZP_WINDOW_CAPTURE Capture = NULL;
+    PZP_WINDOW_SHARED_CAPTURE Capture = NULL;
     ZP_WINDOW_CAPTURE_IMAGE Image;
     BYTE Header[sizeof(USHORT) + 8 * sizeof(ULONG)];
     HWND Window;
@@ -601,7 +602,7 @@ ZpWindowCapture_Worker(
                                                   Channel->Options.ThreadId,
                                                   &Window);
     Result = ZpStatus_IsSuccess(CompletionStatus) ?
-                 ZpWindowCapture_Create(Window, &Channel->Options, &Capture) : E_HANDLE;
+                 ZpWindowShared_Open(Window, &Channel->Options, &Capture) : E_HANDLE;
     while (SUCCEEDED(Result))
     {
         CompletionStatus = ZpWindow_ValidateIdentity(Channel->Options.Handle,
@@ -609,7 +610,7 @@ ZpWindowCapture_Worker(
                                                       Channel->Options.ThreadId,
                                                       &Window);
         if (!ZpStatus_IsSuccess(CompletionStatus)) break;
-        Result = ZpWindowCapture_Next(Capture, 1000, &Image);
+        Result = ZpWindowShared_Next(Capture, 1000, &Image);
         if (Result == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || Result == S_FALSE)
         {
             Result = S_OK;
@@ -633,7 +634,7 @@ ZpWindowCapture_Worker(
         ZpWindowCapture_FreeImage(&Image);
         if (!NT_SUCCESS(Status)) break;
     }
-    ZpWindowCapture_Close(Capture);
+    ZpWindowShared_Close(Capture);
     if (!ZpStatus_IsSuccess(CompletionStatus))
     {
         ZpWindowCapture_FinishWorker(Channel, CompletionStatus);

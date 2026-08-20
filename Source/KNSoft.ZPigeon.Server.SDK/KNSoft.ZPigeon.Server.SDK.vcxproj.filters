@@ -21,6 +21,9 @@
     <Filter Include="Modules\Terminal"><UniqueIdentifier>{fac428f7-a48c-4bbd-aa49-ef4acd2fa7a4}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Tunnel"><UniqueIdentifier>{ea599d7c-dbcd-45b1-bfac-0bb50a31ca27}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Serial"><UniqueIdentifier>{e96dc903-2662-474d-ab8d-1e1d771241c7}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Audio"><UniqueIdentifier>{46e6d50c-4fb3-4ae1-8c90-cda46994d854}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Video"><UniqueIdentifier>{e793d8c4-da7d-49d0-84e0-133cc834cf54}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Recording"><UniqueIdentifier>{bb1ea036-e20f-4fde-9ee3-d2c3c2545043}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Modules\Administration\Server.c"><Filter>Modules\Administration</Filter></ClCompile>
@@ -45,6 +48,9 @@
     <ClCompile Include="..\Modules\Terminal\Server.c"><Filter>Modules\Terminal</Filter></ClCompile>
     <ClCompile Include="..\Modules\Tunnel\Server.c"><Filter>Modules\Tunnel</Filter></ClCompile>
     <ClCompile Include="..\Modules\Serial\Server.c"><Filter>Modules\Serial</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Audio\Server.c"><Filter>Modules\Audio</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Video\Server.c"><Filter>Modules\Video</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Recording\Server.c"><Filter>Modules\Recording</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Core\Channel.h"><Filter>Core</Filter></ClInclude>

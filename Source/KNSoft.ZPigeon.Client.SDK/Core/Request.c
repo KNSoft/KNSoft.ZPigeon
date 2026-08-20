@@ -16,6 +16,7 @@
 #include "../../Modules/Video/Client.h"
 #include "../../Modules/Rtc/Client.h"
 #include "../../Modules/Serial/Client.h"
+#include "../../Modules/Recording/Client.h"
 
 typedef struct _ZP_CLIENT_INBOUND_REQUEST
 {
@@ -327,6 +328,16 @@ ZpClientInbound_RequestCallback(
                                Request->PayloadLength,
                                &AllocatedResponse,
                                &PayloadLength);
+        Response = AllocatedResponse;
+    }
+    else if (Request->ModuleId == ZP_RECORDING_MODULE_ID)
+    {
+        Status = ZpRecording_Execute(Object,
+                                     Request->OperationId,
+                                     Request->Payload,
+                                     Request->PayloadLength,
+                                     &AllocatedResponse,
+                                     &PayloadLength);
         Response = AllocatedResponse;
     }
     else

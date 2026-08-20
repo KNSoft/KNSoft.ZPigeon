@@ -17,6 +17,7 @@
 #include <KNSoft/ZPigeon/Video.h>
 #include <KNSoft/ZPigeon/Rtc.h>
 #include <KNSoft/ZPigeon/Serial.h>
+#include <KNSoft/ZPigeon/Recording.h>
 
 EXTERN_C_START
 
@@ -82,6 +83,22 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
     _In_opt_ ZP_CHANNEL_HANDLE Channel,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_RECORDING_CAPABILITIES_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ ULONG Codecs,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_RECORDING_RECORDS_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_RECORDING_LIST_VIEW Records,
     _In_opt_ PVOID Context);
 
 NTSTATUS

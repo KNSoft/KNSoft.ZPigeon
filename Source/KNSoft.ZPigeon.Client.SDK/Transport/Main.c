@@ -3,6 +3,7 @@
 #include "../../Modules/Execution/Client.h"
 #include "../../Modules/File/Client.h"
 #include "../../Modules/Rtc/Client.h"
+#include "../../Modules/Recording/Client.h"
 #include "../../Network/Config.inl"
 #include "Retry.inl"
 
@@ -107,9 +108,11 @@ ZpClient_Create(
     RtlInitializeSRWLock(&Object->Lock);
     RtlInitializeSRWLock(&Object->FileEnumerationLock);
     RtlInitializeSRWLock(&Object->ExecutionLock);
+    RtlInitializeSRWLock(&Object->RecordingLock);
     InitializeListHead(&Object->InboundRequests);
     InitializeListHead(&Object->LocalChannels);
     InitializeListHead(&Object->ExecutionJobs);
+    InitializeListHead(&Object->RecordingJobs);
     InitializeListHead(&Object->FileEnumerations);
     Object->NextLocalChannelId = 1;
     Object->NextFileEnumerationId = 1;
@@ -689,6 +692,7 @@ ZpClient_TransportShutdown(
     ZpRtc_Close(Object);
     ZpFile_ResetEnumeration(Object);
     ZpClientLocalChannel_CloseAll(Object, Status);
+    ZpRecording_StopAll(Object);
     if (State == ZpClientStateStopping)
     {
         ZpClient_NotifyState(Client, ZpClientStateStopped, Status);
@@ -740,6 +744,7 @@ ZpClient_Close(
         ZpClientUdp_Uninitialize(&Object->UdpTransport);
     }
     ZpExecution_Cleanup(Object);
+    ZpRecording_Cleanup(Object);
     Mem_Free(Object);
     return STATUS_SUCCESS;
 }

@@ -34,6 +34,8 @@ typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
         ZP_NATIVE_AUDIO_SESSIONS_CALLBACK AudioSessions;
         ZP_NATIVE_VIDEO_DEVICES_CALLBACK VideoDevices;
         ZP_NATIVE_SERIAL_PORTS_CALLBACK SerialPorts;
+        ZP_NATIVE_RECORDING_CAPABILITIES_CALLBACK RecordingCapabilities;
+        ZP_NATIVE_RECORDING_RECORDS_CALLBACK RecordingRecords;
         ZP_NATIVE_SERVICE_LIST_CALLBACK ServiceList;
         ZP_NATIVE_SERVICE_INFO_CALLBACK ServiceInfo;
         ZP_NATIVE_ADMINISTRATION_CALLBACK Administration;
@@ -1064,6 +1066,81 @@ ZpNative_SerialPortsCallback(
 
 static
 VOID
+NTAPI
+ZpNative_RecordingCapabilitiesCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ ULONG Codecs,
+    _In_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+
+    CallbackContext->Callback.RecordingCapabilities(Status, Codecs, CallbackContext->Context);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_RecordingRecordsCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_RECORDING_LIST_VIEW List,
+    _In_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_RECORDING_RECORD Records = NULL;
+    ZP_RECORDING_RECORD_VIEW Record;
+    ULONG Count = 0, Index;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        if (List == NULL)
+        {
+            Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
+        }
+        else
+        {
+            Count = List->Count;
+            Records = Count != 0 ? Mem_Alloc((SIZE_T)Count * sizeof(*Records)) : NULL;
+            if (Count != 0 && Records == NULL)
+            {
+                Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+            }
+            else for (Index = 0; Index < Count; Index++)
+            {
+                DecodeStatus = ZpRecording_GetRecord(List, Index, &Record);
+                if (!NT_SUCCESS(DecodeStatus))
+                {
+                    Status = ZpStatus_FromNtStatus(DecodeStatus);
+                    break;
+                }
+                Records[Index].RecordingId = Record.RecordingId;
+                Records[Index].Source = Record.Source;
+                Records[Index].Codec = Record.Codec;
+                Records[Index].State = Record.State;
+                Records[Index].Status = Record.Status;
+                Records[Index].StartTime = Record.StartTime;
+                Records[Index].Duration = Record.Duration;
+                Records[Index].FileSize = Record.FileSize;
+                Records[Index].Path = (PCWCH)Record.Path.Buffer;
+                Records[Index].PathLength = Record.Path.Length;
+            }
+        }
+    }
+    CallbackContext->Callback.RecordingRecords(Status,
+                                                ZpStatus_IsSuccess(Status) ? Records : NULL,
+                                                ZpStatus_IsSuccess(Status) ? Count : 0,
+                                                CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
 ZpNative_ReleaseVideoStream(
     _In_ PZP_NATIVE_VIDEO_STREAM Stream)
 {
@@ -2018,7 +2095,8 @@ ZpNative_Start(
         { ZP_AUDIO_MODULE_ID, ZP_AUDIO_MODULE_VERSION },
         { ZP_VIDEO_MODULE_ID, ZP_VIDEO_MODULE_VERSION },
         { ZP_RTC_MODULE_ID, ZP_RTC_MODULE_VERSION },
-        { ZP_SERIAL_MODULE_ID, ZP_SERIAL_MODULE_VERSION }
+        { ZP_SERIAL_MODULE_ID, ZP_SERIAL_MODULE_VERSION },
+        { ZP_RECORDING_MODULE_ID, ZP_RECORDING_MODULE_VERSION }
     };
     ZP_LISTENER_ENDPOINT Listener = {
         ZpTransportQuic,
@@ -4849,6 +4927,171 @@ ZpNative_EnumerateSerialPorts(
                                                                     ZpNative_SerialPortsCallback,
                                                                     CallbackContext,
                                                                     &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_QueryRecordingCapabilities(
+    _In_ ZP_NATIVE_RECORDING_CAPABILITIES_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.RecordingCapabilities = Callback;
+    return ZpNative_SendStatusRequest(CallbackContext,
+                                      ZpServer_QueryRecordingCapabilities(Connection,
+                                                                           ZpNative_RecordingCapabilitiesCallback,
+                                                                           CallbackContext,
+                                                                           &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_StartRecording(
+    _In_ USHORT Source,
+    _In_ USHORT Codec,
+    _In_ USHORT FrameRate,
+    _In_ USHORT AudioSource,
+    _In_ USHORT Flags,
+    _In_ ULONG MaxDimension,
+    _In_ ULONG VideoBitRate,
+    _In_ ULONG AudioBitRate,
+    _In_ ULONGLONG WindowHandle,
+    _In_reads_opt_(SourceIdLength) PCWCH SourceId,
+    _In_ ULONG SourceIdLength,
+    _In_reads_opt_(AudioDeviceIdLength) PCWCH AudioDeviceId,
+    _In_ ULONG AudioDeviceIdLength,
+    _In_ ZP_NATIVE_RECORDING_RECORDS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_RECORDING_START Start;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    Start.Source = Source;
+    Start.Codec = Codec;
+    Start.FrameRate = FrameRate;
+    Start.AudioSource = AudioSource;
+    Start.Flags = Flags;
+    Start.MaxDimension = MaxDimension;
+    Start.VideoBitRate = VideoBitRate;
+    Start.AudioBitRate = AudioBitRate;
+    Start.WindowHandle = WindowHandle;
+    Start.SourceId = SourceId;
+    Start.SourceIdLength = SourceIdLength;
+    Start.AudioDeviceId = AudioDeviceId;
+    Start.AudioDeviceIdLength = AudioDeviceIdLength;
+    CallbackContext->Callback.RecordingRecords = Callback;
+    return ZpNative_SendStatusRequest(CallbackContext,
+                                      ZpServer_StartRecording(Connection,
+                                                              &Start,
+                                                              ZpNative_RecordingRecordsCallback,
+                                                              CallbackContext,
+                                                              &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumerateRecordings(
+    _In_ ZP_NATIVE_RECORDING_RECORDS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.RecordingRecords = Callback;
+    return ZpNative_SendStatusRequest(CallbackContext,
+                                      ZpServer_EnumerateRecordings(Connection,
+                                                                  ZpNative_RecordingRecordsCallback,
+                                                                  CallbackContext,
+                                                                  &Request));
+}
+
+static
+NTSTATUS
+ZpNative_RecordingStatus(
+    _In_ ULONG RecordingId,
+    _In_ LOGICAL Delete,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    Status = Delete ? ZpServer_DeleteRecording(Connection,
+                                                RecordingId,
+                                                ZpNative_StatusCallback,
+                                                CallbackContext,
+                                                &Request) :
+                      ZpServer_StopRecording(Connection,
+                                              RecordingId,
+                                              ZpNative_StatusCallback,
+                                              CallbackContext,
+                                              &Request);
+    return ZpNative_SendStatusRequest(CallbackContext, Status);
+}
+
+NTSTATUS
+NTAPI
+ZpNative_StopRecording(
+    _In_ ULONG RecordingId,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    return ZpNative_RecordingStatus(RecordingId, FALSE, Callback, Context);
+}
+
+NTSTATUS
+NTAPI
+ZpNative_DeleteRecording(
+    _In_ ULONG RecordingId,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    return ZpNative_RecordingStatus(RecordingId, TRUE, Callback, Context);
 }
 
 NTSTATUS

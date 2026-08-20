@@ -3,6 +3,7 @@
 #include <KNSoft/ZPigeon/Protocol.h>
 #include <KNSoft/ZPigeon/Rtc.h>
 #include <KNSoft/ZPigeon/Serial.h>
+#include <KNSoft/ZPigeon/Recording.h>
 
 TEST_FUNC(ProtocolCodec)
 {
@@ -216,4 +217,47 @@ TEST_FUNC(ProtocolSerial)
                                       Buffer, sizeof(Buffer), &Length) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpSerial_EncodeChannel(7, Buffer, sizeof(Buffer), &Length)) &&
             NT_SUCCESS(ZpSerial_DecodeChannel(Buffer, Length, &ChannelId)) && ChannelId == 7);
+}
+
+TEST_FUNC(ProtocolRecording)
+{
+    const ZP_RECORDING_START Start = {
+        ZpRecordingSourceCamera,
+        ZpRecordingCodecH265,
+        30,
+        ZpRecordingAudioInput,
+        0,
+        1920,
+        4000000,
+        160000,
+        0,
+        L"camera-id",
+        9,
+        L"microphone-id",
+        13
+    };
+    const ZP_RECORDING_RECORD Records[] = {
+        { 7, ZpRecordingSourceCamera, ZpRecordingCodecH265, ZpRecordingStateRecording,
+          { ZpStatusNone, STATUS_SUCCESS }, 123, 456, 789, L"C:\\recording.mp4", 16 }
+    };
+    ZP_RECORDING_START_VIEW StartView;
+    ZP_RECORDING_LIST_VIEW List;
+    ZP_RECORDING_RECORD_VIEW Record;
+    BYTE Buffer[512];
+    ULONG Length, Value;
+
+    TEST_OK(NT_SUCCESS(ZpRecording_EncodeStart(&Start, Buffer, sizeof(Buffer), &Length)) &&
+            NT_SUCCESS(ZpRecording_DecodeStart(Buffer, Length, &StartView)) &&
+            StartView.Source == Start.Source && StartView.Codec == Start.Codec &&
+            StartView.AudioSource == Start.AudioSource && StartView.SourceId.Length == Start.SourceIdLength &&
+            StartView.AudioDeviceId.Length == Start.AudioDeviceIdLength);
+    TEST_OK(ZpRecording_DecodeStart(Buffer, Length - 1, &StartView) == STATUS_DATA_ERROR);
+    TEST_OK(NT_SUCCESS(ZpRecording_EncodeRecords(Records, ARRAYSIZE(Records), Buffer, sizeof(Buffer), &Length)) &&
+            NT_SUCCESS(ZpRecording_DecodeRecords(Buffer, Length, &List)) && List.Count == ARRAYSIZE(Records) &&
+            NT_SUCCESS(ZpRecording_GetRecord(&List, 0, &Record)) && Record.RecordingId == 7 &&
+            Record.Path.Length == Records[0].PathLength);
+    TEST_OK(NT_SUCCESS(ZpRecording_EncodeCapabilities(0x1F, Buffer, sizeof(Buffer), &Length)) &&
+            NT_SUCCESS(ZpRecording_DecodeCapabilities(Buffer, Length, &Value)) && Value == 0x1F);
+    TEST_OK(NT_SUCCESS(ZpRecording_EncodeId(7, Buffer, sizeof(Buffer), &Length)) &&
+            NT_SUCCESS(ZpRecording_DecodeId(Buffer, Length, &Value)) && Value == 7);
 }

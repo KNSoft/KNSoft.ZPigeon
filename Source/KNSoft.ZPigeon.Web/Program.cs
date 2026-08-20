@@ -148,6 +148,7 @@ app.MapPost("/api/serial/ports", async () => await server.EnumerateSerialPortsAs
 app.Map("/api/serial", context => SerialWebSocket.RunAsync(context, server));
 app.MapRegistryApi(server);
 app.MapManagementApi(server);
+app.MapRecordingApi(server);
 app.MapExecutionApi(server, terminalSessions);
 app.MapRemoteAccessApi(tcpForwards, udpForwards, cdpSessions, proxyUserHeader);
 app.Lifetime.ApplicationStopping.Register(server.Dispose);

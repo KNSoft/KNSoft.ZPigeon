@@ -2,6 +2,8 @@
 
 #include "../../KNSoft.ZPigeon.Protocol/Include/KNSoft/ZPigeon/Video.h"
 
+#include <mfidl.h>
+
 typedef struct _ZP_VIDEO_CAPTURE ZP_VIDEO_CAPTURE, *PZP_VIDEO_CAPTURE;
 
 typedef struct _ZP_VIDEO_IMAGE
@@ -20,9 +22,25 @@ ZpVideoCapture_Create(
     _In_ PZP_VIDEO_STREAM_REQUEST_VIEW Request,
     _Out_ PZP_VIDEO_CAPTURE* Capture);
 
+VOID
+ZpVideoCapture_GetFormat(
+    _In_ PZP_VIDEO_CAPTURE Capture,
+    _Out_ PULONG Width,
+    _Out_ PULONG Height,
+    _Out_ PUSHORT FrameRate);
+
 HRESULT
-ZpVideoCapture_Next(
+ZpVideoCapture_NextSample(
     _Inout_ PZP_VIDEO_CAPTURE Capture,
+    _Outptr_ IMFSample** Sample,
+    _Out_ PLONGLONG Timestamp);
+
+HRESULT
+ZpVideoCapture_EncodeSample(
+    _In_ PZP_VIDEO_CAPTURE Capture,
+    _In_ IMFSample* Sample,
+    _In_ ULONG MaxDimension,
+    _In_ USHORT Quality,
     _Out_ PZP_VIDEO_IMAGE Image);
 
 VOID

@@ -295,6 +295,22 @@ typedef struct _ZP_NATIVE_SERIAL_PORT_RECORD
 
 typedef const ZP_NATIVE_SERIAL_PORT_RECORD* PCZP_NATIVE_SERIAL_PORT_RECORD;
 
+typedef struct _ZP_NATIVE_RECORDING_RECORD
+{
+    ULONG RecordingId;
+    USHORT Source;
+    USHORT Codec;
+    USHORT State;
+    ZP_STATUS Status;
+    ULONGLONG StartTime;
+    ULONGLONG Duration;
+    ULONGLONG FileSize;
+    PCWCH Path;
+    ULONG PathLength;
+} ZP_NATIVE_RECORDING_RECORD, *PZP_NATIVE_RECORDING_RECORD;
+
+typedef const ZP_NATIVE_RECORDING_RECORD* PCZP_NATIVE_RECORDING_RECORD;
+
 typedef struct _ZP_NATIVE_VIDEO_STREAM* ZP_NATIVE_VIDEO_STREAM_HANDLE;
 
 typedef
@@ -310,6 +326,21 @@ VOID
 (NTAPI *ZP_NATIVE_SERIAL_PORTS_CALLBACK)(
     _In_ ZP_STATUS Status,
     _In_reads_opt_(RecordCount) PCZP_NATIVE_SERIAL_PORT_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_RECORDING_CAPABILITIES_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_ ULONG Codecs,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_RECORDING_RECORDS_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_RECORDING_RECORD Records,
     _In_ ULONG RecordCount,
     _In_opt_ PVOID Context);
 
@@ -1635,6 +1666,56 @@ ZpNative_ExecuteRegistryStatus(
     _In_ ULONG Type,
     _In_reads_bytes_opt_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_QueryRecordingCapabilities(
+    _In_ ZP_NATIVE_RECORDING_CAPABILITIES_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_StartRecording(
+    _In_ USHORT Source,
+    _In_ USHORT Codec,
+    _In_ USHORT FrameRate,
+    _In_ USHORT AudioSource,
+    _In_ USHORT Flags,
+    _In_ ULONG MaxDimension,
+    _In_ ULONG VideoBitRate,
+    _In_ ULONG AudioBitRate,
+    _In_ ULONGLONG WindowHandle,
+    _In_reads_opt_(SourceIdLength) PCWCH SourceId,
+    _In_ ULONG SourceIdLength,
+    _In_reads_opt_(AudioDeviceIdLength) PCWCH AudioDeviceId,
+    _In_ ULONG AudioDeviceIdLength,
+    _In_ ZP_NATIVE_RECORDING_RECORDS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateRecordings(
+    _In_ ZP_NATIVE_RECORDING_RECORDS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_StopRecording(
+    _In_ ULONG RecordingId,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_DeleteRecording(
+    _In_ ULONG RecordingId,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 

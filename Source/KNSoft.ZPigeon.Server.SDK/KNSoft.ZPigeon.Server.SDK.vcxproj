@@ -76,6 +76,7 @@
     <ClCompile Include="..\Modules\Video\Server.c"><ObjectFileName>$(IntDir)Modules\Video\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Rtc\Server.c"><ObjectFileName>$(IntDir)Modules\Rtc\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Serial\Server.c"><ObjectFileName>$(IntDir)Modules\Serial\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Recording\Server.c"><ObjectFileName>$(IntDir)Modules\Recording\</ObjectFileName></ClCompile>
     <ClCompile Include="Transport\Main.c" />
     <ClCompile Include="Transport\Quic.c" />
     <ClCompile Include="Transport\Tcp.c" />

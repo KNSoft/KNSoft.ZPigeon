@@ -18,6 +18,9 @@
     <Filter Include="Modules\Terminal"><UniqueIdentifier>{8b305900-503c-4e8f-896b-b6cc7afb0bce}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Tunnel"><UniqueIdentifier>{dcbf767a-8584-4f14-abd7-3a06b2a65d31}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Serial"><UniqueIdentifier>{3733506f-f754-481e-b6fa-7d78c4927673}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Audio"><UniqueIdentifier>{6c1b99fe-3f71-4aca-bfe8-27b2d05a356e}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Video"><UniqueIdentifier>{5ca9536e-c4f2-46d0-a1fe-e55eddd0636a}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\Recording"><UniqueIdentifier>{b5d0c798-f45b-4538-b6d7-c0deef0d60ef}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Modules\Administration\Protocol.c"><Filter>Modules\Administration</Filter></ClCompile>
@@ -37,6 +40,9 @@
     <ClCompile Include="..\Modules\Terminal\Protocol.c"><Filter>Modules\Terminal</Filter></ClCompile>
     <ClCompile Include="..\Modules\Tunnel\Protocol.c"><Filter>Modules\Tunnel</Filter></ClCompile>
     <ClCompile Include="..\Modules\Serial\Protocol.c"><Filter>Modules\Serial</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Audio\Protocol.c"><Filter>Modules\Audio</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Video\Protocol.c"><Filter>Modules\Video</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Recording\Protocol.c"><Filter>Modules\Recording</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Include\KNSoft\ZPigeon\Administration.h"><Filter>Include</Filter></ClInclude>
@@ -55,6 +61,9 @@
     <ClInclude Include="Include\KNSoft\ZPigeon\Terminal.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Tunnel.h"><Filter>Include</Filter></ClInclude>
     <ClInclude Include="Include\KNSoft\ZPigeon\Serial.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Audio.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Video.h"><Filter>Include</Filter></ClInclude>
+    <ClInclude Include="Include\KNSoft\ZPigeon\Recording.h"><Filter>Include</Filter></ClInclude>
   </ItemGroup>
   <ItemGroup><None Include="packages.config" /></ItemGroup>
 </Project>

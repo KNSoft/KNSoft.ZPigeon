@@ -1,5 +1,8 @@
 ﻿#include "Client.h"
+#define COBJMACROS
+
 #include "Capture.h"
+#include "Shared.h"
 #include "../Rtc/Client.h"
 
 #include "../../KNSoft.ZPigeon.Client.SDK/Client.inl"
@@ -164,7 +167,9 @@ ZpVideo_Worker(
 {
     PZP_CLIENT_VIDEO_CHANNEL Channel = Context;
     ZP_VIDEO_STREAM_REQUEST_VIEW Request;
-    ZP_VIDEO_CAPTURE* Capture = NULL;
+    PZP_VIDEO_SHARED_CAPTURE Capture = NULL;
+    IMFSample* Sample = NULL;
+    LONGLONG Timestamp;
     ZP_VIDEO_IMAGE Image;
     LARGE_INTEGER Delay, Zero = { 0 };
     ULONGLONG Start, Elapsed, Period;
@@ -180,7 +185,7 @@ ZpVideo_Worker(
     Request.Quality = Channel->Quality;
     Request.DeviceId.Buffer = (const BYTE*)Channel->DeviceId;
     Request.DeviceId.Length = Channel->DeviceIdLength;
-    if (SUCCEEDED(Result)) Result = ZpVideoCapture_Create(&Request, &Capture);
+    if (SUCCEEDED(Result)) Result = ZpVideoShared_Open(&Request, &Capture);
     Period = 1000 / Channel->FrameRate;
     while (SUCCEEDED(Result) && NT_SUCCESS(Status))
     {
@@ -190,7 +195,18 @@ ZpVideo_Worker(
             break;
         }
         Start = Time_StopWatchStart();
-        Result = ZpVideoCapture_Next(Capture, &Image);
+        Result = ZpVideoShared_NextSample(Capture, Channel->StopEvent, &Sample, &Timestamp);
+        UNREFERENCED_PARAMETER(Timestamp);
+        if (SUCCEEDED(Result)) Result = ZpVideoShared_Encode(Capture,
+                                                            Sample,
+                                                            Channel->MaxDimension,
+                                                            Channel->Quality,
+                                                            &Image);
+        if (Sample != NULL)
+        {
+            IMFSample_Release(Sample);
+            Sample = NULL;
+        }
         if (FAILED(Result)) break;
         Status = ZpVideo_SendFrame(Channel, &Image);
         ZpVideoCapture_FreeImage(&Image);
@@ -205,7 +221,12 @@ ZpVideo_Worker(
             }
         }
     }
-    ZpVideoCapture_Close(Capture);
+    ZpVideoShared_Close(Capture);
+    if (Result == HRESULT_FROM_NT(STATUS_CANCELLED))
+    {
+        Result = S_OK;
+        Status = STATUS_CANCELLED;
+    }
     if (Uninitialize) CoUninitialize();
     ZpVideo_FinishWorker(Channel,
                          FAILED(Result) ? ZpStatus_FromCode(ZpStatusHResult, (ULONG)Result) :

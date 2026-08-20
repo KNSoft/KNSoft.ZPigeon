@@ -1,6 +1,8 @@
 ﻿#define COBJMACROS
 
 #include "Client.h"
+#include "Capture.h"
+#include "Shared.h"
 #include "../Rtc/Client.h"
 
 #include "../../KNSoft.ZPigeon.Client.SDK/Client.inl"
@@ -166,7 +168,9 @@ ZpAudio_FinishWorker(
 static
 HRESULT
 ZpAudio_GetDevice(
-    _In_ PZP_CLIENT_AUDIO_CHANNEL Channel,
+    _In_ ZP_AUDIO_FLOW Flow,
+    _In_reads_opt_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
     _Outptr_ IMMDevice** Device)
 {
     IMMDeviceEnumerator* Enumerator;
@@ -178,12 +182,12 @@ ZpAudio_GetDevice(
                               &ZpAudioDeviceEnumeratorIid,
                               (PVOID*)&Enumerator);
     if (FAILED(Result)) return Result;
-    Result = Channel->DeviceIdLength == 0 ?
+    Result = DeviceIdLength == 0 ?
                  IMMDeviceEnumerator_GetDefaultAudioEndpoint(Enumerator,
-                                                              Channel->Flow == ZpAudioFlowRender ? eRender : eCapture,
+                                                              Flow == ZpAudioFlowRender ? eRender : eCapture,
                                                               eConsole,
                                                               Device) :
-                 IMMDeviceEnumerator_GetDevice(Enumerator, Channel->DeviceId, Device);
+                 IMMDeviceEnumerator_GetDevice(Enumerator, DeviceId, Device);
     IMMDeviceEnumerator_Release(Enumerator);
     return Result;
 }
@@ -232,6 +236,49 @@ ZpAudio_GetFormat(
         return AUDCLNT_E_UNSUPPORTED_FORMAT;
     }
     return S_OK;
+}
+
+HRESULT
+ZpAudioCapture_QueryFormat(
+    _In_ ZP_AUDIO_FLOW Flow,
+    _In_reads_opt_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _Out_ PUSHORT Channels,
+    _Out_ PULONG SampleRate)
+{
+    IMMDevice* Device = NULL;
+    IAudioClient* Client = NULL;
+    WAVEFORMATEX* Format = NULL;
+    USHORT ValidBits;
+    LOGICAL FloatingPoint, Uninitialize;
+    HRESULT Result;
+
+    if ((Flow != ZpAudioFlowRender && Flow != ZpAudioFlowCapture) ||
+        (DeviceIdLength != 0 && DeviceId == NULL))
+    {
+        return E_INVALIDARG;
+    }
+    Result = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    Uninitialize = SUCCEEDED(Result);
+    if (Result == RPC_E_CHANGED_MODE) Result = S_OK;
+    if (SUCCEEDED(Result)) Result = ZpAudio_GetDevice(Flow, DeviceId, DeviceIdLength, &Device);
+    if (SUCCEEDED(Result)) Result = IMMDevice_Activate(Device,
+                                                       &ZpAudioClientIid,
+                                                       CLSCTX_INPROC_SERVER,
+                                                       NULL,
+                                                       (PVOID*)&Client);
+    if (SUCCEEDED(Result)) Result = IAudioClient_GetMixFormat(Client, &Format);
+    if (SUCCEEDED(Result)) Result = ZpAudio_GetFormat(Format, &FloatingPoint, &ValidBits);
+    if (SUCCEEDED(Result))
+    {
+        *Channels = Format->nChannels;
+        *SampleRate = Format->nSamplesPerSec;
+    }
+    CoTaskMemFree(Format);
+    if (Client != NULL) IAudioClient_Release(Client);
+    if (Device != NULL) IMMDevice_Release(Device);
+    if (Uninitialize) CoUninitialize();
+    return Result;
 }
 
 static
@@ -295,18 +342,18 @@ ZpAudio_ConvertFrames(
 
 static
 NTSTATUS
-ZpAudio_SendPacket(
-    _Inout_ PZP_CLIENT_AUDIO_CHANNEL Channel,
+ZpAudio_ProcessFrames(
     _In_ const WAVEFORMATEX* Format,
     _In_ LOGICAL FloatingPoint,
     _In_reads_bytes_opt_(FrameCount * Format->nBlockAlign) const BYTE* Data,
     _In_ ULONG FrameCount,
     _In_ LOGICAL Silent,
-    _Out_writes_(ZP_AUDIO_MAX_PACKET_FRAMES * Format->nChannels) SHORT* Samples)
+    _In_ ULONGLONG Timestamp,
+    _Out_writes_(ZP_AUDIO_MAX_PACKET_FRAMES * Format->nChannels) SHORT* Samples,
+    _In_ ZP_AUDIO_CAPTURE_CALLBACK Callback,
+    _In_opt_ PVOID Context)
 {
-    BYTE Header[sizeof(USHORT) * 2 + sizeof(ULONG) * 3];
-    ZP_AUDIO_PACKET Packet;
-    ULONG HeaderLength, Frames, DataLength;
+    ULONG Frames, DataLength;
     NTSTATUS Status = STATUS_SUCCESS;
 
     while (FrameCount != 0)
@@ -315,28 +362,30 @@ ZpAudio_SendPacket(
         DataLength = Frames * Format->nChannels * sizeof(SHORT);
         if (Silent) RtlZeroMemory(Samples, DataLength);
         else ZpAudio_ConvertFrames(Data, Format, FloatingPoint, Frames, Samples);
-        Packet.Format = ZP_AUDIO_FORMAT_PCM16;
-        Packet.Channels = Format->nChannels;
-        Packet.SampleRate = Format->nSamplesPerSec;
-        Packet.FrameCount = Frames;
-        Packet.DataLength = DataLength;
-        Status = ZpAudio_EncodePacket(&Packet, Header, sizeof(Header), &HeaderLength);
-        if (NT_SUCCESS(Status)) Status = ZpAudio_SendBytes(Channel, Header, HeaderLength);
-        if (NT_SUCCESS(Status)) Status = ZpAudio_SendBytes(Channel, Samples, DataLength);
+        Status = Callback(Format->nChannels,
+                          Format->nSamplesPerSec,
+                          Frames,
+                          Samples,
+                          Timestamp,
+                          Context);
         if (!NT_SUCCESS(Status)) break;
         if (!Silent) Data += (SIZE_T)Frames * Format->nBlockAlign;
+        Timestamp += (ULONGLONG)Frames * 10000000 / Format->nSamplesPerSec;
         FrameCount -= Frames;
     }
     return Status;
 }
 
-static
-NTSTATUS
-NTAPI
-ZpAudio_Worker(
-    _In_ PVOID Context)
+HRESULT
+ZpAudioCapture_Run(
+    _In_ ZP_AUDIO_FLOW Flow,
+    _In_reads_opt_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_ HANDLE StopEvent,
+    _In_ ZP_AUDIO_CAPTURE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ PNTSTATUS CaptureStatus)
 {
-    PZP_CLIENT_AUDIO_CHANNEL Channel = Context;
     IMMDevice* Device = NULL;
     IAudioClient* Client = NULL;
     IAudioCaptureClient* Capture = NULL;
@@ -347,15 +396,21 @@ ZpAudio_Worker(
     HANDLE Events[2];
     DWORD Flags;
     UINT32 Frames, NextFrames;
+    UINT64 DevicePosition, QpcPosition;
     USHORT ValidBits;
     LOGICAL FloatingPoint, Started = FALSE, Uninitialize;
     HRESULT Result;
     NTSTATUS Status = STATUS_SUCCESS;
 
+    if ((Flow != ZpAudioFlowRender && Flow != ZpAudioFlowCapture) ||
+        (DeviceIdLength != 0 && DeviceId == NULL) || StopEvent == NULL || Callback == NULL)
+    {
+        return E_INVALIDARG;
+    }
     Result = CoInitializeEx(NULL, COINIT_MULTITHREADED);
     Uninitialize = SUCCEEDED(Result);
     if (Result == RPC_E_CHANGED_MODE) Result = S_OK;
-    if (SUCCEEDED(Result)) Result = ZpAudio_GetDevice(Channel, &Device);
+    if (SUCCEEDED(Result)) Result = ZpAudio_GetDevice(Flow, DeviceId, DeviceIdLength, &Device);
     if (SUCCEEDED(Result)) Result = IMMDevice_Activate(Device,
                                                        &ZpAudioClientIid,
                                                        CLSCTX_INPROC_SERVER,
@@ -376,7 +431,7 @@ ZpAudio_Worker(
     if (SUCCEEDED(Result))
     {
         Flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_NOPERSIST;
-        if (Channel->Flow == ZpAudioFlowRender) Flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
+        if (Flow == ZpAudioFlowRender) Flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
         Result = IAudioClient_Initialize(Client,
                                          AUDCLNT_SHAREMODE_SHARED,
                                          Flags,
@@ -389,7 +444,7 @@ ZpAudio_Worker(
     if (SUCCEEDED(Result)) Result = IAudioClient_GetService(Client, &ZpAudioCaptureClientIid, (PVOID*)&Capture);
     if (SUCCEEDED(Result)) Result = IAudioClient_Start(Client);
     if (SUCCEEDED(Result)) Started = TRUE;
-    Events[0] = Channel->StopEvent;
+    Events[0] = StopEvent;
     Events[1] = AudioEvent;
     while (SUCCEEDED(Result) && NT_SUCCESS(Status))
     {
@@ -403,16 +458,24 @@ ZpAudio_Worker(
         Result = IAudioCaptureClient_GetNextPacketSize(Capture, &NextFrames);
         while (SUCCEEDED(Result) && NextFrames != 0)
         {
-            Result = IAudioCaptureClient_GetBuffer(Capture, &Data, &Frames, &Flags, NULL, NULL);
+            Result = IAudioCaptureClient_GetBuffer(Capture,
+                                                    &Data,
+                                                    &Frames,
+                                                    &Flags,
+                                                    &DevicePosition,
+                                                    &QpcPosition);
             if (SUCCEEDED(Result))
             {
-                Status = ZpAudio_SendPacket(Channel,
-                                            Format,
-                                            FloatingPoint,
-                                            Data,
-                                            Frames,
-                                            !!(Flags & AUDCLNT_BUFFERFLAGS_SILENT),
-                                            Samples);
+                UNREFERENCED_PARAMETER(DevicePosition);
+                Status = ZpAudio_ProcessFrames(Format,
+                                               FloatingPoint,
+                                               Data,
+                                               Frames,
+                                               !!(Flags & AUDCLNT_BUFFERFLAGS_SILENT),
+                                               QpcPosition,
+                                               Samples,
+                                               Callback,
+                                               Context);
                 Result = IAudioCaptureClient_ReleaseBuffer(Capture, Frames);
             }
             if (SUCCEEDED(Result) && NT_SUCCESS(Status))
@@ -433,6 +496,74 @@ ZpAudio_Worker(
     if (AudioEvent != NULL) NtClose(AudioEvent);
     Mem_Free(Samples);
     if (Uninitialize) CoUninitialize();
+    *CaptureStatus = Status;
+    return Result;
+}
+
+static
+NTSTATUS
+NTAPI
+ZpAudio_StreamCapture(
+    _In_ USHORT Channels,
+    _In_ ULONG SampleRate,
+    _In_ ULONG FrameCount,
+    _In_reads_(FrameCount * Channels) const SHORT* Samples,
+    _In_ ULONGLONG Timestamp,
+    _In_opt_ PVOID Context)
+{
+    PZP_CLIENT_AUDIO_CHANNEL Channel = Context;
+    BYTE Header[sizeof(USHORT) * 2 + sizeof(ULONG) * 3];
+    ZP_AUDIO_PACKET Packet;
+    ULONG HeaderLength, DataLength;
+    NTSTATUS Status;
+
+    UNREFERENCED_PARAMETER(Timestamp);
+    DataLength = FrameCount * Channels * sizeof(SHORT);
+    Packet.Format = ZP_AUDIO_FORMAT_PCM16;
+    Packet.Channels = Channels;
+    Packet.SampleRate = SampleRate;
+    Packet.FrameCount = FrameCount;
+    Packet.DataLength = DataLength;
+    Status = ZpAudio_EncodePacket(&Packet, Header, sizeof(Header), &HeaderLength);
+    if (NT_SUCCESS(Status)) Status = ZpAudio_SendBytes(Channel, Header, HeaderLength);
+    if (NT_SUCCESS(Status)) Status = ZpAudio_SendBytes(Channel, Samples, DataLength);
+    return Status;
+}
+
+static
+NTSTATUS
+NTAPI
+ZpAudio_Worker(
+    _In_ PVOID Context)
+{
+    PZP_CLIENT_AUDIO_CHANNEL Channel = Context;
+    PZP_AUDIO_SHARED_CAPTURE Capture = NULL;
+    PZP_AUDIO_SHARED_FRAME Frame;
+    NTSTATUS Status = STATUS_SUCCESS;
+    HRESULT Result;
+
+    Result = ZpAudioShared_Open(Channel->Flow,
+                                Channel->DeviceId,
+                                Channel->DeviceIdLength,
+                                &Capture);
+    while (SUCCEEDED(Result) && NT_SUCCESS(Status))
+    {
+        Result = ZpAudioShared_Next(Capture, Channel->StopEvent, &Frame);
+        if (FAILED(Result)) break;
+        Status = ZpAudio_StreamCapture(Frame->Channels,
+                                       Frame->SampleRate,
+                                       Frame->FrameCount,
+                                       Frame->Samples,
+                                       Frame->Timestamp,
+                                       Channel);
+        ZpAudioShared_ReleaseFrame(Frame);
+    }
+    ZpAudioShared_Close(Capture);
+    if (Result == HRESULT_FROM_NT(STATUS_CANCELLED))
+    {
+        Result = S_OK;
+        Status = STATUS_CANCELLED;
+    }
     ZpAudio_FinishWorker(Channel,
                          FAILED(Result) ? ZpStatus_FromCode(ZpStatusHResult, (ULONG)Result) :
                                           ZpStatus_FromNtStatus(Status));

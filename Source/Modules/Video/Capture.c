@@ -25,8 +25,7 @@ struct _ZP_VIDEO_CAPTURE
     IWICImagingFactory* ImagingFactory;
     ULONG Width;
     ULONG Height;
-    ULONG MaxDimension;
-    USHORT Quality;
+    USHORT FrameRate;
     LOGICAL Started;
 };
 
@@ -174,8 +173,6 @@ ZpVideoCapture_Create(
     Object = Mem_Alloc(sizeof(*Object));
     if (Object == NULL) return E_OUTOFMEMORY;
     RtlZeroMemory(Object, sizeof(*Object));
-    Object->MaxDimension = Request->MaxDimension;
-    Object->Quality = Request->Quality;
     Result = MFStartup(MF_VERSION, MFSTARTUP_FULL);
     Object->Started = SUCCEEDED(Result);
     if (SUCCEEDED(Result)) Result = ZpVideoCapture_Activate(Request, &Object->Source);
@@ -200,13 +197,18 @@ ZpVideoCapture_Create(
     }
     if (SUCCEEDED(Result))
     {
-        ULONGLONG Size;
+        ULONGLONG Rate, Size;
 
         Result = IMFMediaType_GetUINT64(Type, &MF_MT_FRAME_SIZE, &Size);
         if (SUCCEEDED(Result))
         {
             Object->Width = (ULONG)(Size >> 32);
             Object->Height = (ULONG)Size;
+        }
+        if (SUCCEEDED(Result) && SUCCEEDED(IMFMediaType_GetUINT64(Type, &MF_MT_FRAME_RATE, &Rate)) &&
+            (ULONG)Rate != 0)
+        {
+            Object->FrameRate = (USHORT)((Rate >> 32) / (ULONG)Rate);
         }
     }
     if (SUCCEEDED(Result))
@@ -228,12 +230,49 @@ ZpVideoCapture_Create(
     return S_OK;
 }
 
+VOID
+ZpVideoCapture_GetFormat(
+    _In_ PZP_VIDEO_CAPTURE Capture,
+    _Out_ PULONG Width,
+    _Out_ PULONG Height,
+    _Out_ PUSHORT FrameRate)
+{
+    *Width = Capture->Width;
+    *Height = Capture->Height;
+    *FrameRate = Capture->FrameRate;
+}
+
+HRESULT
+ZpVideoCapture_NextSample(
+    _Inout_ PZP_VIDEO_CAPTURE Capture,
+    _Outptr_ IMFSample** Sample,
+    _Out_ PLONGLONG Timestamp)
+{
+    DWORD Flags;
+    HRESULT Result;
+
+    do
+    {
+        Result = IMFSourceReader_ReadSample(Capture->Reader,
+                                            MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                                            0,
+                                            NULL,
+                                            &Flags,
+                                            Timestamp,
+                                            Sample);
+        if (SUCCEEDED(Result) && Flags & MF_SOURCE_READERF_ENDOFSTREAM) Result = MF_E_END_OF_STREAM;
+    } while (SUCCEEDED(Result) && *Sample == NULL);
+    return Result;
+}
+
 static
 HRESULT
 ZpVideoCapture_Encode(
     _In_ PZP_VIDEO_CAPTURE Capture,
     _In_reads_bytes_(Length) PBYTE Bytes,
     _In_ ULONG Length,
+    _In_ ULONG MaxDimension,
+    _In_ USHORT Quality,
     _Out_ PZP_VIDEO_IMAGE Image)
 {
     IWICBitmap* Bitmap = NULL;
@@ -257,17 +296,17 @@ ZpVideoCapture_Encode(
     if ((ULONGLONG)Width * 4 > MAXULONG) return E_OUTOFMEMORY;
     Stride = Width * 4;
     if ((ULONGLONG)Stride * Height > Length) return MF_E_BUFFERTOOSMALL;
-    if (max(Width, Height) > Capture->MaxDimension)
+    if (max(Width, Height) > MaxDimension)
     {
         if (Width >= Height)
         {
-            Height = (ULONG)((ULONGLONG)Height * Capture->MaxDimension / Width);
-            Width = Capture->MaxDimension;
+            Height = (ULONG)((ULONGLONG)Height * MaxDimension / Width);
+            Width = MaxDimension;
         }
         else
         {
-            Width = (ULONG)((ULONGLONG)Width * Capture->MaxDimension / Height);
-            Height = Capture->MaxDimension;
+            Width = (ULONG)((ULONGLONG)Width * MaxDimension / Height);
+            Height = MaxDimension;
         }
     }
     Result = IWICImagingFactory_CreateBitmapFromMemory(Capture->ImagingFactory,
@@ -308,7 +347,7 @@ ZpVideoCapture_Encode(
         Property.pstrName = L"ImageQuality";
         VariantInit(&Value);
         Value.vt = VT_R4;
-        Value.fltVal = Capture->Quality / 100.0f;
+        Value.fltVal = Quality / 100.0f;
         Result = IPropertyBag2_Write(Properties, 1, &Property, &Value);
     }
     if (SUCCEEDED(Result)) Result = IWICBitmapFrameEncode_Initialize(Frame, Properties);
@@ -345,34 +384,28 @@ ZpVideoCapture_Encode(
 }
 
 HRESULT
-ZpVideoCapture_Next(
-    _Inout_ PZP_VIDEO_CAPTURE Capture,
+ZpVideoCapture_EncodeSample(
+    _In_ PZP_VIDEO_CAPTURE Capture,
+    _In_ IMFSample* Sample,
+    _In_ ULONG MaxDimension,
+    _In_ USHORT Quality,
     _Out_ PZP_VIDEO_IMAGE Image)
 {
-    IMFSample* Sample = NULL;
     IMFMediaBuffer* Buffer = NULL;
-    DWORD Flags;
     PBYTE Bytes = NULL;
     DWORD Length;
     HRESULT Result;
 
-    do
-    {
-        Result = IMFSourceReader_ReadSample(Capture->Reader,
-                                            MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                                            0,
-                                            NULL,
-                                            &Flags,
-                                            NULL,
-                                            &Sample);
-        if (SUCCEEDED(Result) && Flags & MF_SOURCE_READERF_ENDOFSTREAM) Result = MF_E_END_OF_STREAM;
-    } while (SUCCEEDED(Result) && Sample == NULL);
-    if (SUCCEEDED(Result)) Result = IMFSample_ConvertToContiguousBuffer(Sample, &Buffer);
+    Result = IMFSample_ConvertToContiguousBuffer(Sample, &Buffer);
     if (SUCCEEDED(Result)) Result = IMFMediaBuffer_Lock(Buffer, &Bytes, NULL, &Length);
-    if (SUCCEEDED(Result)) Result = ZpVideoCapture_Encode(Capture, Bytes, Length, Image);
+    if (SUCCEEDED(Result)) Result = ZpVideoCapture_Encode(Capture,
+                                                          Bytes,
+                                                          Length,
+                                                          MaxDimension,
+                                                          Quality,
+                                                          Image);
     if (Bytes != NULL) IMFMediaBuffer_Unlock(Buffer);
     if (Buffer != NULL) IMFMediaBuffer_Release(Buffer);
-    if (Sample != NULL) IMFSample_Release(Sample);
     return Result;
 }
 

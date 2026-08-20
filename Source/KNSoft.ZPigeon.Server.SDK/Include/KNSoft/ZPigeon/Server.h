@@ -1102,6 +1102,49 @@ ZpServer_CloseRtc(
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 
+NTSTATUS
+NTAPI
+ZpServer_QueryRecordingCapabilities(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_RECORDING_CAPABILITIES_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_StartRecording(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ PCZP_RECORDING_START Start,
+    _In_ ZP_RECORDING_RECORDS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateRecordings(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_RECORDING_RECORDS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_StopRecording(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG RecordingId,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_DeleteRecording(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG RecordingId,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
 VOID
 NTAPI
 ZpConnection_AddRef(
