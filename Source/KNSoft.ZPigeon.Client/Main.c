@@ -7,6 +7,7 @@
 #include <KNSoft/ZPigeon/EventLog.h>
 #include <KNSoft/ZPigeon/Execution.h>
 #include <KNSoft/ZPigeon/File.h>
+#include <KNSoft/ZPigeon/PortableDevice.h>
 #include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/Registry.h>
 #include <KNSoft/ZPigeon/Service.h>
@@ -90,6 +91,7 @@ ZpClient_GetModuleLogName(
         case ZP_PROCESS_MODULE_ID: return L"process.log";
         case ZP_SERVICE_MODULE_ID: return L"service.log";
         case ZP_FILE_MODULE_ID: return L"file.log";
+        case ZP_PORTABLE_DEVICE_MODULE_ID: return L"portable-device.log";
         case ZP_TERMINAL_MODULE_ID: return L"terminal.log";
         case ZP_EVENT_LOG_MODULE_ID: return L"eventlog.log";
         case ZP_EXECUTION_MODULE_ID: return L"execution.log";
@@ -428,7 +430,8 @@ wmain(VOID)
         { ZP_VIDEO_MODULE_ID, ZP_VIDEO_MODULE_VERSION },
         { ZP_RTC_MODULE_ID, ZP_RTC_MODULE_VERSION },
         { ZP_SERIAL_MODULE_ID, ZP_SERIAL_MODULE_VERSION },
-        { ZP_RECORDING_MODULE_ID, ZP_RECORDING_MODULE_VERSION }
+        { ZP_RECORDING_MODULE_ID, ZP_RECORDING_MODULE_VERSION },
+        { ZP_PORTABLE_DEVICE_MODULE_ID, ZP_PORTABLE_DEVICE_MODULE_VERSION }
     };
     static const ZP_ENDPOINT Endpoint = {
         ZpTransportQuic,

@@ -13,6 +13,94 @@ internal static class ManagementWebApi
 
     internal static void MapManagementApi(this WebApplication app, NativeServer server)
     {
+        app.MapPost("/api/portable/devices", async () => await server.EnumeratePortableDevicesAsync());
+        app.MapPost("/api/portable/objects", async (PortablePageRequest request) =>
+        {
+            ValidatePortable(request.DeviceId);
+            if (request.ParentId is not null) ValidatePortable(request.ParentId);
+            var page = await server.EnumeratePortableObjectsAsync(request.DeviceId,
+                                                                  request.ParentId,
+                                                                  request.Offset);
+            return Results.Ok(new
+            {
+                Objects = page.Objects.Select(item => new
+                {
+                    Size = item.Size.ToString(),
+                    ModifiedTime = item.ModifiedTime.ToString(),
+                    Capacity = item.Capacity.ToString(),
+                    FreeSpace = item.FreeSpace.ToString(),
+                    item.Flags,
+                    item.Id,
+                    item.PersistentId,
+                    item.Name
+                }),
+                page.NextOffset
+            });
+        });
+        app.MapPost("/api/portable/folder", async (PortableNameRequest request) =>
+        {
+            ValidatePortable(request.DeviceId, request.ObjectId, request.Name);
+            await server.CreatePortableFolderAsync(request.DeviceId, request.ObjectId, request.Name);
+            return Results.NoContent();
+        });
+        app.MapPost("/api/portable/delete", async (PortableObjectRequest request) =>
+        {
+            ValidatePortable(request.DeviceId, request.ObjectId);
+            await server.DeletePortableObjectAsync(request.DeviceId, request.ObjectId);
+            return Results.NoContent();
+        });
+        app.MapPost("/api/portable/rename", async (PortableNameRequest request) =>
+        {
+            ValidatePortable(request.DeviceId, request.ObjectId, request.Name);
+            await server.RenamePortableObjectAsync(request.DeviceId, request.ObjectId, request.Name);
+            return Results.NoContent();
+        });
+        app.MapGet("/api/portable/download", async (
+            HttpContext context,
+            string deviceId,
+            string objectId,
+            string name) =>
+        {
+            ValidatePortable(deviceId, objectId, name);
+            await using var transfer = await server.OpenPortableReadAsync(deviceId, objectId);
+            context.Response.ContentLength = checked((long)transfer.FileSize);
+            context.Response.ContentType = "application/octet-stream";
+            context.Response.GetTypedHeaders().ContentDisposition = new ContentDispositionHeaderValue("attachment")
+            {
+                FileNameStar = name
+            };
+            await foreach (var data in transfer.Output.ReadAllAsync(context.RequestAborted))
+            {
+                await context.Response.Body.WriteAsync(data, context.RequestAborted);
+            }
+            var status = (await transfer.Completion).Status;
+            if (!status.IsSuccess) throw new NativeException(status);
+        });
+        app.MapPut("/api/portable/upload", async (
+            HttpContext context,
+            string deviceId,
+            string parentId,
+            string name) =>
+        {
+            ValidatePortable(deviceId, parentId, name);
+            if (context.Request.ContentLength is not long length || length < 0)
+            {
+                return Results.StatusCode(StatusCodes.Status411LengthRequired);
+            }
+            await using var transfer = await server.OpenPortableWriteAsync(deviceId, parentId, name, (ulong)length);
+            var buffer = GC.AllocateUninitializedArray<byte>(0x10000);
+            long received = 0;
+            int read;
+            while ((read = await context.Request.Body.ReadAsync(buffer, context.RequestAborted)) != 0)
+            {
+                await transfer.WriteAsync(buffer.AsMemory(0, read), context.RequestAborted);
+                received += read;
+            }
+            if (received != length) throw new EndOfStreamException();
+            var status = (await transfer.Completion).Status;
+            if (!status.IsSuccess) throw new NativeException(status);
+            return Results.NoContent();
+        });
         app.MapPost("/api/files", async (FilePageRequest request) =>
         {
             var enumerationId = 0U;
@@ -92,6 +180,19 @@ internal static class ManagementWebApi
             await server.RenameFileAsync(request.Path, request.NewPath));
         app.MapPost("/api/file/attributes", async (FileAttributesRequest request) =>
             await server.SetFileAttributesAsync(request.Path, request.Attributes));
+        app.MapPost("/api/file/owners", async (PathRequest request) =>
+            await server.QueryFileOwnersAsync(request.Path));
+        app.MapPost("/api/file/owners/control", async (FileOwnerControlRequest request) =>
+        {
+            if (request.ProcessIds is not { Length: > 0 } ||
+                request.Control is not (FileOwnerControl.Terminate or FileOwnerControl.CloseHandles))
+            {
+                return Results.BadRequest();
+            }
+            return Results.Ok(await server.ControlFileOwnersAsync(request.Path,
+                                                                    request.Control,
+                                                                    request.ProcessIds));
+        });
         app.MapPost("/api/file/volume", async (PathRequest request) =>
             await server.QueryFileVolumeAsync(request.Path));
         app.MapPost("/api/file/volume/label", async (FileVolumeLabelRequest request) =>
@@ -561,6 +662,14 @@ internal static class ManagementWebApi
         });
     }
 
+    private static void ValidatePortable(params string?[] values)
+    {
+        if (values.Any(value => string.IsNullOrEmpty(value) || value.Length > 1024 || value.Contains('\0')))
+        {
+            throw new BadHttpRequestException("便携设备参数无效");
+        }
+    }
+
     private static void ValidateWmiNamespace(string? value)
     {
         if (string.IsNullOrEmpty(value) || value.Length > 512 || value.Contains('\0') ||
@@ -610,6 +719,9 @@ internal sealed record PathRequest(string Path);
 internal sealed record SecurityDescriptorRequest(string Path, string Sddl);
 internal sealed record SecurityAccountRequest(string Value, bool Sid);
 internal sealed record FilePageRequest(string? Path, string? EnumerationId);
+internal sealed record PortablePageRequest(string DeviceId, string? ParentId, uint Offset);
+internal sealed record PortableObjectRequest(string DeviceId, string ObjectId);
+internal sealed record PortableNameRequest(string DeviceId, string ObjectId, string Name);
 internal sealed record FileRenameRequest(string Path, string NewPath);
 internal sealed record FileHashRequest(string Path, FileHashAlgorithm Algorithm);
 internal sealed record FileRangeRequest(string Path, string Offset, uint Length);
@@ -617,6 +729,10 @@ internal sealed record FileRangeWriteRequest(string Path, string Offset, byte[] 
 internal sealed record ProcessMemoryReadRequest(uint ProcessId, string CreateTime, string Address, uint Length);
 internal sealed record ProcessMemoryWriteRequest(uint ProcessId, string CreateTime, string Address, byte[] Data);
 internal sealed record FileAttributesRequest(string Path, uint Attributes);
+internal sealed record FileOwnerControlRequest(
+    string Path,
+    FileOwnerControl Control,
+    uint[] ProcessIds);
 internal sealed record FileVolumeLabelRequest(string Path, string Label);
 internal sealed record FileVolumeFormatRequest(string Path, string FileSystem, string Label, bool Quick);
 internal sealed record FileSearchRequest(string Path, string Query, uint Mode);

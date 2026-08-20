@@ -103,6 +103,7 @@
     <ClCompile Include="..\Modules\EventLog\Client.c"><ObjectFileName>$(IntDir)Modules\EventLog\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Execution\Client.c"><ObjectFileName>$(IntDir)Modules\Execution\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\File\Client.c"><ObjectFileName>$(IntDir)Modules\File\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\PortableDevice\Client.c"><ObjectFileName>$(IntDir)Modules\PortableDevice\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Process\Client.c"><ObjectFileName>$(IntDir)Modules\Process\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Registry\Client.c"><ObjectFileName>$(IntDir)Modules\Registry\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Service\Client.c"><ObjectFileName>$(IntDir)Modules\Service\</ObjectFileName></ClCompile>
@@ -152,6 +153,7 @@
     <ClInclude Include="..\Modules\EventLog\Client.h" />
     <ClInclude Include="..\Modules\Execution\Client.h" />
     <ClInclude Include="..\Modules\File\Client.h" />
+    <ClInclude Include="..\Modules\PortableDevice\Client.h" />
     <ClInclude Include="..\Modules\Process\Client.h" />
     <ClInclude Include="..\Modules\Registry\Client.h" />
     <ClInclude Include="..\Modules\Service\Client.h" />
@@ -201,7 +203,7 @@
     <Import Project="..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets" Condition="Exists('..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets')" />
     <Import Project="..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets" Condition="Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" />
     <Import Project="..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets" Condition="Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" />
-    <Import Project="..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets" Condition="Exists('..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets')" />
+    <Import Project="..\packages\KNSoft.Quic.1.0.1-beta\build\KNSoft.Quic.targets" Condition="Exists('..\packages\KNSoft.Quic.1.0.1-beta\build\KNSoft.Quic.targets')" />
     <Import Project="..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets" Condition="Exists('..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets')" />
   </ImportGroup>
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
@@ -211,7 +213,7 @@
     <Error Condition="!Exists('..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets'))" />
     <Error Condition="!Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets'))" />
     <Error Condition="!Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets'))" />
-    <Error Condition="!Exists('..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets'))" />
+    <Error Condition="!Exists('..\packages\KNSoft.Quic.1.0.1-beta\build\KNSoft.Quic.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.Quic.1.0.1-beta\build\KNSoft.Quic.targets'))" />
     <Error Condition="!Exists('..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets'))" />
   </Target>
 </Project>

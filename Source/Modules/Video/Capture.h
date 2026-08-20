@@ -18,16 +18,17 @@ ZpVideoCapture_Enumerate(
     _Out_ PULONG ResponseLength);
 
 HRESULT
+ZpVideoCapture_SelectFormat(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_ ULONG MaximumDimension,
+    _In_ USHORT FrameRate,
+    _Out_ PZP_VIDEO_FORMAT Format);
+
+HRESULT
 ZpVideoCapture_Create(
     _In_ PZP_VIDEO_STREAM_REQUEST_VIEW Request,
     _Out_ PZP_VIDEO_CAPTURE* Capture);
-
-VOID
-ZpVideoCapture_GetFormat(
-    _In_ PZP_VIDEO_CAPTURE Capture,
-    _Out_ PULONG Width,
-    _Out_ PULONG Height,
-    _Out_ PUSHORT FrameRate);
 
 HRESULT
 ZpVideoCapture_NextSample(
@@ -39,7 +40,6 @@ HRESULT
 ZpVideoCapture_EncodeSample(
     _In_ PZP_VIDEO_CAPTURE Capture,
     _In_ IMFSample* Sample,
-    _In_ ULONG MaxDimension,
     _In_ USHORT Quality,
     _Out_ PZP_VIDEO_IMAGE Image);
 

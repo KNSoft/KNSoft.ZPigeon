@@ -46,6 +46,7 @@
     <ClInclude Include="Include\KNSoft\ZPigeon\Protocol.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Registry.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\File.h" />
+    <ClInclude Include="Include\KNSoft\ZPigeon\PortableDevice.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Process.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\Service.h" />
     <ClInclude Include="Include\KNSoft\ZPigeon\System.h" />
@@ -69,6 +70,7 @@
     <ClCompile Include="..\Modules\EventLog\Protocol.c"><ObjectFileName>$(IntDir)Modules\EventLog\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Execution\Protocol.c"><ObjectFileName>$(IntDir)Modules\Execution\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\File\Protocol.c"><ObjectFileName>$(IntDir)Modules\File\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\PortableDevice\Protocol.c"><ObjectFileName>$(IntDir)Modules\PortableDevice\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Process\Protocol.c"><ObjectFileName>$(IntDir)Modules\Process\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Registry\Protocol.c"><ObjectFileName>$(IntDir)Modules\Registry\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Service\Protocol.c"><ObjectFileName>$(IntDir)Modules\Service\</ObjectFileName></ClCompile>

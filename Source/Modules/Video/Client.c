@@ -20,9 +20,10 @@ struct _ZP_CLIENT_VIDEO_CHANNEL
     HANDLE WorkerThread;
     HANDLE CreditEvent;
     HANDLE StopEvent;
-    ULONG MaxDimension;
+    RTL_SRWLOCK SettingsLock;
+    ZP_VIDEO_FORMAT Format;
+    ULONG SettingsVersion;
     ULONG DirectStreamId;
-    USHORT FrameRate;
     USHORT Quality;
     ULONG DeviceIdLength;
     WCHAR DeviceId[ANYSIZE_ARRAY];
@@ -171,8 +172,9 @@ ZpVideo_Worker(
     IMFSample* Sample = NULL;
     LONGLONG Timestamp;
     ZP_VIDEO_IMAGE Image;
-    LARGE_INTEGER Delay, Zero = { 0 };
-    ULONGLONG Start, Elapsed, Period;
+    LARGE_INTEGER Zero = { 0 };
+    ULONG SettingsVersion = 0;
+    USHORT Quality;
     LOGICAL Uninitialize;
     HRESULT Result;
     NTSTATUS Status = STATUS_SUCCESS;
@@ -180,13 +182,9 @@ ZpVideo_Worker(
     Result = CoInitializeEx(NULL, COINIT_MULTITHREADED);
     Uninitialize = SUCCEEDED(Result);
     if (Result == RPC_E_CHANGED_MODE) Result = S_OK;
-    Request.MaxDimension = Channel->MaxDimension;
-    Request.FrameRate = Channel->FrameRate;
-    Request.Quality = Channel->Quality;
+    Request.DirectStreamId = Channel->DirectStreamId;
     Request.DeviceId.Buffer = (const BYTE*)Channel->DeviceId;
     Request.DeviceId.Length = Channel->DeviceIdLength;
-    if (SUCCEEDED(Result)) Result = ZpVideoShared_Open(&Request, &Capture);
-    Period = 1000 / Channel->FrameRate;
     while (SUCCEEDED(Result) && NT_SUCCESS(Status))
     {
         if (NtWaitForSingleObject(Channel->StopEvent, FALSE, &Zero) == STATUS_WAIT_0)
@@ -194,13 +192,26 @@ ZpVideo_Worker(
             Status = STATUS_CANCELLED;
             break;
         }
-        Start = Time_StopWatchStart();
+        RtlAcquireSRWLockShared(&Channel->SettingsLock);
+        if (SettingsVersion != Channel->SettingsVersion)
+        {
+            Request.Width = Channel->Format.Width;
+            Request.Height = Channel->Format.Height;
+            Request.FrameRateNumerator = Channel->Format.FrameRateNumerator;
+            Request.FrameRateDenominator = Channel->Format.FrameRateDenominator;
+            SettingsVersion = Channel->SettingsVersion;
+            ZpVideoShared_Close(Capture);
+            Capture = NULL;
+        }
+        Quality = Channel->Quality;
+        RtlReleaseSRWLockShared(&Channel->SettingsLock);
+        if (Capture == NULL) Result = ZpVideoShared_Open(&Request, &Capture);
+        if (FAILED(Result)) break;
         Result = ZpVideoShared_NextSample(Capture, Channel->StopEvent, &Sample, &Timestamp);
         UNREFERENCED_PARAMETER(Timestamp);
         if (SUCCEEDED(Result)) Result = ZpVideoShared_Encode(Capture,
                                                             Sample,
-                                                            Channel->MaxDimension,
-                                                            Channel->Quality,
+                                                            Quality,
                                                             &Image);
         if (Sample != NULL)
         {
@@ -210,16 +221,6 @@ ZpVideo_Worker(
         if (FAILED(Result)) break;
         Status = ZpVideo_SendFrame(Channel, &Image);
         ZpVideoCapture_FreeImage(&Image);
-        Elapsed = Time_StopWatchStop(Start, 1000);
-        if (NT_SUCCESS(Status) && Elapsed < Period)
-        {
-            Delay.QuadPart = -(LONGLONG)((Period - Elapsed) * 10000);
-            if (NtWaitForSingleObject(Channel->StopEvent, FALSE, &Delay) == STATUS_WAIT_0)
-            {
-                Status = STATUS_CANCELLED;
-                break;
-            }
-        }
     }
     ZpVideoShared_Close(Capture);
     if (Result == HRESULT_FROM_NT(STATUS_CANCELLED))
@@ -318,9 +319,10 @@ ZpVideo_CreateStreamChannel(
     VideoChannel = Mem_Alloc(AllocationSize);
     if (VideoChannel == NULL) return STATUS_NO_MEMORY;
     RtlZeroMemory(VideoChannel, FIELD_OFFSET(ZP_CLIENT_VIDEO_CHANNEL, DeviceId));
-    VideoChannel->MaxDimension = Request->MaxDimension;
+    RtlInitializeSRWLock(&VideoChannel->SettingsLock);
+    VideoChannel->Format = *(PCZP_VIDEO_FORMAT)Request;
+    VideoChannel->SettingsVersion = 1;
     VideoChannel->DirectStreamId = Request->DirectStreamId;
-    VideoChannel->FrameRate = Request->FrameRate;
     VideoChannel->Quality = Request->Quality;
     VideoChannel->DeviceIdLength = Request->DeviceId.Length;
     RtlCopyMemory(VideoChannel->DeviceId,
@@ -362,6 +364,31 @@ ZpVideo_CreateStreamChannel(
     return STATUS_SUCCESS;
 }
 
+static
+NTSTATUS
+ZpVideo_UpdateStream(
+    _Inout_ PZP_CLIENT_OBJECT Client,
+    _In_ PCZP_VIDEO_STREAM_UPDATE Update)
+{
+    PZP_CLIENT_LOCAL_CHANNEL LocalChannel;
+    PZP_CLIENT_VIDEO_CHANNEL Channel;
+    NTSTATUS Status;
+
+    Status = ZpClientLocalChannel_ReferenceById(Client,
+                                                Update->ChannelId,
+                                                ZP_VIDEO_MODULE_ID,
+                                                &LocalChannel);
+    if (!NT_SUCCESS(Status)) return Status;
+    Channel = (PZP_CLIENT_VIDEO_CHANNEL)LocalChannel;
+    RtlAcquireSRWLockExclusive(&Channel->SettingsLock);
+    Channel->Format = Update->Format;
+    Channel->Quality = Update->Quality;
+    Channel->SettingsVersion++;
+    RtlReleaseSRWLockExclusive(&Channel->SettingsLock);
+    ZpClientLocalChannel_Release(LocalChannel);
+    return STATUS_SUCCESS;
+}
+
 ZP_STATUS
 ZpVideo_Execute(
     _Inout_ struct _ZP_CLIENT_OBJECT* Client,
@@ -373,6 +400,7 @@ ZpVideo_Execute(
     _Outptr_result_maybenull_ PZP_CLIENT_VIDEO_CHANNEL* Channel)
 {
     ZP_VIDEO_STREAM_REQUEST_VIEW StreamRequest;
+    ZP_VIDEO_STREAM_UPDATE StreamUpdate;
     PZP_CLIENT_VIDEO_CHANNEL VideoChannel;
     HRESULT Result;
     NTSTATUS Status;
@@ -389,6 +417,12 @@ ZpVideo_Execute(
         }
         return SUCCEEDED(Result) ? ZpStatus_Make(ZpStatusNone, 0) :
                                    ZpStatus_FromCode(ZpStatusHResult, (ULONG)Result);
+    }
+    if (OperationId == ZP_VIDEO_OPERATION_UPDATE_STREAM)
+    {
+        Status = ZpVideo_DecodeStreamUpdate(Request, RequestLength, &StreamUpdate);
+        if (NT_SUCCESS(Status)) Status = ZpVideo_UpdateStream(Client, &StreamUpdate);
+        return ZpStatus_FromNtStatus(Status);
     }
     if (OperationId != ZP_VIDEO_OPERATION_OPEN_STREAM) return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
     Status = ZpVideo_DecodeStreamRequest(Request, RequestLength, &StreamRequest);

@@ -2,6 +2,7 @@
 #define ZP_FIRMWARE_VARIABLE_PREFIX L"uefi:"
 #define ZP_FIRMWARE_CPUID_IDENTITY L"cpuid"
 #define ZP_FIRMWARE_SMBIOS_IDENTITY L"smbios"
+#define ZP_FIRMWARE_SMBIOS_PREFIX L"smbios:"
 #define ZP_FIRMWARE_ACPI_IDENTITY L"acpi"
 #define ZP_FIRMWARE_ACPI_PREFIX L"acpi:"
 #define ZP_FIRMWARE_FOURCC(A, B, C, D) \
@@ -28,9 +29,39 @@ typedef struct _ZP_FIRMWARE_CPUID_RECORD
     ULONG Ecx;
     ULONG Edx;
 } ZP_FIRMWARE_CPUID_RECORD, *PZP_FIRMWARE_CPUID_RECORD;
+
+typedef struct _ZP_FIRMWARE_SMBIOS_RAW_DATA
+{
+    BYTE Used20CallingMethod;
+    BYTE MajorVersion;
+    BYTE MinorVersion;
+    BYTE DmiRevision;
+    ULONG Length;
+    BYTE Data[];
+} ZP_FIRMWARE_SMBIOS_RAW_DATA, *PZP_FIRMWARE_SMBIOS_RAW_DATA;
+
+typedef struct _ZP_FIRMWARE_SMBIOS_HEADER
+{
+    BYTE Type;
+    BYTE Length;
+    USHORT Handle;
+} ZP_FIRMWARE_SMBIOS_HEADER, *PZP_FIRMWARE_SMBIOS_HEADER;
 #pragma pack(pop)
 
 C_ASSERT(sizeof(ZP_FIRMWARE_CPUID_RECORD) == 24);
+C_ASSERT(FIELD_OFFSET(ZP_FIRMWARE_SMBIOS_RAW_DATA, Data) == 8);
+C_ASSERT(sizeof(ZP_FIRMWARE_SMBIOS_HEADER) == 4);
+
+typedef struct _ZP_FIRMWARE_SMBIOS_STRUCTURE
+{
+    const ZP_FIRMWARE_SMBIOS_HEADER* Header;
+    ULONG Offset;
+    ULONG TotalLength;
+} ZP_FIRMWARE_SMBIOS_STRUCTURE, *PZP_FIRMWARE_SMBIOS_STRUCTURE;
+
+static RTL_SRWLOCK ZpFirmwareSmbiosLock = RTL_SRWLOCK_INIT;
+// SMBIOS is immutable for the current boot; retain one validated process-lifetime snapshot.
+static PZP_FIRMWARE_SMBIOS_RAW_DATA ZpFirmwareSmbiosSnapshot;
 
 static
 NTSTATUS
@@ -462,6 +493,101 @@ ZpFirmware_QueryTable(
 
 static
 NTSTATUS
+ZpFirmware_ParseTableIdentity(
+    _In_ PCWSTR Text,
+    _In_ PCWSTR Prefix,
+    _Out_ PULONG Value)
+{
+    ULONG Result = 0, Index, PrefixLength = (ULONG)wcslen(Prefix);
+
+    if (wcslen(Text) != PrefixLength + 8 || wcsncmp(Text, Prefix, PrefixLength) != 0)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    for (Index = PrefixLength; Index < PrefixLength + 8; Index++)
+    {
+        WCHAR Character = Text[Index];
+
+        Result <<= 4;
+        if (Character >= L'0' && Character <= L'9') Result |= Character - L'0';
+        else if (Character >= L'A' && Character <= L'F') Result |= Character - L'A' + 10;
+        else if (Character >= L'a' && Character <= L'f') Result |= Character - L'a' + 10;
+        else return STATUS_INVALID_PARAMETER;
+    }
+    *Value = Result;
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpFirmware_GetSmbiosSnapshot(
+    _Outptr_ const ZP_FIRMWARE_SMBIOS_RAW_DATA** Snapshot)
+{
+    PBYTE Data;
+    ULONG Length;
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    RtlAcquireSRWLockExclusive(&ZpFirmwareSmbiosLock);
+    if (ZpFirmwareSmbiosSnapshot == NULL)
+    {
+        Status = ZpFirmware_QueryTable(ZP_FIRMWARE_FOURCC('R', 'S', 'M', 'B'),
+                                       SystemFirmwareTableGet,
+                                       0,
+                                       &Data,
+                                       &Length);
+        if (NT_SUCCESS(Status))
+        {
+            if (Length < (ULONG)FIELD_OFFSET(ZP_FIRMWARE_SMBIOS_RAW_DATA, Data) ||
+                ((PZP_FIRMWARE_SMBIOS_RAW_DATA)Data)->Length >
+                    Length - (ULONG)FIELD_OFFSET(ZP_FIRMWARE_SMBIOS_RAW_DATA, Data))
+            {
+                Status = STATUS_DATA_ERROR;
+                Mem_Free(Data);
+            }
+            else
+            {
+                ZpFirmwareSmbiosSnapshot = (PZP_FIRMWARE_SMBIOS_RAW_DATA)Data;
+            }
+        }
+    }
+    if (NT_SUCCESS(Status)) *Snapshot = ZpFirmwareSmbiosSnapshot;
+    RtlReleaseSRWLockExclusive(&ZpFirmwareSmbiosLock);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpFirmware_GetSmbiosStructure(
+    _In_ const ZP_FIRMWARE_SMBIOS_RAW_DATA* Snapshot,
+    _In_ ULONG Offset,
+    _Out_ PZP_FIRMWARE_SMBIOS_STRUCTURE Structure)
+{
+    const ZP_FIRMWARE_SMBIOS_HEADER* Header;
+    const BYTE* Data = Snapshot->Data;
+    ULONG End;
+
+    if (Offset == Snapshot->Length) return STATUS_NO_MORE_ENTRIES;
+    if (Offset > Snapshot->Length || Snapshot->Length - Offset < sizeof(*Header)) return STATUS_DATA_ERROR;
+    Header = (const ZP_FIRMWARE_SMBIOS_HEADER*)(Data + Offset);
+    if (Header->Length < sizeof(*Header) || Header->Length > Snapshot->Length - Offset)
+    {
+        return STATUS_DATA_ERROR;
+    }
+    for (End = Offset + Header->Length; End + 1 < Snapshot->Length; End++)
+    {
+        if (Data[End] == 0 && Data[End + 1] == 0)
+        {
+            Structure->Header = Header;
+            Structure->Offset = Offset;
+            Structure->TotalLength = End + 2 - Offset;
+            return STATUS_SUCCESS;
+        }
+    }
+    return STATUS_DATA_ERROR;
+}
+
+static
+NTSTATUS
 ZpFirmware_AddDataRecord(
     _Inout_ PZP_ADMINISTRATION_BUILDER Builder,
     _In_ ZP_ADMINISTRATION_KIND Kind,
@@ -620,9 +746,9 @@ ZpFirmware_QueryAcpi(
     _Out_ PULONG ResponseLength)
 {
     ZP_ADMINISTRATION_BUILDER Builder = { 0 };
-    PBYTE IdData, Table = NULL;
+    PBYTE IdData;
     PULONG Ids;
-    ULONG Length, TableLength, Index, Prior;
+    ULONG Length, Index, Prior;
     NTSTATUS Status;
 
     Status = ZpFirmware_QueryTable(ZP_FIRMWARE_FOURCC('A', 'C', 'P', 'I'),
@@ -636,30 +762,106 @@ ZpFirmware_QueryAcpi(
     for (Index = 0; NT_SUCCESS(Status) && Index < Length / sizeof(ULONG); Index++)
     {
         WCHAR Identity[14];
+        WCHAR Signature[5];
 
         for (Prior = 0; Prior < Index && Ids[Prior] != Ids[Index]; Prior++);
         if (Prior != Index) continue;
-        Status = ZpFirmware_QueryTable(ZP_FIRMWARE_FOURCC('A', 'C', 'P', 'I'),
-                                       SystemFirmwareTableGet,
-                                       Ids[Index],
-                                       &Table,
-                                       &TableLength);
-        if (!NT_SUCCESS(Status)) break;
         _snwprintf_s(Identity, ARRAYSIZE(Identity), _TRUNCATE, ZP_FIRMWARE_ACPI_PREFIX L"%08lX", Ids[Index]);
-        Status = ZpFirmware_AddDataRecord(&Builder,
-                                          ZpAdministrationKindAcpiTable,
-                                          0,
-                                          Identity,
-                                          Table,
-                                          TableLength);
-        Mem_Free(Table);
-        Table = NULL;
+        Signature[0] = (WCHAR)(BYTE)Ids[Index];
+        Signature[1] = (WCHAR)(BYTE)(Ids[Index] >> 8);
+        Signature[2] = (WCHAR)(BYTE)(Ids[Index] >> 16);
+        Signature[3] = (WCHAR)(BYTE)(Ids[Index] >> 24);
+        Signature[4] = UNICODE_NULL;
+        Status = ZpAdministration_AddRecord(&Builder,
+                                             ZpAdministrationKindAcpiTable,
+                                             0,
+                                             0,
+                                             0,
+                                             Identity,
+                                             Signature,
+                                             NULL,
+                                             NULL);
     }
     if (NT_SUCCESS(Status)) Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
     ZpAdministration_FreeBuilder(&Builder);
-    Mem_Free(Table);
     Mem_Free(IdData);
     return ZpStatus_FromNtStatus(Status);
+}
+
+static
+ZP_STATUS
+ZpFirmware_QuerySmbios(
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    ZP_ADMINISTRATION_BUILDER Builder = { 0 };
+    const ZP_FIRMWARE_SMBIOS_RAW_DATA* Snapshot;
+    ZP_FIRMWARE_SMBIOS_STRUCTURE Structure;
+    ULONG Offset = 0, State;
+    WCHAR Identity[16];
+    NTSTATUS Status;
+
+    Status = ZpFirmware_GetSmbiosSnapshot(&Snapshot);
+    if (!NT_SUCCESS(Status)) return ZpStatus_FromNtStatus(Status);
+    State = ((ULONG)Snapshot->DmiRevision << 24) | ((ULONG)Snapshot->MinorVersion << 16) |
+            ((ULONG)Snapshot->MajorVersion << 8);
+    while (NT_SUCCESS(Status = ZpFirmware_GetSmbiosStructure(Snapshot, Offset, &Structure)))
+    {
+        _snwprintf_s(Identity, ARRAYSIZE(Identity), _TRUNCATE, ZP_FIRMWARE_SMBIOS_PREFIX L"%08lX", Offset);
+        Status = ZpAdministration_AddRecord(&Builder,
+                                             ZpAdministrationKindSmbiosTable,
+                                             State | Structure.Header->Type,
+                                             Structure.Header->Handle,
+                                             ((ULONGLONG)Structure.Header->Length << 32) | Structure.TotalLength,
+                                             Identity,
+                                             NULL,
+                                             NULL,
+                                             NULL);
+        if (!NT_SUCCESS(Status)) break;
+        Offset += Structure.TotalLength;
+    }
+    if (Status == STATUS_NO_MORE_ENTRIES) Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
+    ZpAdministration_FreeBuilder(&Builder);
+    return ZpStatus_FromNtStatus(Status);
+}
+
+static
+NTSTATUS
+ZpFirmware_QuerySmbiosStructure(
+    _In_ ULONG RequestedOffset,
+    _In_ PCWSTR Identity,
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    const ZP_FIRMWARE_SMBIOS_RAW_DATA* Snapshot;
+    ZP_FIRMWARE_SMBIOS_STRUCTURE Structure;
+    ULONG Offset = 0, Version;
+    NTSTATUS Status;
+
+    Status = ZpFirmware_GetSmbiosSnapshot(&Snapshot);
+    while (NT_SUCCESS(Status))
+    {
+        Status = ZpFirmware_GetSmbiosStructure(Snapshot, Offset, &Structure);
+        if (!NT_SUCCESS(Status) || Offset == RequestedOffset) break;
+        Offset += Structure.TotalLength;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Version = ((ULONG)Snapshot->DmiRevision << 16) | ((ULONG)Snapshot->MinorVersion << 8) |
+                  Snapshot->MajorVersion;
+        Status = ZpFirmware_EncodeData(ZpAdministrationKindSmbiosTable,
+                                       Version,
+                                       Identity,
+                                       Snapshot->Data + Offset,
+                                       Structure.TotalLength,
+                                       Response,
+                                       ResponseLength);
+    }
+    else if (Status == STATUS_NO_MORE_ENTRIES)
+    {
+        Status = STATUS_NOT_FOUND;
+    }
+    return Status;
 }
 
 static
@@ -670,7 +872,7 @@ ZpAdministration_QueryFirmware(
     _Out_ PULONG ResponseLength)
 {
     PBYTE Data = NULL;
-    ULONG Length, Attributes = 0, TableId = 0, Index;
+    ULONG Length, Attributes = 0, TableId;
     PWSTR Text = ZpAdministration_CopyView(Identity), VariableBuffer;
     ZP_ADMINISTRATION_KIND Kind;
     UNICODE_STRING Name;
@@ -688,6 +890,11 @@ ZpAdministration_QueryFirmware(
         Mem_Free(Text);
         return ZpFirmware_QueryAcpi(Response, ResponseLength);
     }
+    if (wcscmp(Text, ZP_FIRMWARE_SMBIOS_IDENTITY) == 0)
+    {
+        Mem_Free(Text);
+        return ZpFirmware_QuerySmbios(Response, ResponseLength);
+    }
     if (wcsncmp(Text, ZP_FIRMWARE_VARIABLE_PREFIX, RTL_NUMBER_OF(ZP_FIRMWARE_VARIABLE_PREFIX) - 1) == 0)
     {
         Kind = ZpAdministrationKindFirmwareVariable;
@@ -698,39 +905,20 @@ ZpAdministration_QueryFirmware(
             Mem_Free(VariableBuffer);
         }
     }
-    else if (wcscmp(Text, ZP_FIRMWARE_SMBIOS_IDENTITY) == 0)
+    else if (NT_SUCCESS(Status = ZpFirmware_ParseTableIdentity(Text, ZP_FIRMWARE_SMBIOS_PREFIX, &TableId)))
     {
-        Kind = ZpAdministrationKindSmbiosTable;
-        Status = ZpFirmware_QueryTable(ZP_FIRMWARE_FOURCC('R', 'S', 'M', 'B'),
-                                       SystemFirmwareTableGet,
-                                       0,
-                                       &Data,
-                                       &Length);
+        Status = ZpFirmware_QuerySmbiosStructure(TableId, Text, Response, ResponseLength);
+        Mem_Free(Text);
+        return ZpStatus_FromNtStatus(Status);
     }
-    else if (wcslen(Text) == RTL_NUMBER_OF(ZP_FIRMWARE_ACPI_PREFIX) - 1 + 8 &&
-             wcsncmp(Text, ZP_FIRMWARE_ACPI_PREFIX, RTL_NUMBER_OF(ZP_FIRMWARE_ACPI_PREFIX) - 1) == 0)
+    else if (NT_SUCCESS(Status = ZpFirmware_ParseTableIdentity(Text, ZP_FIRMWARE_ACPI_PREFIX, &TableId)))
     {
         Kind = ZpAdministrationKindAcpiTable;
-        Status = STATUS_SUCCESS;
-        for (Index = RTL_NUMBER_OF(ZP_FIRMWARE_ACPI_PREFIX) - 1; NT_SUCCESS(Status) && Text[Index] != UNICODE_NULL;
-             Index++)
-        {
-            WCHAR Character = Text[Index];
-
-            TableId <<= 4;
-            if (Character >= L'0' && Character <= L'9') TableId |= Character - L'0';
-            else if (Character >= L'A' && Character <= L'F') TableId |= Character - L'A' + 10;
-            else if (Character >= L'a' && Character <= L'f') TableId |= Character - L'a' + 10;
-            else Status = STATUS_INVALID_PARAMETER;
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpFirmware_QueryTable(ZP_FIRMWARE_FOURCC('A', 'C', 'P', 'I'),
-                                           SystemFirmwareTableGet,
-                                           TableId,
-                                           &Data,
-                                           &Length);
-        }
+        Status = ZpFirmware_QueryTable(ZP_FIRMWARE_FOURCC('A', 'C', 'P', 'I'),
+                                       SystemFirmwareTableGet,
+                                       TableId,
+                                       &Data,
+                                       &Length);
     }
     else
     {

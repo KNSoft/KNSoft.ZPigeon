@@ -8,6 +8,8 @@ public sealed partial class NativeServer
     private static readonly NativeMethods.FileInfoCallback FileInfoCallback = CompleteFileInfo;
     private static readonly NativeMethods.FileHashCallback FileHashCallback = CompleteFileHash;
     private static readonly NativeMethods.FileVolumeCallback FileVolumeCallback = CompleteFileVolume;
+    private static readonly NativeMethods.FileOwnersCallback FileOwnersCallback = CompleteFileOwners;
+    private static readonly NativeMethods.FileOwnerControlCallback FileOwnerControlCallback = CompleteFileOwnerControl;
     private static readonly NativeMethods.StringCallback StringCallback = CompleteString;
     private static readonly NativeMethods.ProcessListCallback ProcessListCallback = CompleteProcessList;
     private static readonly NativeMethods.ProcessInfoCallback ProcessInfoCallback = CompleteProcessInfo;
@@ -95,6 +97,40 @@ public sealed partial class NativeServer
             attributes,
             callback,
             context));
+
+    public Task<FileOwnerRecord[]> QueryFileOwnersAsync(string path) =>
+        RunManagementAsync<FileOwnerRecord[]>(context => NativeMethods.QueryFileOwners(
+            path,
+            (uint)path.Length,
+            FileOwnersCallback,
+            context));
+
+    public unsafe Task<FileOwnerControlResult[]> ControlFileOwnersAsync(
+        string path,
+        FileOwnerControl control,
+        uint[] processIds)
+    {
+        var completion = new TaskCompletionSource<FileOwnerControlResult[]>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = GCHandle.Alloc(completion);
+        int status;
+        fixed (uint* pointer = processIds)
+        {
+            status = NativeMethods.ControlFileOwners(path,
+                                                     (uint)path.Length,
+                                                     control,
+                                                     (nint)pointer,
+                                                     (uint)processIds.Length,
+                                                     FileOwnerControlCallback,
+                                                     GCHandle.ToIntPtr(handle));
+        }
+        if (status < 0)
+        {
+            handle.Free();
+            ThrowIfFailed(status);
+        }
+        return completion.Task;
+    }
 
     public unsafe Task WriteFileRangeAsync(string path, ulong offset, byte[] data)
     {
@@ -442,6 +478,54 @@ public sealed partial class NativeServer
             Marshal.PtrToStringUni(fileSystem, (int)fileSystemLength) ?? string.Empty));
     }
 
+    private static void CompleteFileOwners(ZpStatus status, nint records, uint recordCount, nint context)
+    {
+        var completion = GetCompletion<FileOwnerRecord[]>(context);
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        var result = new FileOwnerRecord[recordCount];
+        var size = Marshal.SizeOf<NativeMethods.FileOwnerRecord>();
+        for (var index = 0; index < result.Length; index++)
+        {
+            var record = Marshal.PtrToStructure<NativeMethods.FileOwnerRecord>(records + index * size);
+            result[index] = new FileOwnerRecord(
+                record.ProcessId,
+                record.ImagePathStatus,
+                record.CommandLineStatus,
+                Marshal.PtrToStringUni(record.ImageName, (int)record.ImageNameLength) ?? string.Empty,
+                Marshal.PtrToStringUni(record.ImagePath, (int)record.ImagePathLength) ?? string.Empty,
+                Marshal.PtrToStringUni(record.CommandLine, (int)record.CommandLineLength) ?? string.Empty,
+                (Marshal.PtrToStringUni(record.ServiceNames, (int)record.ServiceNamesLength) ?? string.Empty)
+                    .Split('\0', StringSplitOptions.RemoveEmptyEntries));
+        }
+        completion.SetResult(result);
+    }
+
+    private static void CompleteFileOwnerControl(
+        ZpStatus status,
+        nint results,
+        uint resultCount,
+        nint context)
+    {
+        var completion = GetCompletion<FileOwnerControlResult[]>(context);
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        var values = new FileOwnerControlResult[resultCount];
+        var size = Marshal.SizeOf<NativeMethods.FileOwnerControlResult>();
+        for (var index = 0; index < values.Length; index++)
+        {
+            var result = Marshal.PtrToStructure<NativeMethods.FileOwnerControlResult>(results + index * size);
+            values[index] = new FileOwnerControlResult(result.ProcessId, result.Status, result.AffectedHandleCount);
+        }
+        completion.SetResult(values);
+    }
+
     private static void CompleteProcessList(
         ZpStatus status,
         nint records,
@@ -729,6 +813,20 @@ public sealed record FileInfo(
     DateTime LastAccessTime,
     DateTime LastWriteTime);
 public sealed record FileHash(ulong FileSize, string Value);
+public sealed record FileOwnerRecord(
+    uint ProcessId,
+    int ImagePathStatus,
+    int CommandLineStatus,
+    string ImageName,
+    string ImagePath,
+    string CommandLine,
+    string[] ServiceNames);
+public sealed record FileOwnerControlResult(uint ProcessId, int Status, uint AffectedHandleCount);
+public enum FileOwnerControl
+{
+    Terminate = 1,
+    CloseHandles
+}
 public sealed record FileVolumeInfo(
     ulong TotalBytes,
     ulong FreeBytes,
@@ -984,6 +1082,12 @@ internal static partial class NativeMethods
         nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void FileOwnersCallback(ZpStatus status, nint records, uint recordCount, nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void FileOwnerControlCallback(ZpStatus status, nint results, uint resultCount, nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void StringCallback(ZpStatus status, nint value, uint valueLength, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
@@ -1032,6 +1136,30 @@ internal static partial class NativeMethods
         internal readonly uint NameLength;
         [MarshalAs(UnmanagedType.U1)]
         internal readonly bool HasChildren;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct FileOwnerRecord
+    {
+        internal readonly uint ProcessId;
+        internal readonly int ImagePathStatus;
+        internal readonly int CommandLineStatus;
+        internal readonly nint ImageName;
+        internal readonly uint ImageNameLength;
+        internal readonly nint ImagePath;
+        internal readonly uint ImagePathLength;
+        internal readonly nint CommandLine;
+        internal readonly uint CommandLineLength;
+        internal readonly nint ServiceNames;
+        internal readonly uint ServiceNamesLength;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct FileOwnerControlResult
+    {
+        internal readonly uint ProcessId;
+        internal readonly int Status;
+        internal readonly uint AffectedHandleCount;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1299,6 +1427,27 @@ internal static partial class NativeMethods
         uint pathLength,
         uint attributes,
         StatusCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_QueryFileOwners",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int QueryFileOwners(
+        string path,
+        uint pathLength,
+        FileOwnersCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_ControlFileOwners",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int ControlFileOwners(
+        string path,
+        uint pathLength,
+        FileOwnerControl control,
+        nint processIds,
+        uint processCount,
+        FileOwnerControlCallback callback,
         nint context);
 
     [LibraryImport(Library,

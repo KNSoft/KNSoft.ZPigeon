@@ -84,7 +84,7 @@
   <ImportGroup Label="ExtensionTargets">
     <Import Project="..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets" Condition="Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" />
     <Import Project="..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets" Condition="Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" />
-    <Import Project="..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets" Condition="Exists('..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets')" />
+    <Import Project="..\packages\KNSoft.Quic.1.0.1-beta\build\KNSoft.Quic.targets" Condition="Exists('..\packages\KNSoft.Quic.1.0.1-beta\build\KNSoft.Quic.targets')" />
   </ImportGroup>
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
@@ -92,6 +92,6 @@
     </PropertyGroup>
     <Error Condition="!Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets'))" />
     <Error Condition="!Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets'))" />
-    <Error Condition="!Exists('..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets'))" />
+    <Error Condition="!Exists('..\packages\KNSoft.Quic.1.0.1-beta\build\KNSoft.Quic.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.Quic.1.0.1-beta\build\KNSoft.Quic.targets'))" />
   </Target>
 </Project>

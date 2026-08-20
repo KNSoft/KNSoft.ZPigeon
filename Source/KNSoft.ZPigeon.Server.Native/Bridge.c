@@ -19,6 +19,10 @@ typedef struct _ZP_NATIVE_CALLBACK_CONTEXT
         ZP_NATIVE_FILE_INFO_CALLBACK FileInfo;
         ZP_NATIVE_FILE_HASH_CALLBACK FileHash;
         ZP_NATIVE_FILE_VOLUME_CALLBACK FileVolume;
+        ZP_NATIVE_FILE_OWNERS_CALLBACK FileOwners;
+        ZP_NATIVE_FILE_OWNER_CONTROL_CALLBACK FileOwnerControl;
+        ZP_NATIVE_PORTABLE_DEVICES_CALLBACK PortableDevices;
+        ZP_NATIVE_PORTABLE_OBJECTS_CALLBACK PortableObjects;
         ZP_NATIVE_STRING_CALLBACK String;
         ZP_NATIVE_PROCESS_LIST_CALLBACK ProcessList;
         ZP_NATIVE_PROCESS_INFO_CALLBACK ProcessInfo;
@@ -307,6 +311,116 @@ ZpNative_FilePageCallback(
 static
 VOID
 NTAPI
+ZpNative_PortableDevicesCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_PORTABLE_DEVICE_LIST_VIEW Devices,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_PORTABLE_DEVICE_RECORD Records = NULL;
+    ZP_PORTABLE_DEVICE_RECORD_VIEW Record;
+    ULONG Count = 0, Index, Offset = 0;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        if (Devices != NULL) Count = Devices->Count;
+        else Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
+    }
+    if (ZpStatus_IsSuccess(Status) && Count != 0)
+    {
+        Records = Mem_Alloc((SIZE_T)Count * sizeof(*Records));
+        if (Records == NULL) Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Count; Index++)
+    {
+        DecodeStatus = ZpPortable_GetNextDevice(Devices, &Offset, &Record);
+        if (!NT_SUCCESS(DecodeStatus))
+        {
+            Status = ZpStatus_FromNtStatus(DecodeStatus);
+            break;
+        }
+        Records[Index].Id = (PCWCH)Record.Id.Buffer;
+        Records[Index].IdLength = Record.Id.Length;
+        Records[Index].Name = (PCWCH)Record.Name.Buffer;
+        Records[Index].NameLength = Record.Name.Length;
+        Records[Index].Manufacturer = (PCWCH)Record.Manufacturer.Buffer;
+        Records[Index].ManufacturerLength = Record.Manufacturer.Length;
+        Records[Index].Model = (PCWCH)Record.Model.Buffer;
+        Records[Index].ModelLength = Record.Model.Length;
+    }
+    CallbackContext->Callback.PortableDevices(Status,
+                                               ZpStatus_IsSuccess(Status) ? Records : NULL,
+                                               ZpStatus_IsSuccess(Status) ? Count : 0,
+                                               CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_PortableObjectsCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_PORTABLE_OBJECT_PAGE_VIEW Objects,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_PORTABLE_OBJECT_RECORD Records = NULL;
+    ZP_PORTABLE_OBJECT_RECORD_VIEW Record;
+    ULONG Count = 0, Index, NextOffset = 0, Offset = 0;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        if (Objects != NULL)
+        {
+            Count = Objects->Count;
+            NextOffset = Objects->NextOffset;
+        }
+        else Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
+    }
+    if (ZpStatus_IsSuccess(Status) && Count != 0)
+    {
+        Records = Mem_Alloc((SIZE_T)Count * sizeof(*Records));
+        if (Records == NULL) Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Count; Index++)
+    {
+        DecodeStatus = ZpPortable_GetNextObject(Objects, &Offset, &Record);
+        if (!NT_SUCCESS(DecodeStatus))
+        {
+            Status = ZpStatus_FromNtStatus(DecodeStatus);
+            break;
+        }
+        Records[Index].Size = Record.Size;
+        Records[Index].ModifiedTime = Record.ModifiedTime;
+        Records[Index].Capacity = Record.Capacity;
+        Records[Index].FreeSpace = Record.FreeSpace;
+        Records[Index].Flags = Record.Flags;
+        Records[Index].Id = (PCWCH)Record.Id.Buffer;
+        Records[Index].IdLength = Record.Id.Length;
+        Records[Index].PersistentId = (PCWCH)Record.PersistentId.Buffer;
+        Records[Index].PersistentIdLength = Record.PersistentId.Length;
+        Records[Index].Name = (PCWCH)Record.Name.Buffer;
+        Records[Index].NameLength = Record.Name.Length;
+    }
+    CallbackContext->Callback.PortableObjects(Status,
+                                               ZpStatus_IsSuccess(Status) ? Records : NULL,
+                                               ZpStatus_IsSuccess(Status) ? Count : 0,
+                                               ZpStatus_IsSuccess(Status) ? NextOffset : 0,
+                                               CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
 ZpNative_FileInfoCallback(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
@@ -344,6 +458,88 @@ ZpNative_FileHashCallback(
         ZpStatus_IsSuccess(Status) ? Hash->Digest.Buffer : NULL,
         ZpStatus_IsSuccess(Status) ? Hash->Digest.Length : 0,
         CallbackContext->Context);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_FileOwnersCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_FILE_OWNER_LIST_VIEW Owners,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_FILE_OWNER_RECORD Records = NULL;
+    ZP_FILE_OWNER_RECORD_VIEW Owner;
+    ULONG Index;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status) && Owners->Count != 0)
+    {
+        Records = Mem_Alloc((SIZE_T)Owners->Count * sizeof(*Records));
+        if (Records == NULL) Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Owners->Count; Index++)
+    {
+        DecodeStatus = ZpFile_GetOwnerRecord(Owners, Index, &Owner);
+        if (!NT_SUCCESS(DecodeStatus))
+        {
+            Status = ZpStatus_FromNtStatus(DecodeStatus);
+            break;
+        }
+        Records[Index].ProcessId = Owner.ProcessId;
+        Records[Index].ImagePathStatus = Owner.ImagePathStatus;
+        Records[Index].CommandLineStatus = Owner.CommandLineStatus;
+        Records[Index].ImageName = (PCWCH)Owner.ImageName.Buffer;
+        Records[Index].ImageNameLength = Owner.ImageName.Length;
+        Records[Index].ImagePath = (PCWCH)Owner.ImagePath.Buffer;
+        Records[Index].ImagePathLength = Owner.ImagePath.Length;
+        Records[Index].CommandLine = (PCWCH)Owner.CommandLine.Buffer;
+        Records[Index].CommandLineLength = Owner.CommandLine.Length;
+        Records[Index].ServiceNames = (PCWCH)Owner.ServiceNames.Buffer;
+        Records[Index].ServiceNamesLength = Owner.ServiceNames.Length;
+    }
+    CallbackContext->Callback.FileOwners(Status,
+                                         ZpStatus_IsSuccess(Status) ? Records : NULL,
+                                         ZpStatus_IsSuccess(Status) ? Owners->Count : 0,
+                                         CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
+ZpNative_FileOwnerControlCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ const ZP_FILE_OWNER_CONTROL_RESULT_VIEW* Results,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_FILE_OWNER_CONTROL_RESULT Values = NULL;
+    ULONG Index;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Values = Mem_Alloc((SIZE_T)Results->Count * sizeof(*Values));
+        if (Values == NULL) Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Results->Count; Index++)
+    {
+        DecodeStatus = ZpFile_GetOwnerControlResult(Results, Index, &Values[Index]);
+        if (!NT_SUCCESS(DecodeStatus)) Status = ZpStatus_FromNtStatus(DecodeStatus);
+    }
+    CallbackContext->Callback.FileOwnerControl(Status,
+                                               ZpStatus_IsSuccess(Status) ? Values : NULL,
+                                               ZpStatus_IsSuccess(Status) ? Results->Count : 0,
+                                               CallbackContext->Context);
+    Mem_Free(Values);
     ZpRequest_Close(Request);
     ZpNative_FreeCallbackContext(CallbackContext);
 }
@@ -966,8 +1162,9 @@ ZpNative_VideoDevicesCallback(
 {
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_VIDEO_DEVICE_RECORD Records = NULL;
+    PZP_VIDEO_FORMAT Formats = NULL;
     ZP_VIDEO_DEVICE_VIEW Device;
-    ULONG Count = 0, Index, Offset = 0;
+    ULONG Count = 0, TotalFormats = 0, Index, FormatIndex, Offset = 0, RecordFormatIndex, DeviceFormatOffset;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status))
@@ -979,13 +1176,28 @@ ZpNative_VideoDevicesCallback(
         else
         {
             Count = Devices->Count;
-            Records = Count != 0 ? Mem_Alloc((SIZE_T)Count * sizeof(*Records)) : NULL;
-            if (Count != 0 && Records == NULL)
+            for (Index = 0; Index < Count; Index++)
+            {
+                DecodeStatus = ZpVideo_GetNextDevice(Devices, &Offset, &Device);
+                if (!NT_SUCCESS(DecodeStatus))
+                {
+                    Status = ZpStatus_FromNtStatus(DecodeStatus);
+                    break;
+                }
+                TotalFormats += Device.FormatCount;
+            }
+            Records = ZpStatus_IsSuccess(Status) && Count != 0 ?
+                          Mem_Alloc((SIZE_T)Count * sizeof(*Records) +
+                                    (SIZE_T)TotalFormats * sizeof(*Formats)) : NULL;
+            if (ZpStatus_IsSuccess(Status) && Count != 0 && Records == NULL)
             {
                 Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
             }
-            else
+            else if (ZpStatus_IsSuccess(Status))
             {
+                Formats = Add2Ptr(Records, (SIZE_T)Count * sizeof(*Records));
+                Offset = 0;
+                RecordFormatIndex = 0;
                 for (Index = 0; Index < Count; Index++)
                 {
                     DecodeStatus = ZpVideo_GetNextDevice(Devices, &Offset, &Device);
@@ -998,6 +1210,21 @@ ZpNative_VideoDevicesCallback(
                     Records[Index].IdLength = Device.Id.Length;
                     Records[Index].Name = (PCWCH)Device.Name.Buffer;
                     Records[Index].NameLength = Device.Name.Length;
+                    Records[Index].Formats = &Formats[RecordFormatIndex];
+                    Records[Index].FormatCount = Device.FormatCount;
+                    DeviceFormatOffset = 0;
+                    for (FormatIndex = 0; FormatIndex < Device.FormatCount; FormatIndex++)
+                    {
+                        DecodeStatus = ZpVideo_GetNextFormat(&Device,
+                                                             &DeviceFormatOffset,
+                                                             &Formats[RecordFormatIndex++]);
+                        if (!NT_SUCCESS(DecodeStatus))
+                        {
+                            Status = ZpStatus_FromNtStatus(DecodeStatus);
+                            break;
+                        }
+                    }
+                    if (!ZpStatus_IsSuccess(Status)) break;
                 }
             }
         }
@@ -2096,7 +2323,8 @@ ZpNative_Start(
         { ZP_VIDEO_MODULE_ID, ZP_VIDEO_MODULE_VERSION },
         { ZP_RTC_MODULE_ID, ZP_RTC_MODULE_VERSION },
         { ZP_SERIAL_MODULE_ID, ZP_SERIAL_MODULE_VERSION },
-        { ZP_RECORDING_MODULE_ID, ZP_RECORDING_MODULE_VERSION }
+        { ZP_RECORDING_MODULE_ID, ZP_RECORDING_MODULE_VERSION },
+        { ZP_PORTABLE_DEVICE_MODULE_ID, ZP_PORTABLE_DEVICE_MODULE_VERSION }
     };
     ZP_LISTENER_ENDPOINT Listener = {
         ZpTransportQuic,
@@ -2741,6 +2969,78 @@ ZpNative_SetFileAttributes(
 
 NTSTATUS
 NTAPI
+ZpNative_QueryFileOwners(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_NATIVE_FILE_OWNERS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.FileOwners = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_QueryFileOwners(Connection,
+                                 Path,
+                                 PathLength,
+                                 ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                 ZpNative_FileOwnersCallback,
+                                 CallbackContext,
+                                 &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_ControlFileOwners(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_FILE_OWNER_CONTROL Control,
+    _In_reads_(ProcessCount) const ULONG* ProcessIds,
+    _In_ ULONG ProcessCount,
+    _In_ ZP_NATIVE_FILE_OWNER_CONTROL_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.FileOwnerControl = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_ControlFileOwners(Connection,
+                                   Path,
+                                   PathLength,
+                                   Control,
+                                   ProcessIds,
+                                   ProcessCount,
+                                   ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                   ZpNative_FileOwnerControlCallback,
+                                   CallbackContext,
+                                   &Request));
+}
+
+NTSTATUS
+NTAPI
 ZpNative_OpenFileRead(
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
@@ -2933,6 +3233,301 @@ ZpNative_CloseFileTransfer(
     RtlReleaseSRWLockExclusive(&Transfer->Lock);
     Status = Channel != NULL ? ZpChannel_Cancel(Channel) : STATUS_SUCCESS;
     ZpNative_ReleaseFileTransfer(Transfer);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumeratePortableDevices(
+    _In_ ZP_NATIVE_PORTABLE_DEVICES_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.PortableDevices = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_EnumeratePortableDevices(Connection,
+                                          ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                          ZpNative_PortableDevicesCallback,
+                                          CallbackContext,
+                                          &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_EnumeratePortableObjects(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_opt_(ParentIdLength) PCWCH ParentId,
+    _In_ ULONG ParentIdLength,
+    _In_ ULONG Offset,
+    _In_ ZP_NATIVE_PORTABLE_OBJECTS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.PortableObjects = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_EnumeratePortableObjects(Connection,
+                                          DeviceId,
+                                          DeviceIdLength,
+                                          ParentId,
+                                          ParentIdLength,
+                                          Offset,
+                                          ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                          ZpNative_PortableObjectsCallback,
+                                          CallbackContext,
+                                          &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_CreatePortableFolder(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ParentIdLength) PCWCH ParentId,
+    _In_ ULONG ParentIdLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_CreatePortableFolder(Connection,
+                                      DeviceId,
+                                      DeviceIdLength,
+                                      ParentId,
+                                      ParentIdLength,
+                                      Name,
+                                      NameLength,
+                                      ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                      ZpNative_StatusCallback,
+                                      CallbackContext,
+                                      &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_DeletePortableObject(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ObjectIdLength) PCWCH ObjectId,
+    _In_ ULONG ObjectIdLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_DeletePortableObject(Connection,
+                                      DeviceId,
+                                      DeviceIdLength,
+                                      ObjectId,
+                                      ObjectIdLength,
+                                      ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                      ZpNative_StatusCallback,
+                                      CallbackContext,
+                                      &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_RenamePortableObject(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ObjectIdLength) PCWCH ObjectId,
+    _In_ ULONG ObjectIdLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_RenamePortableObject(Connection,
+                                      DeviceId,
+                                      DeviceIdLength,
+                                      ObjectId,
+                                      ObjectIdLength,
+                                      Name,
+                                      NameLength,
+                                      ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                      ZpNative_StatusCallback,
+                                      CallbackContext,
+                                      &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_OpenPortableRead(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ObjectIdLength) PCWCH ObjectId,
+    _In_ ULONG ObjectIdLength,
+    _In_ ZP_NATIVE_FILE_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_FILE_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_FILE_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_FILE_TRANSFER Transfer;
+    ZP_CONNECTION_HANDLE Connection;
+    ZP_REQUEST_HANDLE Request;
+    NTSTATUS Status;
+
+    if (OpenCallback == NULL || DataCallback == NULL || CloseCallback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    Transfer = Mem_Alloc(sizeof(*Transfer));
+    if (Transfer == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(Transfer, sizeof(*Transfer));
+    Transfer->Connection = Connection;
+    Transfer->OpenCallback = OpenCallback;
+    Transfer->DataCallback = DataCallback;
+    Transfer->CloseCallback = CloseCallback;
+    Transfer->Context = Context;
+    Status = ZpServer_OpenPortableRead(Connection,
+                                       DeviceId,
+                                       DeviceIdLength,
+                                       ObjectId,
+                                       ObjectIdLength,
+                                       ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                       ZpNative_FileReadOpenCallback,
+                                       ZpNative_FileDataCallback,
+                                       ZpNative_FileCloseCallback,
+                                       Transfer,
+                                       &Request);
+    if (!NT_SUCCESS(Status))
+    {
+        ZpConnection_Release(Connection);
+        Mem_Free(Transfer);
+    }
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_OpenPortableWrite(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ParentIdLength) PCWCH ParentId,
+    _In_ ULONG ParentIdLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ULONGLONG FileSize,
+    _In_ ZP_NATIVE_FILE_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_FILE_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_NATIVE_FILE_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_FILE_TRANSFER Transfer;
+    ZP_CONNECTION_HANDLE Connection;
+    ZP_REQUEST_HANDLE Request;
+    NTSTATUS Status;
+
+    if (OpenCallback == NULL || WritableCallback == NULL || CloseCallback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection();
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    Transfer = Mem_Alloc(sizeof(*Transfer));
+    if (Transfer == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(Transfer, sizeof(*Transfer));
+    Transfer->Connection = Connection;
+    Transfer->OpenCallback = OpenCallback;
+    Transfer->WritableCallback = WritableCallback;
+    Transfer->CloseCallback = CloseCallback;
+    Transfer->Context = Context;
+    Status = ZpServer_OpenPortableWrite(Connection,
+                                        DeviceId,
+                                        DeviceIdLength,
+                                        ParentId,
+                                        ParentIdLength,
+                                        Name,
+                                        NameLength,
+                                        FileSize,
+                                        ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                        ZpNative_FileWriteOpenCallback,
+                                        ZpNative_FileWritableCallback,
+                                        ZpNative_FileCloseCallback,
+                                        Transfer,
+                                        &Request);
+    if (!NT_SUCCESS(Status))
+    {
+        ZpConnection_Release(Connection);
+        Mem_Free(Transfer);
+    }
     return Status;
 }
 
@@ -3887,8 +4482,10 @@ NTAPI
 ZpNative_OpenVideoStream(
     _In_reads_(DeviceIdLength) PCWCH DeviceId,
     _In_ ULONG DeviceIdLength,
-    _In_ ULONG MaxDimension,
-    _In_ USHORT FrameRate,
+    _In_ ULONG Width,
+    _In_ ULONG Height,
+    _In_ ULONG FrameRateNumerator,
+    _In_ ULONG FrameRateDenominator,
     _In_ USHORT Quality,
     _In_ ULONG DirectStreamId,
     _In_ ZP_NATIVE_VIDEO_STREAM_OPEN_CALLBACK OpenCallback,
@@ -3899,6 +4496,7 @@ ZpNative_OpenVideoStream(
     ZP_CONNECTION_HANDLE Connection;
     PZP_NATIVE_VIDEO_STREAM Stream;
     ZP_REQUEST_HANDLE Request;
+    ZP_VIDEO_FORMAT Format = { Width, Height, FrameRateNumerator, FrameRateDenominator };
     NTSTATUS Status;
 
     if (OpenCallback == NULL || DataCallback == NULL || CloseCallback == NULL) return STATUS_INVALID_PARAMETER;
@@ -3919,8 +4517,7 @@ ZpNative_OpenVideoStream(
     Status = ZpServer_OpenVideoStream(Connection,
                                       DeviceId,
                                       DeviceIdLength,
-                                      MaxDimension,
-                                      FrameRate,
+                                      &Format,
                                       Quality,
                                       DirectStreamId,
                                       ZP_NATIVE_TIMEOUT_MILLISECONDS,
@@ -3935,6 +4532,51 @@ ZpNative_OpenVideoStream(
         Mem_Free(Stream);
     }
     return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpNative_UpdateVideoStream(
+    _In_ ZP_NATIVE_VIDEO_STREAM_HANDLE Stream,
+    _In_ ULONG Width,
+    _In_ ULONG Height,
+    _In_ ULONG FrameRateNumerator,
+    _In_ ULONG FrameRateDenominator,
+    _In_ USHORT Quality,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_VIDEO_FORMAT Format = { Width, Height, FrameRateNumerator, FrameRateDenominator };
+    ZP_REQUEST_HANDLE Request;
+    NTSTATUS Status;
+
+    if (Stream == NULL || Callback == NULL) return STATUS_INVALID_PARAMETER;
+    RtlAcquireSRWLockShared(&Stream->Lock);
+    if (Stream->Channel == NULL)
+    {
+        RtlReleaseSRWLockShared(&Stream->Lock);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    ZpConnection_AddRef(Stream->Connection);
+    CallbackContext = ZpNative_CreateCallbackContext(Stream->Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Stream->Connection);
+        RtlReleaseSRWLockShared(&Stream->Lock);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.Status = Callback;
+    Status = ZpServer_UpdateVideoStream(Stream->Connection,
+                                        Stream->Channel,
+                                        &Format,
+                                        Quality,
+                                        ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                        ZpNative_StatusCallback,
+                                        CallbackContext,
+                                        &Request);
+    RtlReleaseSRWLockShared(&Stream->Lock);
+    return ZpNative_SendStatusRequest(CallbackContext, Status);
 }
 
 NTSTATUS

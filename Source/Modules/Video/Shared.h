@@ -9,13 +9,6 @@ ZpVideoShared_Open(
     _In_ PZP_VIDEO_STREAM_REQUEST_VIEW Request,
     _Out_ PZP_VIDEO_SHARED_CAPTURE* Capture);
 
-VOID
-ZpVideoShared_GetFormat(
-    _In_ PZP_VIDEO_SHARED_CAPTURE Capture,
-    _Out_ PULONG Width,
-    _Out_ PULONG Height,
-    _Out_ PUSHORT FrameRate);
-
 HRESULT
 ZpVideoShared_NextSample(
     _Inout_ PZP_VIDEO_SHARED_CAPTURE Capture,
@@ -27,7 +20,6 @@ HRESULT
 ZpVideoShared_Encode(
     _In_ PZP_VIDEO_SHARED_CAPTURE Capture,
     _In_ IMFSample* Sample,
-    _In_ ULONG MaxDimension,
     _In_ USHORT Quality,
     _Out_ PZP_VIDEO_IMAGE Image);
 

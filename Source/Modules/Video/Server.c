@@ -3,9 +3,15 @@
 #include "../../KNSoft.ZPigeon.Server.SDK/Core/Channel.h"
 #include <KNSoft/MakeLifeEasier/Memory/Core.h>
 
+typedef union _ZP_VIDEO_CALLBACK
+{
+    ZP_VIDEO_DEVICES_CALLBACK Devices;
+    ZP_REQUEST_STATUS_CALLBACK Status;
+} ZP_VIDEO_CALLBACK;
+
 typedef struct _ZP_VIDEO_CONTEXT
 {
-    ZP_VIDEO_DEVICES_CALLBACK Callback;
+    ZP_VIDEO_CALLBACK Callback;
     PVOID Context;
 } ZP_VIDEO_CONTEXT, *PZP_VIDEO_CONTEXT;
 
@@ -34,10 +40,29 @@ ZpVideo_DevicesComplete(
     {
         Status = ZpStatus_FromNtStatus(ZpVideo_DecodeDeviceList(Payload->Buffer, Payload->Length, &Devices));
     }
-    VideoContext->Callback(Request,
-                           Status,
-                           ZpStatus_IsSuccess(Status) ? &Devices : NULL,
-                           VideoContext->Context);
+    VideoContext->Callback.Devices(Request,
+                                   Status,
+                                   ZpStatus_IsSuccess(Status) ? &Devices : NULL,
+                                   VideoContext->Context);
+    Mem_Free(VideoContext);
+}
+
+static
+VOID
+NTAPI
+ZpVideo_StatusComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_VIDEO_CONTEXT VideoContext = Context;
+
+    if (ZpStatus_IsSuccess(Status) && Payload->Length != 0)
+    {
+        Status = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
+    }
+    VideoContext->Callback.Status(Request, Status, VideoContext->Context);
     Mem_Free(VideoContext);
 }
 
@@ -56,7 +81,7 @@ ZpServer_EnumerateVideoDevices(
     if (Callback == NULL) return STATUS_INVALID_PARAMETER;
     VideoContext = Mem_Alloc(sizeof(*VideoContext));
     if (VideoContext == NULL) return STATUS_NO_MEMORY;
-    VideoContext->Callback = Callback;
+    VideoContext->Callback.Devices = Callback;
     VideoContext->Context = Context;
     Status = ZpServer_SendRequest(Connection,
                                   ZP_VIDEO_MODULE_ID,
@@ -132,8 +157,7 @@ ZpServer_OpenVideoStream(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_reads_(DeviceIdLength) PCWCH DeviceId,
     _In_ ULONG DeviceIdLength,
-    _In_ ULONG MaxDimension,
-    _In_ USHORT FrameRate,
+    _In_ PCZP_VIDEO_FORMAT Format,
     _In_ USHORT Quality,
     _In_ ULONG DirectStreamId,
     _In_ ULONG TimeoutMilliseconds,
@@ -152,8 +176,7 @@ ZpServer_OpenVideoStream(
     if (OpenCallback == NULL || DataCallback == NULL || CloseCallback == NULL) return STATUS_INVALID_PARAMETER;
     Status = ZpVideo_EncodeStreamRequest(DeviceId,
                                          DeviceIdLength,
-                                         MaxDimension,
-                                         FrameRate,
+                                         Format,
                                          Quality,
                                          DirectStreamId,
                                          NULL,
@@ -169,8 +192,7 @@ ZpServer_OpenVideoStream(
     }
     Status = ZpVideo_EncodeStreamRequest(DeviceId,
                                          DeviceIdLength,
-                                         MaxDimension,
-                                         FrameRate,
+                                         Format,
                                          Quality,
                                          DirectStreamId,
                                          Payload,
@@ -202,5 +224,57 @@ ZpServer_OpenVideoStream(
     Mem_Free(Payload);
     if (!NT_SUCCESS(Status)) Mem_Free(StreamContext);
     if (Reserved) ZpServerChannel_ReleaseReservation(Connection);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_UpdateVideoStream(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ PCZP_VIDEO_FORMAT Format,
+    _In_ USHORT Quality,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_VIDEO_STREAM_UPDATE Update;
+    PZP_VIDEO_CONTEXT VideoContext;
+    BYTE Payload[sizeof(ULONG) * 5 + sizeof(USHORT)];
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Format == NULL || Callback == NULL) return STATUS_INVALID_PARAMETER;
+    VideoContext = Mem_Alloc(sizeof(*VideoContext));
+    if (VideoContext == NULL) return STATUS_NO_MEMORY;
+    VideoContext->Callback.Status = Callback;
+    VideoContext->Context = Context;
+    Status = ZpServerChannel_GetId((PZP_SERVER_CHANNEL_OBJECT)Channel,
+                                   Connection,
+                                   ZP_VIDEO_MODULE_ID,
+                                   &Update.ChannelId);
+    if (NT_SUCCESS(Status))
+    {
+        Update.Format = *Format;
+        Update.Quality = Quality;
+        Status = ZpVideo_EncodeStreamUpdate(&Update,
+                                            Payload,
+                                            sizeof(Payload),
+                                            &PayloadLength);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpServer_SendRequest(Connection,
+                                      ZP_VIDEO_MODULE_ID,
+                                      ZP_VIDEO_OPERATION_UPDATE_STREAM,
+                                      TimeoutMilliseconds,
+                                      Payload,
+                                      PayloadLength,
+                                      ZpVideo_StatusComplete,
+                                      VideoContext,
+                                      Request);
+    }
+    if (!NT_SUCCESS(Status)) Mem_Free(VideoContext);
     return Status;
 }

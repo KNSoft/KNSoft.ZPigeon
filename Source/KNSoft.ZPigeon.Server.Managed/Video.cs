@@ -3,7 +3,12 @@ using System.Threading.Channels;
 
 namespace KNSoft.ZPigeon.Server.Managed;
 
-public sealed record VideoDevice(string Id, string Name);
+public readonly record struct VideoFormat(
+    uint Width,
+    uint Height,
+    uint FrameRateNumerator,
+    uint FrameRateDenominator);
+public sealed record VideoDevice(string Id, string Name, VideoFormat[] Formats);
 public readonly record struct VideoStreamCompletion(ZpStatus Status);
 
 public sealed partial class NativeServer
@@ -18,8 +23,7 @@ public sealed partial class NativeServer
 
     public Task<VideoStream> OpenVideoStreamAsync(
         string deviceId,
-        uint maxDimension,
-        ushort frameRate,
+        VideoFormat format,
         ushort quality,
         uint directStreamId)
     {
@@ -27,8 +31,10 @@ public sealed partial class NativeServer
         creation.Handle = GCHandle.Alloc(creation);
         var status = NativeMethods.OpenVideoStream(deviceId,
                                                    (uint)deviceId.Length,
-                                                   maxDimension,
-                                                   frameRate,
+                                                   format.Width,
+                                                   format.Height,
+                                                   format.FrameRateNumerator,
+                                                   format.FrameRateDenominator,
                                                    quality,
                                                    directStreamId,
                                                    VideoStreamOpenCallback,
@@ -56,9 +62,21 @@ public sealed partial class NativeServer
         for (var index = 0; index < result.Length; index++)
         {
             var record = Marshal.PtrToStructure<NativeMethods.VideoDeviceRecord>(records + index * size);
+            var formats = new VideoFormat[record.FormatCount];
+            var formatSize = Marshal.SizeOf<NativeMethods.VideoFormatRecord>();
+            for (var formatIndex = 0; formatIndex < formats.Length; formatIndex++)
+            {
+                var format = Marshal.PtrToStructure<NativeMethods.VideoFormatRecord>(
+                    record.Formats + formatIndex * formatSize);
+                formats[formatIndex] = new(format.Width,
+                                           format.Height,
+                                           format.FrameRateNumerator,
+                                           format.FrameRateDenominator);
+            }
             result[index] = new VideoDevice(
                 Marshal.PtrToStringUni(record.Id, (int)record.IdLength) ?? string.Empty,
-                Marshal.PtrToStringUni(record.Name, (int)record.NameLength) ?? string.Empty);
+                Marshal.PtrToStringUni(record.Name, (int)record.NameLength) ?? string.Empty,
+                formats);
         }
         completion.SetResult(result);
     }
@@ -118,6 +136,27 @@ public sealed class VideoStream : IAsyncDisposable
     public ChannelReader<ReadOnlyMemory<byte>> Output => output.Reader;
     public Task<VideoStreamCompletion> Completion => completion.Task;
 
+    public Task UpdateAsync(VideoFormat format, ushort quality)
+    {
+        ObjectDisposedException.ThrowIf(disposed != 0, this);
+        var result = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = GCHandle.Alloc(result);
+        var status = NativeMethods.UpdateVideoStream(stream,
+                                                     format.Width,
+                                                     format.Height,
+                                                     format.FrameRateNumerator,
+                                                     format.FrameRateDenominator,
+                                                     quality,
+                                                     NativeServer.StatusCallback,
+                                                     GCHandle.ToIntPtr(handle));
+        if (status < 0)
+        {
+            handle.Free();
+            NativeServer.ThrowIfFailed(status);
+        }
+        return result.Task;
+    }
+
     internal bool Receive(nint data, uint dataLength)
     {
         if (disposed != 0) return false;
@@ -164,6 +203,17 @@ internal static partial class NativeMethods
         internal readonly uint IdLength;
         internal readonly nint Name;
         internal readonly uint NameLength;
+        internal readonly nint Formats;
+        internal readonly uint FormatCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct VideoFormatRecord
+    {
+        internal readonly uint Width;
+        internal readonly uint Height;
+        internal readonly uint FrameRateNumerator;
+        internal readonly uint FrameRateDenominator;
     }
 
     [LibraryImport(Library, EntryPoint = "ZpNative_EnumerateVideoDevices")]
@@ -175,13 +225,26 @@ internal static partial class NativeMethods
     internal static partial int OpenVideoStream(
         string deviceId,
         uint deviceIdLength,
-        uint maxDimension,
-        ushort frameRate,
+        uint width,
+        uint height,
+        uint frameRateNumerator,
+        uint frameRateDenominator,
         ushort quality,
         uint directStreamId,
         VideoStreamOpenCallback openCallback,
         VideoStreamDataCallback dataCallback,
         VideoStreamCloseCallback closeCallback,
+        nint context);
+
+    [LibraryImport(Library, EntryPoint = "ZpNative_UpdateVideoStream")]
+    internal static partial int UpdateVideoStream(
+        nint stream,
+        uint width,
+        uint height,
+        uint frameRateNumerator,
+        uint frameRateDenominator,
+        ushort quality,
+        StatusCallback callback,
         nint context);
 
     [LibraryImport(Library, EntryPoint = "ZpNative_CloseVideoStream")]

@@ -21,6 +21,8 @@ EXTERN_C_START
 #define ZP_FILE_OPERATION_RESOLVE_ACCOUNT 13
 #define ZP_FILE_OPERATION_RESOLVE_SID 14
 #define ZP_FILE_OPERATION_WRITE_RANGE 15
+#define ZP_FILE_OPERATION_QUERY_OWNERS 16
+#define ZP_FILE_OPERATION_CONTROL_OWNERS 17
 #define ZP_FILE_RANGE_MAX_LENGTH 0x00010000UL
 #define ZP_FILE_CRC32_SIZE 4
 #define ZP_FILE_MD5_SIZE 16
@@ -129,6 +131,76 @@ typedef struct _ZP_FILE_WRITE_RANGE_VIEW
 } ZP_FILE_WRITE_RANGE_VIEW, *PZP_FILE_WRITE_RANGE_VIEW;
 
 typedef const ZP_FILE_WRITE_RANGE_VIEW* PCZP_FILE_WRITE_RANGE_VIEW;
+
+typedef enum _ZP_FILE_OWNER_CONTROL
+{
+    ZpFileOwnerTerminate = 1,
+    ZpFileOwnerCloseHandles = 2
+} ZP_FILE_OWNER_CONTROL, *PZP_FILE_OWNER_CONTROL;
+
+typedef struct _ZP_FILE_OWNER_RECORD
+{
+    ULONG ProcessId;
+    NTSTATUS ImagePathStatus;
+    NTSTATUS CommandLineStatus;
+    PCWCH ImageName;
+    ULONG ImageNameLength;
+    PCWCH ImagePath;
+    ULONG ImagePathLength;
+    PCWCH CommandLine;
+    ULONG CommandLineLength;
+    PCWCH ServiceNames;
+    ULONG ServiceNamesLength;
+} ZP_FILE_OWNER_RECORD, *PZP_FILE_OWNER_RECORD;
+
+typedef const ZP_FILE_OWNER_RECORD* PCZP_FILE_OWNER_RECORD;
+
+typedef struct _ZP_FILE_OWNER_RECORD_VIEW
+{
+    ULONG ProcessId;
+    NTSTATUS ImagePathStatus;
+    NTSTATUS CommandLineStatus;
+    ZP_STRING_VIEW ImageName;
+    ZP_STRING_VIEW ImagePath;
+    ZP_STRING_VIEW CommandLine;
+    ZP_STRING_VIEW ServiceNames;
+} ZP_FILE_OWNER_RECORD_VIEW, *PZP_FILE_OWNER_RECORD_VIEW;
+
+typedef struct _ZP_FILE_OWNER_LIST_VIEW
+{
+    const BYTE* Buffer;
+    ULONG Length;
+    ULONG Count;
+} ZP_FILE_OWNER_LIST_VIEW, *PZP_FILE_OWNER_LIST_VIEW;
+
+typedef const ZP_FILE_OWNER_LIST_VIEW* PCZP_FILE_OWNER_LIST_VIEW;
+
+typedef struct _ZP_FILE_OWNER_CONTROL_REQUEST_VIEW
+{
+    ZP_FILE_OWNER_CONTROL Control;
+    ZP_STRING_VIEW Path;
+    const BYTE* ProcessIds;
+    ULONG ProcessCount;
+} ZP_FILE_OWNER_CONTROL_REQUEST_VIEW, *PZP_FILE_OWNER_CONTROL_REQUEST_VIEW;
+
+typedef const ZP_FILE_OWNER_CONTROL_REQUEST_VIEW* PCZP_FILE_OWNER_CONTROL_REQUEST_VIEW;
+
+typedef struct _ZP_FILE_OWNER_CONTROL_RESULT
+{
+    ULONG ProcessId;
+    NTSTATUS Status;
+    ULONG AffectedHandleCount;
+} ZP_FILE_OWNER_CONTROL_RESULT, *PZP_FILE_OWNER_CONTROL_RESULT;
+
+typedef const ZP_FILE_OWNER_CONTROL_RESULT* PCZP_FILE_OWNER_CONTROL_RESULT;
+
+typedef struct _ZP_FILE_OWNER_CONTROL_RESULT_VIEW
+{
+    const BYTE* Buffer;
+    ULONG Count;
+} ZP_FILE_OWNER_CONTROL_RESULT_VIEW, *PZP_FILE_OWNER_CONTROL_RESULT_VIEW;
+
+typedef const ZP_FILE_OWNER_CONTROL_RESULT_VIEW* PCZP_FILE_OWNER_CONTROL_RESULT_VIEW;
 
 NTSTATUS
 ZpFile_EncodePath(
@@ -368,5 +440,68 @@ ZpFile_DecodeVolumeInfo(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_FILE_VOLUME_INFO_VIEW Info);
+
+NTSTATUS
+ZpFile_EncodeOwnerList(
+    _In_reads_opt_(OwnerCount) PCZP_FILE_OWNER_RECORD Owners,
+    _In_ ULONG OwnerCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeOwnerList(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_OWNER_LIST_VIEW View);
+
+NTSTATUS
+ZpFile_GetOwnerRecord(
+    _In_ PCZP_FILE_OWNER_LIST_VIEW List,
+    _In_ ULONG Index,
+    _Out_ PZP_FILE_OWNER_RECORD_VIEW Record);
+
+NTSTATUS
+ZpFile_EncodeOwnerControlRequest(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_FILE_OWNER_CONTROL Control,
+    _In_reads_(ProcessCount) const ULONG* ProcessIds,
+    _In_ ULONG ProcessCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeOwnerControlRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_OWNER_CONTROL_REQUEST_VIEW Request);
+
+NTSTATUS
+ZpFile_GetOwnerControlProcessId(
+    _In_ PCZP_FILE_OWNER_CONTROL_REQUEST_VIEW Request,
+    _In_ ULONG Index,
+    _Out_ PULONG ProcessId);
+
+NTSTATUS
+ZpFile_EncodeOwnerControlResults(
+    _In_reads_(ResultCount) PCZP_FILE_OWNER_CONTROL_RESULT Results,
+    _In_ ULONG ResultCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpFile_DecodeOwnerControlResults(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_OWNER_CONTROL_RESULT_VIEW View);
+
+NTSTATUS
+ZpFile_GetOwnerControlResult(
+    _In_ PCZP_FILE_OWNER_CONTROL_RESULT_VIEW View,
+    _In_ ULONG Index,
+    _Out_ PZP_FILE_OWNER_CONTROL_RESULT Result);
 
 EXTERN_C_END

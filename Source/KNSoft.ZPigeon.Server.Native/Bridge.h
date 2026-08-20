@@ -48,6 +48,54 @@ typedef struct _ZP_NATIVE_FILE_RECORD
 
 typedef const ZP_NATIVE_FILE_RECORD* PCZP_NATIVE_FILE_RECORD;
 
+typedef struct _ZP_NATIVE_PORTABLE_DEVICE_RECORD
+{
+    PCWCH Id;
+    ULONG IdLength;
+    PCWCH Name;
+    ULONG NameLength;
+    PCWCH Manufacturer;
+    ULONG ManufacturerLength;
+    PCWCH Model;
+    ULONG ModelLength;
+} ZP_NATIVE_PORTABLE_DEVICE_RECORD, *PZP_NATIVE_PORTABLE_DEVICE_RECORD;
+
+typedef const ZP_NATIVE_PORTABLE_DEVICE_RECORD* PCZP_NATIVE_PORTABLE_DEVICE_RECORD;
+
+typedef struct _ZP_NATIVE_PORTABLE_OBJECT_RECORD
+{
+    ULONGLONG Size;
+    ULONGLONG ModifiedTime;
+    ULONGLONG Capacity;
+    ULONGLONG FreeSpace;
+    ULONG Flags;
+    PCWCH Id;
+    ULONG IdLength;
+    PCWCH PersistentId;
+    ULONG PersistentIdLength;
+    PCWCH Name;
+    ULONG NameLength;
+} ZP_NATIVE_PORTABLE_OBJECT_RECORD, *PZP_NATIVE_PORTABLE_OBJECT_RECORD;
+
+typedef const ZP_NATIVE_PORTABLE_OBJECT_RECORD* PCZP_NATIVE_PORTABLE_OBJECT_RECORD;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_PORTABLE_DEVICES_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_PORTABLE_DEVICE_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_PORTABLE_OBJECTS_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_PORTABLE_OBJECT_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_ ULONG NextOffset,
+    _In_opt_ PVOID Context);
+
 typedef
 VOID
 (NTAPI *ZP_NATIVE_FILE_PAGE_CALLBACK)(
@@ -75,6 +123,39 @@ VOID
     _In_ ULONGLONG FileSize,
     _In_reads_bytes_opt_(DigestLength) const VOID* Digest,
     _In_ ULONG DigestLength,
+    _In_opt_ PVOID Context);
+
+typedef struct _ZP_NATIVE_FILE_OWNER_RECORD
+{
+    ULONG ProcessId;
+    NTSTATUS ImagePathStatus;
+    NTSTATUS CommandLineStatus;
+    PCWCH ImageName;
+    ULONG ImageNameLength;
+    PCWCH ImagePath;
+    ULONG ImagePathLength;
+    PCWCH CommandLine;
+    ULONG CommandLineLength;
+    PCWCH ServiceNames;
+    ULONG ServiceNamesLength;
+} ZP_NATIVE_FILE_OWNER_RECORD, *PZP_NATIVE_FILE_OWNER_RECORD;
+
+typedef const ZP_NATIVE_FILE_OWNER_RECORD* PCZP_NATIVE_FILE_OWNER_RECORD;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_FILE_OWNERS_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(RecordCount) PCZP_NATIVE_FILE_OWNER_RECORD Records,
+    _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_FILE_OWNER_CONTROL_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(ResultCount) PCZP_FILE_OWNER_CONTROL_RESULT Results,
+    _In_ ULONG ResultCount,
     _In_opt_ PVOID Context);
 
 typedef struct _ZP_NATIVE_FILE_TRANSFER* ZP_NATIVE_FILE_TRANSFER_HANDLE;
@@ -281,6 +362,8 @@ typedef struct _ZP_NATIVE_VIDEO_DEVICE_RECORD
     ULONG IdLength;
     PCWCH Name;
     ULONG NameLength;
+    PCZP_VIDEO_FORMAT Formats;
+    ULONG FormatCount;
 } ZP_NATIVE_VIDEO_DEVICE_RECORD, *PZP_NATIVE_VIDEO_DEVICE_RECORD;
 
 typedef const ZP_NATIVE_VIDEO_DEVICE_RECORD* PCZP_NATIVE_VIDEO_DEVICE_RECORD;
@@ -826,6 +909,27 @@ ZpNative_SetFileAttributes(
 __declspec(dllexport)
 NTSTATUS
 NTAPI
+ZpNative_QueryFileOwners(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_NATIVE_FILE_OWNERS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_ControlFileOwners(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_FILE_OWNER_CONTROL Control,
+    _In_reads_(ProcessCount) const ULONG* ProcessIds,
+    _In_ ULONG ProcessCount,
+    _In_ ZP_NATIVE_FILE_OWNER_CONTROL_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
 ZpNative_OpenFileRead(
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
@@ -1199,8 +1303,10 @@ NTAPI
 ZpNative_OpenVideoStream(
     _In_reads_(DeviceIdLength) PCWCH DeviceId,
     _In_ ULONG DeviceIdLength,
-    _In_ ULONG MaxDimension,
-    _In_ USHORT FrameRate,
+    _In_ ULONG Width,
+    _In_ ULONG Height,
+    _In_ ULONG FrameRateNumerator,
+    _In_ ULONG FrameRateDenominator,
     _In_ USHORT Quality,
     _In_ ULONG DirectStreamId,
     _In_ ZP_NATIVE_VIDEO_STREAM_OPEN_CALLBACK OpenCallback,
@@ -1213,6 +1319,19 @@ NTSTATUS
 NTAPI
 ZpNative_CloseVideoStream(
     _In_ ZP_NATIVE_VIDEO_STREAM_HANDLE Stream);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_UpdateVideoStream(
+    _In_ ZP_NATIVE_VIDEO_STREAM_HANDLE Stream,
+    _In_ ULONG Width,
+    _In_ ULONG Height,
+    _In_ ULONG FrameRateNumerator,
+    _In_ ULONG FrameRateDenominator,
+    _In_ USHORT Quality,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
 
 __declspec(dllexport)
 NTSTATUS
@@ -1717,6 +1836,91 @@ NTAPI
 ZpNative_DeleteRecording(
     _In_ ULONG RecordingId,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumeratePortableDevices(
+    _In_ ZP_NATIVE_PORTABLE_DEVICES_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumeratePortableObjects(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_opt_(ParentIdLength) PCWCH ParentId,
+    _In_ ULONG ParentIdLength,
+    _In_ ULONG Offset,
+    _In_ ZP_NATIVE_PORTABLE_OBJECTS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_CreatePortableFolder(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ParentIdLength) PCWCH ParentId,
+    _In_ ULONG ParentIdLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_DeletePortableObject(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ObjectIdLength) PCWCH ObjectId,
+    _In_ ULONG ObjectIdLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_RenamePortableObject(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ObjectIdLength) PCWCH ObjectId,
+    _In_ ULONG ObjectIdLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_OpenPortableRead(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ObjectIdLength) PCWCH ObjectId,
+    _In_ ULONG ObjectIdLength,
+    _In_ ZP_NATIVE_FILE_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_FILE_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_FILE_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_OpenPortableWrite(
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ParentIdLength) PCWCH ParentId,
+    _In_ ULONG ParentIdLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ULONGLONG FileSize,
+    _In_ ZP_NATIVE_FILE_OPEN_CALLBACK OpenCallback,
+    _In_ ZP_NATIVE_FILE_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_NATIVE_FILE_CLOSE_CALLBACK CloseCallback,
     _In_opt_ PVOID Context);
 
 EXTERN_C_END

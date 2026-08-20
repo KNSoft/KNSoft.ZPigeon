@@ -6,6 +6,7 @@
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Security.h"
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 #include <Bcrypt.h>
+#include <Winsvc.h>
 
 #pragma comment(lib, "Bcrypt.lib")
 
@@ -40,6 +41,13 @@ typedef union _ZP_FILE_DIRECTORY_BUFFER
     ULONG_PTR Alignment;
     BYTE Buffer[4096];
 } ZP_FILE_DIRECTORY_BUFFER, *PZP_FILE_DIRECTORY_BUFFER;
+
+typedef struct _ZP_FILE_OWNER_ALLOCATION
+{
+    PUNICODE_STRING ImagePath;
+    PUNICODE_STRING CommandLine;
+    PWSTR ServiceNames;
+} ZP_FILE_OWNER_ALLOCATION, *PZP_FILE_OWNER_ALLOCATION;
 
 typedef enum _ZP_CLIENT_FILE_CHANNEL_TYPE
 {
@@ -1640,74 +1648,21 @@ ZpFile_EnumerateDrives(
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
 {
-    static UNICODE_STRING DirectoryName = RTL_CONSTANT_STRING(L"\\GLOBAL??");
-    static UNICODE_STRING SymbolicLinkName = RTL_CONSTANT_STRING(L"SymbolicLink");
-    ZP_FILE_DIRECTORY_BUFFER Buffer;
+    PROCESS_DEVICEMAP_INFORMATION DeviceMap;
     ZP_FILE_RECORD Records[26];
     WCHAR Names[26][3];
-    BOOLEAN Drives[26] = { 0 };
-    OBJECT_ATTRIBUTES ObjectAttributes;
-    POBJECT_DIRECTORY_INFORMATION Information;
-    HANDLE Directory;
-    ULONG Context = 0, Count = 0, Index;
+    ULONG Count = 0, Index;
     NTSTATUS Status;
 
-    InitializeObjectAttributes(&ObjectAttributes,
-                               &DirectoryName,
-                               OBJ_CASE_INSENSITIVE,
-                               NULL,
-                               NULL);
-    Status = NtOpenDirectoryObject(&Directory,
-                                   DIRECTORY_QUERY,
-                                   &ObjectAttributes);
-    if (!NT_SUCCESS(Status))
+    Status = NtQueryInformationProcess(NtCurrentProcess(),
+                                       ProcessDeviceMap,
+                                       &DeviceMap,
+                                       sizeof(DeviceMap),
+                                       NULL);
+    if (!NT_SUCCESS(Status)) return Status;
+    for (Index = 0; Index < 26; Index++)
     {
-        return Status;
-    }
-    for (;;)
-    {
-        Status = NtQueryDirectoryObject(Directory,
-                                        Buffer.Buffer,
-                                        sizeof(Buffer.Buffer),
-                                        TRUE,
-                                        Context == 0,
-                                        &Context,
-                                        NULL);
-        if (Status == STATUS_NO_MORE_ENTRIES)
-        {
-            Status = STATUS_SUCCESS;
-            break;
-        }
-        if (!NT_SUCCESS(Status))
-        {
-            break;
-        }
-        Information = (POBJECT_DIRECTORY_INFORMATION)Buffer.Buffer;
-        if (Information->Name.Length == 2 * sizeof(WCHAR) &&
-            Information->Name.Buffer[1] == L':' &&
-            RtlEqualUnicodeString(&Information->TypeName,
-                                  &SymbolicLinkName,
-                                  FALSE))
-        {
-            WCHAR Letter = RtlUpcaseUnicodeChar(Information->Name.Buffer[0]);
-
-            if (Letter >= L'A' && Letter <= L'Z')
-            {
-                Drives[Letter - L'A'] = TRUE;
-            }
-        }
-    }
-    NtClose(Directory);
-    if (!NT_SUCCESS(Status))
-    {
-        return Status;
-    }
-    for (Index = 0; Index < ARRAYSIZE(Drives); Index++)
-    {
-        if (!Drives[Index])
-        {
-            continue;
-        }
+        if (!FlagOn(DeviceMap.Query.DriveMap, 1UL << Index)) continue;
         Names[Count][0] = (WCHAR)(L'A' + Index);
         Names[Count][1] = L':';
         Names[Count][2] = L'\\';
@@ -1990,6 +1945,490 @@ ZpFile_Hash(
     return Status;
 }
 
+static
+NTSTATUS
+ZpFile_QueryProcessString(
+    _In_ HANDLE Process,
+    _In_ PROCESSINFOCLASS InformationClass,
+    _Outptr_ PUNICODE_STRING* String)
+{
+    PUNICODE_STRING Buffer;
+    ULONG Length = sizeof(UNICODE_STRING) + MAX_PATH * sizeof(WCHAR);
+    NTSTATUS Status;
+
+    Buffer = Mem_Alloc(Length);
+    if (Buffer == NULL) return STATUS_NO_MEMORY;
+    Status = NtQueryInformationProcess(Process, InformationClass, Buffer, Length, &Length);
+    if (Status == STATUS_INFO_LENGTH_MISMATCH)
+    {
+        Mem_Free(Buffer);
+        Buffer = Mem_Alloc(Length);
+        if (Buffer == NULL) return STATUS_NO_MEMORY;
+        Status = NtQueryInformationProcess(Process, InformationClass, Buffer, Length, NULL);
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Buffer);
+        return Status;
+    }
+    *String = Buffer;
+    return STATUS_SUCCESS;
+}
+
+static
+PSYSTEM_PROCESS_INFORMATION
+ZpFile_FindProcess(
+    _In_ PVOID SystemProcesses,
+    _In_ ULONG ProcessId)
+{
+    PSYSTEM_PROCESS_INFORMATION Process = SystemProcesses;
+
+    for (;;)
+    {
+        if ((ULONG)(ULONG_PTR)Process->UniqueProcessId == ProcessId) return Process;
+        if (Process->NextEntryOffset == 0) return NULL;
+        Process = Add2Ptr(Process, Process->NextEntryOffset);
+    }
+}
+
+static
+NTSTATUS
+ZpFile_QueryOwnerServices(
+    _Inout_updates_(OwnerCount) PZP_FILE_OWNER_RECORD Owners,
+    _Inout_updates_(OwnerCount) PZP_FILE_OWNER_ALLOCATION Allocations,
+    _In_ ULONG OwnerCount)
+{
+    LPENUM_SERVICE_STATUS_PROCESSW Services;
+    SC_HANDLE Manager;
+    DWORD Error, Length = 0, ServiceCount = 0, Resume = 0;
+    ULONG OwnerIndex, ServiceIndex;
+
+    Manager = OpenSCManagerW(NULL, NULL, SC_MANAGER_ENUMERATE_SERVICE);
+    if (Manager == NULL) return NTSTATUS_FROM_WIN32(GetLastError());
+    if (EnumServicesStatusExW(Manager,
+                              SC_ENUM_PROCESS_INFO,
+                              SERVICE_WIN32,
+                              SERVICE_STATE_ALL,
+                              NULL,
+                              0,
+                              &Length,
+                              &ServiceCount,
+                              &Resume,
+                              NULL))
+    {
+        CloseServiceHandle(Manager);
+        return STATUS_SUCCESS;
+    }
+    Error = GetLastError();
+    if (Error != ERROR_MORE_DATA)
+    {
+        CloseServiceHandle(Manager);
+        return Error == ERROR_SUCCESS ? STATUS_SUCCESS : NTSTATUS_FROM_WIN32(Error);
+    }
+    Services = Mem_Alloc(Length);
+    if (Services == NULL)
+    {
+        CloseServiceHandle(Manager);
+        return STATUS_NO_MEMORY;
+    }
+    Resume = 0;
+    if (!EnumServicesStatusExW(Manager,
+                               SC_ENUM_PROCESS_INFO,
+                               SERVICE_WIN32,
+                               SERVICE_STATE_ALL,
+                               (PBYTE)Services,
+                               Length,
+                               &Length,
+                               &ServiceCount,
+                               &Resume,
+                               NULL))
+    {
+        Error = GetLastError();
+        Mem_Free(Services);
+        CloseServiceHandle(Manager);
+        return NTSTATUS_FROM_WIN32(Error);
+    }
+    for (OwnerIndex = 0; OwnerIndex < OwnerCount; OwnerIndex++)
+    {
+        SIZE_T NameLength = 0;
+        PWSTR Cursor;
+
+        for (ServiceIndex = 0; ServiceIndex < ServiceCount; ServiceIndex++)
+        {
+            if (Services[ServiceIndex].ServiceStatusProcess.dwProcessId == Owners[OwnerIndex].ProcessId)
+            {
+                NameLength += wcslen(Services[ServiceIndex].lpServiceName) + (NameLength != 0);
+            }
+        }
+        if (NameLength == 0) continue;
+        Allocations[OwnerIndex].ServiceNames = Mem_Alloc((NameLength + 1) * sizeof(WCHAR));
+        if (Allocations[OwnerIndex].ServiceNames == NULL)
+        {
+            Mem_Free(Services);
+            CloseServiceHandle(Manager);
+            return STATUS_NO_MEMORY;
+        }
+        Cursor = Allocations[OwnerIndex].ServiceNames;
+        for (ServiceIndex = 0; ServiceIndex < ServiceCount; ServiceIndex++)
+        {
+            PCWSTR Name = Services[ServiceIndex].lpServiceName;
+            SIZE_T CurrentLength;
+
+            if (Services[ServiceIndex].ServiceStatusProcess.dwProcessId != Owners[OwnerIndex].ProcessId) continue;
+            if (Cursor != Allocations[OwnerIndex].ServiceNames) *Cursor++ = UNICODE_NULL;
+            CurrentLength = wcslen(Name);
+            RtlCopyMemory(Cursor, Name, CurrentLength * sizeof(WCHAR));
+            Cursor += CurrentLength;
+        }
+        *Cursor = UNICODE_NULL;
+        Owners[OwnerIndex].ServiceNames = Allocations[OwnerIndex].ServiceNames;
+        Owners[OwnerIndex].ServiceNamesLength = (ULONG)NameLength;
+    }
+    Mem_Free(Services);
+    CloseServiceHandle(Manager);
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpFile_QueryOwnerProcessIds(
+    _In_ HANDLE File,
+    _Outptr_ PFILE_PROCESS_IDS_USING_FILE_INFORMATION* Information)
+{
+    PFILE_PROCESS_IDS_USING_FILE_INFORMATION Buffer;
+    IO_STATUS_BLOCK IoStatusBlock;
+    ULONG Length = FIELD_OFFSET(FILE_PROCESS_IDS_USING_FILE_INFORMATION, ProcessIdList) + 64 * sizeof(HANDLE);
+    NTSTATUS Status;
+
+    for (;;)
+    {
+        Buffer = Mem_Alloc(Length);
+        if (Buffer == NULL) return STATUS_NO_MEMORY;
+        Status = NtQueryInformationFile(File,
+                                        &IoStatusBlock,
+                                        Buffer,
+                                        Length,
+                                        FileProcessIdsUsingFileInformation);
+        if (Status != STATUS_INFO_LENGTH_MISMATCH && Status != STATUS_BUFFER_OVERFLOW &&
+            Status != STATUS_BUFFER_TOO_SMALL)
+        {
+            break;
+        }
+        Mem_Free(Buffer);
+        if (Length > (ZP_FRAME_MAX_BODY_SIZE - 12) / 2) return STATUS_BUFFER_OVERFLOW;
+        Length *= 2;
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Buffer);
+        return Status;
+    }
+    *Information = Buffer;
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpFile_QueryOwners(
+    _In_ PCZP_STRING_VIEW Path,
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    PFILE_PROCESS_IDS_USING_FILE_INFORMATION ProcessIds;
+    PZP_FILE_OWNER_ALLOCATION Allocations;
+    PZP_FILE_OWNER_RECORD Owners;
+    PVOID SystemProcesses;
+    HANDLE File, Process;
+    ULONG Index, Length;
+    NTSTATUS Status;
+
+    Status = ZpFile_OpenForControl(Path, FILE_READ_ATTRIBUTES, &File);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = ZpFile_QueryOwnerProcessIds(File, &ProcessIds);
+    NtClose(File);
+    if (!NT_SUCCESS(Status)) return Status;
+    if (ProcessIds->NumberOfProcessIdsInList == 0)
+    {
+        Status = ZpFile_EncodeOwnerList(NULL, 0, NULL, 0, &Length);
+        if (!NT_SUCCESS(Status))
+        {
+            Mem_Free(ProcessIds);
+            return Status;
+        }
+        *Response = Mem_Alloc(Length);
+        if (*Response == NULL)
+        {
+            Mem_Free(ProcessIds);
+            return STATUS_NO_MEMORY;
+        }
+        Status = ZpFile_EncodeOwnerList(NULL, 0, *Response, Length, ResponseLength);
+        Mem_Free(ProcessIds);
+        if (!NT_SUCCESS(Status)) Mem_Free(*Response);
+        return Status;
+    }
+    Status = Sys_QueryDynamicInfo(SystemProcessInformation, &SystemProcesses);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(ProcessIds);
+        return Status;
+    }
+    Owners = Mem_Alloc((SIZE_T)ProcessIds->NumberOfProcessIdsInList * sizeof(*Owners));
+    Allocations = Mem_Alloc((SIZE_T)ProcessIds->NumberOfProcessIdsInList * sizeof(*Allocations));
+    if (Owners == NULL || Allocations == NULL)
+    {
+        Mem_Free(Owners);
+        Mem_Free(Allocations);
+        Sys_FreeInfo(SystemProcesses);
+        Mem_Free(ProcessIds);
+        return STATUS_NO_MEMORY;
+    }
+    RtlZeroMemory(Owners, (SIZE_T)ProcessIds->NumberOfProcessIdsInList * sizeof(*Owners));
+    RtlZeroMemory(Allocations, (SIZE_T)ProcessIds->NumberOfProcessIdsInList * sizeof(*Allocations));
+    for (Index = 0; Index < ProcessIds->NumberOfProcessIdsInList; Index++)
+    {
+        PSYSTEM_PROCESS_INFORMATION Entry;
+
+        Owners[Index].ProcessId = (ULONG)(ULONG_PTR)ProcessIds->ProcessIdList[Index];
+        Entry = ZpFile_FindProcess(SystemProcesses, Owners[Index].ProcessId);
+        if (Entry != NULL)
+        {
+            Owners[Index].ImageName = Entry->ImageName.Buffer;
+            Owners[Index].ImageNameLength = Entry->ImageName.Length / sizeof(WCHAR);
+        }
+        Owners[Index].ImagePathStatus = PS_OpenProcess(&Process,
+                                                       PROCESS_QUERY_LIMITED_INFORMATION,
+                                                       Owners[Index].ProcessId);
+        Owners[Index].CommandLineStatus = Owners[Index].ImagePathStatus;
+        if (!NT_SUCCESS(Owners[Index].ImagePathStatus)) continue;
+        Owners[Index].ImagePathStatus = ZpFile_QueryProcessString(Process,
+                                                                  ProcessImageFileNameWin32,
+                                                                  &Allocations[Index].ImagePath);
+        if (NT_SUCCESS(Owners[Index].ImagePathStatus))
+        {
+            Owners[Index].ImagePath = Allocations[Index].ImagePath->Buffer;
+            Owners[Index].ImagePathLength = Allocations[Index].ImagePath->Length / sizeof(WCHAR);
+        }
+        Owners[Index].CommandLineStatus = ZpFile_QueryProcessString(Process,
+                                                                    ProcessCommandLineInformation,
+                                                                    &Allocations[Index].CommandLine);
+        if (NT_SUCCESS(Owners[Index].CommandLineStatus))
+        {
+            Owners[Index].CommandLine = Allocations[Index].CommandLine->Buffer;
+            Owners[Index].CommandLineLength = Allocations[Index].CommandLine->Length / sizeof(WCHAR);
+        }
+        NtClose(Process);
+    }
+    Status = ZpFile_QueryOwnerServices(Owners, Allocations, ProcessIds->NumberOfProcessIdsInList);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodeOwnerList(Owners,
+                                        ProcessIds->NumberOfProcessIdsInList,
+                                        NULL,
+                                        0,
+                                        &Length);
+    }
+    *Response = NT_SUCCESS(Status) ? Mem_Alloc(Length) : NULL;
+    if (NT_SUCCESS(Status) && *Response == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodeOwnerList(Owners,
+                                        ProcessIds->NumberOfProcessIdsInList,
+                                        *Response,
+                                        Length,
+                                        ResponseLength);
+    }
+    for (Index = 0; Index < ProcessIds->NumberOfProcessIdsInList; Index++)
+    {
+        Mem_Free(Allocations[Index].ImagePath);
+        Mem_Free(Allocations[Index].CommandLine);
+        Mem_Free(Allocations[Index].ServiceNames);
+    }
+    Mem_Free(Allocations);
+    Mem_Free(Owners);
+    Sys_FreeInfo(SystemProcesses);
+    Mem_Free(ProcessIds);
+    if (!NT_SUCCESS(Status)) Mem_Free(*Response);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpFile_QueryId(
+    _In_ HANDLE File,
+    _Out_ PFILE_ID_INFORMATION Information)
+{
+    IO_STATUS_BLOCK IoStatusBlock;
+    NTSTATUS Status;
+
+    Status = NtQueryInformationFile(File,
+                                    &IoStatusBlock,
+                                    Information,
+                                    sizeof(*Information),
+                                    FileIdInformation);
+    if (Status == STATUS_PENDING)
+    {
+        Status = NtWaitForSingleObject(File, FALSE, NULL);
+        if (NT_SUCCESS(Status)) Status = IoStatusBlock.Status;
+    }
+    return Status;
+}
+
+static
+USHORT
+ZpFile_FindObjectTypeIndex(
+    _In_ PSYSTEM_HANDLE_INFORMATION_EX Handles,
+    _In_ HANDLE Handle)
+{
+    ULONG_PTR Index;
+
+    for (Index = 0; Index < Handles->NumberOfHandles; Index++)
+    {
+        if ((ULONG)(ULONG_PTR)Handles->Handles[Index].UniqueProcessId == GetCurrentProcessId() &&
+            Handles->Handles[Index].HandleValue == Handle)
+        {
+            return Handles->Handles[Index].ObjectTypeIndex;
+        }
+    }
+    return 0;
+}
+
+static
+NTSTATUS
+ZpFile_CloseOwnerHandles(
+    _In_ ULONG ProcessId,
+    _In_ const FILE_ID_INFORMATION* FileId,
+    _In_ USHORT FileTypeIndex,
+    _In_ PSYSTEM_HANDLE_INFORMATION_EX Handles,
+    _Out_ PULONG ClosedCount)
+{
+    FILE_ID_INFORMATION CandidateId;
+    HANDLE Process, Candidate;
+    ULONG_PTR Index;
+    NTSTATUS Status, Result = STATUS_NOT_FOUND;
+
+    if (ProcessId == GetCurrentProcessId()) return STATUS_ACCESS_DENIED;
+    Status = PS_OpenProcess(&Process, PROCESS_DUP_HANDLE, ProcessId);
+    if (!NT_SUCCESS(Status)) return Status;
+    *ClosedCount = 0;
+    for (Index = 0; Index < Handles->NumberOfHandles; Index++)
+    {
+        PSYSTEM_HANDLE_TABLE_ENTRY_INFO_EX Entry = &Handles->Handles[Index];
+
+        if ((ULONG)(ULONG_PTR)Entry->UniqueProcessId != ProcessId || Entry->ObjectTypeIndex != FileTypeIndex) continue;
+        Status = NtDuplicateObject(Process,
+                                   Entry->HandleValue,
+                                   NtCurrentProcess(),
+                                   &Candidate,
+                                   SYNCHRONIZE,
+                                   0,
+                                   0);
+        if (!NT_SUCCESS(Status)) continue;
+        Status = ZpFile_QueryId(Candidate, &CandidateId);
+        if (NT_SUCCESS(Status) && RtlEqualMemory(&CandidateId, FileId, sizeof(CandidateId)))
+        {
+            Status = NtDuplicateObject(Process,
+                                       Entry->HandleValue,
+                                       NULL,
+                                       NULL,
+                                       0,
+                                       0,
+                                       DUPLICATE_CLOSE_SOURCE);
+            if (NT_SUCCESS(Status))
+            {
+                (*ClosedCount)++;
+                if (Result == STATUS_NOT_FOUND) Result = STATUS_SUCCESS;
+            }
+            else Result = Status;
+        }
+        NtClose(Candidate);
+    }
+    NtClose(Process);
+    return Result;
+}
+
+static
+NTSTATUS
+ZpFile_ControlOwners(
+    _In_ PCZP_FILE_OWNER_CONTROL_REQUEST_VIEW Request,
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    PZP_FILE_OWNER_CONTROL_RESULT Results;
+    PSYSTEM_HANDLE_INFORMATION_EX Handles = NULL;
+    FILE_ID_INFORMATION FileId;
+    HANDLE File = NULL, Process;
+    USHORT FileTypeIndex = 0;
+    ULONG Index, Length;
+    NTSTATUS Status;
+
+    Results = Mem_Alloc((SIZE_T)Request->ProcessCount * sizeof(*Results));
+    if (Results == NULL) return STATUS_NO_MEMORY;
+    if (Request->Control == ZpFileOwnerCloseHandles)
+    {
+        Status = ZpFile_OpenForControl(&Request->Path, FILE_READ_ATTRIBUTES, &File);
+        if (NT_SUCCESS(Status)) Status = ZpFile_QueryId(File, &FileId);
+        if (NT_SUCCESS(Status)) Status = Sys_QueryDynamicInfo(SystemExtendedHandleInformation, (PVOID*)&Handles);
+        if (NT_SUCCESS(Status)) FileTypeIndex = ZpFile_FindObjectTypeIndex(Handles, File);
+        if (NT_SUCCESS(Status) && FileTypeIndex == 0) Status = STATUS_OBJECT_TYPE_MISMATCH;
+        if (File != NULL) NtClose(File);
+        if (!NT_SUCCESS(Status))
+        {
+            Mem_Free(Results);
+            Sys_FreeInfo(Handles);
+            return Status;
+        }
+    }
+    for (Index = 0; Index < Request->ProcessCount; Index++)
+    {
+        Status = ZpFile_GetOwnerControlProcessId(Request, Index, &Results[Index].ProcessId);
+        Results[Index].AffectedHandleCount = 0;
+        if (!NT_SUCCESS(Status)) break;
+        if (Request->Control == ZpFileOwnerTerminate)
+        {
+            if (Results[Index].ProcessId == GetCurrentProcessId())
+            {
+                Results[Index].Status = STATUS_ACCESS_DENIED;
+            }
+            else
+            {
+                Results[Index].Status = PS_OpenProcess(&Process, PROCESS_TERMINATE, Results[Index].ProcessId);
+                if (NT_SUCCESS(Results[Index].Status))
+                {
+                    Results[Index].Status = NtTerminateProcess(Process, STATUS_SUCCESS);
+                    NtClose(Process);
+                    if (NT_SUCCESS(Results[Index].Status)) Results[Index].AffectedHandleCount = 1;
+                }
+            }
+        }
+        else
+        {
+            Results[Index].Status = ZpFile_CloseOwnerHandles(Results[Index].ProcessId,
+                                                             &FileId,
+                                                             FileTypeIndex,
+                                                             Handles,
+                                                             &Results[Index].AffectedHandleCount);
+        }
+    }
+    Sys_FreeInfo(Handles);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodeOwnerControlResults(Results, Request->ProcessCount, NULL, 0, &Length);
+    }
+    *Response = NT_SUCCESS(Status) ? Mem_Alloc(Length) : NULL;
+    if (NT_SUCCESS(Status) && *Response == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodeOwnerControlResults(Results,
+                                                  Request->ProcessCount,
+                                                  *Response,
+                                                  Length,
+                                                  ResponseLength);
+    }
+    Mem_Free(Results);
+    if (!NT_SUCCESS(Status)) Mem_Free(*Response);
+    return Status;
+}
+
 NTSTATUS
 ZpFile_Execute(
     _Inout_opt_ PZP_CLIENT_OBJECT Client,
@@ -2004,6 +2443,7 @@ ZpFile_Execute(
     ZP_STRING_VIEW Path, NewPath;
     ZP_FILE_WRITE_RANGE_VIEW WriteRange;
     ZP_FILE_HASH_ALGORITHM Algorithm;
+    ZP_FILE_OWNER_CONTROL_REQUEST_VIEW OwnerControl;
     PZP_CLIENT_FILE_CHANNEL FileChannel = NULL;
     ULONGLONG FileSize, Offset;
     ULONG Attributes, EnumerationId;
@@ -2069,6 +2509,14 @@ ZpFile_Execute(
     case ZP_FILE_OPERATION_WRITE_RANGE:
         Status = ZpFile_DecodeWriteRangeRequest(Request, RequestLength, &WriteRange);
         return NT_SUCCESS(Status) ? ZpFile_WriteRange(&WriteRange) : Status;
+
+    case ZP_FILE_OPERATION_QUERY_OWNERS:
+        Status = ZpFile_DecodePath(Request, RequestLength, &Path);
+        return NT_SUCCESS(Status) ? ZpFile_QueryOwners(&Path, Response, ResponseLength) : Status;
+
+    case ZP_FILE_OPERATION_CONTROL_OWNERS:
+        Status = ZpFile_DecodeOwnerControlRequest(Request, RequestLength, &OwnerControl);
+        return NT_SUCCESS(Status) ? ZpFile_ControlOwners(&OwnerControl, Response, ResponseLength) : Status;
 
     case ZP_FILE_OPERATION_QUERY_VOLUME:
         Status = ZpFile_DecodePath(Request, RequestLength, &Path);

@@ -12,6 +12,7 @@
     <Filter Include="Modules\EventLog"><UniqueIdentifier>{7656ca23-7a73-4df8-bcbe-e8497e34e953}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Execution"><UniqueIdentifier>{3fdf6799-3763-47ef-8e13-dd1235e3e14e}</UniqueIdentifier></Filter>
     <Filter Include="Modules\File"><UniqueIdentifier>{84b00e40-ae0e-447e-9811-f19bb2929dfe}</UniqueIdentifier></Filter>
+    <Filter Include="Modules\PortableDevice"><UniqueIdentifier>{ea9f040d-2738-438d-8027-8826c48850be}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Window"><UniqueIdentifier>{df69eb8d-79d4-4a1e-9b36-d84686667351}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Process"><UniqueIdentifier>{e10eefb5-132e-4aac-9f46-2f19e88bbd85}</UniqueIdentifier></Filter>
     <Filter Include="Modules\Registry"><UniqueIdentifier>{5715349f-e762-49a0-b11a-9ae027702182}</UniqueIdentifier></Filter>
@@ -38,6 +39,7 @@
     <ClCompile Include="..\Modules\EventLog\Client.c"><Filter>Modules\EventLog</Filter></ClCompile>
     <ClCompile Include="..\Modules\Execution\Client.c"><Filter>Modules\Execution</Filter></ClCompile>
     <ClCompile Include="..\Modules\File\Client.c"><Filter>Modules\File</Filter></ClCompile>
+    <ClCompile Include="..\Modules\PortableDevice\Client.c"><Filter>Modules\PortableDevice</Filter></ClCompile>
     <ClCompile Include="..\Modules\Window\Client.c"><Filter>Modules\Window</Filter></ClCompile>
     <ClCompile Include="..\Modules\Process\Client.c"><Filter>Modules\Process</Filter></ClCompile>
     <ClCompile Include="..\Modules\Registry\Client.c"><Filter>Modules\Registry</Filter></ClCompile>
@@ -89,6 +91,7 @@
     <ClInclude Include="..\Modules\EventLog\Client.h"><Filter>Modules\EventLog</Filter></ClInclude>
     <ClInclude Include="..\Modules\Execution\Client.h"><Filter>Modules\Execution</Filter></ClInclude>
     <ClInclude Include="..\Modules\File\Client.h"><Filter>Modules\File</Filter></ClInclude>
+    <ClInclude Include="..\Modules\PortableDevice\Client.h"><Filter>Modules\PortableDevice</Filter></ClInclude>
     <ClInclude Include="..\Modules\Window\Client.h"><Filter>Modules\Window</Filter></ClInclude>
     <ClInclude Include="..\Modules\Process\Client.h"><Filter>Modules\Process</Filter></ClInclude>
     <ClInclude Include="..\Modules\Registry\Client.h"><Filter>Modules\Registry</Filter></ClInclude>

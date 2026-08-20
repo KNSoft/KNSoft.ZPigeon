@@ -40,6 +40,6 @@
   <ImportGroup Label="ExtensionTargets">
     <Import Project="..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets" />
     <Import Project="..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets" />
-    <Import Project="..\packages\KNSoft.Quic.1.0.0-beta\build\KNSoft.Quic.targets" />
+    <Import Project="..\packages\KNSoft.Quic.1.0.1-beta\build\KNSoft.Quic.targets" />
   </ImportGroup>
 </Project>

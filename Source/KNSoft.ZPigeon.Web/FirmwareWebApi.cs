@@ -8,6 +8,7 @@ namespace KNSoft.ZPigeon.Web;
 
 internal static class FirmwareWebApi
 {
+    private const uint MaximumFirmwareDataLength = 16 * 1024 * 1024;
     private const uint MaximumRangeLength = 0x10000;
     private const int MaximumVariableLength = 0x100000;
 
@@ -44,30 +45,80 @@ internal static class FirmwareWebApi
         app.MapPost("/api/firmware/smbios", async () =>
         {
             var records = await server.QueryAdministrationAsync(AdministrationOperation.QueryFirmware, "smbios");
-            if (!TryGetSingleData(records, AdministrationKind.SmbiosTable, out var data))
+            if (records.Any(record => record.Kind != AdministrationKind.SmbiosTable))
             {
                 return InvalidData("SMBIOS 响应格式无效");
             }
-            var status = SmbiosParser.TryParseWindowsRaw(data, out var table);
-            if (status != FirmwareDecodeStatus.Success || table is null)
+            var structures = new SmbiosStructureWebRecord[records.Length];
+            for (var index = 0; index < records.Length; index++)
             {
-                return InvalidData($"SMBIOS 解析失败：{status}");
+                var record = records[index];
+                var offset = ParseTableIdentity(record.Identity, "smbios:");
+                if (offset is null ||
+                    !ulong.TryParse(record.Value, out var value) ||
+                    record.Flags > ushort.MaxValue || (value >> 32) > byte.MaxValue ||
+                    (uint)value is < sizeof(uint) or > MaximumFirmwareDataLength ||
+                    (value >> 32) is < sizeof(uint) || (value >> 32) > (uint)value ||
+                    offset > MaximumFirmwareDataLength - (uint)value)
+                {
+                    return InvalidData("SMBIOS 目录响应格式无效");
+                }
+                var type = (byte)record.State;
+                structures[index] = new SmbiosStructureWebRecord(
+                    record.Identity,
+                    type,
+                    SmbiosParser.GetTypeName(type),
+                    (ushort)record.Flags,
+                    (byte)(value >> 32),
+                    (int)(uint)value,
+                    (int)offset.Value,
+                    [],
+                    null);
             }
             return Results.Ok(new SmbiosWebRecord(
-                table.Version.Major,
-                table.Version.Minor,
-                table.Version.DmiRevision,
-                table.Structures.Select(structure => new SmbiosStructureWebRecord(
-                    structure.Type,
-                    structure.TypeName,
-                    structure.Handle,
-                    structure.Length,
-                    structure.Data.Length,
-                    structure.Offset,
-                    structure.Offset + 8,
-                    structure.Fields.Select(field =>
-                        new FirmwareFieldWebRecord(field.Name, FormatSmbiosField(structure, field))).ToArray()))
-                    .ToArray()));
+                records.Length == 0 ? (byte)0 : (byte)(records[0].State >> 8),
+                records.Length == 0 ? (byte)0 : (byte)(records[0].State >> 16),
+                records.Length == 0 ? (byte)0 : (byte)(records[0].State >> 24),
+                structures));
+        });
+        app.MapPost("/api/firmware/smbios/structure", async (FirmwareIdentityRequest request) =>
+        {
+            var offset = ParseTableIdentity(request.Identity, "smbios:");
+            if (offset is null ||
+                offset > MaximumFirmwareDataLength)
+            {
+                return Results.BadRequest();
+            }
+            var records = await server.QueryAdministrationAsync(
+                AdministrationOperation.QueryFirmware,
+                request.Identity);
+            if (records.Length != 1 || records[0].Kind != AdministrationKind.SmbiosTable ||
+                !TryDecodeData(records[0], out var data) || data.Length > MaximumFirmwareDataLength)
+            {
+                return InvalidData("SMBIOS Structure 响应格式无效");
+            }
+            var status = SmbiosParser.TryParse(
+                data,
+                new SmbiosVersion((byte)records[0].Flags,
+                                   (byte)(records[0].Flags >> 8),
+                                   (byte)(records[0].Flags >> 16)),
+                out var table);
+            if (status != FirmwareDecodeStatus.Success || table is null || table.Structures.Count != 1)
+            {
+                return InvalidData($"SMBIOS Structure 解析失败：{status}");
+            }
+            var structure = table.Structures[0];
+            return Results.Ok(new SmbiosStructureWebRecord(
+                request.Identity,
+                structure.Type,
+                structure.TypeName,
+                structure.Handle,
+                structure.Length,
+                structure.Data.Length,
+                (int)offset.Value,
+                structure.Fields.Select(field =>
+                    new FirmwareFieldWebRecord(field.Name, FormatSmbiosField(structure, field))).ToArray(),
+                data));
         });
         app.MapPost("/api/firmware/acpi", async () =>
         {
@@ -76,37 +127,49 @@ internal static class FirmwareWebApi
             {
                 return InvalidData("ACPI 响应格式无效");
             }
-            var result = new AcpiTableWebRecord[records.Length];
-            for (var index = 0; index < records.Length; index++)
+            return Results.Ok(records.Select(record => new AcpiTableWebRecord(
+                record.Identity,
+                record.Name,
+                AcpiParser.GetDescription(record.Name),
+                null,
+                null,
+                0,
+                0,
+                null,
+                [],
+                null)));
+        });
+        app.MapPost("/api/firmware/acpi/table", async (FirmwareIdentityRequest request) =>
+        {
+            if (ParseTableIdentity(request.Identity, "acpi:") is null) return Results.BadRequest();
+            var records = await server.QueryAdministrationAsync(
+                AdministrationOperation.QueryFirmware,
+                request.Identity);
+            if (!TryGetSingleData(records, AdministrationKind.AcpiTable, out var data) ||
+                data.Length > MaximumFirmwareDataLength)
             {
-                var record = records[index];
-                if (!TryDecodeData(record, out var data))
-                {
-                    result[index] = InvalidAcpi(record.Identity, FirmwareDecodeStatus.InvalidArgument);
-                    continue;
-                }
-                var status = AcpiParser.TryParse(data, out var table);
-                if (status != FirmwareDecodeStatus.Success || table is null)
-                {
-                    result[index] = InvalidAcpi(record.Identity, status);
-                    continue;
-                }
-                var header = table.Header;
-                result[index] = new AcpiTableWebRecord(
-                    record.Identity,
-                    header.Signature,
-                    table.Description,
-                    header.OemId,
-                    header.OemTableId,
-                    header.Revision,
-                    header.Length,
-                    null,
-                    table.Fields.Select(field => new FirmwareFieldWebRecord(
-                        field.Name,
-                        table.TryReadUnsigned(field.Offset, field.Size, out var value) ? FormatUnsigned(value) : "—"))
-                        .ToArray());
+                return InvalidData("ACPI 表响应格式无效");
             }
-            return Results.Ok(result);
+            var status = AcpiParser.TryParse(data, out var table);
+            if (status != FirmwareDecodeStatus.Success || table is null)
+            {
+                return Results.Ok(InvalidAcpi(request.Identity, status, data));
+            }
+            var header = table.Header;
+            return Results.Ok(new AcpiTableWebRecord(
+                request.Identity,
+                header.Signature,
+                table.Description,
+                header.OemId,
+                header.OemTableId,
+                header.Revision,
+                header.Length,
+                null,
+                table.Fields.Select(field => new FirmwareFieldWebRecord(
+                    field.Name,
+                    table.TryReadUnsigned(field.Offset, field.Size, out var value) ? FormatUnsigned(value) : "—"))
+                    .ToArray(),
+                data));
         });
         app.MapPost("/api/firmware/data", async (HttpContext context, FirmwareDataRequest request) =>
         {
@@ -228,13 +291,25 @@ internal static class FirmwareWebApi
         detail: message,
         statusCode: StatusCodes.Status502BadGateway);
 
-    private static AcpiTableWebRecord InvalidAcpi(string identity, FirmwareDecodeStatus status)
+    private static AcpiTableWebRecord InvalidAcpi(
+        string identity,
+        FirmwareDecodeStatus status,
+        byte[]? data = null)
     {
         var signature = identity.StartsWith("acpi:", StringComparison.Ordinal) && identity.Length > "acpi:".Length
             ? identity["acpi:".Length..]
             : identity;
-        return new(identity, signature, "—", "—", "—", 0, 0, status.ToString(), []);
+        return new(identity, signature, "—", "—", "—", 0, (uint)(data?.Length ?? 0), status.ToString(), [], data);
     }
+
+    private static uint? ParseTableIdentity(string identity, string prefix) =>
+        identity.Length == prefix.Length + 8 && identity.StartsWith(prefix, StringComparison.Ordinal) &&
+        uint.TryParse(identity.AsSpan(prefix.Length),
+                      NumberStyles.HexNumber,
+                      CultureInfo.InvariantCulture,
+                      out var value)
+            ? value
+            : null;
 
     private static string GetProcessorName(CpuidSnapshot snapshot)
     {
@@ -294,27 +369,30 @@ internal sealed record SmbiosWebRecord(
     SmbiosStructureWebRecord[] Structures);
 
 internal sealed record SmbiosStructureWebRecord(
+    string Identity,
     byte Type,
     string Name,
     ushort Handle,
     byte FormattedLength,
     int TotalLength,
     int Offset,
-    int RawOffset,
-    FirmwareFieldWebRecord[] Fields);
+    FirmwareFieldWebRecord[] Fields,
+    byte[]? Data);
 
 internal sealed record AcpiTableWebRecord(
     string Identity,
     string Signature,
     string Description,
-    string OemId,
-    string OemTableId,
+    string? OemId,
+    string? OemTableId,
     byte Revision,
     uint Length,
     string? Error,
-    FirmwareFieldWebRecord[] Fields);
+    FirmwareFieldWebRecord[] Fields,
+    byte[]? Data);
 
 internal sealed record FirmwareFieldWebRecord(string Name, string Value);
+internal sealed record FirmwareIdentityRequest(string Identity);
 internal sealed record FirmwareDataRequest(
     string Identity,
     string Offset,

@@ -9,6 +9,105 @@
 
 EXTERN_C_START
 
+NTSTATUS
+NTAPI
+ZpServer_EnumeratePortableDevices(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PORTABLE_DEVICES_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumeratePortableObjects(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_opt_(ParentIdLength) PCWCH ParentId,
+    _In_ ULONG ParentIdLength,
+    _In_ ULONG Offset,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PORTABLE_OBJECTS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_CreatePortableFolder(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ParentIdLength) PCWCH ParentId,
+    _In_ ULONG ParentIdLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_DeletePortableObject(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ObjectIdLength) PCWCH ObjectId,
+    _In_ ULONG ObjectIdLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_RenamePortableObject(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ObjectIdLength) PCWCH ObjectId,
+    _In_ ULONG ObjectIdLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_OpenPortableRead(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ObjectIdLength) PCWCH ObjectId,
+    _In_ ULONG ObjectIdLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_OPEN_READ_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_OpenPortableWrite(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(DeviceIdLength) PCWCH DeviceId,
+    _In_ ULONG DeviceIdLength,
+    _In_reads_(ParentIdLength) PCWCH ParentId,
+    _In_ ULONG ParentIdLength,
+    _In_reads_(NameLength) PCWCH Name,
+    _In_ ULONG NameLength,
+    _In_ ULONGLONG FileSize,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_OPEN_WRITE_CALLBACK OpenCallback,
+    _In_ ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback,
+    _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
 #define ZP_SERVER_DEFAULT_MAX_REQUESTS_PER_CONNECTION 64
 #define ZP_SERVER_MAX_REQUESTS_PER_CONNECTION 4096
 #define ZP_SERVER_DEFAULT_MAX_CHANNELS_PER_CONNECTION 16
@@ -332,6 +431,31 @@ ZpServer_WriteFileRange(
     _In_ ULONG DataLength,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryFileOwners(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_OWNER_LIST_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_ControlFileOwners(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_FILE_OWNER_CONTROL Control,
+    _In_reads_(ProcessCount) const ULONG* ProcessIds,
+    _In_ ULONG ProcessCount,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_OWNER_CONTROL_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 
@@ -701,14 +825,25 @@ ZpServer_OpenVideoStream(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_reads_(DeviceIdLength) PCWCH DeviceId,
     _In_ ULONG DeviceIdLength,
-    _In_ ULONG MaxDimension,
-    _In_ USHORT FrameRate,
+    _In_ PCZP_VIDEO_FORMAT Format,
     _In_ USHORT Quality,
     _In_ ULONG DirectStreamId,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_VIDEO_STREAM_OPEN_CALLBACK OpenCallback,
     _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
     _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_UpdateVideoStream(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ PCZP_VIDEO_FORMAT Format,
+    _In_ USHORT Quality,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 

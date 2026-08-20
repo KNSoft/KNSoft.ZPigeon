@@ -29,9 +29,7 @@ struct _ZP_VIDEO_SHARED_SOURCE
     LONGLONG Timestamp;
     ULONGLONG Sequence;
     ULONG CaptureCount;
-    ULONG Width;
-    ULONG Height;
-    USHORT FrameRate;
+    ZP_VIDEO_FORMAT Format;
     ULONG DeviceIdLength;
     WCHAR DeviceId[ANYSIZE_ARRAY];
 };
@@ -43,11 +41,13 @@ static
 LOGICAL
 ZpVideoShared_IsSameSource(
     _In_ PZP_VIDEO_SHARED_SOURCE Source,
-    _In_reads_(DeviceIdLength) PCWCH DeviceId,
-    _In_ ULONG DeviceIdLength)
+    _In_ PZP_VIDEO_STREAM_REQUEST_VIEW Request)
 {
-    return Source->DeviceIdLength == DeviceIdLength &&
-           _wcsnicmp(Source->DeviceId, DeviceId, DeviceIdLength) == 0;
+    return Source->DeviceIdLength == Request->DeviceId.Length &&
+           _wcsnicmp(Source->DeviceId, (PCWCH)Request->DeviceId.Buffer, Request->DeviceId.Length) == 0 &&
+           Source->Format.Width == Request->Width && Source->Format.Height == Request->Height &&
+           Source->Format.FrameRateNumerator == Request->FrameRateNumerator &&
+           Source->Format.FrameRateDenominator == Request->FrameRateDenominator;
 }
 
 static
@@ -80,16 +80,15 @@ ZpVideoShared_Worker(
     Result = CoInitializeEx(NULL, COINIT_MULTITHREADED);
     Uninitialize = SUCCEEDED(Result);
     if (Result == RPC_E_CHANGED_MODE) Result = S_OK;
-    Request.MaxDimension = MAXULONG;
-    Request.FrameRate = 120;
+    Request.Width = Source->Format.Width;
+    Request.Height = Source->Format.Height;
+    Request.FrameRateNumerator = Source->Format.FrameRateNumerator;
+    Request.FrameRateDenominator = Source->Format.FrameRateDenominator;
+    Request.DirectStreamId = 0;
     Request.Quality = 100;
     Request.DeviceId.Buffer = (const BYTE*)Source->DeviceId;
     Request.DeviceId.Length = Source->DeviceIdLength;
     if (SUCCEEDED(Result)) Result = ZpVideoCapture_Create(&Request, &Source->Device);
-    if (SUCCEEDED(Result)) ZpVideoCapture_GetFormat(Source->Device,
-                                                     &Source->Width,
-                                                     &Source->Height,
-                                                     &Source->FrameRate);
     RtlAcquireSRWLockExclusive(&Source->Lock);
     Source->Result = Result;
     NtSetEvent(Source->ReadyEvent, NULL);
@@ -156,9 +155,7 @@ ZpVideoShared_Open(
     for (Entry = ZpVideoSharedSources.Flink; Entry != &ZpVideoSharedSources; Entry = Entry->Flink)
     {
         Source = CONTAINING_RECORD(Entry, ZP_VIDEO_SHARED_SOURCE, ListEntry);
-        if (ZpVideoShared_IsSameSource(Source,
-                                       (PCWCH)Request->DeviceId.Buffer,
-                                       Request->DeviceId.Length)) break;
+        if (ZpVideoShared_IsSameSource(Source, Request)) break;
     }
     if (Entry == &ZpVideoSharedSources)
     {
@@ -174,6 +171,7 @@ ZpVideoShared_Open(
         RtlInitializeSRWLock(&Source->Lock);
         RtlInitializeSRWLock(&Source->EncodeLock);
         InitializeListHead(&Source->Captures);
+        Source->Format = *(PCZP_VIDEO_FORMAT)Request;
         Source->DeviceIdLength = Request->DeviceId.Length;
         RtlCopyMemory(Source->DeviceId,
                       Request->DeviceId.Buffer,
@@ -233,18 +231,6 @@ Cleanup:
     return S_OK;
 }
 
-VOID
-ZpVideoShared_GetFormat(
-    _In_ PZP_VIDEO_SHARED_CAPTURE Capture,
-    _Out_ PULONG Width,
-    _Out_ PULONG Height,
-    _Out_ PUSHORT FrameRate)
-{
-    *Width = Capture->Source->Width;
-    *Height = Capture->Source->Height;
-    *FrameRate = Capture->Source->FrameRate;
-}
-
 HRESULT
 ZpVideoShared_NextSample(
     _Inout_ PZP_VIDEO_SHARED_CAPTURE Capture,
@@ -287,7 +273,6 @@ HRESULT
 ZpVideoShared_Encode(
     _In_ PZP_VIDEO_SHARED_CAPTURE Capture,
     _In_ IMFSample* Sample,
-    _In_ ULONG MaxDimension,
     _In_ USHORT Quality,
     _Out_ PZP_VIDEO_IMAGE Image)
 {
@@ -296,7 +281,6 @@ ZpVideoShared_Encode(
     RtlAcquireSRWLockExclusive(&Capture->Source->EncodeLock);
     Result = ZpVideoCapture_EncodeSample(Capture->Source->Device,
                                          Sample,
-                                         MaxDimension,
                                          Quality,
                                          Image);
     RtlReleaseSRWLockExclusive(&Capture->Source->EncodeLock);

@@ -9,6 +9,8 @@ typedef union _ZP_SERVER_FILE_CALLBACK
     ZP_FILE_VOLUME_CALLBACK Volume;
     ZP_FILE_ENUMERATE_PAGE_CALLBACK Page;
     ZP_FILE_HASH_CALLBACK Hash;
+    ZP_FILE_OWNER_LIST_CALLBACK Owners;
+    ZP_FILE_OWNER_CONTROL_CALLBACK OwnerControl;
     ZP_STRING_CALLBACK String;
     ZP_REQUEST_STATUS_CALLBACK Status;
 } ZP_SERVER_FILE_CALLBACK;
@@ -116,6 +118,53 @@ typedef struct _ZP_SERVER_FILE_OPEN_WRITE_CONTEXT
     PVOID Context;
 } ZP_SERVER_FILE_OPEN_WRITE_CONTEXT,
   *PZP_SERVER_FILE_OPEN_WRITE_CONTEXT;
+
+static
+VOID
+NTAPI
+ZpServerFile_OwnersComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_SERVER_FILE_CONTEXT FileContext = Context;
+    ZP_FILE_OWNER_LIST_VIEW Owners;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(ZpFile_DecodeOwnerList(Payload->Buffer, Payload->Length, &Owners));
+    }
+    FileContext->Callback.Owners(Request,
+                                 Status,
+                                 ZpStatus_IsSuccess(Status) ? &Owners : NULL,
+                                 FileContext->Context);
+    Mem_Free(FileContext);
+}
+
+static
+VOID
+NTAPI
+ZpServerFile_OwnerControlComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_SERVER_FILE_CONTEXT FileContext = Context;
+    ZP_FILE_OWNER_CONTROL_RESULT_VIEW Results;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(
+            ZpFile_DecodeOwnerControlResults(Payload->Buffer, Payload->Length, &Results));
+    }
+    FileContext->Callback.OwnerControl(Request,
+                                       Status,
+                                       ZpStatus_IsSuccess(Status) ? &Results : NULL,
+                                       FileContext->Context);
+    Mem_Free(FileContext);
+}
 
 static
 VOID
@@ -938,6 +987,103 @@ ZpServer_WriteFileRange(
                                    Payload,
                                    PayloadLength,
                                    ZpServerFile_StatusComplete,
+                                   FileContext,
+                                   Request);
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_QueryFileOwners(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_OWNER_LIST_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_SERVER_FILE_CONTEXT FileContext;
+    PBYTE Payload;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Status = ZpServerFile_EncodePath(Path, PathLength, &Payload, &PayloadLength);
+    FileContext = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*FileContext)) : NULL;
+    if (NT_SUCCESS(Status) && FileContext == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        FileContext->Callback.Owners = Callback;
+        FileContext->Context = Context;
+        Status = ZpServerFile_Send(Connection,
+                                   ZP_FILE_OPERATION_QUERY_OWNERS,
+                                   TimeoutMilliseconds,
+                                   Payload,
+                                   PayloadLength,
+                                   ZpServerFile_OwnersComplete,
+                                   FileContext,
+                                   Request);
+    }
+    Mem_Free(Payload);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_ControlFileOwners(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_FILE_OWNER_CONTROL Control,
+    _In_reads_(ProcessCount) const ULONG* ProcessIds,
+    _In_ ULONG ProcessCount,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_FILE_OWNER_CONTROL_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    PZP_SERVER_FILE_CONTEXT FileContext;
+    PBYTE Payload = NULL;
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Status = ZpFile_EncodeOwnerControlRequest(Path,
+                                              PathLength,
+                                              Control,
+                                              ProcessIds,
+                                              ProcessCount,
+                                              NULL,
+                                              0,
+                                              &PayloadLength);
+    Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
+    if (NT_SUCCESS(Status) && Payload == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpFile_EncodeOwnerControlRequest(Path,
+                                                  PathLength,
+                                                  Control,
+                                                  ProcessIds,
+                                                  ProcessCount,
+                                                  Payload,
+                                                  PayloadLength,
+                                                  &PayloadLength);
+    }
+    FileContext = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*FileContext)) : NULL;
+    if (NT_SUCCESS(Status) && FileContext == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        FileContext->Callback.OwnerControl = Callback;
+        FileContext->Context = Context;
+        Status = ZpServerFile_Send(Connection,
+                                   ZP_FILE_OPERATION_CONTROL_OWNERS,
+                                   TimeoutMilliseconds,
+                                   Payload,
+                                   PayloadLength,
+                                   ZpServerFile_OwnerControlComplete,
                                    FileContext,
                                    Request);
     }

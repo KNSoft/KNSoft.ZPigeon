@@ -407,7 +407,6 @@ ZpRecording_RunCamera(
     IMFSample* SourceSample = NULL;
     IMFSample* Sample = NULL;
     ULONG Width, Height, OutputWidth, OutputHeight;
-    USHORT SourceFrameRate;
     LONGLONG MediaTimestamp;
     ULONGLONG Timestamp, TimestampBase = 0;
     LARGE_INTEGER ZeroTimeout = { 0 };
@@ -417,17 +416,24 @@ ZpRecording_RunCamera(
     Result = ZpRecording_StartAudioTrack(Job);
     Request.DeviceId.Buffer = (const BYTE*)Job->SourceId;
     Request.DeviceId.Length = Job->SourceIdLength;
-    Request.MaxDimension = Job->MaxDimension;
-    Request.FrameRate = Job->FrameRate;
+    Request.DirectStreamId = 0;
     Request.Quality = 85;
+    if (SUCCEEDED(Result))
+    {
+        Result = ZpVideoCapture_SelectFormat(Job->SourceId,
+                                             Job->SourceIdLength,
+                                             Job->MaxDimension,
+                                             Job->FrameRate,
+                                             (PZP_VIDEO_FORMAT)&Request);
+    }
     if (SUCCEEDED(Result))
     {
         Result = ZpVideoShared_Open(&Request, &Capture);
     }
     if (SUCCEEDED(Result))
     {
-        ZpVideoShared_GetFormat(Capture, &Width, &Height, &SourceFrameRate);
-        UNREFERENCED_PARAMETER(SourceFrameRate);
+        Width = Request.Width;
+        Height = Request.Height;
         OutputWidth = Width;
         OutputHeight = Height;
     }

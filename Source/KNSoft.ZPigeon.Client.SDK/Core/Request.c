@@ -6,6 +6,7 @@
 #include "../../Modules/EventLog/Client.h"
 #include "../../Modules/Execution/Client.h"
 #include "../../Modules/File/Client.h"
+#include "../../Modules/PortableDevice/Client.h"
 #include "../../Modules/Process/Client.h"
 #include "../../Modules/Registry/Client.h"
 #include "../../Modules/Service/Client.h"
@@ -139,6 +140,7 @@ ZpClientInbound_RequestCallback(
     const VOID* Response = Payload;
     PBYTE AllocatedResponse = NULL;
     PZP_CLIENT_FILE_CHANNEL FileChannel = NULL;
+    PZP_CLIENT_PORTABLE_CHANNEL PortableChannel = NULL;
     PZP_CLIENT_TERMINAL_CHANNEL TerminalChannel = NULL;
     PZP_CLIENT_TUNNEL_CHANNEL TunnelChannel = NULL;
     PZP_CLIENT_WINDOW_CAPTURE_CHANNEL WindowChannel = NULL;
@@ -176,6 +178,18 @@ ZpClientInbound_RequestCallback(
                                       &PayloadLength,
                                       &FileChannel);
         Status = ZpStatus_FromNtStatus(ModuleStatus);
+        Response = AllocatedResponse;
+    }
+    else if (Request->ModuleId == ZP_PORTABLE_DEVICE_MODULE_ID)
+    {
+        Status = ZpPortable_Execute(Object,
+                                    Request->OperationId,
+                                    Request->Payload,
+                                    Request->PayloadLength,
+                                    &Request->Pending,
+                                    &AllocatedResponse,
+                                    &PayloadLength,
+                                    &PortableChannel);
         Response = AllocatedResponse;
     }
     else if (Request->ModuleId == ZP_PROCESS_MODULE_ID)
@@ -377,6 +391,11 @@ ZpClientInbound_RequestCallback(
     {
         ZpFile_CommitChannel(FileChannel,
                              Respond && NT_SUCCESS(SendStatus));
+    }
+    if (PortableChannel != NULL)
+    {
+        ZpPortable_CommitChannel(PortableChannel,
+                                 Respond && NT_SUCCESS(SendStatus));
     }
     if (TerminalChannel != NULL)
     {

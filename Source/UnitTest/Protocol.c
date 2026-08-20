@@ -1,9 +1,99 @@
 ﻿#include "UnitTest.h"
 
 #include <KNSoft/ZPigeon/Protocol.h>
+#include <KNSoft/ZPigeon/File.h>
 #include <KNSoft/ZPigeon/Rtc.h>
 #include <KNSoft/ZPigeon/Serial.h>
 #include <KNSoft/ZPigeon/Recording.h>
+#include <KNSoft/ZPigeon/PortableDevice.h>
+
+TEST_FUNC(ProtocolPortable)
+{
+    ZP_PORTABLE_DEVICE_RECORD Devices[] = {
+        { L"id", 2, L"phone", 5, L"vendor", 6, L"model", 5 }
+    };
+    ZP_PORTABLE_OBJECT_RECORD Objects[] = {
+        { 123, 456, 1000, 877, ZP_PORTABLE_OBJECT_STORAGE | ZP_PORTABLE_OBJECT_FOLDER,
+          L"object", 6, L"persistent", 10, L"storage", 7 },
+        { 789, 654, 0, 0, ZP_PORTABLE_OBJECT_CAN_DELETE, L"file", 4, NULL, 0, L"data.bin", 8 }
+    };
+    BYTE Buffer[256];
+    ZP_PORTABLE_DEVICE_LIST_VIEW DeviceList;
+    ZP_PORTABLE_DEVICE_RECORD_VIEW Device;
+    ZP_PORTABLE_OBJECT_PAGE_VIEW ObjectPage;
+    ZP_PORTABLE_OBJECT_RECORD_VIEW Object;
+    ZP_PORTABLE_WRITE_REQUEST_VIEW Write;
+    ULONG Length, Offset = 0;
+
+    TEST_OK(NT_SUCCESS(ZpPortable_EncodeDeviceList(Devices, ARRAYSIZE(Devices), Buffer, sizeof(Buffer), &Length)) &&
+            NT_SUCCESS(ZpPortable_DecodeDeviceList(Buffer, Length, &DeviceList)) && DeviceList.Count == 1 &&
+            NT_SUCCESS(ZpPortable_GetNextDevice(&DeviceList, &Offset, &Device)) && Device.Id.Length == 2 &&
+            Device.Name.Length == 5);
+    Offset = 0;
+    TEST_OK(NT_SUCCESS(ZpPortable_EncodeObjectPage(Objects,
+                                                   ARRAYSIZE(Objects),
+                                                   100,
+                                                   Buffer,
+                                                   sizeof(Buffer),
+                                                   &Length)) &&
+            NT_SUCCESS(ZpPortable_DecodeObjectPage(Buffer, Length, &ObjectPage)) && ObjectPage.Count == 2 &&
+            ObjectPage.NextOffset == 100 &&
+            NT_SUCCESS(ZpPortable_GetNextObject(&ObjectPage, &Offset, &Object)) && Object.Size == 0 &&
+            Object.Capacity == 1000 && Object.Flags == Objects[0].Flags &&
+            NT_SUCCESS(ZpPortable_GetNextObject(&ObjectPage, &Offset, &Object)) && Object.Size == 789 &&
+            Object.Capacity == 0 && Object.Flags == Objects[1].Flags);
+    TEST_OK(NT_SUCCESS(ZpPortable_EncodeWriteRequest(L"id", 2, L"DEVICE", 6, L"file", 4, 123,
+                                                     Buffer, sizeof(Buffer), &Length)) &&
+            NT_SUCCESS(ZpPortable_DecodeWriteRequest(Buffer, Length, &Write)) && Write.FileSize == 123 &&
+            Write.DeviceId.Length == 2 && Write.ParentId.Length == 6 && Write.Name.Length == 4);
+}
+
+TEST_FUNC(ProtocolFileOwners)
+{
+    static const ZP_FILE_OWNER_RECORD Owners[] = {
+        { 42, STATUS_SUCCESS, STATUS_ACCESS_DENIED, L"test.exe", 8, L"C:\\test.exe", 11,
+          NULL, 0, L"SvcA\0SvcB", 9 }
+    };
+    static const ULONG ProcessIds[] = { 4, 42 };
+    static const ZP_FILE_OWNER_CONTROL_RESULT Results[] = {
+        { 4, STATUS_ACCESS_DENIED, 0 },
+        { 42, STATUS_SUCCESS, 2 }
+    };
+    BYTE Buffer[256];
+    ZP_FILE_OWNER_LIST_VIEW List;
+    ZP_FILE_OWNER_RECORD_VIEW Owner;
+    ZP_FILE_OWNER_CONTROL_REQUEST_VIEW Request;
+    ZP_FILE_OWNER_CONTROL_RESULT_VIEW ResultView;
+    ZP_FILE_OWNER_CONTROL_RESULT Result;
+    ULONG Length, ProcessId;
+
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeOwnerList(Owners, ARRAYSIZE(Owners), Buffer, sizeof(Buffer), &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeOwnerList(Buffer, Length, &List)) && List.Count == ARRAYSIZE(Owners) &&
+            NT_SUCCESS(ZpFile_GetOwnerRecord(&List, 0, &Owner)) && Owner.ProcessId == 42 &&
+            Owner.ImageName.Length == 8 && Owner.CommandLineStatus == STATUS_ACCESS_DENIED &&
+            Owner.ServiceNames.Length == 9);
+    TEST_OK(ZpFile_DecodeOwnerList(Buffer, Length - 1, &List) == STATUS_DATA_ERROR);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeOwnerControlRequest(L"C:\\test.exe",
+                                                        11,
+                                                        ZpFileOwnerCloseHandles,
+                                                        ProcessIds,
+                                                        ARRAYSIZE(ProcessIds),
+                                                        Buffer,
+                                                        sizeof(Buffer),
+                                                        &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeOwnerControlRequest(Buffer, Length, &Request)) &&
+            Request.Control == ZpFileOwnerCloseHandles && Request.ProcessCount == ARRAYSIZE(ProcessIds) &&
+            NT_SUCCESS(ZpFile_GetOwnerControlProcessId(&Request, 1, &ProcessId)) && ProcessId == 42);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeOwnerControlResults(Results,
+                                                        ARRAYSIZE(Results),
+                                                        Buffer,
+                                                        sizeof(Buffer),
+                                                        &Length)) &&
+            NT_SUCCESS(ZpFile_DecodeOwnerControlResults(Buffer, Length, &ResultView)) &&
+            ResultView.Count == ARRAYSIZE(Results) &&
+            NT_SUCCESS(ZpFile_GetOwnerControlResult(&ResultView, 1, &Result)) && Result.ProcessId == 42 &&
+            Result.Status == STATUS_SUCCESS && Result.AffectedHandleCount == 2);
+}
 
 TEST_FUNC(ProtocolCodec)
 {

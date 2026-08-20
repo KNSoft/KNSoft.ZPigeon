@@ -8,6 +8,7 @@
 #include <KNSoft/ZPigeon/EventLog.h>
 #include <KNSoft/ZPigeon/Execution.h>
 #include <KNSoft/ZPigeon/File.h>
+#include <KNSoft/ZPigeon/PortableDevice.h>
 #include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/Registry.h>
 #include <KNSoft/ZPigeon/Service.h>
@@ -20,6 +21,22 @@
 #include <KNSoft/ZPigeon/Recording.h>
 
 EXTERN_C_START
+
+typedef
+VOID
+(NTAPI *ZP_PORTABLE_DEVICES_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_PORTABLE_DEVICE_LIST_VIEW Devices,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_PORTABLE_OBJECTS_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_PORTABLE_OBJECT_PAGE_VIEW Objects,
+    _In_opt_ PVOID Context);
 
 typedef
 VOID
@@ -267,6 +284,22 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
     _In_opt_ PCZP_FILE_HASH_VIEW Hash,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_FILE_OWNER_LIST_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_FILE_OWNER_LIST_VIEW Owners,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_FILE_OWNER_CONTROL_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ const ZP_FILE_OWNER_CONTROL_RESULT_VIEW* Results,
     _In_opt_ PVOID Context);
 
 typedef

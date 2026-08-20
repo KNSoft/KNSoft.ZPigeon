@@ -1,7 +1,9 @@
 ﻿#include <lm.h>
 #include <sddl.h>
+#include <winnetwk.h>
 
 #pragma comment(lib, "Netapi32.lib")
+#pragma comment(lib, "Mpr.lib")
 
 static
 NTSTATUS
@@ -287,11 +289,11 @@ ZP_STATUS
 ZpAdministration_ControlNetworkConnection(
     _In_ PCZP_ADMINISTRATION_CONTROL_VIEW Control)
 {
-    USE_INFO_2 Use = { 0 };
+    NETRESOURCEW Resource = { 0 };
     PWSTR Identity = ZpAdministration_CopyView(&Control->Identity);
     PWSTR Local = Control->Argument.Length != 0 ? ZpAdministration_CopyView(&Control->Argument) : NULL;
     PWSTR Credentials = NULL, Separator, User = NULL, Password = NULL;
-    DWORD Result, ParameterError;
+    DWORD Result;
     ULONG Index;
 
     if (Identity == NULL || (Control->Argument.Length != 0 && Local == NULL))
@@ -327,16 +329,14 @@ ZpAdministration_ControlNetworkConnection(
     switch (Control->Action)
     {
         case ZpAdministrationActionConnect:
-            Use.ui2_local = Local != NULL && *Local != UNICODE_NULL ? Local : NULL;
-            Use.ui2_remote = Identity;
-            Use.ui2_password = Password;
-            Use.ui2_asg_type = USE_DISKDEV;
-            Use.ui2_username = User;
-            Result = NetUseAdd(NULL, 2, (PBYTE)&Use, &ParameterError);
+            Resource.dwType = RESOURCETYPE_DISK;
+            Resource.lpLocalName = Local != NULL && *Local != UNICODE_NULL ? Local : NULL;
+            Resource.lpRemoteName = Identity;
+            Result = WNetAddConnection2W(&Resource, Password, User, 0);
             break;
 
         case ZpAdministrationActionDisconnect:
-            Result = NetUseDel(NULL, Identity, USE_NOFORCE);
+            Result = WNetCancelConnection2W(Identity, 0, FALSE);
             break;
 
         default:

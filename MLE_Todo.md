@@ -2,6 +2,53 @@
 
 These candidates remain pending Owner review. `IO_CreatePipe` is locally prototyped in the parent MLE repository and the ZPigeon package copy, but is not committed there; `PS_CreateProcessEx` is not implemented.
 
+## File owner query and forced handle release
+
+The ZPigeon File module currently implements this directly. Consider moving the reusable NT handle work into MLE after Owner review:
+
+```c
+typedef struct _IO_PROCESS_FILE_HANDLE_RESULT
+{
+    ULONG ProcessId;
+    NTSTATUS Status;
+    ULONG ClosedHandleCount;
+} IO_PROCESS_FILE_HANDLE_RESULT, *PIO_PROCESS_FILE_HANDLE_RESULT;
+
+NTSTATUS
+NTAPI
+IO_QueryFileProcessIds(
+    _In_ HANDLE FileHandle,
+    _Outptr_result_buffer_(*ProcessCount) PULONG* ProcessIds,
+    _Out_ PULONG ProcessCount);
+
+NTSTATUS
+NTAPI
+IO_CloseProcessFileHandles(
+    _In_ HANDLE FileHandle,
+    _In_reads_(ProcessCount) const ULONG* ProcessIds,
+    _In_ ULONG ProcessCount,
+    _Out_writes_(ProcessCount) PIO_PROCESS_FILE_HANDLE_RESULT Results);
+```
+
+Implementation:
+
+- Require `FileHandle` to have `FILE_READ_ATTRIBUTES | SYNCHRONIZE`; support files and directories and do not require
+  `FILE_NON_DIRECTORY_FILE` or `FILE_DIRECTORY_FILE`.
+- Query `FileProcessIdsUsingFileInformation` with a geometrically growing buffer and return the kernel-provided PID order
+  unchanged. Do not filter or deduplicate PIDs.
+- For forced release, query `FileIdInformation` for the target and `SystemExtendedHandleInformation` once. Determine the file
+  object type index from `FileHandle`, then scan only matching type/PID entries.
+- Open each target process with `PROCESS_DUP_HANDLE`. Duplicate a candidate with only `SYNCHRONIZE` (`FileIdInformation`
+  requires no file access right), compare its `FILE_ID_INFORMATION`, then close a confirmed source handle with
+  `NtDuplicateObject(DUPLICATE_CLOSE_SOURCE)`.
+- Wait for `STATUS_PENDING` file-information queries and use the resulting `IO_STATUS_BLOCK.Status`. Skip candidates that
+  cannot be duplicated or identified; report an error only after a matching handle cannot be closed. Return
+  `STATUS_NOT_FOUND` when no matching handle remains.
+- Refuse the current process to avoid closing MLE/caller-owned handles. Do not add process creation-time validation,
+  Restart Manager fallback, filesystem locality checks, Win32 handle APIs, or compatibility paths.
+- This operation is inherently racy because a remote numeric handle can be closed and reused after enumeration. Callers must
+  require explicit destructive-operation confirmation and present per-process raw `NTSTATUS` results.
+
 ## ZPigeon Release build optimization
 
 This is a ZPigeon project task rather than an MLE candidate. Enable whole-program optimization for all Release C/C++ projects and link the Client with `KNSoftQuicIntegration=StaticLTCGPGO`, non-incremental linking, `/OPT:REF`, and `/OPT:ICF`. A local comparison build reduced `KNSoft.ZPigeon.Client.exe` from 2,503,168 bytes to 757,760 bytes while retaining the static CRT and static MsQuic. Keep Release PDB generation; the PDB is external and remains useful for diagnostics.

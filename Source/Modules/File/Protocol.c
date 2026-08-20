@@ -1133,3 +1133,284 @@ ZpFile_DecodeVolumeInfo(
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Info->FileSystem);
     return NT_SUCCESS(Status) && Reader.Offset != PayloadLength ? STATUS_DATA_ERROR : Status;
 }
+
+static
+NTSTATUS
+ZpFile_ReadOwner(
+    _Inout_ PZP_CODEC_READER Reader,
+    _Out_opt_ PZP_FILE_OWNER_RECORD_VIEW Owner)
+{
+    ZP_FILE_OWNER_RECORD_VIEW Local;
+    ULONG Value;
+    NTSTATUS Status;
+
+    Status = ZpCodec_ReadUInt32(Reader, &Local.ProcessId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Value);
+    if (NT_SUCCESS(Status)) Local.ImagePathStatus = (NTSTATUS)Value;
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Value);
+    if (NT_SUCCESS(Status)) Local.CommandLineStatus = (NTSTATUS)Value;
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.ImageName);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.ImagePath);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.CommandLine);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.ServiceNames);
+    if (NT_SUCCESS(Status) && Owner != NULL) *Owner = Local;
+    return Status;
+}
+
+NTSTATUS
+ZpFile_EncodeOwnerList(
+    _In_reads_opt_(OwnerCount) PCZP_FILE_OWNER_RECORD Owners,
+    _In_ ULONG OwnerCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize = sizeof(ULONG);
+    NTSTATUS Status;
+    ULONG Index;
+
+    if (OwnerCount > ZP_CODEC_MAX_ELEMENT_COUNT || (OwnerCount != 0 && Owners == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    for (Index = 0; Index < OwnerCount; Index++)
+    {
+        if (Owners[Index].ImageNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+            Owners[Index].ImagePathLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+            Owners[Index].CommandLineLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+            Owners[Index].ServiceNamesLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+            (Owners[Index].ImageNameLength != 0 && Owners[Index].ImageName == NULL) ||
+            (Owners[Index].ImagePathLength != 0 && Owners[Index].ImagePath == NULL) ||
+            (Owners[Index].CommandLineLength != 0 && Owners[Index].CommandLine == NULL) ||
+            (Owners[Index].ServiceNamesLength != 0 && Owners[Index].ServiceNames == NULL))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+        RequiredSize += 7 * sizeof(ULONG) +
+                        ((ULONGLONG)Owners[Index].ImageNameLength + Owners[Index].ImagePathLength +
+                         Owners[Index].CommandLineLength + Owners[Index].ServiceNamesLength) * sizeof(WCHAR);
+        if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12) return STATUS_BUFFER_OVERFLOW;
+    }
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteArrayCount(&Writer, OwnerCount);
+    for (Index = 0; NT_SUCCESS(Status) && Index < OwnerCount; Index++)
+    {
+        Status = ZpCodec_WriteUInt32(&Writer, Owners[Index].ProcessId);
+        if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Owners[Index].ImagePathStatus);
+        if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Owners[Index].CommandLineStatus);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteString(&Writer, Owners[Index].ImageName, Owners[Index].ImageNameLength);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteString(&Writer, Owners[Index].ImagePath, Owners[Index].ImagePathLength);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteString(&Writer, Owners[Index].CommandLine, Owners[Index].CommandLineLength);
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpCodec_WriteString(&Writer, Owners[Index].ServiceNames, Owners[Index].ServiceNamesLength);
+        }
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpFile_DecodeOwnerList(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_OWNER_LIST_VIEW View)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+    ULONG Count, Index;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+    for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++) Status = ZpFile_ReadOwner(&Reader, NULL);
+    if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    View->Buffer = Add2Ptr(Payload, sizeof(ULONG));
+    View->Length = PayloadLength - sizeof(ULONG);
+    View->Count = Count;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpFile_GetOwnerRecord(
+    _In_ PCZP_FILE_OWNER_LIST_VIEW List,
+    _In_ ULONG Index,
+    _Out_ PZP_FILE_OWNER_RECORD_VIEW Record)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status = STATUS_SUCCESS;
+    ULONG Current;
+
+    if (Index >= List->Count) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, List->Buffer, List->Length);
+    for (Current = 0; NT_SUCCESS(Status) && Current <= Index; Current++)
+    {
+        Status = ZpFile_ReadOwner(&Reader, Current == Index ? Record : NULL);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpFile_EncodeOwnerControlRequest(
+    _In_reads_(PathLength) PCWCH Path,
+    _In_ ULONG PathLength,
+    _In_ ZP_FILE_OWNER_CONTROL Control,
+    _In_reads_(ProcessCount) const ULONG* ProcessIds,
+    _In_ ULONG ProcessCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    ULONGLONG RequiredSize;
+    NTSTATUS Status;
+    ULONG Index;
+
+    if (Path == NULL || PathLength == 0 || PathLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        (Control != ZpFileOwnerTerminate && Control != ZpFileOwnerCloseHandles) ||
+        ProcessIds == NULL || ProcessCount == 0 || ProcessCount > ZP_CODEC_MAX_ELEMENT_COUNT)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    RequiredSize = 3 * sizeof(ULONG) + (ULONGLONG)PathLength * sizeof(WCHAR) +
+                   (ULONGLONG)ProcessCount * sizeof(ULONG);
+    if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12) return STATUS_BUFFER_OVERFLOW;
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Control);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Path, PathLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteArrayCount(&Writer, ProcessCount);
+    for (Index = 0; NT_SUCCESS(Status) && Index < ProcessCount; Index++)
+    {
+        Status = ZpCodec_WriteUInt32(&Writer, ProcessIds[Index]);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpFile_DecodeOwnerControlRequest(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_OWNER_CONTROL_REQUEST_VIEW Request)
+{
+    ZP_CODEC_READER Reader;
+    ULONG Control;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadUInt32(&Reader, &Control);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Path);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadArrayCount(&Reader, &Request->ProcessCount);
+    if (!NT_SUCCESS(Status)) return Status;
+    if ((ULONGLONG)Reader.Offset + (ULONGLONG)Request->ProcessCount * sizeof(ULONG) != PayloadLength ||
+        Request->Path.Length == 0 ||
+        Request->ProcessCount == 0 || (Control != ZpFileOwnerTerminate && Control != ZpFileOwnerCloseHandles))
+    {
+        return STATUS_DATA_ERROR;
+    }
+    Request->Control = (ZP_FILE_OWNER_CONTROL)Control;
+    Request->ProcessIds = Add2Ptr(Payload, Reader.Offset);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpFile_GetOwnerControlProcessId(
+    _In_ PCZP_FILE_OWNER_CONTROL_REQUEST_VIEW Request,
+    _In_ ULONG Index,
+    _Out_ PULONG ProcessId)
+{
+    ZP_CODEC_READER Reader;
+
+    if (Index >= Request->ProcessCount) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, Request->ProcessIds, Request->ProcessCount * sizeof(ULONG));
+    Reader.Offset = Index * sizeof(ULONG);
+    return ZpCodec_ReadUInt32(&Reader, ProcessId);
+}
+
+NTSTATUS
+ZpFile_EncodeOwnerControlResults(
+    _In_reads_(ResultCount) PCZP_FILE_OWNER_CONTROL_RESULT Results,
+    _In_ ULONG ResultCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+    ULONG Index;
+
+    if (Results == NULL || ResultCount == 0 || ResultCount > ZP_CODEC_MAX_ELEMENT_COUNT)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *BytesWritten = sizeof(ULONG) + ResultCount * 3 * sizeof(ULONG);
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < *BytesWritten) return STATUS_BUFFER_TOO_SMALL;
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteArrayCount(&Writer, ResultCount);
+    for (Index = 0; NT_SUCCESS(Status) && Index < ResultCount; Index++)
+    {
+        Status = ZpCodec_WriteUInt32(&Writer, Results[Index].ProcessId);
+        if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Results[Index].Status);
+        if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Results[Index].AffectedHandleCount);
+    }
+    return Status;
+}
+
+NTSTATUS
+ZpFile_DecodeOwnerControlResults(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_FILE_OWNER_CONTROL_RESULT_VIEW View)
+{
+    ZP_CODEC_READER Reader;
+    ULONG Count;
+    NTSTATUS Status;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+    if (!NT_SUCCESS(Status)) return Status;
+    if (Count == 0 || sizeof(ULONG) + (ULONGLONG)Count * 3 * sizeof(ULONG) != PayloadLength)
+    {
+        return STATUS_DATA_ERROR;
+    }
+    View->Buffer = Add2Ptr(Payload, sizeof(ULONG));
+    View->Count = Count;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpFile_GetOwnerControlResult(
+    _In_ PCZP_FILE_OWNER_CONTROL_RESULT_VIEW View,
+    _In_ ULONG Index,
+    _Out_ PZP_FILE_OWNER_CONTROL_RESULT Result)
+{
+    ZP_CODEC_READER Reader;
+    ULONG Value;
+    NTSTATUS Status;
+
+    if (Index >= View->Count) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, View->Buffer, View->Count * 3 * sizeof(ULONG));
+    Reader.Offset = Index * 3 * sizeof(ULONG);
+    Status = ZpCodec_ReadUInt32(&Reader, &Result->ProcessId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Value);
+    if (NT_SUCCESS(Status)) Result->Status = (NTSTATUS)Value;
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Result->AffectedHandleCount);
+    return Status;
+}
