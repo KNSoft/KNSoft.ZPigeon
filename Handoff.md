@@ -64,6 +64,7 @@ Managed SDK 封装与 Web 无关的远程操作和长生命周期会话；Web �
 - Web、Managed、Native、QUIC 与 Client 本地闭环已经跑通，QUIC 启用 KeepAlive，并保留 ProcessExit、NTSTATUS、Win32、Winsock、HRESULT、Security 和 QUIC 等原始状态域；
 - Terminal、File、Registry、Process、Service、EventLog、Window、WMI、Audio、Video、Tunnel、Browser、Execution 和 Administration 管理路径均已接入 Web；
 - 网络共享、网络适配器、IPv4/IPv6 路由表及 TCP/UDP 端点已经完成真实只读联调；网卡启用/禁用只验证调用路径，未在开发机执行；
+- 页面文件、字体和蓝牙完成只读联调；页面文件、字体、蓝牙及网络类别的写操作未在开发机执行；位置服务在系统无可用报告时会原样返回 HRESULT；
 - 固件读取按 CPUID、SMBIOS 和 ACPI 分页签组织并按需获取；UEFI 变量和启动项写入能力只编码，不在开发机执行破坏性测试；
 - 最新 Client SDK 静态分析未发现 NetworkStatus 新增实现的问题；仓库仍有其他既有静态分析告警需要后续独立审计。
 

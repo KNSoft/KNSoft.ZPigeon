@@ -2,9 +2,69 @@
 
 #include <wtsapi32.h>
 
+#include "../../KNSoft.ZPigeon.Client.SDK/Core/Account.h"
+
 #pragma comment(lib, "Netapi32.lib")
 #pragma comment(lib, "Secur32.lib")
 #pragma comment(lib, "Wtsapi32.lib")
+
+static
+NTSTATUS
+ZpUser_QueryMicrosoftAccount(
+    _Outptr_ PUNICODE_STRING* Account)
+{
+    static const UNICODE_STRING Prefix = RTL_CONSTANT_STRING(L"MicrosoftAccount\\");
+    PTOKEN_GROUPS Groups;
+    PUNICODE_STRING Name;
+    PSID_IDENTIFIER_AUTHORITY Authority;
+    HANDLE Token;
+    ULONG Length, Index;
+    NTSTATUS Status;
+
+    Status = NtOpenProcessToken(NtCurrentProcess(), TOKEN_QUERY, &Token);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = NtQueryInformationToken(Token, TokenGroups, NULL, 0, &Length);
+    if (Status != STATUS_BUFFER_TOO_SMALL)
+    {
+        NtClose(Token);
+        return Status;
+    }
+    Groups = Mem_Alloc(Length);
+    if (Groups == NULL)
+    {
+        NtClose(Token);
+        return STATUS_NO_MEMORY;
+    }
+    Status = NtQueryInformationToken(Token, TokenGroups, Groups, Length, &Length);
+    NtClose(Token);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Groups);
+        return Status;
+    }
+    Status = STATUS_NOT_FOUND;
+    for (Index = 0; Index < Groups->GroupCount; Index++)
+    {
+        Authority = GetSidIdentifierAuthority(Groups->Groups[Index].Sid);
+        if (Authority->Value[0] != 0 || Authority->Value[1] != 0 || Authority->Value[2] != 0 ||
+            Authority->Value[3] != 0 || Authority->Value[4] != 0 || Authority->Value[5] != 11)
+        {
+            continue;
+        }
+        if (NT_SUCCESS(ZpAccount_QuerySidName(Groups->Groups[Index].Sid, &Name)))
+        {
+            if (RtlPrefixUnicodeString((PUNICODE_STRING)&Prefix, Name, TRUE))
+            {
+                *Account = Name;
+                Status = STATUS_SUCCESS;
+                break;
+            }
+            NT_FreeStringW(Name);
+        }
+    }
+    Mem_Free(Groups);
+    return Status;
+}
 
 static
 NTSTATUS
@@ -15,11 +75,18 @@ ZpAdministration_AddSessions(
     PWSTR User, Domain;
     WCHAR Identity[32], Name[512], Detail[64];
     DWORD Count, Index, Length, Error;
+    DWORD CurrentSession;
+    PUNICODE_STRING MicrosoftAccount = NULL;
+    PCWSTR Account;
     NTSTATUS Status = STATUS_SUCCESS;
 
+    if (!ProcessIdToSessionId(GetCurrentProcessId(), &CurrentSession)) CurrentSession = MAXDWORD;
+    ZpUser_QueryMicrosoftAccount(&MicrosoftAccount);
     if (!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &Sessions, &Count))
     {
-        return NTSTATUS_FROM_WIN32(GetLastError());
+        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        if (MicrosoftAccount != NULL) NT_FreeStringW(MicrosoftAccount);
+        return Status;
     }
     for (Index = 0; Index < Count && NT_SUCCESS(Status); Index++)
     {
@@ -52,6 +119,8 @@ ZpAdministration_AddSessions(
                      Domain != NULL && *Domain != UNICODE_NULL ? L"%s\\%s" : L"%s%s",
                      Domain == NULL ? L"" : Domain,
                      User == NULL ? L"" : User);
+        Account = MicrosoftAccount != NULL && Sessions[Index].SessionId == CurrentSession ?
+                      MicrosoftAccount->Buffer + RTL_NUMBER_OF(L"MicrosoftAccount\\") - 1 : NULL;
         if (Error != ERROR_SUCCESS)
         {
             _snwprintf_s(Detail, ARRAYSIZE(Detail), _TRUNCATE, L"部分信息不可用，Win32: 0x%08lX", Error);
@@ -64,11 +133,12 @@ ZpAdministration_AddSessions(
                                              Identity,
                                              Name,
                                              Sessions[Index].pWinStationName,
-                                             Error == ERROR_SUCCESS ? NULL : Detail);
+                                             Error == ERROR_SUCCESS ? Account : Detail);
         if (Domain != NULL) WTSFreeMemory(Domain);
         if (User != NULL) WTSFreeMemory(User);
     }
     WTSFreeMemory(Sessions);
+    if (MicrosoftAccount != NULL) NT_FreeStringW(MicrosoftAccount);
     return Status;
 }
 
@@ -81,10 +151,20 @@ ZpAdministration_AddLogonSessions(
     PLUID Sessions;
     WCHAR Identity[32], User[512], Domain[512], Detail[1024];
     ULONG Count, Index;
+    DWORD CurrentSession;
+    PUNICODE_STRING MicrosoftAccount = NULL;
+    PCWCH Upn;
+    INT UpnLength;
     NTSTATUS Status;
 
+    if (!ProcessIdToSessionId(GetCurrentProcessId(), &CurrentSession)) CurrentSession = MAXDWORD;
+    ZpUser_QueryMicrosoftAccount(&MicrosoftAccount);
     Status = LsaEnumerateLogonSessions(&Count, &Sessions);
-    if (!NT_SUCCESS(Status)) return Status;
+    if (!NT_SUCCESS(Status))
+    {
+        if (MicrosoftAccount != NULL) NT_FreeStringW(MicrosoftAccount);
+        return Status;
+    }
     for (Index = 0; Index < Count; Index++)
     {
         Status = LsaGetLogonSessionData(&Sessions[Index], &Data);
@@ -128,13 +208,27 @@ ZpAdministration_AddLogonSessions(
                      L"%.*s",
                      (INT)(Data->LogonDomain.Length / sizeof(WCHAR)),
                      Data->LogonDomain.Buffer == NULL ? L"" : Data->LogonDomain.Buffer);
+        Upn = Data->Upn.Buffer;
+        UpnLength = (INT)(Data->Upn.Length / sizeof(WCHAR));
+        if (UpnLength == 0 && MicrosoftAccount != NULL && Data->Session == CurrentSession)
+        {
+            Upn = MicrosoftAccount->Buffer + RTL_NUMBER_OF(L"MicrosoftAccount\\") - 1;
+            UpnLength = (INT)(MicrosoftAccount->Length / sizeof(WCHAR)) -
+                        (RTL_NUMBER_OF(L"MicrosoftAccount\\") - 1);
+        }
         _snwprintf_s(Detail,
                      ARRAYSIZE(Detail),
                      _TRUNCATE,
-                     L"会话 %lu · %.*s",
+                     L"会话 %lu · %.*s\nUPN: %.*s\n登录服务器: %.*s\nDNS 域: %.*s",
                      Data->Session,
                      (INT)(Data->AuthenticationPackage.Length / sizeof(WCHAR)),
-                     Data->AuthenticationPackage.Buffer == NULL ? L"" : Data->AuthenticationPackage.Buffer);
+                     Data->AuthenticationPackage.Buffer == NULL ? L"" : Data->AuthenticationPackage.Buffer,
+                     UpnLength,
+                     Upn == NULL ? L"" : Upn,
+                     (INT)(Data->LogonServer.Length / sizeof(WCHAR)),
+                     Data->LogonServer.Buffer == NULL ? L"" : Data->LogonServer.Buffer,
+                     (INT)(Data->DnsDomainName.Length / sizeof(WCHAR)),
+                     Data->DnsDomainName.Buffer == NULL ? L"" : Data->DnsDomainName.Buffer);
         Status = ZpAdministration_AddRecord(Builder,
                                              ZpAdministrationKindLogonSession,
                                              Data->LogonType,
@@ -148,6 +242,7 @@ ZpAdministration_AddLogonSessions(
         if (!NT_SUCCESS(Status)) break;
     }
     LsaFreeReturnBuffer(Sessions);
+    if (MicrosoftAccount != NULL) NT_FreeStringW(MicrosoftAccount);
     return Status;
 }
 

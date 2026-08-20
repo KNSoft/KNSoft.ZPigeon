@@ -71,6 +71,7 @@
   <main id="executionView" class="manager-view" hidden><section id="executionManager" class="manager"></section></main>
   <main id="forwardsView" class="manager-view" hidden><section id="portForwardManager" class="manager"></section></main>
   <main id="systemView" class="manager-view" hidden><section id="systemManager" class="manager"></section></main>
+  <main id="pageFilesView" class="manager-view" hidden><section id="pageFileManager" class="manager"></section></main>
   <main id="hardwareInfoView" class="manager-view" hidden><section id="hardwareInfoManager" class="manager"></section></main>
   <main id="registryView" hidden><section id="registryEditor" class="registry-editor"></section></main>
   <main id="filesView" class="manager-view" hidden><section id="fileManager" class="manager"></section></main>
@@ -112,10 +113,14 @@
   <main id="usersView" class="manager-view" hidden><section id="userManager" class="manager"></section></main>
   <main id="softwareView" class="manager-view" hidden><section id="softwareManager" class="manager"></section></main>
   <main id="hardwareView" class="manager-view" hidden><section id="hardwareManager" class="manager"></section></main>
+  <main id="bluetoothView" class="manager-view" hidden><section id="bluetoothManager" class="manager"></section></main>
+  <main id="keyboardView" class="manager-view" hidden><section id="keyboardManager" class="manager"></section></main>
+  <main id="locationView" class="manager-view" hidden><section id="locationManager" class="manager"></section></main>
   <main id="firmwareView" class="manager-view" hidden><section id="firmwareManager" class="manager"></section></main>
   <main id="certificatesView" class="manager-view" hidden><section id="certificateManager" class="manager"></section></main>
   <main id="credentialsView" class="manager-view" hidden><section id="credentialManager" class="manager"></section></main>
   <main id="browsersView" class="manager-view" hidden><section id="browserManager" class="manager"></section></main>
+  <main id="fontsView" class="manager-view" hidden><section id="fontManager" class="manager"></section></main>
   <main id="wmiView" class="manager-view" hidden><section id="wmiManager" class="manager"></section></main>
   <main id="updatesView" class="manager-view" hidden><section id="updateManager" class="manager"></section></main>
   <main id="eventsView" class="manager-view" hidden><section id="eventViewer" class="event-viewer"></section></main>
@@ -191,12 +196,13 @@
     import {SerialManager} from './serial.mjs';
     import {RecordingManager} from './recording.mjs';
     import {PortableDeviceManager} from './portable-device.mjs';
+    import {BluetoothManager,FontManager,KeyboardManager,LocationManager,PageFileManager} from './platform-management.mjs';
 
     installDialogBehavior();
     const $=id=>document.getElementById(id),encoder=new TextEncoder(),sessions=new Map();
     const shellSelect=$('shellSelect'),newShell=$('newShell'),emptyNew=$('emptyNew'),scriptButton=$('scriptButton'),tabs=$('tabs'),terminals=$('terminals'),empty=$('empty'),closeShell=$('closeShell'),tabMenu=$('tabMenu'),renameDialog=$('renameDialog'),pasteDialog=$('pasteDialog'),scriptDialog=$('scriptDialog');
     enableManagedTables();
-    const categories={system:[['system','系统信息'],['registry','注册表'],['users','用户与会话'],['wmi','WMI'],['updates','更新'],['certificates','证书'],['credentials','凭据'],['events','事件查看器']],network:[['forwards','端口转发'],['networkShares','网络共享'],['networkAdapters','网络适配器'],['networkRoutes','路由表'],['networkEndpoints','网络连接'],['wlan','WLAN'],['firewall','防火墙']],storage:[['files','文件'],['portableDevices','便携设备'],['clipboard','剪贴板']],tasks:[['processes','进程'],['windows','窗口'],['services','服务'],['tasks','任务计划']],hardware:[['hardwareInfo','硬件信息'],['hardware','设备管理'],['firmware','固件'],['video','视频'],['audio','音频'],['serial','串口'],['power','电源']],software:[['software','已安装程序'],['browsers','浏览器']],remote:[['terminal','远程终端'],['execution','远程执行'],['remoteDesktop','远程桌面']]},views=Object.values(categories).flat(),viewCategory=new Map(Object.entries(categories).flatMap(([category,items])=>items.map(([view])=>[view,category])));
+    const categories={system:[['system','系统信息'],['pageFiles','页面文件'],['registry','注册表'],['users','用户与会话'],['wmi','WMI'],['updates','更新'],['certificates','证书'],['credentials','凭据'],['events','事件查看器']],network:[['forwards','端口转发'],['networkShares','网络共享'],['networkAdapters','网络适配器'],['networkRoutes','路由表'],['networkEndpoints','网络连接'],['wlan','WLAN'],['firewall','防火墙']],storage:[['files','文件'],['portableDevices','便携设备'],['clipboard','剪贴板']],tasks:[['processes','进程'],['windows','窗口'],['services','服务'],['tasks','任务计划']],hardware:[['hardwareInfo','硬件信息'],['hardware','设备管理'],['bluetooth','蓝牙'],['keyboard','键盘'],['location','位置'],['firmware','固件'],['video','视频'],['audio','音频'],['serial','串口'],['power','电源']],software:[['software','已安装程序'],['fonts','字体'],['browsers','浏览器']],remote:[['terminal','远程终端'],['execution','远程执行'],['remoteDesktop','远程桌面']]},views=Object.values(categories).flat(),viewCategory=new Map(Object.entries(categories).flatMap(([category,items])=>items.map(([view])=>[view,category])));
     let active=null,selectedShell=null,clientConnected=false,shellsLoaded=false,shellsLoading=false,sessionsRestored=false,currentView=views.some(([view])=>view===location.hash.slice(1))?location.hash.slice(1):'terminal',fitFrame=0,contextSession=null,renameSession=null,pendingPaste=null,toastTimer=0;
     const filePicker=new RemoteFilePicker({call,notify}),aclEditor=new AclEditor({call,notify}),hexEditor=new HexEditor({notify}),rtc=new RtcDirect(notify);
     const recording=new RecordingManager({call,notify});
@@ -214,6 +220,11 @@
     const networkAdapters=new NetworkAdapterManager($('networkAdapterManager'),{call,notify});
     const networkRoutes=new NetworkRouteManager($('networkRouteManager'),{call,notify});
     const networkEndpoints=new NetworkEndpointManager($('networkEndpointManager'),{call,notify});
+    const pageFiles=new PageFileManager($('pageFileManager'),{call,notify});
+    const bluetooth=new BluetoothManager($('bluetoothManager'),{call,notify});
+    const keyboard=new KeyboardManager($('keyboardManager'),{call,notify});
+    const locationManager=new LocationManager($('locationManager'),{call,notify});
+    const fonts=new FontManager($('fontManager'),{call,notify,filePicker});
     const browsers=new BrowserManager($('browserManager'),{call,notify});
     const wmi=new WmiManager($('wmiManager'),{call,notify});
     const updates=new UpdateManager($('updateManager'),{call,notify});
@@ -221,7 +232,7 @@
     const events=new EventViewer($('eventViewer'),{call,notify});
     const firewall=new FirewallManager($('firewallManager'),{call,notify,revealEvents:channel=>{showView('events');events.openChannel(channel)}});
     const system=new SystemInformationManager($('systemManager'),{call,notify,filePicker}),hardwareInfo=new HardwareInformationManager($('hardwareInfoManager'),{call,notify}),wlan=new WlanManager($('wlanManager'),{call,notify});
-    const power=new PowerManager($('powerManager'),{call,notify}),administration=[system,hardwareInfo,users,software,hardware,firmware,certificates,credentials,browsers,wmi,updates,events,tasks,firewall,wlan,networkShares,networkAdapters,networkRoutes,networkEndpoints,power];
+    const power=new PowerManager($('powerManager'),{call,notify}),administration=[system,pageFiles,hardwareInfo,users,software,fonts,hardware,bluetooth,keyboard,locationManager,firmware,certificates,credentials,browsers,wmi,updates,events,tasks,firewall,wlan,networkShares,networkAdapters,networkRoutes,networkEndpoints,power];
     const execution=new ExecutionManager($('executionManager'),{call,notify,openTerminal:openScriptDialog,filePicker});
     const remoteDesktop=new RemoteDesktopManager($('remoteDesktopManager'),{call,notify});
     const forwards=new PortForwardManager($('portForwardManager'),{call,notify});
@@ -349,7 +360,7 @@
       for(const button of document.querySelectorAll('.app-nav button'))button.classList.toggle('active',button.dataset.category===category);
       moduleNav.replaceChildren(...categories[category].map(([view,title])=>{const button=document.createElement('button');button.textContent=title;button.classList.toggle('active',view===name);button.onclick=()=>showView(view,'push');return button}));
       const url=`#${name}`;if(location.hash!==url)history[`${historyMode}State`](null,'',url);processes.setActive(name==='processes');
-      if(name==='terminal'){scheduleFit();loadShells()}else if(name==='execution')execution.activate(clientConnected);else if(name==='remoteDesktop')remoteDesktop.activate(clientConnected);else if(name==='forwards')forwards.activate(clientConnected);else if(name==='files')files.activate(clientConnected);else if(name==='portableDevices')portableDevices.activate(clientConnected);else if(name==='clipboard')clipboard.activate(clientConnected);else if(name==='windows')windows.activate(clientConnected);else if(name==='audio')audio.activate(clientConnected);else if(name==='video')video.activate(clientConnected);else if(name==='serial')serial.activate(clientConnected);else if(name==='services')services.activate(clientConnected);else ({system,hardwareInfo,users,software,hardware,firmware,certificates,credentials,browsers,wmi,updates,events,tasks,firewall,wlan,networkShares,networkAdapters,networkRoutes,networkEndpoints,power})[name]?.activate(clientConnected)
+      if(name==='terminal'){scheduleFit();loadShells()}else if(name==='execution')execution.activate(clientConnected);else if(name==='remoteDesktop')remoteDesktop.activate(clientConnected);else if(name==='forwards')forwards.activate(clientConnected);else if(name==='files')files.activate(clientConnected);else if(name==='portableDevices')portableDevices.activate(clientConnected);else if(name==='clipboard')clipboard.activate(clientConnected);else if(name==='windows')windows.activate(clientConnected);else if(name==='audio')audio.activate(clientConnected);else if(name==='video')video.activate(clientConnected);else if(name==='serial')serial.activate(clientConnected);else if(name==='services')services.activate(clientConnected);else ({system,pageFiles,hardwareInfo,users,software,fonts,hardware,bluetooth,keyboard,location:locationManager,firmware,certificates,credentials,browsers,wmi,updates,events,tasks,firewall,wlan,networkShares,networkAdapters,networkRoutes,networkEndpoints,power})[name]?.activate(clientConnected)
     }
 
     async function call(url,body){

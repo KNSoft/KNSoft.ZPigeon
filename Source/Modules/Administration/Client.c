@@ -172,6 +172,11 @@ typedef const VOID* PCVOID;
 #include "Firmware.inl"
 #include "NetworkShare.inl"
 #include "NetworkStatus.inl"
+#include "PageFile.inl"
+#include "Bluetooth.inl"
+#include "Keyboard.inl"
+#include "Location.inl"
+#include "Font.inl"
 
 ZP_STATUS
 ZpAdministration_Execute(
@@ -292,6 +297,21 @@ ZpAdministration_Execute(
                        ZpAdministration_EnumerateNetworkEndpoints(Response, ResponseLength) :
                        ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
 
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_PAGE_FILES:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumeratePageFiles(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_BLUETOOTH:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateBluetooth(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_FONTS:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateFonts(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
         case ZP_ADMINISTRATION_OPERATION_QUERY_CERTIFICATE:
             Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
             return NT_SUCCESS(Status) ?
@@ -326,6 +346,18 @@ ZpAdministration_Execute(
             Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
             return NT_SUCCESS(Status) ?
                        ZpAdministration_QueryPublishedShare(&Identity, Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(Status);
+
+        case ZP_ADMINISTRATION_OPERATION_WAIT_KEYBOARD:
+            Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
+            return NT_SUCCESS(Status) ?
+                       ZpAdministration_WaitKeyboard(&Identity, Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(Status);
+
+        case ZP_ADMINISTRATION_OPERATION_QUERY_LOCATION:
+            Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
+            return NT_SUCCESS(Status) ?
+                       ZpAdministration_QueryLocation(&Identity, Response, ResponseLength) :
                        ZpStatus_FromNtStatus(Status);
     }
     Status = ZpAdministration_DecodeControl(Request, RequestLength, &Control);
@@ -385,6 +417,15 @@ ZpAdministration_Execute(
 
         case ZP_ADMINISTRATION_OPERATION_CONTROL_NETWORK_ROUTE:
             return ZpAdministration_ControlNetworkRoute(&Control);
+
+        case ZP_ADMINISTRATION_OPERATION_CONTROL_PAGE_FILE:
+            return ZpAdministration_ControlPageFile(&Control);
+
+        case ZP_ADMINISTRATION_OPERATION_CONTROL_BLUETOOTH:
+            return ZpAdministration_ControlBluetooth(&Control);
+
+        case ZP_ADMINISTRATION_OPERATION_CONTROL_FONT:
+            return ZpAdministration_ControlFont(&Control);
     }
     return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
 }

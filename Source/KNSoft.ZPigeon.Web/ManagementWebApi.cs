@@ -509,6 +509,16 @@ internal static class ManagementWebApi
             await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateSessions));
         app.MapPost("/api/logon-sessions", async () =>
             await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateLogonSessions));
+        MapAdministration(app, server, "page-files", AdministrationOperation.EnumeratePageFiles,
+                          AdministrationOperation.ControlPageFile);
+        MapAdministration(app, server, "bluetooth", AdministrationOperation.EnumerateBluetooth,
+                          AdministrationOperation.ControlBluetooth);
+        app.MapPost("/api/keyboard/wait", async () =>
+            await server.QueryAdministrationAsync(AdministrationOperation.WaitKeyboard, "wait"));
+        app.MapPost("/api/location", async () =>
+            await server.QueryAdministrationAsync(AdministrationOperation.QueryLocation, "current"));
+        MapAdministration(app, server, "fonts", AdministrationOperation.EnumerateFonts,
+                          AdministrationOperation.ControlFont);
         MapAdministration(app, server, "software", AdministrationOperation.EnumerateSoftware,
                           AdministrationOperation.ControlSoftware);
         MapAdministration(app, server, "hardware", AdministrationOperation.EnumerateHardware,

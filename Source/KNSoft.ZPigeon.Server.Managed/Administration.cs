@@ -111,7 +111,15 @@ public enum AdministrationOperation : ushort
     EnumerateNetworkEndpoints,
     ControlNetworkRoute,
     EnumerateSessions,
-    EnumerateLogonSessions
+    EnumerateLogonSessions,
+    EnumeratePageFiles,
+    ControlPageFile,
+    EnumerateBluetooth,
+    ControlBluetooth,
+    WaitKeyboard,
+    QueryLocation,
+    EnumerateFonts,
+    ControlFont
 }
 
 public enum AdministrationKind : ushort
@@ -156,7 +164,13 @@ public enum AdministrationKind : ushort
     TcpEndpoint,
     UdpEndpoint,
     Session,
-    LogonSession
+    LogonSession,
+    PageFile,
+    BluetoothRadio,
+    BluetoothDevice,
+    KeyboardEvent,
+    Location,
+    Font
 }
 
 public enum CredentialStore : ushort
