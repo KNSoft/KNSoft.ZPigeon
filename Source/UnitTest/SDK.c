@@ -31,11 +31,11 @@ typedef struct _SDK_TEST_CONTEXT
     ULONG SendCount;
     ZP_MESSAGE_TYPE SendMessageType;
     ULONGLONG SendToken;
-    ULONGLONG SendRequestId;
+    ULONG SendRequestId;
     USHORT SendModuleId;
     USHORT SendOperationId;
     ULONG SendPayloadLength;
-    ULONGLONG SendChannelId;
+    ULONG SendChannelId;
     ULONG SendChannelCredit;
     ULONG SendChannelDataLength;
     ZP_STATUS SendChannelStatus;
@@ -50,7 +50,7 @@ typedef struct _SDK_TEST_CONTEXT
     ULONG FilePageCount;
     ZP_STATUS FilePageStatus;
     ULONG FilePageFileCount;
-    ULONGLONG FilePageEnumerationId;
+    ULONG FilePageEnumerationId;
     ULONG RegistryPageCount;
     ZP_STATUS RegistryPageStatus;
     ULONG RegistryRecordCount;
@@ -1193,15 +1193,14 @@ TEST_FUNC(SDKContract)
     WCHAR FileAttributePath[MAX_PATH], TempPath[MAX_PATH];
     BYTE RootCertificate[] = { 0x30, 0x01, 0x00 };
     ZP_MODULE_RECORD Modules[] = { { 1, 1 }, { 2, 1 } };
-    ZP_ENDPOINT Endpoint = { ZpTransportQuic, Host, 443, ServerName, NULL };
+    ZP_ENDPOINT Endpoint = { ZpTransportQuic, Host, 443, ServerName };
     ZP_ENDPOINT MixedEndpoints[] = {
-        { ZpTransportTcp, Host, 443, ServerName, NULL },
-        { ZpTransportQuic, Host, 443, ServerName, NULL }
+        { ZpTransportTcp, Host, 443, ServerName },
+        { ZpTransportQuic, Host, 443, ServerName }
     };
-    ZP_LISTENER_ENDPOINT Listener = { ZpTransportQuic, ListenerHost, 443, NULL };
+    ZP_LISTENER_ENDPOINT Listener = { ZpTransportQuic, ListenerHost, 443 };
     ZP_SERVER_DEPLOYMENT InvalidDeployment = { L"server.example", NULL };
     ZP_CLIENT_CONFIG ClientConfig = {
-        sizeof(ZP_CLIENT_CONFIG),
         &Endpoint,
         1,
         RootCertificate,
@@ -1215,7 +1214,6 @@ TEST_FUNC(SDKContract)
         NULL
     };
     ZP_SERVER_CONFIG ServerConfig = {
-        sizeof(ZP_SERVER_CONFIG),
         &Listener,
         1,
         NULL,
@@ -1278,7 +1276,7 @@ TEST_FUNC(SDKContract)
     ULONG EventPageResponseLength;
     DWORD FileLoopbackPathLength, TempPathLength;
     ULONG FileLoopbackDirectoryLength;
-    BYTE TerminalCreateResponse[sizeof(ULONGLONG) + sizeof(ULONG)];
+    BYTE TerminalCreateResponse[2 * sizeof(ULONG)];
     ULONG TerminalCreateResponseLength;
     BYTE TerminalInput[] = { 'e', 'x', 'i', 't' };
     BYTE TerminalTooLongInput[] = { 'e', 'x', 'i', 't', '\r' };
@@ -1291,7 +1289,7 @@ TEST_FUNC(SDKContract)
     SDK_SYSTEM_LOOPBACK SystemLoopback = { 0 };
     SDK_REQUEST_CONNECTION RegistryConnection = { 0 };
     LOGICAL TempFileCreated;
-    ULONGLONG CanceledRequestId;
+    ULONG CanceledRequestId;
     ZP_MODULE_RECORD LoopbackModules[] = {
         { ZP_SYSTEM_MODULE_ID, ZP_SYSTEM_MODULE_VERSION },
         { ZP_PROCESS_MODULE_ID, ZP_PROCESS_MODULE_VERSION },
@@ -1312,15 +1310,15 @@ TEST_FUNC(SDKContract)
     RtlFillMemory(FileDigest, sizeof(FileDigest), 0x5A);
 
     TEST_OK(ZpTransportQuic == 1 && ZpTransportTcp == 2 &&
-            ZpTransportUdp == 3 && ZpTransportWss == 4);
+            ZpTransportUdp == 3 && ZpTransportCount == 4);
     TEST_OK(Endpoint.Transport == ZpTransportQuic &&
             Endpoint.Port == 443 &&
             wcscmp(Endpoint.ServerName, L"server.example") == 0);
     TEST_OK(Listener.Transport == ZpTransportQuic &&
             wcscmp(Listener.Host, L"::") == 0 &&
             Listener.Port == 443);
-    TEST_OK(ClientConfig.Size == sizeof(ZP_CLIENT_CONFIG));
-    TEST_OK(ServerConfig.Size == sizeof(ZP_SERVER_CONFIG));
+    TEST_OK(ClientConfig.EndpointCount == 1);
+    TEST_OK(ServerConfig.ListenerCount == 1);
     TEST_OK(sizeof(ZP_CLIENT_HANDLE) == sizeof(PVOID));
     TEST_OK(sizeof(ZP_SERVER_HANDLE) == sizeof(PVOID));
     TEST_OK(sizeof(ZP_CONNECTION_HANDLE) == sizeof(PVOID));
@@ -1589,7 +1587,9 @@ TEST_FUNC(SDKContract)
     TEST_OK(ClientObject->Config.DeploymentRootCertificate[0] == 0x30);
     TEST_OK(ClientObject->Config.Modules[0].ModuleVersion == 1);
     TEST_OK(ClientObject->TransportOperations[ZpTransportQuic] != NULL &&
-            ClientObject->TransportContexts[ZpTransportQuic] == &ClientObject->QuicTransport);
+            ClientObject->TransportContexts[ZpTransportQuic] == &ClientObject->QuicTransport &&
+            ClientObject->TransportOperations[ZpTransportTcp] == NULL &&
+            ClientObject->TransportOperations[ZpTransportUdp] == NULL);
     ClientObject->State = ZpClientStateConnecting;
     TEST_OK(ZpClient_Close(Client) == STATUS_DEVICE_BUSY);
     ClientObject->State = ZpClientStateStopped;
@@ -1605,7 +1605,10 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
     ClientObject = (PZP_CLIENT_OBJECT)Client;
     TEST_OK(ClientObject->TransportOperations[ZpTransportQuic] != NULL &&
-            ClientObject->TransportContexts[ZpTransportQuic] == &ClientObject->QuicTransport);
+            ClientObject->TransportContexts[ZpTransportQuic] == &ClientObject->QuicTransport &&
+            ClientObject->TransportOperations[ZpTransportTcp] != NULL &&
+            ClientObject->TransportContexts[ZpTransportTcp] == &ClientObject->TcpTransport &&
+            ClientObject->TransportOperations[ZpTransportUdp] == NULL);
     TEST_OK(NT_SUCCESS(ZpClient_Close(Client)));
 
     ClientConfig.CallbackContext = &TlsContext;
@@ -1635,12 +1638,9 @@ TEST_FUNC(SDKContract)
 
     ClientConfig.Endpoints = &Endpoint;
     ClientConfig.EndpointCount = 1;
-    ClientConfig.Size = 0;
+    Endpoint.Transport = ZpTransportCount;
     TEST_OK(ZpClient_Create(&ClientConfig, &Client) == STATUS_INVALID_PARAMETER);
-    ClientConfig.Size = sizeof(ClientConfig);
-    Endpoint.WssPath = L"/invalid";
-    TEST_OK(ZpClient_Create(&ClientConfig, &Client) == STATUS_INVALID_PARAMETER);
-    Endpoint.WssPath = NULL;
+    Endpoint.Transport = ZpTransportQuic;
     Modules[1].ModuleId = Modules[0].ModuleId;
     TEST_OK(ZpClient_Create(&ClientConfig, &Client) == STATUS_INVALID_PARAMETER);
     Modules[1].ModuleId = 2;
@@ -1662,7 +1662,11 @@ TEST_FUNC(SDKContract)
             ServerObject->Config.MaxChannelsPerConnection ==
                 ZP_SERVER_DEFAULT_MAX_CHANNELS_PER_CONNECTION);
     TEST_OK(wcscmp(ServerObject->Config.Listeners[0].Host, L"::") == 0);
-    TEST_OK(ServerObject->Config.Modules[0].ModuleVersion == 1);
+    TEST_OK(ServerObject->Config.Modules[0].ModuleVersion == 1 &&
+            ServerObject->TransportOperations[ZpTransportQuic] != NULL &&
+            ServerObject->TransportContexts[ZpTransportQuic] == &ServerObject->QuicTransport &&
+            ServerObject->TransportOperations[ZpTransportTcp] == NULL &&
+            ServerObject->TransportOperations[ZpTransportUdp] == NULL);
     ServerObject->State = ZpServerStateRunning;
     TEST_OK(ZpServer_Close(Server) == STATUS_DEVICE_BUSY);
     ServerObject->State = ZpServerStateStopped;
@@ -1670,21 +1674,25 @@ TEST_FUNC(SDKContract)
 
     ListenerHost[0] = L':';
     Modules[0].ModuleVersion = 1;
-    Listener.WssPath = L"/invalid";
+    Listener.Transport = ZpTransportCount;
     TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
-    Listener.WssPath = NULL;
+    Listener.Transport = ZpTransportQuic;
     ServerConfig.Deployments = &InvalidDeployment;
     ServerConfig.DeploymentCount = 1;
     TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
 
     ServerConfig.Deployments = NULL;
     ServerConfig.DeploymentCount = 0;
-    Endpoint.Transport = ZpTransportWss;
+    Endpoint.Transport = ZpTransportUdp;
     ClientConfig.CallbackContext = &TestContext;
     TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
     ClientObject = (PZP_CLIENT_OBJECT)Client;
+    TEST_OK(ZpClient_SetTransport(Client,
+                                  ZpTransportCount,
+                                  &SDKTest_TransportOperations,
+                                  &TestContext) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpClient_SetTransport(Client,
-                                             ZpTransportWss,
+                                             ZpTransportUdp,
                                              &SDKTest_TransportOperations,
                                              &TestContext)));
     TEST_OK(NT_SUCCESS(ZpClient_Start(Client)) &&
@@ -1759,8 +1767,8 @@ TEST_FUNC(SDKContract)
             TestContext.SendCount == 1 &&
             TestContext.SendMessageType == ZpMessagePing &&
             TestContext.SendToken == 0x0102030405060708);
-    ClientObject->ActiveModules[0] = ClientObject->Config.Modules[0];
-    ClientObject->ActiveModuleCount = 1;
+    ClientObject->ActiveModuleMask[InboundRequest.ModuleId >> 6] |=
+        1ull << (InboundRequest.ModuleId & 63);
     ClientObject->InboundRequestCount = ClientObject->Config.MaxRequestsPerConnection;
     TEST_OK(NT_SUCCESS(ZpClient_QueueRequest(Client, &InboundRequest)) &&
             ClientObject->HighestInboundRequestId == InboundRequest.RequestId &&
@@ -2438,7 +2446,7 @@ TEST_FUNC(SDKContract)
     ClientConfig.CallbackContext = &TestContext;
     TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
     TEST_OK(NT_SUCCESS(ZpClient_SetTransport(Client,
-                                             ZpTransportWss,
+                                             ZpTransportUdp,
                                              &SDKTest_TransportOperations,
                                              &TestContext)));
     ClientObject = (PZP_CLIENT_OBJECT)Client;
@@ -2461,14 +2469,12 @@ TEST_FUNC(SDKContract)
 
     RtlZeroMemory(&TestContext, sizeof(TestContext));
     ServerConfig.CallbackContext = &TestContext;
-    Listener.Transport = ZpTransportWss;
+    Listener.Transport = ZpTransportUdp;
     TEST_OK(NT_SUCCESS(ZpServer_Create(&ServerConfig, &Server)));
     ServerObject = (PZP_SERVER_OBJECT)Server;
     ServerObject->Config.DeploymentCount = 1;
-    TEST_OK(SDK_STATUS_IS(ZpServer_Start(Server), STATUS_NOT_SUPPORTED) &&
-            ServerObject->State == ZpServerStateStopped);
     TEST_OK(NT_SUCCESS(ZpServer_SetTransport(Server,
-                                             ZpTransportWss,
+                                             ZpTransportUdp,
                                              &SDKTest_TransportOperations,
                                              &TestContext)));
     TEST_OK(ZpStatus_IsSuccess(ZpServer_Start(Server)) &&
@@ -2484,7 +2490,7 @@ TEST_FUNC(SDKContract)
     TEST_OK(NT_SUCCESS(ZpServer_Stop(Server)) && TestContext.StopCount == 1);
     TestContext.CloseServerOnStopped = TRUE;
     ZpServer_TransportStopped(Server,
-                              ZpTransportWss,
+                              ZpTransportUdp,
                               ZpStatus_FromNtStatus(STATUS_SUCCESS));
     TEST_OK(ServerObject->State == ZpServerStateStopped &&
             TestContext.ServerStates[3] == ZpServerStateStopped &&

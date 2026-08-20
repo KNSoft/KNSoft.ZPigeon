@@ -15,6 +15,7 @@ typedef struct _ZP_SERVER_UDP_TRANSPORT
     LOGICAL ReceiveStopped;
     ULONG ActiveConnectionCount;
     HANDLE StopEvent;
+    WSAEVENT SocketEvent;
     HANDLE WorkerThread;
     CredHandle Credential;
     SOCKET Listeners[ZP_LISTENER_MAX_COUNT];

@@ -2,6 +2,10 @@
 
 These candidates remain pending Owner review. `IO_CreatePipe` is locally prototyped in the parent MLE repository and the ZPigeon package copy, but is not committed there; `PS_CreateProcessEx` is not implemented.
 
+## ZPigeon Release build optimization
+
+This is a ZPigeon project task rather than an MLE candidate. Enable whole-program optimization for all Release C/C++ projects and link the Client with `KNSoftQuicIntegration=StaticLTCGPGO`, non-incremental linking, `/OPT:REF`, and `/OPT:ICF`. A local comparison build reduced `KNSoft.ZPigeon.Client.exe` from 2,503,168 bytes to 757,760 bytes while retaining the static CRT and static MsQuic. Keep Release PDB generation; the PDB is external and remains useful for diagnostics.
+
 ## `IO_CreatePipe`
 
 Add a minimal native asynchronous anonymous byte-stream pipe helper to the MLE I/O module. This follows the implementation used by Microsoft Windows Terminal rather than synthesizing a discoverable pipe name:

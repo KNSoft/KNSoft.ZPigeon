@@ -23,7 +23,7 @@ static
 NTSTATUS
 ZpServerFile_Send(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
@@ -228,7 +228,7 @@ static
 NTSTATUS
 ZpServerFile_SendStringRequest(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_(ValueLength) PCWCH Value,
     _In_ ULONG ValueLength,
     _In_ ULONG TimeoutMilliseconds,
@@ -275,7 +275,7 @@ static
 NTSTATUS
 ZpServerFile_SendPairStatusRequest(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_(FirstLength) PCWCH First,
     _In_ ULONG FirstLength,
     _In_reads_(SecondLength) PCWCH Second,
@@ -342,7 +342,7 @@ static
 NTSTATUS
 ZpServerFile_Send(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
@@ -597,7 +597,7 @@ ZpServer_EnumerateFilesPage(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
-    _In_ ULONGLONG EnumerationId,
+    _In_ ULONG EnumerationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_FILE_ENUMERATE_PAGE_CALLBACK Callback,
     _In_opt_ PVOID Context,
@@ -956,7 +956,8 @@ ZpServerFile_OpenReadComplete(
 {
     PZP_SERVER_FILE_OPEN_READ_CONTEXT FileContext = Context;
     PZP_SERVER_CHANNEL_OBJECT Channel = NULL;
-    ULONGLONG ChannelId = 0, FileSize = 0, Offset = 0, Remaining = 0;
+    ULONG ChannelId = 0;
+    ULONGLONG FileSize = 0, Offset = 0, Remaining = 0;
     NTSTATUS ChannelStatus;
 
     if (ZpStatus_IsSuccess(Status))
@@ -1126,7 +1127,8 @@ ZpServerFile_OpenWriteComplete(
 {
     PZP_SERVER_FILE_OPEN_WRITE_CONTEXT FileContext = Context;
     PZP_SERVER_CHANNEL_OBJECT Channel = NULL;
-    ULONGLONG ChannelId = 0, FileSize = 0;
+    ULONG ChannelId = 0;
+    ULONGLONG FileSize = 0;
 
     if (ZpStatus_IsSuccess(Status))
     {

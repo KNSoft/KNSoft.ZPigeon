@@ -7,7 +7,7 @@ typedef struct _ZP_CLIENT_TUNNEL_CHANNEL ZP_CLIENT_TUNNEL_CHANNEL, *PZP_CLIENT_T
 ZP_STATUS
 ZpTunnel_Execute(
     _Inout_ struct _ZP_CLIENT_OBJECT* Client,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_bytes_(RequestLength) const VOID* Request,
     _In_ ULONG RequestLength,
     _In_ ULONG TimeoutMilliseconds,

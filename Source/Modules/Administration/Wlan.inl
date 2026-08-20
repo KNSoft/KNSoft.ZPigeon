@@ -50,7 +50,7 @@ ZpAdministration_LoadWlan(
     Api->DeleteProfile = (ZP_WLAN_DELETE_PROFILE)GetProcAddress(Api->Module, "WlanDeleteProfile");
     Api->FreeMemory = (ZP_WLAN_FREE_MEMORY)GetProcAddress(Api->Module, "WlanFreeMemory");
     if (Api->OpenHandle != NULL && Api->CloseHandle != NULL && Api->EnumInterfaces != NULL &&
-        Api->GetNetworks != NULL && Api->GetProfiles != NULL &&
+        Api->GetNetworks != NULL && Api->GetProfiles != NULL && Api->GetProfile != NULL &&
         Api->Connect != NULL && Api->Disconnect != NULL && Api->DeleteProfile != NULL && Api->FreeMemory != NULL)
     {
         return ERROR_SUCCESS;

@@ -20,8 +20,8 @@ int
 main(
     void)
 {
-    ZP_CLIENT_CONFIG ClientConfig = { sizeof(ClientConfig) };
-    ZP_SERVER_CONFIG ServerConfig = { sizeof(ServerConfig) };
+    ZP_CLIENT_CONFIG ClientConfig = { 0 };
+    ZP_SERVER_CONFIG ServerConfig = { 0 };
     ZP_CLIENT_HANDLE Client = NULL;
     ZP_SERVER_HANDLE Server = NULL;
     ULONG FrameSize;

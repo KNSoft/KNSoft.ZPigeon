@@ -19,7 +19,7 @@ public sealed partial class NativeServer
     private static readonly NativeMethods.ServiceListCallback ServiceListCallback = CompleteServiceList;
     private static readonly NativeMethods.ServiceInfoCallback ServiceInfoCallback = CompleteServiceInfo;
 
-    public Task<FilePage> EnumerateFilesPageAsync(string? path, ulong enumerationId) =>
+    public Task<FilePage> EnumerateFilesPageAsync(string? path, uint enumerationId) =>
         RunManagementAsync<FilePage>((context) => NativeMethods.EnumerateFilesPage(
             path,
             (uint)(path?.Length ?? 0),
@@ -332,7 +332,7 @@ public sealed partial class NativeServer
 
     private static void CompleteFilePage(
         ZpStatus status,
-        ulong enumerationId,
+        uint enumerationId,
         nint records,
         uint recordCount,
         nint context)
@@ -946,7 +946,7 @@ internal static partial class NativeMethods
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void FilePageCallback(
         ZpStatus status,
-        ulong enumerationId,
+        uint enumerationId,
         nint records,
         uint recordCount,
         nint context);
@@ -1198,7 +1198,7 @@ internal static partial class NativeMethods
     internal static partial int EnumerateFilesPage(
         string? path,
         uint pathLength,
-        ulong enumerationId,
+        uint enumerationId,
         FilePageCallback callback,
         nint context);
 

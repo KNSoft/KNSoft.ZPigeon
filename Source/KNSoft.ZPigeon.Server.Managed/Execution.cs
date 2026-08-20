@@ -43,7 +43,7 @@ public sealed partial class NativeServer
         RunManagementAsync<ExecutionJob[]>(context =>
             NativeMethods.EnumerateExecutionJobs(ExecutionJobsCallback, context));
 
-    public Task TerminateExecutionAsync(ulong jobId) =>
+    public Task TerminateExecutionAsync(uint jobId) =>
         RunStatusAsync((callback, context) => NativeMethods.TerminateExecution(jobId, callback, context));
 
     public Task<string> CreateExecutionStagingAsync(string name)
@@ -198,7 +198,7 @@ internal static partial class NativeMethods
     [StructLayout(LayoutKind.Sequential)]
     internal readonly struct ExecutionJob
     {
-        internal readonly ulong JobId;
+        internal readonly uint JobId;
         internal readonly ulong CreateTime;
         internal readonly ulong ExitTime;
         internal readonly uint ProcessId;
@@ -242,7 +242,7 @@ internal static partial class NativeMethods
     internal static partial int EnumerateExecutionJobs(ExecutionJobsCallback callback, nint context);
 
     [LibraryImport(Library, EntryPoint = "ZpNative_TerminateExecution")]
-    internal static partial int TerminateExecution(ulong jobId, StatusCallback callback, nint context);
+    internal static partial int TerminateExecution(uint jobId, StatusCallback callback, nint context);
 
     [LibraryImport(Library,
         EntryPoint = "ZpNative_CreateExecutionStaging",

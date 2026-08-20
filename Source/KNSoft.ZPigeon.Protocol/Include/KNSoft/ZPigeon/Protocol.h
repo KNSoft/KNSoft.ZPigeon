@@ -172,8 +172,8 @@ typedef struct _ZP_FRAME_VIEW
 
 typedef struct _ZP_MODULE_RECORD
 {
-    USHORT ModuleId;
-    USHORT ModuleVersion;
+    BYTE ModuleId;
+    BYTE ModuleVersion;
 } ZP_MODULE_RECORD, *PZP_MODULE_RECORD;
 
 typedef const ZP_MODULE_RECORD* PCZP_MODULE_RECORD;
@@ -188,7 +188,7 @@ typedef const ZP_MODULE_LIST_VIEW* PCZP_MODULE_LIST_VIEW;
 
 typedef struct _ZP_CLIENT_HELLO
 {
-    USHORT CoreVersion;
+    BYTE CoreVersion;
     PCZP_MODULE_RECORD Modules;
     USHORT ModuleCount;
     const BYTE* ClientPublicKey;
@@ -198,7 +198,7 @@ typedef const ZP_CLIENT_HELLO* PCZP_CLIENT_HELLO;
 
 typedef struct _ZP_CLIENT_HELLO_VIEW
 {
-    USHORT CoreVersion;
+    BYTE CoreVersion;
     ZP_MODULE_LIST_VIEW Modules;
     const BYTE* ClientPublicKey;
 } ZP_CLIENT_HELLO_VIEW, *PZP_CLIENT_HELLO_VIEW;
@@ -218,9 +218,9 @@ typedef struct _ZP_READY_VIEW
 
 typedef struct _ZP_REQUEST
 {
-    ULONGLONG RequestId;
-    USHORT ModuleId;
-    USHORT OperationId;
+    ULONG RequestId;
+    BYTE ModuleId;
+    BYTE OperationId;
     ULONG TimeoutMilliseconds;
     const VOID* Payload;
     ULONG PayloadLength;
@@ -230,9 +230,9 @@ typedef const ZP_REQUEST* PCZP_REQUEST;
 
 typedef struct _ZP_REQUEST_VIEW
 {
-    ULONGLONG RequestId;
-    USHORT ModuleId;
-    USHORT OperationId;
+    ULONG RequestId;
+    BYTE ModuleId;
+    BYTE OperationId;
     ULONG TimeoutMilliseconds;
     ZP_BUFFER_VIEW Payload;
 } ZP_REQUEST_VIEW, *PZP_REQUEST_VIEW;
@@ -241,7 +241,7 @@ typedef const ZP_REQUEST_VIEW* PCZP_REQUEST_VIEW;
 
 typedef struct _ZP_RESPONSE
 {
-    ULONGLONG RequestId;
+    ULONG RequestId;
     ZP_STATUS Status;
     const VOID* Payload;
     ULONG PayloadLength;
@@ -251,7 +251,7 @@ typedef const ZP_RESPONSE* PCZP_RESPONSE;
 
 typedef struct _ZP_RESPONSE_VIEW
 {
-    ULONGLONG RequestId;
+    ULONG RequestId;
     ZP_STATUS Status;
     ZP_BUFFER_VIEW Payload;
 } ZP_RESPONSE_VIEW, *PZP_RESPONSE_VIEW;
@@ -260,13 +260,13 @@ typedef const ZP_RESPONSE_VIEW* PCZP_RESPONSE_VIEW;
 
 typedef struct _ZP_CHANNEL_DATA_VIEW
 {
-    ULONGLONG ChannelId;
+    ULONG ChannelId;
     ZP_BUFFER_VIEW Data;
 } ZP_CHANNEL_DATA_VIEW, *PZP_CHANNEL_DATA_VIEW;
 
 typedef struct _ZP_CHANNEL_CLOSE
 {
-    ULONGLONG ChannelId;
+    ULONG ChannelId;
     ZP_STATUS Status;
 } ZP_CHANNEL_CLOSE, *PZP_CHANNEL_CLOSE;
 
@@ -462,7 +462,7 @@ ZpMessage_DecodeResponse(
 
 NTSTATUS
 ZpMessage_EncodeCancel(
-    _In_ ULONGLONG RequestId,
+    _In_ ULONG RequestId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);
@@ -471,11 +471,11 @@ NTSTATUS
 ZpMessage_DecodeCancel(
     _In_reads_bytes_(BodyLength) const VOID* Body,
     _In_ ULONG BodyLength,
-    _Out_ PULONGLONG RequestId);
+    _Out_ PULONG RequestId);
 
 NTSTATUS
 ZpMessage_EncodeChannelData(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_reads_bytes_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
@@ -490,7 +490,7 @@ ZpMessage_DecodeChannelData(
 
 NTSTATUS
 ZpMessage_EncodeChannelClose(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ZP_STATUS Status,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
@@ -504,7 +504,7 @@ ZpMessage_DecodeChannelClose(
 
 NTSTATUS
 ZpMessage_EncodeChannelWindow(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ULONG CreditBytes,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
@@ -514,7 +514,7 @@ NTSTATUS
 ZpMessage_DecodeChannelWindow(
     _In_reads_bytes_(BodyLength) const VOID* Body,
     _In_ ULONG BodyLength,
-    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONG ChannelId,
     _Out_ PULONG CreditBytes);
 
 NTSTATUS

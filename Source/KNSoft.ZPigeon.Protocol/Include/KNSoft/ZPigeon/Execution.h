@@ -109,7 +109,7 @@ typedef const ZP_EXECUTION_START_VIEW* PCZP_EXECUTION_START_VIEW;
 
 typedef struct _ZP_EXECUTION_JOB_RECORD
 {
-    ULONGLONG JobId;
+    ULONG JobId;
     ULONGLONG CreateTime;
     ULONGLONG ExitTime;
     ULONG ProcessId;
@@ -127,7 +127,7 @@ typedef const ZP_EXECUTION_JOB_RECORD* PCZP_EXECUTION_JOB_RECORD;
 
 typedef struct _ZP_EXECUTION_JOB_RECORD_VIEW
 {
-    ULONGLONG JobId;
+    ULONG JobId;
     ULONGLONG CreateTime;
     ULONGLONG ExitTime;
     ULONG ProcessId;
@@ -204,7 +204,7 @@ ZpExecution_GetJob(
 
 NTSTATUS
 ZpExecution_EncodeJobId(
-    _In_ ULONGLONG JobId,
+    _In_ ULONG JobId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);
@@ -213,7 +213,7 @@ NTSTATUS
 ZpExecution_DecodeJobId(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG JobId);
+    _Out_ PULONG JobId);
 
 NTSTATUS
 ZpExecution_EncodeStaging(

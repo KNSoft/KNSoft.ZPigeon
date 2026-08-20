@@ -64,7 +64,7 @@ ZpTunnel_DecodeOpen(
 
 NTSTATUS
 ZpTunnel_EncodeOpenResponse(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
@@ -76,19 +76,19 @@ ZpTunnel_EncodeOpenResponse(
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < sizeof(ChannelId)) return STATUS_BUFFER_TOO_SMALL;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    return ZpCodec_WriteUInt64(&Writer, ChannelId);
+    return ZpCodec_WriteUInt32(&Writer, ChannelId);
 }
 
 NTSTATUS
 ZpTunnel_DecodeOpenResponse(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG ChannelId)
+    _Out_ PULONG ChannelId)
 {
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadUInt64(&Reader, ChannelId);
+    Status = ZpCodec_ReadUInt32(&Reader, ChannelId);
     return NT_SUCCESS(Status) && (*ChannelId == 0 || Reader.Offset != PayloadLength) ? STATUS_DATA_ERROR : Status;
 }

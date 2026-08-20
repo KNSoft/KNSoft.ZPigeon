@@ -50,7 +50,6 @@ typedef const ZP_SERVER_DEPLOYMENT* PCZP_SERVER_DEPLOYMENT;
 
 typedef struct _ZP_SERVER_CONFIG
 {
-    ULONG Size;
     PCZP_LISTENER_ENDPOINT Listeners;
     ULONG ListenerCount;
     PCZP_SERVER_DEPLOYMENT Deployments;
@@ -168,8 +167,8 @@ NTSTATUS
 NTAPI
 ZpServer_SendRequest(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT ModuleId,
-    _In_ USHORT OperationId,
+    _In_ BYTE ModuleId,
+    _In_ BYTE OperationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
@@ -240,7 +239,7 @@ ZpServer_EnumerateFilesPage(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
-    _In_ ULONGLONG EnumerationId,
+    _In_ ULONG EnumerationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_FILE_ENUMERATE_PAGE_CALLBACK Callback,
     _In_opt_ PVOID Context,
@@ -687,7 +686,7 @@ NTSTATUS
 NTAPI
 ZpServer_EnumerateAdministration(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_ADMINISTRATION_ENUMERATE_CALLBACK Callback,
     _In_opt_ PVOID Context,
@@ -697,7 +696,7 @@ NTSTATUS
 NTAPI
 ZpServer_QueryAdministration(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_(IdentityLength) PCWCH Identity,
     _In_ ULONG IdentityLength,
     _In_ ULONG TimeoutMilliseconds,
@@ -709,7 +708,7 @@ NTSTATUS
 NTAPI
 ZpServer_ControlAdministration(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ZP_ADMINISTRATION_ACTION Action,
     _In_reads_opt_(IdentityLength) PCWCH Identity,
     _In_ ULONG IdentityLength,
@@ -787,7 +786,7 @@ NTSTATUS
 NTAPI
 ZpServer_TerminateExecution(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ ULONGLONG JobId,
+    _In_ ULONG JobId,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,

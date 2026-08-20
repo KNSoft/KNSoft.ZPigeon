@@ -67,7 +67,7 @@ ZpAudio_SendCloseLocked(
     _Inout_ PZP_CLIENT_AUDIO_CHANNEL Channel,
     _In_ ZP_STATUS CloseStatus)
 {
-    BYTE Body[sizeof(ULONGLONG) + ZP_STATUS_WIRE_SIZE];
+    BYTE Body[sizeof(ULONG) + ZP_STATUS_WIRE_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -95,7 +95,7 @@ ZpAudio_SendBytes(
     NTSTATUS Status = STATUS_SUCCESS;
     LOGICAL Pending, Removed;
 
-    Body = Mem_Alloc(sizeof(ULONGLONG) + ZP_AUDIO_CHANNEL_CHUNK_SIZE);
+    Body = Mem_Alloc(sizeof(ULONG) + ZP_AUDIO_CHANNEL_CHUNK_SIZE);
     if (Body == NULL) return STATUS_NO_MEMORY;
     while (Offset < Length)
     {
@@ -122,7 +122,7 @@ ZpAudio_SendBytes(
                                              Add2Ptr(Data, Offset),
                                              ChunkLength,
                                              Body,
-                                             sizeof(ULONGLONG) + ZP_AUDIO_CHANNEL_CHUNK_SIZE,
+                                             sizeof(ULONG) + ZP_AUDIO_CHANNEL_CHUNK_SIZE,
                                              &BodyLength);
         if (!NT_SUCCESS(Status)) break;
         RtlAcquireSRWLockExclusive(&Object->Lock);

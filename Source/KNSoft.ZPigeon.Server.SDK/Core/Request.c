@@ -8,7 +8,7 @@ typedef struct _ZP_SERVER_REQUEST_OBJECT
     LIST_ENTRY ListEntry;
     PZP_CONNECTION_OBJECT Owner;
     volatile LONG Pending;
-    ULONGLONG RequestId;
+    ULONG RequestId;
     ULONGLONG DeadlineTickCount;
     ZP_REQUEST_COMPLETE_CALLBACK Callback;
     PVOID Context;
@@ -61,7 +61,7 @@ static
 VOID
 ZpServerConnection_SendCancel(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ ULONGLONG RequestId)
+    _In_ ULONG RequestId)
 {
     BYTE Body[sizeof(RequestId)];
     ULONG BodyLength;
@@ -190,7 +190,7 @@ static
 LOGICAL
 ZpServerConnection_HasModule(
     _In_ PZP_CONNECTION_OBJECT Connection,
-    _In_ USHORT ModuleId)
+    _In_ BYTE ModuleId)
 {
     USHORT Index;
 
@@ -208,8 +208,8 @@ NTSTATUS
 NTAPI
 ZpServer_SendRequest(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT ModuleId,
-    _In_ USHORT OperationId,
+    _In_ BYTE ModuleId,
+    _In_ BYTE OperationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
@@ -243,7 +243,6 @@ ZpServer_SendRequest(
         Mem_Free(Body);
         return STATUS_NO_MEMORY;
     }
-    RtlZeroMemory(RequestObject, sizeof(*RequestObject));
     RequestObject->Header.Cancel = ZpServerConnection_CancelRequest;
     RequestObject->Header.ReferenceCount = 3;
     RequestObject->Owner = ConnectionObject;

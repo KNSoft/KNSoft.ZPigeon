@@ -470,7 +470,7 @@ static
 HRESULT
 ZpWmi_CreateEnumerator(
     _In_ IWbemServices* Services,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ PCZP_WMI_REQUEST_VIEW Request,
     _Outptr_ IEnumWbemClassObject** Enumerator)
 {
@@ -518,7 +518,7 @@ static
 HRESULT
 ZpWmi_Enumerate(
     _In_ IEnumWbemClassObject* Enumerator,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ PCZP_WMI_REQUEST_VIEW Request,
     _Inout_ PZP_WMI_BUILDER Builder)
 {
@@ -587,7 +587,7 @@ ZpWmi_EncodeBuilder(
 static
 ZP_STATUS
 ZpWmi_Run(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ PCZP_WMI_REQUEST_VIEW Request,
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
@@ -623,7 +623,7 @@ ZpWmi_Run(
 
 ZP_STATUS
 ZpWmi_Execute(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_bytes_opt_(RequestLength) const VOID* Request,
     _In_ ULONG RequestLength,
     _Outptr_result_bytebuffer_maybenull_(*ResponseLength) PBYTE* Response,

@@ -151,17 +151,7 @@ ZpClientSession_ValidateReady(
         {
             return STATUS_PROTOCOL_UNREACHABLE;
         }
-    }
-    Object->ActiveModuleCount = Ready->Modules.Count;
-    for (Index = 0; Index < Ready->Modules.Count; Index++)
-    {
-        Status = ZpMessage_GetModuleRecord(&Ready->Modules,
-                                           Index,
-                                           &Object->ActiveModules[Index]);
-        if (!NT_SUCCESS(Status))
-        {
-            return Status;
-        }
+        Object->ActiveModuleMask[Selected.ModuleId >> 6] |= 1ull << (Selected.ModuleId & 63);
     }
     return STATUS_SUCCESS;
 }
@@ -182,8 +172,8 @@ ZpClientSession_MessageCallback(
     ZP_CHANNEL_CLOSE ChannelClose;
     BYTE Signature[ZP_CLIENT_SIGNATURE_SIZE];
     BYTE Body[ZP_CLIENT_SIGNATURE_SIZE];
-    ULONGLONG Token, RequestId;
-    ULONG BodyLength, CreditBytes;
+    ULONGLONG Token;
+    ULONG BodyLength, ChannelId, CreditBytes, RequestId;
     NTSTATUS Status;
     ZP_STATUS SignStatus;
 
@@ -254,11 +244,11 @@ ZpClientSession_MessageCallback(
         case ZpMessageChannelWindow:
             Status = ZpMessage_DecodeChannelWindow(Frame->Body,
                                                     Frame->BodyLength,
-                                                    &Token,
+                                                    &ChannelId,
                                                     &CreditBytes);
             return NT_SUCCESS(Status) ?
                        ZpClientLocalChannel_ReceiveWindow(Session->Owner,
-                                                         Token,
+                                                         ChannelId,
                                                          CreditBytes) : Status;
     }
     return STATUS_PROTOCOL_UNREACHABLE;

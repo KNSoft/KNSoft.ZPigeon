@@ -21,9 +21,9 @@ typedef struct _ZP_CLIENT_INBOUND_REQUEST
     PZP_CLIENT_OBJECT Owner;
     volatile LONG ReferenceCount;
     volatile LONG Pending;
-    ULONGLONG RequestId;
-    USHORT ModuleId;
-    USHORT OperationId;
+    ULONG RequestId;
+    BYTE ModuleId;
+    BYTE OperationId;
     ULONG TimeoutMilliseconds;
     ULONGLONG ReceivedTickCount;
     ULONG PayloadLength;
@@ -54,11 +54,12 @@ static
 NTSTATUS
 ZpClientInbound_SendResponse(
     _Inout_ PZP_CLIENT_OBJECT Object,
-    _In_ ULONGLONG RequestId,
+    _In_ ULONG RequestId,
     _In_ ZP_STATUS ResponseStatus,
     _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength)
 {
+    BYTE StackBody[64];
     ZP_RESPONSE Response = {
         RequestId,
         ResponseStatus,
@@ -67,15 +68,22 @@ ZpClientInbound_SendResponse(
     };
     PCZP_TRANSPORT_OPERATIONS Operations;
     PVOID TransportContext;
-    PBYTE Body;
+    PBYTE Body = StackBody;
     ULONG BodyLength;
     NTSTATUS Status;
 
     Status = ZpMessage_EncodeResponse(&Response, NULL, 0, &BodyLength);
-    Body = NT_SUCCESS(Status) ? Mem_Alloc(BodyLength) : NULL;
-    if (!NT_SUCCESS(Status) || Body == NULL)
+    if (!NT_SUCCESS(Status))
     {
-        return NT_SUCCESS(Status) ? STATUS_NO_MEMORY : Status;
+        return Status;
+    }
+    if (BodyLength > sizeof(StackBody))
+    {
+        Body = Mem_Alloc(BodyLength);
+        if (Body == NULL)
+        {
+            return STATUS_NO_MEMORY;
+        }
     }
     Status = ZpMessage_EncodeResponse(&Response,
                                       Body,
@@ -99,7 +107,10 @@ ZpClientInbound_SendResponse(
         }
         RtlReleaseSRWLockShared(&Object->Lock);
     }
-    Mem_Free(Body);
+    if (Body != StackBody)
+    {
+        Mem_Free(Body);
+    }
     return Status;
 }
 
@@ -107,18 +118,9 @@ static
 LOGICAL
 ZpClientInbound_HasModule(
     _In_ PZP_CLIENT_OBJECT Object,
-    _In_ USHORT ModuleId)
+    _In_ BYTE ModuleId)
 {
-    USHORT Index;
-
-    for (Index = 0; Index < Object->ActiveModuleCount; Index++)
-    {
-        if (Object->ActiveModules[Index].ModuleId == ModuleId)
-        {
-            return TRUE;
-        }
-    }
-    return FALSE;
+    return (Object->ActiveModuleMask[ModuleId >> 6] & (1ull << (ModuleId & 63))) != 0;
 }
 
 static
@@ -426,7 +428,6 @@ ZpClient_QueueRequest(
                                             NULL,
                                             0);
     }
-    RtlZeroMemory(RequestObject, FIELD_OFFSET(ZP_CLIENT_INBOUND_REQUEST, Payload));
     RequestObject->Owner = Object;
     RequestObject->ReferenceCount = 2;
     RequestObject->Pending = TRUE;
@@ -471,7 +472,7 @@ ZpClient_QueueRequest(
 NTSTATUS
 ZpClient_CancelInboundRequest(
     _In_ ZP_CLIENT_HANDLE Client,
-    _In_ ULONGLONG RequestId)
+    _In_ ULONG RequestId)
 {
     PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
     PZP_CLIENT_INBOUND_REQUEST Request = NULL;

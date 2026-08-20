@@ -1110,7 +1110,10 @@ ZpRegistry_DeleteKey(
     HANDLE Key;
     NTSTATUS Status;
 
-    Status = ZpRegistry_OpenKey(Request->Root, &Request->Path, KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE | DELETE, &Key);
+    Status = ZpRegistry_OpenKey(Request->Root,
+                                &Request->Path,
+                                KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE | DELETE,
+                                &Key);
     if (NT_SUCCESS(Status))
     {
         Status = ZpRegistry_DeleteKeyTree(Key, 0);
@@ -1203,7 +1206,7 @@ ZpRegistry_RenameValue(
 
 NTSTATUS
 ZpRegistry_Execute(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Outptr_result_maybenull_ PBYTE* Response,

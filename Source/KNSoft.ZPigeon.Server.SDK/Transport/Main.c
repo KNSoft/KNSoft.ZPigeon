@@ -12,9 +12,9 @@ ZpServer_ValidateConfig(
     ULONG Index, PreviousIndex;
     UNICODE_STRING ServerName, PreviousServerName;
 
-    if (Config->Size != sizeof(*Config) ||
+    if (Config->ListenerCount == 0 ||
         Config->ListenerCount > ZP_LISTENER_MAX_COUNT ||
-        (Config->ListenerCount != 0 && Config->Listeners == NULL) ||
+        Config->Listeners == NULL ||
         Config->DeploymentCount > ZP_DEPLOYMENT_MAX_COUNT ||
         Config->MaxRequestsPerConnection >
             ZP_SERVER_MAX_REQUESTS_PER_CONNECTION ||
@@ -50,16 +50,6 @@ ZpServer_ValidateConfig(
             return Status;
         }
         if (StringSize != 0 && Listener->Host[0] == UNICODE_NULL)
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
-        Status = ZpConfig_AddStringSize(&Size, Listener->WssPath, FALSE, &StringSize);
-        if (!NT_SUCCESS(Status))
-        {
-            return Status;
-        }
-        if ((Listener->Transport != ZpTransportWss && StringSize != 0) ||
-            (StringSize != 0 && Listener->WssPath[0] != L'/'))
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -102,10 +92,7 @@ ZpServer_Free(
 
     for (Index = 0; Index < Object->Config.DeploymentCount; Index++)
     {
-        if (Object->Config.Deployments[Index].Certificate != NULL)
-        {
-            CertFreeCertificateContext(Object->Config.Deployments[Index].Certificate);
-        }
+        CertFreeCertificateContext(Object->Config.Deployments[Index].Certificate);
     }
     Mem_Free(Object);
 }
@@ -125,7 +112,6 @@ ZpServer_Create(
     PZP_MODULE_RECORD Modules;
     ULONG Index;
 
-    *Server = NULL;
     Status = ZpServer_ValidateConfig(Config, &AllocationSize);
     if (!NT_SUCCESS(Status))
     {
@@ -155,7 +141,7 @@ ZpServer_Create(
     Cursor += (SIZE_T)Config->DeploymentCount * sizeof(*Deployments);
     Modules = (PZP_MODULE_RECORD)Cursor;
     Cursor += (SIZE_T)Config->ModuleCount * sizeof(*Modules);
-    Object->Config.Listeners = Config->ListenerCount != 0 ? Listeners : NULL;
+    Object->Config.Listeners = Listeners;
     Object->Config.Deployments = Config->DeploymentCount != 0 ? Deployments : NULL;
     Object->Config.Modules = Config->ModuleCount != 0 ? Modules : NULL;
     if (Config->ModuleCount != 0)
@@ -167,7 +153,6 @@ ZpServer_Create(
     {
         Listeners[Index] = Config->Listeners[Index];
         ZpConfig_CopyString(&Cursor, Config->Listeners[Index].Host, &Listeners[Index].Host);
-        ZpConfig_CopyString(&Cursor, Config->Listeners[Index].WssPath, &Listeners[Index].WssPath);
     }
     for (Index = 0; Index < Config->DeploymentCount; Index++)
     {
@@ -182,9 +167,32 @@ ZpServer_Create(
             return STATUS_UNSUCCESSFUL;
         }
     }
-    ZpServerQuic_Configure(Object);
-    ZpServerTcp_Configure(Object);
-    ZpServerUdp_Configure(Object);
+    for (Index = 0; Index < Config->ListenerCount; Index++)
+    {
+        ZP_TRANSPORT_TYPE Transport = Config->Listeners[Index].Transport;
+
+        if (Object->TransportOperations[Transport] != NULL)
+        {
+            continue;
+        }
+        switch (Transport)
+        {
+            case ZpTransportQuic:
+                ZpServerQuic_Configure(Object);
+                break;
+
+            case ZpTransportTcp:
+                ZpServerTcp_Configure(Object);
+                break;
+
+            case ZpTransportUdp:
+                ZpServerUdp_Configure(Object);
+                break;
+
+            default:
+                break;
+        }
+    }
     *Server = (ZP_SERVER_HANDLE)Object;
     return STATUS_SUCCESS;
 }
@@ -210,7 +218,7 @@ ZpServer_Start(
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return ZpStatus_FromNtStatus(STATUS_INVALID_DEVICE_STATE);
     }
-    if (RequiredTransports == 0 || Object->Config.DeploymentCount == 0)
+    if (Object->Config.DeploymentCount == 0)
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
@@ -475,9 +483,18 @@ ZpServer_Close(
         return STATUS_DEVICE_BUSY;
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
-    ZpServerQuic_Uninitialize(&Object->QuicTransport);
-    ZpServerTcp_Uninitialize(&Object->TcpTransport);
-    ZpServerUdp_Uninitialize(&Object->UdpTransport);
+    if (Object->TransportOperations[ZpTransportQuic] != NULL)
+    {
+        ZpServerQuic_Uninitialize(&Object->QuicTransport);
+    }
+    if (Object->TransportOperations[ZpTransportTcp] != NULL)
+    {
+        ZpServerTcp_Uninitialize(&Object->TcpTransport);
+    }
+    if (Object->TransportOperations[ZpTransportUdp] != NULL)
+    {
+        ZpServerUdp_Uninitialize(&Object->UdpTransport);
+    }
     ZpServer_Free(Object);
     return STATUS_SUCCESS;
 }

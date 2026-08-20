@@ -54,12 +54,15 @@ ZpServerUdp_Send(
         Connection,
         ZP_SERVER_UDP_CONNECTION,
         Public);
+    NTSTATUS Status;
 
-    return ZpUdpConnection_SendFrame(&UdpConnection->Udp,
-                                     &UdpConnection->Session.Connection,
-                                     MessageType,
-                                     Body,
-                                     BodyLength);
+    Status = ZpUdpConnection_SendFrame(&UdpConnection->Udp,
+                                       &UdpConnection->Session.Connection,
+                                       MessageType,
+                                       Body,
+                                       BodyLength);
+    WSASetEvent(UdpConnection->Transport->SocketEvent);
+    return Status;
 }
 
 static
@@ -253,7 +256,7 @@ ZpServerUdp_CreateConnection(
 }
 
 static
-VOID
+LOGICAL
 ZpServerUdp_ProcessDatagram(
     _Inout_ PZP_SERVER_UDP_TRANSPORT Transport,
     _In_ SOCKET Listener)
@@ -262,6 +265,7 @@ ZpServerUdp_ProcessDatagram(
     SOCKADDR_STORAGE Address;
     PZP_SERVER_UDP_CONNECTION Connection;
     ULONGLONG ConnectionId;
+    BYTE Type;
     INT AddressLength = sizeof(Address), Length;
     ZP_STATUS Status;
 
@@ -271,16 +275,19 @@ ZpServerUdp_ProcessDatagram(
                       0,
                       (SOCKADDR*)&Address,
                       &AddressLength);
-    if (Length == SOCKET_ERROR ||
-        !ZpUdp_DecodeHeader(Buffer, Length, &ConnectionId))
+    if (Length == SOCKET_ERROR)
     {
-        return;
+        return FALSE;
+    }
+    if (!ZpUdp_DecodeHeader(Buffer, Length, &Type, &ConnectionId))
+    {
+        return TRUE;
     }
     Connection = ZpServerUdp_FindConnection(Transport,
                                              ConnectionId,
                                              &Address,
                                              AddressLength);
-    if (Connection == NULL && Buffer[5] == 1)
+    if (Connection == NULL && Type == ZP_UDP_PACKET_HANDSHAKE)
     {
         Connection = ZpServerUdp_CreateConnection(Transport,
                                                    Listener,
@@ -290,7 +297,7 @@ ZpServerUdp_ProcessDatagram(
     }
     if (Connection == NULL)
     {
-        return;
+        return TRUE;
     }
     Status = ZpUdpConnection_ProcessDatagram(&Connection->Udp, Buffer, Length);
     if (!ZpStatus_IsSuccess(Status))
@@ -298,6 +305,39 @@ ZpServerUdp_ProcessDatagram(
         ZpServerUdp_CloseConnection(Connection, Status);
     }
     ZpConnection_Release((ZP_CONNECTION_HANDLE)&Connection->Public);
+    return TRUE;
+}
+
+static
+ULONG
+ZpServerUdp_GetWaitMilliseconds(
+    _Inout_ PZP_SERVER_UDP_TRANSPORT Transport)
+{
+    PZP_SERVER_UDP_CONNECTION Connections[ZP_SERVER_UDP_MAX_CONNECTIONS];
+    PLIST_ENTRY Entry;
+    ULONG Count = 0, Index, Wait = INFINITE;
+    ULONGLONG TickCount = GetTickCount64();
+
+    RtlAcquireSRWLockShared(&Transport->Owner->Lock);
+    for (Entry = Transport->Connections.Flink;
+         Entry != &Transport->Connections && Count < RTL_NUMBER_OF(Connections);
+         Entry = Entry->Flink)
+    {
+        Connections[Count] = CONTAINING_RECORD(Entry,
+                                               ZP_SERVER_UDP_CONNECTION,
+                                               ListEntry);
+        ZpConnection_AddRef((ZP_CONNECTION_HANDLE)&Connections[Count]->Public);
+        Count++;
+    }
+    RtlReleaseSRWLockShared(&Transport->Owner->Lock);
+    for (Index = 0; Index < Count; Index++)
+    {
+        Wait = min(Wait,
+                   ZpUdpConnection_GetWaitMilliseconds(&Connections[Index]->Udp,
+                                                       TickCount));
+        ZpConnection_Release((ZP_CONNECTION_HANDLE)&Connections[Index]->Public);
+    }
+    return Wait;
 }
 
 static
@@ -342,32 +382,55 @@ ZpServerUdp_Worker(
     _In_ PVOID Context)
 {
     PZP_SERVER_UDP_TRANSPORT Transport = Context;
+    HANDLE Events[] = { Transport->StopEvent, Transport->SocketEvent };
+    WSANETWORKEVENTS NetworkEvents;
+    DWORD Wait;
     INT Count;
     ULONG Index;
 
-    while (WaitForSingleObject(Transport->StopEvent, 0) != WAIT_OBJECT_0)
+    for (;;)
     {
-        Count = WSAPoll(Transport->PollDescriptors,
-                        Transport->ListenerCount,
-                        50);
-        if (Count > 0)
+        Wait = WaitForMultipleObjects(RTL_NUMBER_OF(Events),
+                                      Events,
+                                      FALSE,
+                                      ZpServerUdp_GetWaitMilliseconds(Transport));
+        if (Wait == WAIT_OBJECT_0)
+        {
+            break;
+        }
+        if (Wait == WAIT_OBJECT_0 + 1)
         {
             for (Index = 0; Index < Transport->ListenerCount; Index++)
             {
-                if ((Transport->PollDescriptors[Index].revents & POLLRDNORM) != 0)
+                if (WSAEnumNetworkEvents(Transport->Listeners[Index],
+                                         Transport->SocketEvent,
+                                         &NetworkEvents) != SOCKET_ERROR &&
+                    (NetworkEvents.lNetworkEvents & FD_READ) != 0 &&
+                    NetworkEvents.iErrorCode[FD_READ_BIT] == 0)
                 {
-                    ZpServerUdp_ProcessDatagram(Transport,
-                                                Transport->PollDescriptors[Index].fd);
+                    while (ZpServerUdp_ProcessDatagram(Transport,
+                                                       Transport->Listeners[Index]))
+                    {
+                    }
                 }
-                Transport->PollDescriptors[Index].revents = 0;
             }
+            Count = WSAPoll(Transport->PollDescriptors,
+                            Transport->ListenerCount,
+                            0);
+            if (Count > 0)
+            {
+                WSASetEvent(Transport->SocketEvent);
+            }
+        }
+        else if (Wait != WAIT_TIMEOUT)
+        {
+            break;
         }
         ZpServerUdp_TickConnections(Transport);
     }
     RtlAcquireSRWLockExclusive(&Transport->Owner->Lock);
     Transport->ReceiveStopped = TRUE;
     RtlReleaseSRWLockExclusive(&Transport->Owner->Lock);
-    ZpServerUdp_TryCompleteStop(Transport);
     return 0;
 }
 
@@ -444,6 +507,12 @@ ZpServerUdp_Start(
         return ZpStatus_FromCode(ZpStatusWinsock, Error);
     }
     Transport->WsaInitialized = TRUE;
+    Transport->SocketEvent = WSACreateEvent();
+    if (Transport->SocketEvent == WSA_INVALID_EVENT)
+    {
+        Status = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
+        goto Failed;
+    }
     for (Index = 0; Index < Transport->Owner->Config.DeploymentCount; Index++)
     {
         Certificates[Index] = Transport->Owner->Config.Deployments[Index].Certificate;
@@ -462,11 +531,13 @@ ZpServerUdp_Start(
         {
             continue;
         }
-        Status = ZpUdp_ResolveAddress(Transport->Owner->Config.Listeners[Index].Host,
-                                      Transport->Owner->Config.Listeners[Index].Port,
-                                      TRUE,
-                                      &Address,
-                                      &AddressLength);
+        Status = ZpSocket_ResolveAddress(Transport->Owner->Config.Listeners[Index].Host,
+                                         Transport->Owner->Config.Listeners[Index].Port,
+                                         TRUE,
+                                         SOCK_DGRAM,
+                                         IPPROTO_UDP,
+                                         &Address,
+                                         &AddressLength);
         if (!ZpStatus_IsSuccess(Status))
         {
             goto Failed;
@@ -477,12 +548,19 @@ ZpServerUdp_Start(
             Status = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
             goto Failed;
         }
-        setsockopt(Socket,
-                   SOL_SOCKET,
-                   SO_EXCLUSIVEADDRUSE,
-                   (PCSTR)&Exclusive,
-                   sizeof(Exclusive));
-        if (bind(Socket, (SOCKADDR*)&Address, AddressLength) == SOCKET_ERROR)
+        if (setsockopt(Socket,
+                       SOL_SOCKET,
+                       SO_EXCLUSIVEADDRUSE,
+                       (PCSTR)&Exclusive,
+                       sizeof(Exclusive)) == SOCKET_ERROR ||
+            bind(Socket, (SOCKADDR*)&Address, AddressLength) == SOCKET_ERROR)
+        {
+            Error = WSAGetLastError();
+            closesocket(Socket);
+            Status = ZpStatus_FromCode(ZpStatusWinsock, Error);
+            goto Failed;
+        }
+        if (WSAEventSelect(Socket, Transport->SocketEvent, FD_READ) == SOCKET_ERROR)
         {
             Error = WSAGetLastError();
             closesocket(Socket);
@@ -526,6 +604,10 @@ ZpServerUdp_Stop(
     Transport->Stopping = TRUE;
     RtlReleaseSRWLockExclusive(&Transport->Owner->Lock);
     SetEvent(Transport->StopEvent);
+    if (Transport->WorkerThread != NULL)
+    {
+        WaitForSingleObject(Transport->WorkerThread, INFINITE);
+    }
     ZpServerUdp_CloseConnections(Transport);
     ZpServerUdp_TryCompleteStop(Transport);
 }
@@ -543,6 +625,7 @@ ZpServerUdp_Configure(
     ULONG Index;
 
     Object->UdpTransport.Owner = Object;
+    Object->UdpTransport.SocketEvent = WSA_INVALID_EVENT;
     InitializeListHead(&Object->UdpTransport.Connections);
     for (Index = 0; Index < ZP_LISTENER_MAX_COUNT; Index++)
     {
@@ -582,6 +665,11 @@ ZpServerUdp_Uninitialize(
     }
     ZpServerUdp_CloseConnections(Transport);
     ZpServerUdp_CloseListeners(Transport);
+    if (Transport->SocketEvent != WSA_INVALID_EVENT)
+    {
+        WSACloseEvent(Transport->SocketEvent);
+        Transport->SocketEvent = WSA_INVALID_EVENT;
+    }
     if (Transport->CredentialInitialized)
     {
         ZpDtls_FreeCredentials(&Transport->Credential);

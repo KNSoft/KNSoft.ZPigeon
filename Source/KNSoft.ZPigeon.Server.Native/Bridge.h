@@ -52,7 +52,7 @@ typedef
 VOID
 (NTAPI *ZP_NATIVE_FILE_PAGE_CALLBACK)(
     _In_ ZP_STATUS Status,
-    _In_ ULONGLONG EnumerationId,
+    _In_ ULONG EnumerationId,
     _In_reads_opt_(RecordCount) PCZP_NATIVE_FILE_RECORD Records,
     _In_ ULONG RecordCount,
     _In_opt_ PVOID Context);
@@ -194,7 +194,7 @@ VOID
 
 typedef struct _ZP_NATIVE_EXECUTION_JOB_RECORD
 {
-    ULONGLONG JobId;
+    ULONG JobId;
     ULONGLONG CreateTime;
     ULONGLONG ExitTime;
     ULONG ProcessId;
@@ -683,7 +683,7 @@ NTAPI
 ZpNative_EnumerateFilesPage(
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
-    _In_ ULONGLONG EnumerationId,
+    _In_ ULONG EnumerationId,
     _In_ ZP_NATIVE_FILE_PAGE_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
@@ -982,7 +982,7 @@ __declspec(dllexport)
 NTSTATUS
 NTAPI
 ZpNative_TerminateExecution(
-    _In_ ULONGLONG JobId,
+    _In_ ULONG JobId,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
@@ -1249,7 +1249,7 @@ __declspec(dllexport)
 NTSTATUS
 NTAPI
 ZpNative_EnumerateAdministration(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ZP_NATIVE_ADMINISTRATION_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
@@ -1257,7 +1257,7 @@ __declspec(dllexport)
 NTSTATUS
 NTAPI
 ZpNative_QueryAdministration(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_(IdentityLength) PCWCH Identity,
     _In_ ULONG IdentityLength,
     _In_ ZP_NATIVE_ADMINISTRATION_CALLBACK Callback,
@@ -1267,7 +1267,7 @@ __declspec(dllexport)
 NTSTATUS
 NTAPI
 ZpNative_ControlAdministration(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ USHORT Action,
     _In_reads_opt_(IdentityLength) PCWCH Identity,
     _In_ ULONG IdentityLength,
@@ -1559,7 +1559,7 @@ __declspec(dllexport)
 NTSTATUS
 NTAPI
 ZpNative_ExecuteRegistryStatus(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ZP_REGISTRY_ROOT Root,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,

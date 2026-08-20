@@ -15,9 +15,9 @@ internal static class ManagementWebApi
     {
         app.MapPost("/api/files", async (FilePageRequest request) =>
         {
-            var enumerationId = 0UL;
+            var enumerationId = 0U;
             if (request.EnumerationId is not null &&
-                !ulong.TryParse(request.EnumerationId, out enumerationId))
+                !uint.TryParse(request.EnumerationId, out enumerationId))
             {
                 return Results.BadRequest();
             }

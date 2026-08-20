@@ -52,14 +52,13 @@ typedef
 VOID
 (NTAPI *ZP_CLIENT_OPERATION_CALLBACK)(
     _In_ ZP_CLIENT_HANDLE Client,
-    _In_ USHORT ModuleId,
-    _In_ USHORT OperationId,
+    _In_ BYTE ModuleId,
+    _In_ BYTE OperationId,
     _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context);
 
 typedef struct _ZP_CLIENT_CONFIG
 {
-    ULONG Size;
     PCZP_ENDPOINT Endpoints;
     ULONG EndpointCount;
     const BYTE* DeploymentRootCertificate;

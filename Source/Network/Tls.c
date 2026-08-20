@@ -182,11 +182,11 @@ ZpTls_Handshake(
     ULONG Attributes;
     TimeStamp Expiry;
     SECURITY_STATUS SecurityStatus, HandshakeStatus;
+    PBYTE OutputToken = NULL;
+    ULONG OutputTokenLength = 0;
+    LOGICAL HandshakeComplete = FALSE;
     ZP_STATUS Status;
 
-    *Token = NULL;
-    *TokenLength = 0;
-    *Complete = FALSE;
     Status = ZpTls_AppendInput(Context, Data, DataLength);
     if (!ZpStatus_IsSuccess(Status))
     {
@@ -194,7 +194,7 @@ ZpTls_Handshake(
     }
     if (Context->Role == ZpTlsServer && Context->InputLength == 0)
     {
-        return ZpStatus_FromNtStatus(STATUS_SUCCESS);
+        goto Succeeded;
     }
     InputBuffers[0].BufferType = SECBUFFER_TOKEN;
     InputBuffers[0].pvBuffer = Context->Input;
@@ -244,45 +244,60 @@ ZpTls_Handshake(
         SecurityStatus = CompleteAuthToken(&Context->Handle, &OutputDescriptor);
         if (SecurityStatus != SEC_E_OK)
         {
-            if (OutputBuffer.pvBuffer != NULL)
-            {
-                FreeContextBuffer(OutputBuffer.pvBuffer);
-            }
-            return ZpTls_FromSecurityStatus(SecurityStatus);
+            Status = ZpTls_FromSecurityStatus(SecurityStatus);
+            goto Cleanup;
         }
     }
     if (OutputBuffer.cbBuffer != 0)
     {
-        *Token = Mem_Alloc(OutputBuffer.cbBuffer);
-        if (*Token == NULL)
+        OutputToken = Mem_Alloc(OutputBuffer.cbBuffer);
+        if (OutputToken == NULL)
         {
-            FreeContextBuffer(OutputBuffer.pvBuffer);
-            return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+            Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+            goto Cleanup;
         }
-        RtlCopyMemory(*Token, OutputBuffer.pvBuffer, OutputBuffer.cbBuffer);
-        *TokenLength = OutputBuffer.cbBuffer;
-        FreeContextBuffer(OutputBuffer.pvBuffer);
+        RtlCopyMemory(OutputToken, OutputBuffer.pvBuffer, OutputBuffer.cbBuffer);
+        OutputTokenLength = OutputBuffer.cbBuffer;
     }
     if (HandshakeStatus == SEC_E_INCOMPLETE_MESSAGE ||
         HandshakeStatus == SEC_I_CONTINUE_NEEDED ||
         HandshakeStatus == SEC_I_COMPLETE_AND_CONTINUE)
     {
-        return ZpStatus_FromNtStatus(STATUS_SUCCESS);
+        goto Succeeded;
     }
     if (HandshakeStatus != SEC_E_OK && HandshakeStatus != SEC_I_COMPLETE_NEEDED)
     {
-        return ZpTls_FromSecurityStatus(HandshakeStatus);
+        Status = ZpTls_FromSecurityStatus(HandshakeStatus);
+        goto Cleanup;
     }
     SecurityStatus = QueryContextAttributesW(&Context->Handle,
                                               SECPKG_ATTR_STREAM_SIZES,
                                               &Context->StreamSizes);
     if (SecurityStatus != SEC_E_OK)
     {
-        return ZpTls_FromSecurityStatus(SecurityStatus);
+        Status = ZpTls_FromSecurityStatus(SecurityStatus);
+        goto Cleanup;
     }
     Context->HandshakeComplete = TRUE;
-    *Complete = TRUE;
-    return ZpStatus_FromNtStatus(STATUS_SUCCESS);
+    HandshakeComplete = TRUE;
+
+Succeeded:
+    *Token = OutputToken;
+    *TokenLength = OutputTokenLength;
+    *Complete = HandshakeComplete;
+    OutputToken = NULL;
+    Status = ZpStatus_FromNtStatus(STATUS_SUCCESS);
+
+Cleanup:
+    if (OutputBuffer.pvBuffer != NULL)
+    {
+        FreeContextBuffer(OutputBuffer.pvBuffer);
+    }
+    if (OutputToken != NULL)
+    {
+        Mem_Free(OutputToken);
+    }
+    return Status;
 }
 
 ZP_STATUS

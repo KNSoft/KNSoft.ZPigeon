@@ -40,8 +40,8 @@ struct _ZP_CLIENT_LOCAL_CHANNEL
     PZP_CLIENT_OBJECT Owner;
     volatile LONG ReferenceCount;
     volatile LONG Pending;
-    ULONGLONG ChannelId;
-    USHORT ModuleId;
+    ULONG ChannelId;
+    BYTE ModuleId;
     ZP_CLIENT_LOCAL_CHANNEL_DATA_ROUTINE ReceiveData;
     ZP_CLIENT_LOCAL_CHANNEL_WINDOW_ROUTINE ReceiveWindow;
     ZP_CLIENT_LOCAL_CHANNEL_CLOSE_ROUTINE ReceiveClose;
@@ -53,7 +53,7 @@ NTSTATUS
 ZpClientLocalChannel_Insert(
     _Inout_ PZP_CLIENT_OBJECT Object,
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
-    _In_ USHORT ModuleId,
+    _In_ BYTE ModuleId,
     _In_opt_ ZP_CLIENT_LOCAL_CHANNEL_DATA_ROUTINE ReceiveData,
     _In_opt_ ZP_CLIENT_LOCAL_CHANNEL_WINDOW_ROUTINE ReceiveWindow,
     _In_ ZP_CLIENT_LOCAL_CHANNEL_CLOSE_ROUTINE ReceiveClose,
@@ -63,8 +63,8 @@ ZpClientLocalChannel_Insert(
 NTSTATUS
 ZpClientLocalChannel_ReferenceById(
     _Inout_ PZP_CLIENT_OBJECT Object,
-    _In_ ULONGLONG ChannelId,
-    _In_ USHORT ModuleId,
+    _In_ ULONG ChannelId,
+    _In_ BYTE ModuleId,
     _Out_ PZP_CLIENT_LOCAL_CHANNEL* Channel);
 
 LOGICAL
@@ -98,7 +98,7 @@ ZpClientLocalChannel_ReceiveData(
 NTSTATUS
 ZpClientLocalChannel_ReceiveWindow(
     _Inout_ PZP_CLIENT_OBJECT Object,
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ULONG CreditBytes);
 
 NTSTATUS

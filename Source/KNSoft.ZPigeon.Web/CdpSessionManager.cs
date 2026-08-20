@@ -177,7 +177,7 @@ internal sealed class CdpSessionManager(
         {
             try
             {
-                await server.TerminateExecutionAsync(ulong.Parse(job.JobId));
+                await server.TerminateExecutionAsync(uint.Parse(job.JobId));
             }
             catch (NativeException)
             {
@@ -203,7 +203,7 @@ internal sealed class CdpSessionManager(
         forwards.Close(session.ForwardId);
         try
         {
-            await server.TerminateExecutionAsync(ulong.Parse(session.JobId));
+            await server.TerminateExecutionAsync(uint.Parse(session.JobId));
         }
         catch (NativeException)
         {

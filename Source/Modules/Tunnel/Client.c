@@ -47,7 +47,7 @@ ZpTunnel_SendCloseLocked(
     _Inout_ PZP_CLIENT_TUNNEL_CHANNEL Channel,
     _In_ ZP_STATUS CloseStatus)
 {
-    BYTE Body[sizeof(ULONGLONG) + ZP_STATUS_WIRE_SIZE];
+    BYTE Body[sizeof(ULONG) + ZP_STATUS_WIRE_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -66,7 +66,7 @@ ZpTunnel_SendWindowLocked(
     _Inout_ PZP_CLIENT_TUNNEL_CHANNEL Channel,
     _In_ ULONG CreditBytes)
 {
-    BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
+    BYTE Body[2 * sizeof(ULONG)];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -147,7 +147,7 @@ ZpTunnel_ReceiveThread(
 {
     PZP_CLIENT_TUNNEL_CHANNEL Channel = Context;
     PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
-    PBYTE Body = Mem_Alloc(sizeof(ULONGLONG) + ZP_TUNNEL_CHUNK_SIZE);
+    PBYTE Body = Mem_Alloc(sizeof(ULONG) + ZP_TUNNEL_CHUNK_SIZE);
     ZP_STATUS Completion = ZpStatus_Make(ZpStatusNone, 0);
     ULONG ReadLength, ReservedLength, DataLength, BodyLength;
     INT Received;
@@ -186,7 +186,7 @@ ZpTunnel_ReceiveThread(
         RtlReleaseSRWLockExclusive(&Object->Lock);
         Received = recv(Channel->Socket,
                         Add2Ptr(Body,
-                                sizeof(ULONGLONG) +
+                                sizeof(ULONG) +
                                     (Channel->Protocol == ZP_TUNNEL_PROTOCOL_UDP ? sizeof(BYTE) : 0)),
                         ReadLength,
                         0);
@@ -203,14 +203,14 @@ ZpTunnel_ReceiveThread(
         DataLength = (ULONG)Received;
         if (Channel->Protocol == ZP_TUNNEL_PROTOCOL_UDP)
         {
-            *(PBYTE)Add2Ptr(Body, sizeof(ULONGLONG)) = 0;
+            *(PBYTE)Add2Ptr(Body, sizeof(ULONG)) = 0;
             DataLength++;
         }
         Status = ZpMessage_EncodeChannelData(Channel->Header.ChannelId,
-                                             Add2Ptr(Body, sizeof(ULONGLONG)),
+                                             Add2Ptr(Body, sizeof(ULONG)),
                                              DataLength,
                                              Body,
-                                             sizeof(ULONGLONG) + ZP_TUNNEL_CHUNK_SIZE,
+                                             sizeof(ULONG) + ZP_TUNNEL_CHUNK_SIZE,
                                              &BodyLength);
         if (!NT_SUCCESS(Status)) break;
         RtlAcquireSRWLockExclusive(&Object->Lock);
@@ -548,7 +548,7 @@ Cleanup:
 ZP_STATUS
 ZpTunnel_Execute(
     _Inout_ PZP_CLIENT_OBJECT Client,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_bytes_(RequestLength) const VOID* Request,
     _In_ ULONG RequestLength,
     _In_ ULONG TimeoutMilliseconds,

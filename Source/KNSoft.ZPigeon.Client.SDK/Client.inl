@@ -19,17 +19,16 @@ typedef struct _ZP_CLIENT_OBJECT
     LIST_ENTRY LocalChannels;
     LIST_ENTRY ExecutionJobs;
     LIST_ENTRY FileEnumerations;
-    ULONGLONG HighestInboundRequestId;
-    ULONGLONG NextLocalChannelId;
-    ULONGLONG NextFileEnumerationId;
-    ULONGLONG NextExecutionJobId;
+    ULONG HighestInboundRequestId;
+    ULONG NextLocalChannelId;
+    ULONG NextFileEnumerationId;
+    ULONG NextExecutionJobId;
     ULONG InboundRequestCount;
     ULONGLONG InboundRequestPayloadBytes;
     ULONG LocalChannelCount;
     ULONG ExecutionJobCount;
     ULONG FileEnumerationCount;
-    ZP_MODULE_RECORD ActiveModules[ZP_MODULE_MAX_COUNT];
-    USHORT ActiveModuleCount;
+    ULONGLONG ActiveModuleMask[4];
     ZP_CLIENT_CONFIG Config;
     PCZP_TRANSPORT_OPERATIONS TransportOperations[ZpTransportCount];
     PVOID TransportContexts[ZpTransportCount];
@@ -79,7 +78,7 @@ ZpClient_QueueRequest(
 NTSTATUS
 ZpClient_CancelInboundRequest(
     _In_ ZP_CLIENT_HANDLE Client,
-    _In_ ULONGLONG RequestId);
+    _In_ ULONG RequestId);
 
 VOID
 ZpClient_CloseInboundRequests(

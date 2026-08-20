@@ -153,7 +153,11 @@ ZpServerTcp_Accept(
         {
             return;
         }
-        ioctlsocket(Socket, FIONBIO, &NonBlocking);
+        if (ioctlsocket(Socket, FIONBIO, &NonBlocking) == SOCKET_ERROR)
+        {
+            closesocket(Socket);
+            continue;
+        }
         Connection = Mem_Alloc(sizeof(*Connection));
         if (Connection == NULL)
         {
@@ -332,11 +336,13 @@ ZpServerTcp_Start(
         {
             continue;
         }
-        Status = ZpTcp_ResolveAddress(Transport->Owner->Config.Listeners[Index].Host,
-                                      Transport->Owner->Config.Listeners[Index].Port,
-                                      TRUE,
-                                      &Address,
-                                      &AddressLength);
+        Status = ZpSocket_ResolveAddress(Transport->Owner->Config.Listeners[Index].Host,
+                                         Transport->Owner->Config.Listeners[Index].Port,
+                                         TRUE,
+                                         SOCK_STREAM,
+                                         IPPROTO_TCP,
+                                         &Address,
+                                         &AddressLength);
         if (!ZpStatus_IsSuccess(Status))
         {
             goto Failed;
@@ -352,12 +358,12 @@ ZpServerTcp_Start(
             Status = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
             goto Failed;
         }
-        setsockopt(Socket,
-                   SOL_SOCKET,
-                   SO_EXCLUSIVEADDRUSE,
-                   (PCSTR)&Exclusive,
-                   sizeof(Exclusive));
-        if (bind(Socket, (SOCKADDR*)&Address, AddressLength) == SOCKET_ERROR ||
+        if (setsockopt(Socket,
+                       SOL_SOCKET,
+                       SO_EXCLUSIVEADDRUSE,
+                       (PCSTR)&Exclusive,
+                       sizeof(Exclusive)) == SOCKET_ERROR ||
+            bind(Socket, (SOCKADDR*)&Address, AddressLength) == SOCKET_ERROR ||
             listen(Socket, SOMAXCONN) == SOCKET_ERROR ||
             ioctlsocket(Socket, FIONBIO, &NonBlocking) == SOCKET_ERROR)
         {

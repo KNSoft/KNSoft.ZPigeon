@@ -93,7 +93,7 @@ static
 NTSTATUS
 ZpService_Send(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
@@ -132,7 +132,7 @@ static
 NTSTATUS
 ZpService_SendName(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_(ServiceNameLength) PCWCH ServiceName,
     _In_ ULONG ServiceNameLength,
     _In_ ULONG TimeoutMilliseconds,
@@ -185,7 +185,7 @@ ZpService_SendName(
 static
 NTSTATUS
 ZpService_EncodeConfiguration(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ const VOID* Config,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
@@ -211,7 +211,7 @@ static
 NTSTATUS
 ZpService_SendConfiguration(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ const VOID* Config,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,

@@ -100,7 +100,7 @@ ZpTerminal_DecodeCreate(
 
 NTSTATUS
 ZpTerminal_EncodeCreateResponse(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ULONG ProcessId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
@@ -113,7 +113,7 @@ ZpTerminal_EncodeCreateResponse(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    *BytesWritten = sizeof(ULONGLONG) + sizeof(ULONG);
+    *BytesWritten = 2 * sizeof(ULONG);
     if (Buffer == NULL)
     {
         return STATUS_SUCCESS;
@@ -123,7 +123,7 @@ ZpTerminal_EncodeCreateResponse(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt64(&Writer, ChannelId);
+    Status = ZpCodec_WriteUInt32(&Writer, ChannelId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_WriteUInt32(&Writer, ProcessId);
@@ -135,18 +135,18 @@ NTSTATUS
 ZpTerminal_DecodeCreateResponse(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONG ChannelId,
     _Out_ PULONG ProcessId)
 {
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
-    if (PayloadLength != sizeof(ULONGLONG) + sizeof(ULONG))
+    if (PayloadLength != 2 * sizeof(ULONG))
     {
         return STATUS_DATA_ERROR;
     }
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadUInt64(&Reader, ChannelId);
+    Status = ZpCodec_ReadUInt32(&Reader, ChannelId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadUInt32(&Reader, ProcessId);
@@ -161,7 +161,7 @@ ZpTerminal_DecodeCreateResponse(
 
 NTSTATUS
 ZpTerminal_EncodeResize(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ USHORT Columns,
     _In_ USHORT Rows,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
@@ -175,7 +175,7 @@ ZpTerminal_EncodeResize(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    *BytesWritten = sizeof(ULONGLONG) + 2 * sizeof(USHORT);
+    *BytesWritten = sizeof(ULONG) + 2 * sizeof(USHORT);
     if (Buffer == NULL)
     {
         return STATUS_SUCCESS;
@@ -185,7 +185,7 @@ ZpTerminal_EncodeResize(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt64(&Writer, ChannelId);
+    Status = ZpCodec_WriteUInt32(&Writer, ChannelId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_WriteUInt16(&Writer, Columns);
@@ -201,19 +201,19 @@ NTSTATUS
 ZpTerminal_DecodeResize(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONG ChannelId,
     _Out_ PUSHORT Columns,
     _Out_ PUSHORT Rows)
 {
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
-    if (PayloadLength != sizeof(ULONGLONG) + 2 * sizeof(USHORT))
+    if (PayloadLength != sizeof(ULONG) + 2 * sizeof(USHORT))
     {
         return STATUS_DATA_ERROR;
     }
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadUInt64(&Reader, ChannelId);
+    Status = ZpCodec_ReadUInt32(&Reader, ChannelId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadUInt16(&Reader, Columns);

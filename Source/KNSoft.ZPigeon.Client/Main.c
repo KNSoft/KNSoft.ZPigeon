@@ -19,10 +19,19 @@
 #include <stdio.h>
 
 #define ZP_CLIENT_PORT 4433
+#define ZP_CLIENT_LOG_CACHE_SIZE 32
+
+typedef struct _ZP_CLIENT_LOG
+{
+    PCWSTR Name;
+    HANDLE Handle;
+} ZP_CLIENT_LOG, *PZP_CLIENT_LOG;
 
 static WCHAR ZpClientDirectory[MAX_PATH];
 static HANDLE ZpClientStopEvent;
 static HANDLE ZpClientStoppedEvent;
+static RTL_SRWLOCK ZpClientLogLock = RTL_SRWLOCK_INIT;
+static ZP_CLIENT_LOG ZpClientLogs[ZP_CLIENT_LOG_CACHE_SIZE];
 
 static
 PCSTR
@@ -64,8 +73,8 @@ ZpClient_GetStatusTypeName(
 static
 PCWSTR
 ZpClient_GetModuleLogName(
-    _In_ USHORT ModuleId,
-    _In_ USHORT OperationId)
+    _In_ BYTE ModuleId,
+    _In_ BYTE OperationId)
 {
     static PCWSTR const AdministrationLogs[] = {
         L"user.log", L"software.log", L"hardware.log", L"update.log", L"task.log",
@@ -134,21 +143,13 @@ ZpClient_WriteLog(
 {
     WCHAR Path[MAX_PATH];
     CHAR Line[256];
+    PZP_CLIENT_LOG Log = NULL;
     TIME_FIELDS TimeFields;
     LARGE_INTEGER SystemTime;
     LARGE_INTEGER Offset;
-    HANDLE FileHandle;
+    ULONG Index;
     int Length;
 
-    if (_snwprintf_s(Path,
-                     ARRAYSIZE(Path),
-                     _TRUNCATE,
-                     L"%slogs\\%s",
-                     ZpClientDirectory,
-                     FileName) < 0)
-    {
-        return;
-    }
     if (!NT_SUCCESS(NtQuerySystemTime(&SystemTime)))
     {
         return;
@@ -183,19 +184,53 @@ ZpClient_WriteLog(
     {
         return;
     }
-    if (NT_SUCCESS(IO_CreateWin32File(&FileHandle,
+    RtlAcquireSRWLockExclusive(&ZpClientLogLock);
+    for (Index = 0; Index < RTL_NUMBER_OF(ZpClientLogs); Index++)
+    {
+        if (ZpClientLogs[Index].Name == NULL ||
+            _wcsicmp(ZpClientLogs[Index].Name, FileName) == 0)
+        {
+            Log = &ZpClientLogs[Index];
+            break;
+        }
+    }
+    if (Log != NULL && Log->Name == NULL &&
+        _snwprintf_s(Path,
+                     ARRAYSIZE(Path),
+                     _TRUNCATE,
+                     L"%slogs\\%s",
+                     ZpClientDirectory,
+                     FileName) >= 0 &&
+        NT_SUCCESS(IO_CreateWin32File(&Log->Handle,
                                       Path,
                                       NULL,
                                       FILE_APPEND_DATA | SYNCHRONIZE,
-                                      FILE_SHARE_READ | FILE_SHARE_WRITE |
-                                          FILE_SHARE_DELETE,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                       FILE_OPEN_IF,
-                                      FILE_NON_DIRECTORY_FILE |
-                                          FILE_SYNCHRONOUS_IO_NONALERT)))
+                                      FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT)))
+    {
+        Log->Name = FileName;
+    }
+    if (Log != NULL && Log->Handle != NULL)
     {
         Offset.QuadPart = -1;
-        IO_WriteFile(FileHandle, &Offset, Line, (ULONG)Length, NULL);
-        NtClose(FileHandle);
+        IO_WriteFile(Log->Handle, &Offset, Line, (ULONG)Length, NULL);
+    }
+    RtlReleaseSRWLockExclusive(&ZpClientLogLock);
+}
+
+static
+VOID
+ZpClient_CloseLogs(VOID)
+{
+    ULONG Index;
+
+    for (Index = 0; Index < RTL_NUMBER_OF(ZpClientLogs); Index++)
+    {
+        if (ZpClientLogs[Index].Handle != NULL)
+        {
+            NtClose(ZpClientLogs[Index].Handle);
+        }
     }
 }
 
@@ -228,8 +263,8 @@ VOID
 NTAPI
 ZpClient_OperationCallback(
     _In_ ZP_CLIENT_HANDLE Client,
-    _In_ USHORT ModuleId,
-    _In_ USHORT OperationId,
+    _In_ BYTE ModuleId,
+    _In_ BYTE OperationId,
     _In_ ZP_STATUS Status,
     _In_opt_ PVOID Context)
 {
@@ -391,8 +426,7 @@ wmain(VOID)
         ZpTransportQuic,
         L"127.0.0.1",
         ZP_CLIENT_PORT,
-        L"localhost",
-        NULL
+        L"localhost"
     };
     ZP_CLIENT_CONFIG Config = { 0 };
     ZP_CLIENT_HANDLE Client;
@@ -420,7 +454,6 @@ wmain(VOID)
                           ZpStatus_FromNtStatus(Status));
         return (int)Status;
     }
-    Config.Size = sizeof(Config);
     Config.Endpoints = &Endpoint;
     Config.EndpointCount = 1;
     Config.DeploymentRootCertificate = RootCertificate;
@@ -457,6 +490,7 @@ wmain(VOID)
                           ZpStatus_FromNtStatus(Status));
     }
     ZpClient_Close(Client);
+    ZpClient_CloseLogs();
     CloseHandle(ZpClientStoppedEvent);
     CloseHandle(ZpClientStopEvent);
     return (int)Status;

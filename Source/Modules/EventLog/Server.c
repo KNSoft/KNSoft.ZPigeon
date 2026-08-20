@@ -293,7 +293,7 @@ static
 NTSTATUS
 ZpServerEventLog_SendControl(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_(ChannelPathLength) PCWCH ChannelPath,
     _In_ ULONG ChannelPathLength,
     _In_ BOOLEAN Enabled,

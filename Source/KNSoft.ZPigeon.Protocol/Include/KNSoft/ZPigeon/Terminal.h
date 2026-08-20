@@ -47,7 +47,7 @@ ZpTerminal_DecodeCreate(
 
 NTSTATUS
 ZpTerminal_EncodeCreateResponse(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ULONG ProcessId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
@@ -57,12 +57,12 @@ NTSTATUS
 ZpTerminal_DecodeCreateResponse(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONG ChannelId,
     _Out_ PULONG ProcessId);
 
 NTSTATUS
 ZpTerminal_EncodeResize(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ USHORT Columns,
     _In_ USHORT Rows,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
@@ -73,7 +73,7 @@ NTSTATUS
 ZpTerminal_DecodeResize(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONG ChannelId,
     _Out_ PUSHORT Columns,
     _Out_ PUSHORT Rows);
 

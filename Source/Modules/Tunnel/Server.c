@@ -25,7 +25,7 @@ ZpServerTunnel_OpenComplete(
 {
     PZP_SERVER_TUNNEL_CONTEXT TunnelContext = Context;
     PZP_SERVER_CHANNEL_OBJECT Channel = NULL;
-    ULONGLONG ChannelId = 0;
+    ULONG ChannelId = 0;
     NTSTATUS ChannelStatus;
 
     if (ZpStatus_IsSuccess(Status))

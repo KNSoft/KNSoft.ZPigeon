@@ -84,7 +84,10 @@ ZpExecution_DecodeSessions(
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadArrayCount(&Reader, &View->Count);
     View->Buffer = NT_SUCCESS(Status) ? Add2Ptr(Payload, Reader.Offset) : NULL;
-    for (Index = 0; NT_SUCCESS(Status) && Index < View->Count; Index++) Status = ZpExecution_ReadSession(&Reader, NULL);
+    for (Index = 0; NT_SUCCESS(Status) && Index < View->Count; Index++)
+    {
+        Status = ZpExecution_ReadSession(&Reader, NULL);
+    }
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength) return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
     View->Length = PayloadLength - sizeof(ULONG);
     return STATUS_SUCCESS;
@@ -198,7 +201,7 @@ ZpExecution_WriteJob(
 {
     NTSTATUS Status;
 
-    Status = ZpCodec_WriteUInt64(Writer, Record->JobId);
+    Status = ZpCodec_WriteUInt32(Writer, Record->JobId);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Record->CreateTime);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Record->ExitTime);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->ProcessId);
@@ -221,7 +224,7 @@ ZpExecution_ReadJob(
     ZP_EXECUTION_JOB_RECORD_VIEW Local;
     NTSTATUS Status;
 
-    Status = ZpCodec_ReadUInt64(Reader, &Local.JobId);
+    Status = ZpCodec_ReadUInt32(Reader, &Local.JobId);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.CreateTime);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.ExitTime);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.ProcessId);
@@ -262,7 +265,7 @@ ZpExecution_EncodeJobs(
         {
             return STATUS_INVALID_PARAMETER;
         }
-        RequiredSize += 3 * sizeof(ULONGLONG) + 5 * sizeof(ULONG) + 3 * sizeof(USHORT) +
+        RequiredSize += 2 * sizeof(ULONGLONG) + 6 * sizeof(ULONG) + 3 * sizeof(USHORT) +
                         (ULONGLONG)Records[Index].FileNameLength * sizeof(WCHAR);
     }
     if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12) return STATUS_BUFFER_OVERFLOW;
@@ -316,7 +319,7 @@ ZpExecution_GetJob(
 
 NTSTATUS
 ZpExecution_EncodeJobId(
-    _In_ ULONGLONG JobId,
+    _In_ ULONG JobId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
@@ -324,24 +327,24 @@ ZpExecution_EncodeJobId(
     ZP_CODEC_WRITER Writer;
 
     if (JobId == 0) return STATUS_INVALID_PARAMETER;
-    *BytesWritten = sizeof(ULONGLONG);
+    *BytesWritten = sizeof(ULONG);
     if (Buffer == NULL) return STATUS_SUCCESS;
-    if (BufferSize < sizeof(ULONGLONG)) return STATUS_BUFFER_TOO_SMALL;
+    if (BufferSize < sizeof(ULONG)) return STATUS_BUFFER_TOO_SMALL;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    return ZpCodec_WriteUInt64(&Writer, JobId);
+    return ZpCodec_WriteUInt32(&Writer, JobId);
 }
 
 NTSTATUS
 ZpExecution_DecodeJobId(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG JobId)
+    _Out_ PULONG JobId)
 {
     ZP_CODEC_READER Reader;
 
-    if (PayloadLength != sizeof(ULONGLONG)) return STATUS_DATA_ERROR;
+    if (PayloadLength != sizeof(ULONG)) return STATUS_DATA_ERROR;
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    if (!NT_SUCCESS(ZpCodec_ReadUInt64(&Reader, JobId)) || *JobId == 0) return STATUS_DATA_ERROR;
+    if (!NT_SUCCESS(ZpCodec_ReadUInt32(&Reader, JobId)) || *JobId == 0) return STATUS_DATA_ERROR;
     return STATUS_SUCCESS;
 }
 

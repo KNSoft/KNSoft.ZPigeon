@@ -38,7 +38,7 @@ ZpServerTerminal_CreateComplete(
 {
     PZP_SERVER_TERMINAL_CONTEXT TerminalContext = Context;
     PZP_SERVER_CHANNEL_OBJECT Channel = NULL;
-    ULONGLONG ChannelId = 0;
+    ULONG ChannelId = 0;
     ULONG ProcessId = 0;
     NTSTATUS ChannelStatus;
 
@@ -260,7 +260,7 @@ ZpServer_ResizeTerminal(
     PZP_SERVER_TERMINAL_RESIZE_CONTEXT ResizeContext;
     BYTE Payload[sizeof(ULONGLONG) + 2 * sizeof(USHORT)];
     ULONG PayloadLength;
-    ULONGLONG ChannelId;
+    ULONG ChannelId;
     NTSTATUS Status;
 
     if (Connection == NULL || Channel == NULL || Callback == NULL)

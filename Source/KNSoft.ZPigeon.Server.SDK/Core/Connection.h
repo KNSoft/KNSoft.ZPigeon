@@ -23,8 +23,8 @@ struct _ZP_CONNECTION_OBJECT
     RTL_CRITICAL_SECTION RequestSendLock;
     LIST_ENTRY Requests;
     LIST_ENTRY Channels;
-    ULONGLONG NextRequestId;
-    ULONGLONG HighestChannelId;
+    ULONG NextRequestId;
+    ULONG HighestChannelId;
     PTP_TIMER RequestTimer;
     ZP_CONNECTION_PHASE Phase;
     ULONG RequestCount;
@@ -76,7 +76,7 @@ ZpServerConnection_ReceiveChannelClose(
 NTSTATUS
 ZpServerConnection_ReceiveChannelWindow(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ULONG CreditBytes);
 
 VOID

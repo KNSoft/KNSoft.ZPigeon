@@ -19,9 +19,9 @@ ZpClient_ValidateConfig(
     SIZE_T Size, StringSize;
     ULONG Index;
 
-    if (Config->Size != sizeof(*Config) ||
+    if (Config->EndpointCount == 0 ||
         Config->EndpointCount > ZP_ENDPOINT_MAX_COUNT ||
-        (Config->EndpointCount != 0 && Config->Endpoints == NULL) ||
+        Config->Endpoints == NULL ||
         Config->DeploymentRootCertificate == NULL ||
         Config->DeploymentRootCertificateLength == 0 ||
         Config->DeploymentRootCertificateLength > ZP_CERTIFICATE_MAX_SIZE ||
@@ -73,16 +73,6 @@ ZpClient_ValidateConfig(
         {
             return Status;
         }
-        Status = ZpConfig_AddStringSize(&Size, Endpoint->WssPath, FALSE, &StringSize);
-        if (!NT_SUCCESS(Status))
-        {
-            return Status;
-        }
-        if ((Endpoint->Transport != ZpTransportWss && StringSize != 0) ||
-            (StringSize != 0 && Endpoint->WssPath[0] != L'/'))
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
     }
     *AllocationSize = Size;
     return STATUS_SUCCESS;
@@ -102,15 +92,10 @@ ZpClient_Create(
     PZP_MODULE_RECORD Modules;
     ULONG Index;
 
-    *Client = NULL;
     Status = ZpClient_ValidateConfig(Config, &AllocationSize);
     if (!NT_SUCCESS(Status))
     {
         return Status;
-    }
-    if (AllocationSize < sizeof(*Object))
-    {
-        return STATUS_INTEGER_OVERFLOW;
     }
     Object = Mem_Alloc(AllocationSize);
     if (Object == NULL)
@@ -149,7 +134,7 @@ ZpClient_Create(
     Cursor += (SIZE_T)Config->EndpointCount * sizeof(*Endpoints);
     Modules = (PZP_MODULE_RECORD)Cursor;
     Cursor += (SIZE_T)Config->ModuleCount * sizeof(*Modules);
-    Object->Config.Endpoints = Config->EndpointCount != 0 ? Endpoints : NULL;
+    Object->Config.Endpoints = Endpoints;
     Object->Config.Modules = Config->ModuleCount != 0 ? Modules : NULL;
     if (Config->ModuleCount != 0)
     {
@@ -162,15 +147,37 @@ ZpClient_Create(
         Endpoints[Index] = Config->Endpoints[Index];
         ZpConfig_CopyString(&Cursor, Config->Endpoints[Index].Host, &Endpoints[Index].Host);
         ZpConfig_CopyString(&Cursor, Config->Endpoints[Index].ServerName, &Endpoints[Index].ServerName);
-        ZpConfig_CopyString(&Cursor, Config->Endpoints[Index].WssPath, &Endpoints[Index].WssPath);
     }
     Object->Config.DeploymentRootCertificate = Cursor;
     RtlCopyMemory(Cursor,
                   Config->DeploymentRootCertificate,
                   Config->DeploymentRootCertificateLength);
-    ZpClientQuic_Configure(Object);
-    ZpClientTcp_Configure(Object);
-    ZpClientUdp_Configure(Object);
+    for (Index = 0; Index < Config->EndpointCount; Index++)
+    {
+        ZP_TRANSPORT_TYPE Transport = Config->Endpoints[Index].Transport;
+
+        if (Object->TransportOperations[Transport] != NULL)
+        {
+            continue;
+        }
+        switch (Transport)
+        {
+            case ZpTransportQuic:
+                ZpClientQuic_Configure(Object);
+                break;
+
+            case ZpTransportTcp:
+                ZpClientTcp_Configure(Object);
+                break;
+
+            case ZpTransportUdp:
+                ZpClientUdp_Configure(Object);
+                break;
+
+            default:
+                break;
+        }
+    }
     *Client = (ZP_CLIENT_HANDLE)Object;
     return STATUS_SUCCESS;
 }
@@ -184,7 +191,6 @@ ZpClient_FindNextEndpoint(
 {
     ULONG Index;
 
-    *EndpointIndex = MAXULONG;
     for (Index = StartIndex; Index < Object->Config.EndpointCount; Index++)
     {
         if (Object->TransportOperations[Object->Config.Endpoints[Index].Transport] != NULL)
@@ -418,11 +424,6 @@ ZpClient_Start(
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_INVALID_DEVICE_STATE;
     }
-    if (Object->Config.EndpointCount == 0)
-    {
-        RtlReleaseSRWLockExclusive(&Object->Lock);
-        return STATUS_INVALID_PARAMETER;
-    }
     if (!ZpClient_FindNextEndpoint(Object, 0, &EndpointIndex))
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
@@ -619,7 +620,7 @@ ZpClient_NotifyState(
     if (State == ZpClientStateAuthenticating)
     {
         Object->HighestInboundRequestId = 0;
-        Object->ActiveModuleCount = 0;
+        RtlZeroMemory(Object->ActiveModuleMask, sizeof(Object->ActiveModuleMask));
     }
     else if (State == ZpClientStateReady)
     {
@@ -724,9 +725,18 @@ ZpClient_Close(
         CloseThreadpoolTimer(Object->RetryTimer);
         Object->RetryTimer = NULL;
     }
-    ZpClientQuic_Uninitialize(&Object->QuicTransport);
-    ZpClientTcp_Uninitialize(&Object->TcpTransport);
-    ZpClientUdp_Uninitialize(&Object->UdpTransport);
+    if (Object->TransportOperations[ZpTransportQuic] != NULL)
+    {
+        ZpClientQuic_Uninitialize(&Object->QuicTransport);
+    }
+    if (Object->TransportOperations[ZpTransportTcp] != NULL)
+    {
+        ZpClientTcp_Uninitialize(&Object->TcpTransport);
+    }
+    if (Object->TransportOperations[ZpTransportUdp] != NULL)
+    {
+        ZpClientUdp_Uninitialize(&Object->UdpTransport);
+    }
     ZpExecution_Cleanup(Object);
     Mem_Free(Object);
     return STATUS_SUCCESS;

@@ -25,6 +25,11 @@ ZpClientUdp_UninitializeAttempt(
         closesocket(Transport->Socket);
         Transport->Socket = INVALID_SOCKET;
     }
+    if (Transport->SocketEvent != WSA_INVALID_EVENT)
+    {
+        WSACloseEvent(Transport->SocketEvent);
+        Transport->SocketEvent = WSA_INVALID_EVENT;
+    }
     ZpClientSession_Uninitialize(&Transport->Session);
     ZpCertificateValidator_Uninitialize(&Transport->CertificateValidator);
     if (Transport->CredentialInitialized)
@@ -73,12 +78,15 @@ ZpClientUdp_Send(
     _In_ ULONG BodyLength)
 {
     PZP_CLIENT_UDP_TRANSPORT Transport = Context;
+    NTSTATUS Status;
 
-    return ZpUdpConnection_SendFrame(&Transport->Connection,
-                                     &Transport->Session.Connection,
-                                     MessageType,
-                                     Body,
-                                     BodyLength);
+    Status = ZpUdpConnection_SendFrame(&Transport->Connection,
+                                       &Transport->Session.Connection,
+                                       MessageType,
+                                       Body,
+                                       BodyLength);
+    WSASetEvent(Transport->SocketEvent);
+    return Status;
 }
 
 static
@@ -132,35 +140,73 @@ ZpClientUdp_Worker(
 {
     PZP_CLIENT_UDP_TRANSPORT Transport = Context;
     BYTE Buffer[ZP_UDP_MAX_DATAGRAM_SIZE];
-    WSAPOLLFD Poll = { Transport->Socket, POLLRDNORM, 0 };
-    INT Result;
+    HANDLE Events[] = { Transport->StopEvent, Transport->SocketEvent };
+    WSANETWORKEVENTS NetworkEvents;
+    DWORD Wait;
+    INT Error, Result;
     ZP_STATUS Status = ZpStatus_FromNtStatus(STATUS_SUCCESS);
 
-    while (WaitForSingleObject(Transport->StopEvent, 0) != WAIT_OBJECT_0)
+    for (;;)
     {
-        Result = WSAPoll(&Poll, 1, 50);
-        if (Result == SOCKET_ERROR)
+        Wait = WaitForMultipleObjects(RTL_NUMBER_OF(Events),
+                                      Events,
+                                      FALSE,
+                                      ZpUdpConnection_GetWaitMilliseconds(
+                                          &Transport->Connection,
+                                          GetTickCount64()));
+        if (Wait == WAIT_OBJECT_0)
         {
-            Status = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
             break;
         }
-        if (Result > 0 && (Poll.revents & POLLRDNORM) != 0)
+        if (Wait == WAIT_OBJECT_0 + 1)
         {
-            Result = recv(Transport->Socket, (PCHAR)Buffer, sizeof(Buffer), 0);
-            if (Result == SOCKET_ERROR)
+            if (WSAEnumNetworkEvents(Transport->Socket,
+                                     Transport->SocketEvent,
+                                     &NetworkEvents) == SOCKET_ERROR)
             {
                 Status = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
                 break;
             }
-            Status = ZpUdpConnection_ProcessDatagram(&Transport->Connection,
-                                                     Buffer,
-                                                     Result);
-            if (!ZpStatus_IsSuccess(Status))
+            if ((NetworkEvents.lNetworkEvents & FD_READ) != 0)
             {
-                break;
+                if (NetworkEvents.iErrorCode[FD_READ_BIT] != 0)
+                {
+                    Status = ZpStatus_FromCode(ZpStatusWinsock,
+                                               NetworkEvents.iErrorCode[FD_READ_BIT]);
+                    break;
+                }
+                for (;;)
+                {
+                    Result = recv(Transport->Socket, (PCHAR)Buffer, sizeof(Buffer), 0);
+                    if (Result == SOCKET_ERROR)
+                    {
+                        Error = WSAGetLastError();
+                        if (Error == WSAEWOULDBLOCK)
+                        {
+                            break;
+                        }
+                        Status = ZpStatus_FromCode(ZpStatusWinsock, Error);
+                        break;
+                    }
+                    Status = ZpUdpConnection_ProcessDatagram(&Transport->Connection,
+                                                             Buffer,
+                                                             Result);
+                    if (!ZpStatus_IsSuccess(Status))
+                    {
+                        break;
+                    }
+                }
+                if (!ZpStatus_IsSuccess(Status))
+                {
+                    break;
+                }
             }
         }
-        Poll.revents = 0;
+        else if (Wait != WAIT_TIMEOUT)
+        {
+            Status = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
+            break;
+        }
         Status = ZpUdpConnection_Tick(&Transport->Connection, GetTickCount64());
         if (!ZpStatus_IsSuccess(Status))
         {
@@ -200,6 +246,12 @@ ZpClientUdp_Start(
         return ZpStatus_FromCode(ZpStatusWinsock, Error);
     }
     Transport->WsaInitialized = TRUE;
+    Transport->SocketEvent = WSACreateEvent();
+    if (Transport->SocketEvent == WSA_INVALID_EVENT)
+    {
+        Status = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
+        goto Failed;
+    }
     Status = ZpDtls_AcquireClientCredentials(&Transport->Credential);
     if (!ZpStatus_IsSuccess(Status))
     {
@@ -224,17 +276,24 @@ ZpClientUdp_Start(
     {
         goto Failed;
     }
-    Status = ZpUdp_ResolveAddress(Endpoint->Host,
-                                  Endpoint->Port,
-                                  FALSE,
-                                  &Address,
-                                  &AddressLength);
+    Status = ZpSocket_ResolveAddress(Endpoint->Host,
+                                     Endpoint->Port,
+                                     FALSE,
+                                     SOCK_DGRAM,
+                                     IPPROTO_UDP,
+                                     &Address,
+                                     &AddressLength);
     if (!ZpStatus_IsSuccess(Status))
     {
         goto Failed;
     }
     Transport->Socket = socket(Address.ss_family, SOCK_DGRAM, IPPROTO_UDP);
     if (Transport->Socket == INVALID_SOCKET)
+    {
+        Status = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
+        goto Failed;
+    }
+    if (WSAEventSelect(Transport->Socket, Transport->SocketEvent, FD_READ) == SOCKET_ERROR)
     {
         Status = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
         goto Failed;
@@ -318,6 +377,7 @@ ZpClientUdp_Configure(
 {
     Object->UdpTransport.Owner = Object;
     Object->UdpTransport.Socket = INVALID_SOCKET;
+    Object->UdpTransport.SocketEvent = WSA_INVALID_EVENT;
     Object->UdpTransport.StopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (Object->UdpTransport.StopEvent != NULL)
     {

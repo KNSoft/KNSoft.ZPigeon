@@ -49,7 +49,7 @@ internal static class ExecutionWebApi
         });
         app.MapPost("/api/execution/terminate", async (ExecutionJobRequest request) =>
         {
-            if (!ulong.TryParse(request.JobId, out var jobId))
+            if (!uint.TryParse(request.JobId, out var jobId))
             {
                 return Results.BadRequest();
             }

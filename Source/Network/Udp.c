@@ -2,18 +2,11 @@
 
 #include <KNSoft/MakeLifeEasier/Memory/Core.h>
 
-#include <Ws2tcpip.h>
-
 #pragma comment(lib, "Ws2_32.lib")
 
 #define ZP_UDP_MAGIC 0x44505A4BUL
-#define ZP_UDP_VERSION 1
-#define ZP_UDP_PACKET_HANDSHAKE 1
-#define ZP_UDP_PACKET_ESTABLISHED 2
-#define ZP_UDP_PACKET_DATA 3
-#define ZP_UDP_INNER_HEADER_SIZE 20UL
-#define ZP_UDP_ACK_ONLY 1
-#define ZP_UDP_MAX_PENDING_BYTES ZP_FRAME_MAX_BODY_SIZE
+#define ZP_UDP_INNER_HEADER_SIZE 16UL
+#define ZP_UDP_MAX_PENDING_BYTES (ZP_FRAME_MAX_BODY_SIZE + sizeof(ULONG))
 #define ZP_UDP_MAX_REORDERED_PACKETS 64
 #define ZP_UDP_SEND_WINDOW_PACKETS 32
 #define ZP_UDP_HANDSHAKE_TIMEOUT_MILLISECONDS 10000
@@ -73,65 +66,27 @@ ZpUdp_EncodeHeader(
     _In_ ULONGLONG ConnectionId)
 {
     ZpUdp_WriteUInt32(Buffer, ZP_UDP_MAGIC);
-    Buffer[4] = ZP_UDP_VERSION;
-    Buffer[5] = Type;
-    Buffer[6] = Buffer[7] = 0;
-    ZpUdp_WriteUInt64(Buffer + 8, ConnectionId);
-}
-
-ZP_STATUS
-ZpUdp_ResolveAddress(
-    _In_ PCWSTR Host,
-    _In_ USHORT Port,
-    _In_ LOGICAL Passive,
-    _Out_ PSOCKADDR_STORAGE Address,
-    _Out_ PINT AddressLength)
-{
-    ADDRINFOW Hints = { 0 }, *Result;
-    WCHAR Service[6];
-    INT Error;
-
-    Hints.ai_family = AF_UNSPEC;
-    Hints.ai_socktype = SOCK_DGRAM;
-    Hints.ai_protocol = IPPROTO_UDP;
-    Hints.ai_flags = Passive ? AI_PASSIVE : 0;
-    _ultow_s(Port, Service, RTL_NUMBER_OF(Service), 10);
-    Error = GetAddrInfoW(Host != NULL && Host[0] != UNICODE_NULL ? Host : NULL,
-                         Service,
-                         &Hints,
-                         &Result);
-    if (Error != 0)
-    {
-        return ZpStatus_FromCode(ZpStatusWinsock, Error);
-    }
-    if (Result->ai_addrlen > sizeof(*Address))
-    {
-        FreeAddrInfoW(Result);
-        return ZpStatus_FromNtStatus(STATUS_INVALID_ADDRESS);
-    }
-    RtlCopyMemory(Address, Result->ai_addr, Result->ai_addrlen);
-    *AddressLength = (INT)Result->ai_addrlen;
-    FreeAddrInfoW(Result);
-    return ZpStatus_FromNtStatus(STATUS_SUCCESS);
+    Buffer[4] = Type;
+    ZpUdp_WriteUInt64(Buffer + 5, ConnectionId);
 }
 
 LOGICAL
 ZpUdp_DecodeHeader(
     _In_reads_bytes_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,
+    _Out_ PBYTE Type,
     _Out_ PULONGLONG ConnectionId)
 {
     const BYTE* Buffer = Data;
 
     if (DataLength < ZP_UDP_HEADER_SIZE ||
         ZpUdp_ReadUInt32(Buffer) != ZP_UDP_MAGIC ||
-        Buffer[4] != ZP_UDP_VERSION ||
-        Buffer[5] < ZP_UDP_PACKET_HANDSHAKE || Buffer[5] > ZP_UDP_PACKET_DATA ||
-        Buffer[6] != 0 || Buffer[7] != 0)
+        Buffer[4] < ZP_UDP_PACKET_HANDSHAKE || Buffer[4] > ZP_UDP_PACKET_DATA)
     {
         return FALSE;
     }
-    *ConnectionId = ZpUdp_ReadUInt64(Buffer + 8);
+    *Type = Buffer[4];
+    *ConnectionId = ZpUdp_ReadUInt64(Buffer + 5);
     return *ConnectionId != 0;
 }
 
@@ -371,8 +326,7 @@ ZpUdpConnection_SendReliable(
     _Inout_ PZP_UDP_CONNECTION Connection,
     _In_ ULONGLONG Sequence,
     _In_reads_bytes_opt_(DataLength) const VOID* Data,
-    _In_ ULONG DataLength,
-    _In_ USHORT Flags)
+    _In_ ULONG DataLength)
 {
     BYTE Plaintext[ZP_DTLS_MTU];
     PBYTE Encrypted;
@@ -381,10 +335,6 @@ ZpUdpConnection_SendReliable(
 
     ZpUdp_WriteUInt64(Plaintext, Sequence);
     ZpUdp_WriteUInt64(Plaintext + 8, Connection->NextReceiveSequence);
-    Plaintext[16] = (BYTE)DataLength;
-    Plaintext[17] = (BYTE)(DataLength >> 8);
-    Plaintext[18] = (BYTE)Flags;
-    Plaintext[19] = (BYTE)(Flags >> 8);
     if (DataLength != 0)
     {
         RtlCopyMemory(Plaintext + ZP_UDP_INNER_HEADER_SIZE, Data, DataLength);
@@ -434,8 +384,7 @@ ZpUdpConnection_Flush(
         Status = ZpUdpConnection_SendReliable(Connection,
                                               Buffer->Sequence,
                                               Buffer->Data,
-                                              Buffer->DataLength,
-                                              0);
+                                              Buffer->DataLength);
         if (!ZpStatus_IsSuccess(Status))
         {
             return Status;
@@ -543,7 +492,6 @@ ZpUdpConnection_ProcessData(
     PBYTE Plaintext;
     ULONG PlaintextLength, PayloadLength;
     ULONGLONG Sequence, Acknowledgment;
-    USHORT Flags;
     NTSTATUS NtStatus;
     ZP_STATUS Status;
 
@@ -567,12 +515,8 @@ ZpUdpConnection_ProcessData(
     }
     Sequence = ZpUdp_ReadUInt64(Plaintext);
     Acknowledgment = ZpUdp_ReadUInt64(Plaintext + 8);
-    PayloadLength = (ULONG)Plaintext[16] | ((ULONG)Plaintext[17] << 8);
-    Flags = (USHORT)((USHORT)Plaintext[18] | ((USHORT)Plaintext[19] << 8));
-    if (PayloadLength != PlaintextLength - ZP_UDP_INNER_HEADER_SIZE ||
-        (Flags & ~ZP_UDP_ACK_ONLY) != 0 ||
-        ((Flags & ZP_UDP_ACK_ONLY) != 0) != (PayloadLength == 0) ||
-        Acknowledgment > Connection->NextSendSequence)
+    PayloadLength = PlaintextLength - ZP_UDP_INNER_HEADER_SIZE;
+    if (Acknowledgment > Connection->NextSendSequence)
     {
         Mem_Free(Plaintext);
         return ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
@@ -595,8 +539,7 @@ ZpUdpConnection_ProcessData(
             Status = ZpUdpConnection_SendReliable(Connection,
                                                   Connection->NextSendSequence,
                                                   NULL,
-                                                  0,
-                                                  ZP_UDP_ACK_ONLY);
+                                                  0);
         }
         else
         {
@@ -618,12 +561,11 @@ ZpUdpConnection_ProcessDatagram(
     BYTE Type;
     ZP_STATUS Status;
 
-    if (!ZpUdp_DecodeHeader(Data, DataLength, &ConnectionId) ||
+    if (!ZpUdp_DecodeHeader(Data, DataLength, &Type, &ConnectionId) ||
         ConnectionId != Connection->ConnectionId)
     {
         return ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
     }
-    Type = Buffer[5];
     RtlEnterCriticalSection(&Connection->Lock);
     if (Connection->Closed)
     {
@@ -734,8 +676,7 @@ ZpUdpConnection_Tick(
             Status = ZpUdpConnection_SendReliable(Connection,
                                                   Buffer->Sequence,
                                                   Buffer->Data,
-                                                  Buffer->DataLength,
-                                                  0);
+                                                  Buffer->DataLength);
             if (!ZpStatus_IsSuccess(Status))
             {
                 break;
@@ -754,12 +695,76 @@ ZpUdpConnection_Tick(
             Status = ZpUdpConnection_SendReliable(Connection,
                                                   Connection->NextSendSequence,
                                                   NULL,
-                                                  0,
-                                                  ZP_UDP_ACK_ONLY);
+                                                  0);
         }
     }
     RtlLeaveCriticalSection(&Connection->Lock);
     return Status;
+}
+
+static
+ULONG
+ZpUdp_GetRemainingMilliseconds(
+    _In_ ULONGLONG Deadline,
+    _In_ ULONGLONG TickCount)
+{
+    ULONGLONG Remaining;
+
+    if (Deadline <= TickCount)
+    {
+        return 0;
+    }
+    Remaining = Deadline - TickCount;
+    return Remaining > MAXULONG ? MAXULONG : (ULONG)Remaining;
+}
+
+ULONG
+ZpUdpConnection_GetWaitMilliseconds(
+    _Inout_ PZP_UDP_CONNECTION Connection,
+    _In_ ULONGLONG TickCount)
+{
+    PLIST_ENTRY Entry;
+    ULONG Wait;
+
+    RtlEnterCriticalSection(&Connection->Lock);
+    if (Connection->Closed)
+    {
+        Wait = 0;
+    }
+    else if (!Connection->Connected)
+    {
+        Wait = min(ZpUdp_GetRemainingMilliseconds(
+                       Connection->HandshakeStartTickCount + ZP_UDP_HANDSHAKE_TIMEOUT_MILLISECONDS,
+                       TickCount),
+                   ZpUdp_GetRemainingMilliseconds(
+                       Connection->HandshakeFlightTickCount + ZP_UDP_HANDSHAKE_RETRY_MILLISECONDS,
+                       TickCount));
+    }
+    else
+    {
+        Wait = min(ZpUdp_GetRemainingMilliseconds(
+                       Connection->LastReceiveTickCount + ZP_UDP_IDLE_TIMEOUT_MILLISECONDS,
+                       TickCount),
+                   ZpUdp_GetRemainingMilliseconds(
+                       Connection->LastSendTickCount + ZP_UDP_KEEP_ALIVE_MILLISECONDS,
+                       TickCount));
+        for (Entry = Connection->SendQueue.Flink;
+             Entry != &Connection->SendQueue;
+             Entry = Entry->Flink)
+        {
+            PZP_UDP_BUFFER Buffer = CONTAINING_RECORD(Entry, ZP_UDP_BUFFER, ListEntry);
+
+            if (Buffer->SentTickCount != 0)
+            {
+                Wait = min(Wait,
+                           ZpUdp_GetRemainingMilliseconds(
+                               Buffer->SentTickCount + ZP_UDP_RETRY_MILLISECONDS,
+                               TickCount));
+            }
+        }
+    }
+    RtlLeaveCriticalSection(&Connection->Lock);
+    return Wait;
 }
 
 VOID
@@ -782,29 +787,13 @@ ZpUdpConnection_SendFrame(
     LIST_ENTRY Buffers;
     PZP_UDP_BUFFER Buffer;
     PBYTE Frame;
-    ULONG FrameSize, BytesWritten, Offset = 0, Chunk, MaximumPayload;
+    ULONG FrameSize, Offset = 0, Chunk, MaximumPayload;
     NTSTATUS Status;
     ZP_STATUS TransportStatus = ZpStatus_FromNtStatus(STATUS_SUCCESS);
 
-    Status = ZpFrame_GetSize(BodyLength, &FrameSize);
+    Status = ZpConnection_AllocateFrame(MessageType, Body, BodyLength, &Frame, &FrameSize);
     if (!NT_SUCCESS(Status))
     {
-        return Status;
-    }
-    Frame = Mem_Alloc(FrameSize);
-    if (Frame == NULL)
-    {
-        return STATUS_NO_MEMORY;
-    }
-    Status = ZpFrame_Encode(MessageType,
-                            Body,
-                            BodyLength,
-                            Frame,
-                            FrameSize,
-                            &BytesWritten);
-    if (!NT_SUCCESS(Status))
-    {
-        Mem_Free(Frame);
         return Status;
     }
     InitializeListHead(&Buffers);
@@ -819,16 +808,16 @@ ZpUdpConnection_SendFrame(
     {
         Status = STATUS_CONNECTION_DISCONNECTED;
     }
-    else if (BytesWritten > ZP_UDP_MAX_PENDING_BYTES - UdpConnection->PendingBytes ||
+    else if (FrameSize > ZP_UDP_MAX_PENDING_BYTES - UdpConnection->PendingBytes ||
              MaximumPayload == 0)
     {
         Status = STATUS_DEVICE_BUSY;
     }
     else
     {
-        while (Offset < BytesWritten)
+        while (Offset < FrameSize)
         {
-            Chunk = min(BytesWritten - Offset, MaximumPayload);
+            Chunk = min(FrameSize - Offset, MaximumPayload);
             Buffer = Mem_Alloc(FIELD_OFFSET(ZP_UDP_BUFFER, Data) + Chunk);
             if (Buffer == NULL)
             {

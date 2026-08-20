@@ -260,7 +260,7 @@ ZpWindow_DecodeCaptureRequest(
 
 NTSTATUS
 ZpWindow_EncodeCaptureChannel(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
@@ -272,21 +272,21 @@ ZpWindow_EncodeCaptureChannel(
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < *BytesWritten) return STATUS_BUFFER_TOO_SMALL;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    return ZpCodec_WriteUInt64(&Writer, ChannelId);
+    return ZpCodec_WriteUInt32(&Writer, ChannelId);
 }
 
 NTSTATUS
 ZpWindow_DecodeCaptureChannel(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG ChannelId)
+    _Out_ PULONG ChannelId)
 {
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
     if (PayloadLength != sizeof(*ChannelId)) return STATUS_DATA_ERROR;
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadUInt64(&Reader, ChannelId);
+    Status = ZpCodec_ReadUInt32(&Reader, ChannelId);
     return NT_SUCCESS(Status) && *ChannelId != 0 ? STATUS_SUCCESS : STATUS_DATA_ERROR;
 }
 

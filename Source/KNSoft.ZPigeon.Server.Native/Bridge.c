@@ -1967,8 +1967,7 @@ ZpNative_Start(
     ZP_LISTENER_ENDPOINT Listener = {
         ZpTransportQuic,
         L"127.0.0.1",
-        Port,
-        NULL
+        Port
     };
     ZP_SERVER_DEPLOYMENT Deployment = { L"localhost", Certificate };
     ZP_SERVER_CONFIG Config = { 0 };
@@ -1991,7 +1990,6 @@ ZpNative_Start(
     {
         return ZpStatus_FromCode(ZpStatusWin32, GetLastError());
     }
-    Config.Size = sizeof(Config);
     Config.Listeners = &Listener;
     Config.ListenerCount = 1;
     Config.Deployments = &Deployment;
@@ -2138,7 +2136,7 @@ NTAPI
 ZpNative_EnumerateFilesPage(
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
-    _In_ ULONGLONG EnumerationId,
+    _In_ ULONG EnumerationId,
     _In_ ZP_NATIVE_FILE_PAGE_CALLBACK Callback,
     _In_opt_ PVOID Context)
 {
@@ -3170,7 +3168,7 @@ ZpNative_EnumerateExecutionJobs(
 NTSTATUS
 NTAPI
 ZpNative_TerminateExecution(
-    _In_ ULONGLONG JobId,
+    _In_ ULONG JobId,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context)
 {
@@ -4119,7 +4117,7 @@ ZpNative_ConfigureServiceAccount(
 NTSTATUS
 NTAPI
 ZpNative_EnumerateAdministration(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ZP_NATIVE_ADMINISTRATION_CALLBACK Callback,
     _In_opt_ PVOID Context)
 {
@@ -4153,7 +4151,7 @@ ZpNative_EnumerateAdministration(
 NTSTATUS
 NTAPI
 ZpNative_QueryAdministration(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_(IdentityLength) PCWCH Identity,
     _In_ ULONG IdentityLength,
     _In_ ZP_NATIVE_ADMINISTRATION_CALLBACK Callback,
@@ -4188,7 +4186,7 @@ ZpNative_QueryAdministration(
 NTSTATUS
 NTAPI
 ZpNative_ControlAdministration(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ USHORT Action,
     _In_reads_opt_(IdentityLength) PCWCH Identity,
     _In_ ULONG IdentityLength,
@@ -4306,7 +4304,7 @@ ZpNative_QueryBrowser(
 static
 NTSTATUS
 ZpNative_Wmi(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_(NamespaceLength) PCWCH Namespace,
     _In_ ULONG NamespaceLength,
     _In_reads_opt_(QueryLength) PCWCH Query,
@@ -5277,7 +5275,7 @@ __declspec(dllexport)
 NTSTATUS
 NTAPI
 ZpNative_ExecuteRegistryStatus(
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ZP_REGISTRY_ROOT Root,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,

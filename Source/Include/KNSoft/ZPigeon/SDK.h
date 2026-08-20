@@ -20,7 +20,6 @@ typedef enum _ZP_TRANSPORT_TYPE
     ZpTransportQuic = 1,
     ZpTransportTcp,
     ZpTransportUdp,
-    ZpTransportWss,
     ZpTransportCount
 } ZP_TRANSPORT_TYPE, *PZP_TRANSPORT_TYPE;
 
@@ -38,7 +37,6 @@ typedef struct _ZP_ENDPOINT
     PCWSTR Host;
     USHORT Port;
     PCWSTR ServerName;
-    PCWSTR WssPath;
 } ZP_ENDPOINT, *PZP_ENDPOINT;
 
 typedef const ZP_ENDPOINT* PCZP_ENDPOINT;
@@ -48,7 +46,6 @@ typedef struct _ZP_LISTENER_ENDPOINT
     ZP_TRANSPORT_TYPE Transport;
     PCWSTR Host;
     USHORT Port;
-    PCWSTR WssPath;
 } ZP_LISTENER_ENDPOINT, *PZP_LISTENER_ENDPOINT;
 
 typedef const ZP_LISTENER_ENDPOINT* PCZP_LISTENER_ENDPOINT;

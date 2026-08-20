@@ -2,6 +2,45 @@
 
 #include <KNSoft/MakeLifeEasier/Memory/Core.h>
 
+#include <Ws2tcpip.h>
+
+#pragma comment(lib, "Ws2_32.lib")
+
+ZP_STATUS
+ZpSocket_ResolveAddress(
+    _In_opt_ PCWSTR Host,
+    _In_ USHORT Port,
+    _In_ LOGICAL Passive,
+    _In_ INT SocketType,
+    _In_ INT Protocol,
+    _Out_ SOCKADDR_STORAGE* Address,
+    _Out_ PINT AddressLength)
+{
+    ADDRINFOW Hints = { 0 }, *Result;
+    WCHAR Service[6];
+    INT Error;
+
+    Hints.ai_family = AF_UNSPEC;
+    Hints.ai_socktype = SocketType;
+    Hints.ai_protocol = Protocol;
+    Hints.ai_flags = Passive ? AI_PASSIVE : 0;
+    _ultow_s(Port, Service, RTL_NUMBER_OF(Service), 10);
+    Error = GetAddrInfoW(Host, Service, &Hints, &Result);
+    if (Error != 0)
+    {
+        return ZpStatus_FromCode(ZpStatusWinsock, (ULONG)Error);
+    }
+    if (Result->ai_addrlen > sizeof(*Address))
+    {
+        FreeAddrInfoW(Result);
+        return ZpStatus_FromNtStatus(STATUS_INVALID_ADDRESS);
+    }
+    RtlCopyMemory(Address, Result->ai_addr, Result->ai_addrlen);
+    *AddressLength = (INT)Result->ai_addrlen;
+    FreeAddrInfoW(Result);
+    return ZpStatus_FromNtStatus(STATUS_SUCCESS);
+}
+
 static
 ULONG
 ZpConnection_ReadUInt32(
@@ -20,13 +59,9 @@ ZpConnection_Close(
 {
     if (Connection->ReceiveBuffer != NULL)
     {
-        RtlFreeHeap(RtlProcessHeap(), 0, Connection->ReceiveBuffer);
+        Mem_Free(Connection->ReceiveBuffer);
         Connection->ReceiveBuffer = NULL;
     }
-    Connection->ReceivePrefixLength = 0;
-    Connection->ReceiveBufferLength = 0;
-    Connection->ReceiveBufferSize = 0;
-    Connection->ReceiveFrameSize = 0;
     Connection->State = ZpConnectionStateClosed;
 }
 
@@ -224,6 +259,39 @@ ZpConnection_Uninitialize(
 }
 
 NTSTATUS
+ZpConnection_AllocateFrame(
+    _In_ ZP_MESSAGE_TYPE MessageType,
+    _In_reads_bytes_opt_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Outptr_result_bytebuffer_(*FrameSize) PBYTE* Frame,
+    _Out_ PULONG FrameSize)
+{
+    PBYTE Buffer;
+    ULONG Size;
+    NTSTATUS Status;
+
+    Status = ZpFrame_GetSize(BodyLength, &Size);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
+    Buffer = Mem_Alloc(Size);
+    if (Buffer == NULL)
+    {
+        return STATUS_NO_MEMORY;
+    }
+    Status = ZpFrame_Encode(MessageType, Body, BodyLength, Buffer, Size, &Size);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Buffer);
+        return Status;
+    }
+    *Frame = Buffer;
+    *FrameSize = Size;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
 ZpConnection_NotifyMessageSent(
     _Inout_ PZP_CONNECTION Connection,
     _In_ ZP_MESSAGE_TYPE MessageType)
@@ -321,7 +389,7 @@ ZpConnection_Receive(
             Connection->ReceiveBufferSize = 0;
             Connection->ReceiveFrameSize = 0;
             Status = ZpConnection_DecodeAndDispatch(Connection, FrameBuffer, FrameSize);
-            RtlFreeHeap(RtlProcessHeap(), 0, FrameBuffer);
+            Mem_Free(FrameBuffer);
             if (!NT_SUCCESS(Status))
             {
                 return Status;

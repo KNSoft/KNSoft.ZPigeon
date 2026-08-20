@@ -37,7 +37,7 @@ ZpTunnel_DecodeOpen(
 
 NTSTATUS
 ZpTunnel_EncodeOpenResponse(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);
@@ -46,6 +46,6 @@ NTSTATUS
 ZpTunnel_DecodeOpenResponse(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG ChannelId);
+    _Out_ PULONG ChannelId);
 
 EXTERN_C_END

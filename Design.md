@@ -22,7 +22,7 @@ KNSoft.ZPigeon 是面向合法 Windows 远程管理场景的 C/S 软件。Client
 - 隐蔽、注入、绕过或监控安全软件等非法能力；
 - Controller、ManagedNode、Relay 等额外业务身份；
 - 业务角色和操作级权限系统；
-- raw UDP 管理协议；
+- 明文 UDP 管理协议；
 - Windows 10 以前系统的兼容；
 - 第一版的轮询模式、S 集群和超大规模长连接专项设计。
 
@@ -37,7 +37,7 @@ Client executors                       Server control APIs
                               |
                          Connection
                               |
-              QUIC | TLS/TCP | WSS Transport
+             QUIC | TLS/TCP | DTLS/UDP Transport
 ```
 
 网络核心只保留三层：
@@ -153,21 +153,21 @@ Source/
 
 ## 5. Transport 与 Endpoint
 
-计划支持三种 Transport，默认优先级为：
+支持三种 Transport，默认配置使用 QUIC：
 
 1. QUIC；
 2. TLS/TCP；
-3. WSS。
+3. DTLS/UDP。
 
 约束：
 
 - QUIC 使用 KNSoft.Quic 提供的 MsQuic 基础；
 - TLS/TCP 使用 Windows TLS 能力；
-- WebSocket 只支持 WSS；
-- raw UDP 已从 Transport 方案删除，QUIC 底层使用 UDP 不等于提供 raw UDP Transport；
-- 不支持明文 TCP、WS，也不从安全协议自动降级到明文协议；
-- 第一版统一向上提供可靠、有序的字节传输语义；
+- UDP 使用 Windows DTLS 能力，并在其上提供可靠、有序的字节传输语义；
+- 不支持明文 TCP、UDP，也不从安全协议自动降级到明文协议；
 - QUIC 第一版只需使用一条双向 Stream，不立即暴露 QUIC 多流能力。
+
+Client 和 Server 只初始化配置中实际出现的 Transport。DTLS/UDP 使用 Winsock 事件驱动接收，定时任务只等待最近的握手、重传、KeepAlive 或空闲超时期限，发送入队会主动唤醒工作线程，不保留固定周期轮询。
 
 QUIC 第一版使用 ALPN `knsoft-zpigeon/1`。Client 单独解析 Endpoint 的 `Host` 并设置 MsQuic 远端地址，再把 `ServerName` 作为 SNI 传入，因此连接目标与身份名称不会被混为同一字段。Client 为配置中的 Deployment 根 DER 建立内存证书库和 `hExclusiveRoot` 专用链引擎，通过 MsQuic 延迟证书验证事件执行 Windows SSL 链策略与 `ServerName` 校验，验证完成前返回 `QUIC_STATUS_PENDING`；不得设置 `NO_CERTIFICATE_VALIDATION`，也不得回退系统公共根。Schannel 路径不设置 `QUIC_CREDENTIAL_FLAG_INPROC_PEER_CERTIFICATE`，从而保证证书事件提供原生 `PCCERT_CONTEXT`；若将来改用该标志，必须同时按 MsQuic 的序列化或 portable certificate 契约重写验证入口，不得把 blob 强制转换为证书 Context。
 
@@ -179,7 +179,6 @@ Endpoint 至少需要表达：
 - 实际主机或 IP；
 - 端口；
 - 用于 TLS/SNI 验证的 `ServerName`；
-- WSS 路径（仅 WSS）；
 - 优先级或列表顺序。
 
 C 按配置顺序尝试 Endpoint；连接超时、失败后的轮次推进、重连退避和已连接后的 Transport 切换规则见 8.1 节。
@@ -190,7 +189,7 @@ C 按配置顺序尝试 Endpoint；连接超时、失败后的轮次推进、重
 
 ```text
 选择 Endpoint
-    -> 建立 QUIC/TLS/WSS 安全连接
+    -> 建立 QUIC/TLS/DTLS 安全连接
     -> 使用 Deployment 根公钥验证 S 在线证书
     -> 交换 Hello 与版本/模块能力
     -> S 发出客户端 Challenge
@@ -211,7 +210,7 @@ Deployment 已由当前连接的 SNI 和证书上下文确定，握手中不重�
 
 C 不内置、不依赖 S 的协议版本。双方只选择当前实现明确支持的版本；不存在对应实现时拒绝协商，不保留未要求的旧版 Decoder、兼容路径或降级逻辑。
 
-QUIC、TLS/TCP 和 WSS 均使用 TLS 派生的对称会话密钥保护业务数据。分组公私钥不用于逐包加解密，也不在 TLS 外增加应用层二次加密。Client QUIC 使用 20 秒 KeepAlive，避免空闲但仍有效的控制连接被默认空闲超时关闭。
+QUIC、TLS/TCP 和 DTLS/UDP 均使用 TLS 派生的对称会话密钥保护业务数据。分组公私钥不用于逐包加解密，也不在 TLS 外增加应用层二次加密。Client QUIC 使用 20 秒 KeepAlive，避免空闲但仍有效的控制连接被默认空闲超时关闭。
 
 ### 6.1 Connection 状态机与接收缓存
 
@@ -282,26 +281,26 @@ BYTE[] Type-specific body
 
 | 值 | 名称 | 方向 | 类型专用 Body |
 |---:|---|---|---|
-| `0x01` | `ClientHello` | C -> S | `UINT16 CoreVersion`、`UINT16 ModuleCount`、模块记录、65 字节客户端公钥 |
+| `0x01` | `ClientHello` | C -> S | `BYTE CoreVersion`、`BYTE ModuleCount`、模块记录、65 字节客户端公钥 |
 | `0x02` | `ServerChallenge` | S -> C | 32 字节随机 Challenge |
 | `0x03` | `ClientAuthenticate` | C -> S | 64 字节 ECDSA P-256 `r || s` 签名 |
-| `0x04` | `Ready` | S -> C | `UINT16 ModuleCount`、协商后的模块记录 |
-| `0x10` | `Request` | S -> C | `UINT64 RequestId`、`UINT16 ModuleId`、`UINT16 OperationId`、`UINT32 TimeoutMilliseconds`、Payload |
-| `0x11` | `Response` | C -> S | `UINT64 RequestId`、`UINT16 StatusType`、`UINT32 StatusCode`、Payload |
-| `0x12` | `Cancel` | S -> C | `UINT64 RequestId` |
-| `0x13` | `ChannelData` | 双向 | `UINT64 ChannelId`、非空数据 |
-| `0x14` | `ChannelClose` | 双向 | `UINT64 ChannelId`、`UINT16 StatusType`、`UINT32 StatusCode` |
+| `0x04` | `Ready` | S -> C | `BYTE ModuleCount`、协商后的模块记录 |
+| `0x10` | `Request` | S -> C | `UINT32 RequestId`、`BYTE ModuleId`、`BYTE OperationId`、`UINT32 TimeoutMilliseconds`、Payload |
+| `0x11` | `Response` | C -> S | `UINT32 RequestId`、`UINT16 StatusType`、`UINT32 StatusCode`、Payload |
+| `0x12` | `Cancel` | S -> C | `UINT32 RequestId` |
+| `0x13` | `ChannelData` | 双向 | `UINT32 ChannelId`、非空数据 |
+| `0x14` | `ChannelClose` | 双向 | `UINT32 ChannelId`、`UINT16 StatusType`、`UINT32 StatusCode` |
 | `0x15` | `Ping` | 双向 | `UINT64 Token` |
 | `0x16` | `Pong` | 双向 | `UINT64 Token` |
-| `0x17` | `ChannelWindow` | 双向 | `UINT64 ChannelId`、非零 `UINT32 CreditBytes` |
+| `0x17` | `ChannelWindow` | 双向 | `UINT32 ChannelId`、非零 `UINT32 CreditBytes` |
 
 其他值在 Core Version 1 中非法。消息类型的最小 Body 长度由 Protocol 解码器校验。`ChannelData` 单帧数据最大为 1 MiB，单次 `ChannelWindow` Credit 最大为 16 MiB，避免大块传输长期占用连接发送队列；其他消息仍受 16 MiB Frame 上限约束。
 
 模块记录编码为：
 
 ```text
-UINT16 ModuleId
-UINT16 ModuleVersion
+BYTE ModuleId
+BYTE ModuleVersion
 ```
 
 - `ModuleId` 和 `ModuleVersion` 均不得为 0；
@@ -317,7 +316,7 @@ UINT16 ModuleVersion
 - `ChannelWindow`：由接收方增加指定 Channel 的可发送字节额度；
 - `Ping`、`Pong`：连接存活检测。
 
-`RequestId` 和 `ChannelId` 均为连接内非零 `UINT64`，在各自命名空间从 1 单调递增且永不复用，不按奇偶或方向预留取值。第一版 Request 只由 Server 创建；Client 发来的业务 Request 是协议错误。Client 只接受严格大于本连接最高已见值的 RequestId，允许发送失败造成的序号空洞，但拒绝重复或倒序 Request。已结束 Request 的迟到 Cancel 和 Response 幂等忽略，未来未知 ID 仍是协议错误；只保存最高值或下一分配值，不建立 tombstone 表。第一版业务 Channel 只由 Client 创建。`ModuleId` 和 `OperationId` 为非零 `UINT16`。
+`RequestId` 和 `ChannelId` 均为连接内非零 `UINT32`，在各自命名空间从 1 单调递增且不复用，不按奇偶或方向预留取值；耗尽后拒绝继续分配。第一版 Request 只由 Server 创建；Client 发来的业务 Request 是协议错误。Client 只接受严格大于本连接最高已见值的 RequestId，允许发送失败造成的序号空洞，但拒绝重复或倒序 Request。已结束 Request 的迟到 Cancel 和 Response 幂等忽略，未来未知 ID 仍是协议错误；只保存最高值或下一分配值，不建立 tombstone 表。第一版业务 Channel 只由 Client 创建。`ModuleId` 和 `OperationId` 为非零 `BYTE`。
 
 `StatusType` 固定占 16 位，`StatusCode` 固定占 32 位，线上合计 6 字节，不传本机结构体填充或 64 位扩展码。Type 定义为 `None = 0`、`NTSTATUS = 1`、`Win32 = 2`、`Winsock = 3`、`HRESULT = 4`、`Security = 5`、`QUIC = 6`、`ProcessExit = 7`；Code 保留来源 API 返回的原始 32 位 bit pattern，不做跨错误域映射。`None` 只允许 Code 0；其他错误域的 Code 0 统一编码为 None；ProcessExit 必须保留类型且允许退出码 0。NTSTATUS、HRESULT、Security 和 QUIC 按各自有符号成功语义判断，Win32/Winsock 仅 Code 0 成功，ProcessExit 表示会话正常收尾而不是把退出码解释成错误。
 
@@ -386,7 +385,7 @@ Protocol 第一阶段公开 `ZpFrame_*` 与 `ZpCodec_*` 纯函数；它们不分
 
 ### 8.1 Endpoint 与重连默认值
 
-Endpoint 记录由 `Transport`、`Host`、`Port`、`ServerName` 和可选 `WssPath` 构成。`Host` 是实际连接目标；`ServerName` 必须为非空 DNS 名称，用于 SNI 和证书名称验证，即使 `Host` 是 IP 也不省略。只有 WSS 允许非空 Path，Path 必须以 `/` 开头。
+Endpoint 记录由 `Transport`、`Host`、`Port` 和 `ServerName` 构成。`Host` 是实际连接目标；`ServerName` 必须为非空 DNS 名称，用于 SNI 和证书名称验证，即使 `Host` 是 IP 也不省略。
 
 第一版默认策略：
 
@@ -403,7 +402,6 @@ Endpoint 记录由 `Transport`、`Host`、`Port`、`ServerName` 和可选 `WssPa
 
 Client 配置包含：
 
-- `Size`，第一版必须为 `sizeof(ZP_CLIENT_CONFIG)`；
 - 按尝试顺序排列的 Endpoint 数组；
 - Deployment 根证书 DER；
 - 可选的 CNG 客户端持久化密钥名；为空时由 SDK 使用默认名称；默认使用机器范围，也可明确选择当前用户范围；
@@ -414,8 +412,7 @@ Client 配置包含：
 
 Server 配置包含：
 
-- `Size`，第一版必须为 `sizeof(ZP_SERVER_CONFIG)`；
-- Listener 数组；Listener 的 `Host` 为空表示通配绑定，只有 WSS 使用非空 Path；
+- Listener 数组；Listener 的 `Host` 为空表示通配绑定；
 - Deployment 数组，每项由 `ServerName` 和带可用私钥的 Windows `PCCERT_CONTEXT` 组成；SDK 在 `Create` 中复制证书 Context，调用方随后可释放原引用；
 - 严格按 `ModuleId` 升序排列的模块版本；
 - 单连接出站 Request 和 Channel Handle 上限；

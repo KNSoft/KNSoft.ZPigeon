@@ -27,7 +27,7 @@ typedef struct _ZP_FILE_ENTRY
 typedef struct _ZP_FILE_ENUMERATION
 {
     LIST_ENTRY ListEntry;
-    ULONGLONG Id;
+    ULONG Id;
     HANDLE Directory;
     FILE_FIND Find;
     PFILE_DIRECTORY_INFORMATION Current;
@@ -58,8 +58,8 @@ struct _ZP_CLIENT_FILE_CHANNEL
             PZP_CLIENT_OBJECT Owner;
             volatile LONG ReferenceCount;
             volatile LONG Pending;
-            ULONGLONG ChannelId;
-            USHORT ModuleId;
+            ULONG ChannelId;
+            BYTE ModuleId;
             ZP_CLIENT_LOCAL_CHANNEL_DATA_ROUTINE ReceiveData;
             ZP_CLIENT_LOCAL_CHANNEL_WINDOW_ROUTINE ReceiveWindow;
             ZP_CLIENT_LOCAL_CHANNEL_CLOSE_ROUTINE ReceiveClose;
@@ -199,7 +199,7 @@ ZpFile_SendCloseLocked(
     _In_ PZP_CLIENT_FILE_CHANNEL Channel,
     _In_ NTSTATUS CloseStatus)
 {
-    BYTE Body[sizeof(ULONGLONG) + ZP_STATUS_WIRE_SIZE];
+    BYTE Body[sizeof(ULONG) + ZP_STATUS_WIRE_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -465,7 +465,7 @@ ZpFile_SendWindowLocked(
     _Inout_ PZP_CLIENT_FILE_CHANNEL Channel,
     _In_ ULONG CreditBytes)
 {
-    BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
+    BYTE Body[2 * sizeof(ULONG)];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -531,7 +531,7 @@ ZpFile_ReadChannelCallback(
     LOGICAL Removed = FALSE;
 
     UNREFERENCED_PARAMETER(Instance);
-    Body = Mem_Alloc(sizeof(ULONGLONG) + ZP_FILE_CHANNEL_CHUNK_SIZE);
+    Body = Mem_Alloc(sizeof(ULONG) + ZP_FILE_CHANNEL_CHUNK_SIZE);
     if (Body == NULL)
     {
         ZpFile_FinishWorker(Channel, STATUS_NO_MEMORY, TRUE);
@@ -573,7 +573,7 @@ ZpFile_ReadChannelCallback(
         RtlReleaseSRWLockExclusive(&Object->Lock);
         Status = IO_ReadFile(Channel->File,
                              &Offset,
-                             Add2Ptr(Body, sizeof(ULONGLONG)),
+                             Add2Ptr(Body, sizeof(ULONG)),
                              ReadLength,
                              &BytesRead);
         if (!NT_SUCCESS(Status) || BytesRead != ReadLength)
@@ -587,10 +587,10 @@ ZpFile_ReadChannelCallback(
         }
         Status = ZpMessage_EncodeChannelData(
             Channel->ChannelId,
-            Add2Ptr(Body, sizeof(ULONGLONG)),
+            Add2Ptr(Body, sizeof(ULONG)),
             BytesRead,
             Body,
-            sizeof(ULONGLONG) + ZP_FILE_CHANNEL_CHUNK_SIZE,
+            sizeof(ULONG) + ZP_FILE_CHANNEL_CHUNK_SIZE,
             &BodyLength);
         if (!NT_SUCCESS(Status))
         {
@@ -1492,7 +1492,7 @@ static
 NTSTATUS
 ZpFile_CreateEnumeration(
     _In_ PCZP_STRING_VIEW Path,
-    _In_ ULONGLONG Id,
+    _In_ ULONG Id,
     _Outptr_ PZP_FILE_ENUMERATION* Result)
 {
     PZP_FILE_ENUMERATION Enumeration;
@@ -1746,7 +1746,7 @@ NTSTATUS
 ZpFile_EnumeratePage(
     _Inout_ PZP_CLIENT_OBJECT Client,
     _In_ PCZP_STRING_VIEW Path,
-    _In_ ULONGLONG EnumerationId,
+    _In_ ULONG EnumerationId,
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
 {
@@ -1993,7 +1993,7 @@ ZpFile_Hash(
 NTSTATUS
 ZpFile_Execute(
     _Inout_opt_ PZP_CLIENT_OBJECT Client,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_bytes_(RequestLength) const VOID* Request,
     _In_ ULONG RequestLength,
     _In_ volatile LONG* Pending,
@@ -2005,8 +2005,8 @@ ZpFile_Execute(
     ZP_FILE_WRITE_RANGE_VIEW WriteRange;
     ZP_FILE_HASH_ALGORITHM Algorithm;
     PZP_CLIENT_FILE_CHANNEL FileChannel = NULL;
-    ULONGLONG FileSize, Offset, EnumerationId;
-    ULONG Attributes;
+    ULONGLONG FileSize, Offset;
+    ULONG Attributes, EnumerationId;
     ZP_FILE_CREATE_DISPOSITION Disposition;
     NTSTATUS Status;
 

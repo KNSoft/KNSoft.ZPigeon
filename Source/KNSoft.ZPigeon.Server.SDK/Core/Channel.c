@@ -6,8 +6,8 @@ struct _ZP_SERVER_CHANNEL_OBJECT
     LIST_ENTRY ListEntry;
     PZP_CONNECTION_OBJECT Owner;
     volatile LONG Pending;
-    ULONGLONG ChannelId;
-    USHORT ModuleId;
+    ULONG ChannelId;
+    BYTE ModuleId;
     ULONGLONG ReceiveCredit;
     ULONGLONG SendCredit;
     ULONGLONG RemainingBytes;
@@ -44,7 +44,7 @@ static
 PZP_SERVER_CHANNEL_OBJECT
 ZpServerConnection_FindChannel(
     _In_ PZP_CONNECTION_OBJECT Connection,
-    _In_ ULONGLONG ChannelId)
+    _In_ ULONG ChannelId)
 {
     PZP_SERVER_CHANNEL_OBJECT Channel;
     PLIST_ENTRY Entry;
@@ -71,7 +71,7 @@ ZpServerChannel_SendClose(
     _In_ ZP_STATUS CloseStatus)
 {
     PZP_CONNECTION_OBJECT Connection = Channel->Owner;
-    BYTE Body[sizeof(ULONGLONG) + ZP_STATUS_WIRE_SIZE];
+    BYTE Body[sizeof(ULONG) + ZP_STATUS_WIRE_SIZE];
     ULONG BodyLength;
 
     if (!NT_SUCCESS(ZpMessage_EncodeChannelClose(Channel->ChannelId,
@@ -169,8 +169,8 @@ ZpServerChannel_Complete(
 NTSTATUS
 ZpServerChannel_Create(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ ULONGLONG ChannelId,
-    _In_ USHORT ModuleId,
+    _In_ ULONG ChannelId,
+    _In_ BYTE ModuleId,
     _In_ LOGICAL BoundedReceive,
     _In_ ULONGLONG RemainingBytes,
     _In_ LOGICAL BoundedSend,
@@ -203,7 +203,6 @@ ZpServerChannel_Create(
         }
         return STATUS_NO_MEMORY;
     }
-    RtlZeroMemory(ChannelObject, sizeof(*ChannelObject));
     ChannelObject->Header.Cancel = ZpServerChannel_Cancel;
     ChannelObject->Header.Send = ZpServerChannel_Send;
     ChannelObject->Header.Close = ZpServerChannel_Close;
@@ -212,6 +211,8 @@ ZpServerChannel_Create(
     ChannelObject->Pending = TRUE;
     ChannelObject->ChannelId = ChannelId;
     ChannelObject->ModuleId = ModuleId;
+    ChannelObject->ReceiveCredit = 0;
+    ChannelObject->SendCredit = 0;
     ChannelObject->BoundedReceive = BoundedReceive;
     ChannelObject->RemainingBytes = RemainingBytes;
     ChannelObject->BoundedSend = BoundedSend;
@@ -262,7 +263,7 @@ ZpServerChannel_SendWindow(
     _In_ ULONG CreditBytes)
 {
     PZP_CONNECTION_OBJECT Connection = Channel->Owner;
-    BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
+    BYTE Body[2 * sizeof(ULONG)];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -308,8 +309,8 @@ NTSTATUS
 ZpServerChannel_GetId(
     _In_ PZP_SERVER_CHANNEL_OBJECT Channel,
     _In_ PZP_CONNECTION_OBJECT Connection,
-    _In_ USHORT ModuleId,
-    _Out_ PULONGLONG ChannelId)
+    _In_ BYTE ModuleId,
+    _Out_ PULONG ChannelId)
 {
     NTSTATUS Status;
 
@@ -342,10 +343,10 @@ ZpServerChannel_Abort(
 VOID
 ZpServerConnection_RejectChannel(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ZP_STATUS Status)
 {
-    BYTE Body[sizeof(ULONGLONG) + ZP_STATUS_WIRE_SIZE];
+    BYTE Body[sizeof(ULONG) + ZP_STATUS_WIRE_SIZE];
     ULONG BodyLength;
 
     if (!NT_SUCCESS(ZpMessage_EncodeChannelClose(ChannelId,
@@ -567,7 +568,7 @@ ZpServerConnection_ReceiveChannelClose(
 NTSTATUS
 ZpServerConnection_ReceiveChannelWindow(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ULONG CreditBytes)
 {
     PZP_SERVER_CHANNEL_OBJECT Channel;

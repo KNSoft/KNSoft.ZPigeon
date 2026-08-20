@@ -384,7 +384,7 @@ ZpAudio_DecodeStreamRequest(
 
 NTSTATUS
 ZpAudio_EncodeChannel(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
@@ -394,21 +394,21 @@ ZpAudio_EncodeChannel(
     if (ChannelId == 0) return STATUS_INVALID_PARAMETER;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     *BytesWritten = sizeof(ChannelId);
-    return ZpCodec_WriteUInt64(&Writer, ChannelId);
+    return ZpCodec_WriteUInt32(&Writer, ChannelId);
 }
 
 NTSTATUS
 ZpAudio_DecodeChannel(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG ChannelId)
+    _Out_ PULONG ChannelId)
 {
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
     if (PayloadLength != sizeof(*ChannelId)) return STATUS_DATA_ERROR;
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadUInt64(&Reader, ChannelId);
+    Status = ZpCodec_ReadUInt32(&Reader, ChannelId);
     return NT_SUCCESS(Status) && *ChannelId != 0 ? STATUS_SUCCESS : STATUS_DATA_ERROR;
 }
 

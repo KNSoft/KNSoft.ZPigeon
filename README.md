@@ -20,7 +20,7 @@ KNSoft.ZPigeon 是面向 Windows 10 及以上系统的远程管理平台。项�
 - Server Native：向托管程序提供稳定的 C ABI。
 - Server Managed：封装可复用的 .NET 管理能力。
 - Web：提供本地回环管理 API 和可视化控制界面。
-- Transport：按 QUIC、TLS/TCP 和 WSS 边界设计；当前完整闭环以 QUIC 为主。
+- Transport：支持 QUIC、TLS/TCP 和 DTLS/UDP，默认使用 QUIC。
 
 Client 主动连接 Server，并接受 Server 的统一管理。
 

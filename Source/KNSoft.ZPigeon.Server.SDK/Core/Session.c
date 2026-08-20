@@ -66,7 +66,7 @@ ZpServerSession_MessageCallback(
     ZP_CHANNEL_CLOSE ChannelClose;
     ZP_READY Ready;
     BYTE Body[sizeof(USHORT) + ZP_MODULE_MAX_COUNT * sizeof(ZP_MODULE_RECORD)];
-    ULONG BodyLength, CreditBytes;
+    ULONG BodyLength, ChannelId, CreditBytes;
     ULONGLONG Token;
     NTSTATUS Status;
 
@@ -160,11 +160,11 @@ ZpServerSession_MessageCallback(
         case ZpMessageChannelWindow:
             Status = ZpMessage_DecodeChannelWindow(Frame->Body,
                                                     Frame->BodyLength,
-                                                    &Token,
+                                                    &ChannelId,
                                                     &CreditBytes);
             return NT_SUCCESS(Status) ?
                        ZpServerConnection_ReceiveChannelWindow(Session->Public,
-                                                               Token,
+                                                               ChannelId,
                                                                CreditBytes) : Status;
 
         case ZpMessageChannelData:

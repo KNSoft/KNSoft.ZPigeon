@@ -96,11 +96,3 @@ DWORD
 WINAPI
 ZpTcp_Worker(
     _In_ PVOID CompletionPort);
-
-ZP_STATUS
-ZpTcp_ResolveAddress(
-    _In_opt_ PCWSTR Host,
-    _In_ USHORT Port,
-    _In_ LOGICAL Passive,
-    _Out_ SOCKADDR_STORAGE* Address,
-    _Out_ PINT AddressLength);

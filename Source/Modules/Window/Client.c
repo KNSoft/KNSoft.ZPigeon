@@ -475,7 +475,7 @@ ZpWindowCapture_SendCloseLocked(
     _Inout_ PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel,
     _In_ ZP_STATUS CloseStatus)
 {
-    BYTE Body[sizeof(ULONGLONG) + ZP_STATUS_WIRE_SIZE];
+    BYTE Body[sizeof(ULONG) + ZP_STATUS_WIRE_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -505,7 +505,7 @@ ZpWindowCapture_SendBytes(
     NTSTATUS Status = STATUS_SUCCESS;
     LOGICAL Pending, Removed;
 
-    Body = Mem_Alloc(sizeof(ULONGLONG) + ZP_WINDOW_CAPTURE_CHUNK_SIZE);
+    Body = Mem_Alloc(sizeof(ULONG) + ZP_WINDOW_CAPTURE_CHUNK_SIZE);
     if (Body == NULL) return STATUS_NO_MEMORY;
     while (Offset < Length)
     {
@@ -534,7 +534,7 @@ ZpWindowCapture_SendBytes(
                                              Add2Ptr(Data, Offset),
                                              ChunkLength,
                                              Body,
-                                             sizeof(ULONGLONG) + ZP_WINDOW_CAPTURE_CHUNK_SIZE,
+                                             sizeof(ULONG) + ZP_WINDOW_CAPTURE_CHUNK_SIZE,
                                              &BodyLength);
         if (!NT_SUCCESS(Status)) break;
         RtlAcquireSRWLockExclusive(&Object->Lock);
@@ -755,7 +755,7 @@ ZpWindowCapture_CreateChannel(
 ZP_STATUS
 ZpWindow_Execute(
     _Inout_ PZP_CLIENT_OBJECT Client,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_bytes_opt_(RequestLength) const VOID* Request,
     _In_ ULONG RequestLength,
     _Outptr_result_maybenull_ PBYTE* Response,

@@ -695,7 +695,7 @@ static
 ZP_STATUS
 ZpExecution_Terminate(
     _Inout_ PZP_CLIENT_OBJECT Client,
-    _In_ ULONGLONG JobId)
+    _In_ ULONG JobId)
 {
     PLIST_ENTRY Entry;
     ZP_STATUS Status = ZpStatus_FromNtStatus(STATUS_NOT_FOUND);
@@ -798,7 +798,7 @@ ZpExecution_CreateStaging(
 ZP_STATUS
 ZpExecution_Execute(
     _Inout_ PZP_CLIENT_OBJECT Client,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_bytes_opt_(RequestLength) const VOID* Request,
     _In_ ULONG RequestLength,
     _Outptr_result_maybenull_ PBYTE* Response,
@@ -806,7 +806,7 @@ ZpExecution_Execute(
 {
     ZP_EXECUTION_START_VIEW Start;
     ZP_STRING_VIEW Name;
-    ULONGLONG JobId;
+    ULONG JobId;
     NTSTATUS Status;
 
     switch (OperationId)

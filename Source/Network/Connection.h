@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <KNSoft/ZPigeon/Protocol.h>
+#include <WinSock2.h>
 
 #define ZP_CONNECTION_INITIAL_RECEIVE_BUFFER_SIZE 4096
 
@@ -48,6 +49,16 @@ struct _ZP_CONNECTION
     ULONG ReceiveFrameSize;
 };
 
+ZP_STATUS
+ZpSocket_ResolveAddress(
+    _In_opt_ PCWSTR Host,
+    _In_ USHORT Port,
+    _In_ LOGICAL Passive,
+    _In_ INT SocketType,
+    _In_ INT Protocol,
+    _Out_ SOCKADDR_STORAGE* Address,
+    _Out_ PINT AddressLength);
+
 NTSTATUS
 ZpConnection_Initialize(
     _Out_ PZP_CONNECTION Connection,
@@ -58,6 +69,14 @@ ZpConnection_Initialize(
 VOID
 ZpConnection_Uninitialize(
     _Inout_ PZP_CONNECTION Connection);
+
+NTSTATUS
+ZpConnection_AllocateFrame(
+    _In_ ZP_MESSAGE_TYPE MessageType,
+    _In_reads_bytes_opt_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
+    _Outptr_result_bytebuffer_(*FrameSize) PBYTE* Frame,
+    _Out_ PULONG FrameSize);
 
 NTSTATUS
 ZpConnection_NotifyMessageSent(

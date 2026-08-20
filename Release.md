@@ -6,7 +6,7 @@
 
 - 最低支持 Windows 10，当前只提供 x64；ARM64 后续按需加入。
 - 原生核心和公共 SDK 使用纯 C，并提供 Native DLL、Managed SDK、Client EXE 和 C# Web 管理端。
-- QUIC 是当前完成端到端验证的 Transport；TLS/TCP 和 WSS 保留明确的 Transport 边界，不允许降级到明文协议。
+- Transport 支持 QUIC、TLS/TCP 和 DTLS/UDP，不允许降级到明文协议。
 - 14 个协议模块已经实现：System、Process、Service、File、Terminal、EventLog、Registry、Window、Administration、Execution、Tunnel、Browser、Wmi 和 Audio。
 - Web 管理端已经覆盖系统、网络、存储、任务、硬件、软件和远程访问七类功能。
 - ZPigeon 由同一 Solution 直接构建，不单独发布 NuGet 包。
@@ -42,7 +42,7 @@
 ## 构建与验证
 
 - [x] Visual Studio 2026 x64 Debug 全 Solution 构建通过。
-- [x] x64 Debug UnitTest 374/374 通过，包含 localhost QUIC 集成。
+- [x] x64 Debug UnitTest 373/373 通过，包含 localhost QUIC、TLS/TCP 和 DTLS/UDP 集成。
 - [x] Web、Managed、Native、Client 和 QUIC 本地闭环通过。
 - [x] 网络共享、网络适配器、IPv4/IPv6 路由和 TCP/UDP 端点完成只读联调。
 - [x] NetworkStatus 新增 Client 实现通过静态分析。

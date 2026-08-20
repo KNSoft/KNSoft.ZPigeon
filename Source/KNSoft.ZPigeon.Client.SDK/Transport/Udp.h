@@ -12,6 +12,7 @@ typedef struct _ZP_CLIENT_UDP_TRANSPORT
     ULONG EndpointIndex;
     ZP_STATUS ShutdownStatus;
     HANDLE StopEvent;
+    WSAEVENT SocketEvent;
     HANDLE WorkerThread;
     SOCKET Socket;
     CredHandle Credential;

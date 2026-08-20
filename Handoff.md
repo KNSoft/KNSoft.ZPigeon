@@ -49,7 +49,7 @@ Managed SDK 封装与 Web 无关的远程操作和长生命周期会话；Web �
 
 - Request 只由 Server 创建；Client 只执行并返回 Response。
 - Channel 只由 Client 创建；Server 持有公共 Handle 并控制窗口、发送、取消和关闭。
-- RequestId、ChannelId 在各自连接命名空间中从 1 单调递增，非零、永不复用，不做奇偶或方向预留。
+- 32 位 RequestId、ChannelId 在各自连接命名空间中从 1 单调递增，非零、不复用，不做奇偶或方向预留；耗尽后拒绝继续分配。
 - Client 以最高已见 RequestId 拒绝重复或倒序 Request；Server 以下一分配值识别已发送 Request。已结束 Request 的迟到 Response/Cancel 幂等忽略，未来 ID 仍是协议错误，不建立 tombstone 表。
 - 已结束或被 Server 配额拒绝的 Channel 只以最高已见 ID 表示，不建立额外 tombstone 表；迟到 Window/Close 可忽略，未来 ID 和未知 Data 仍是协议错误。
 - Server 在发送会创建 Channel 的 Request 前锁内预留本地名额，避免 Client 先创建文件句柄或 ConPTY 后再被 Server 配额拒绝。
@@ -60,8 +60,8 @@ Managed SDK 封装与 Web 无关的远程操作和长生命周期会话；Web �
 
 ## 已验证内容
 
-- Visual Studio 2026 下 x64 Debug 全 Solution 构建通过，最新 UnitTest 为 374/374；x86 配置已删除，ARM64 后续按需加入；
-- Web、Managed、Native、QUIC 与 Client 本地闭环已经跑通，QUIC 启用 KeepAlive，并保留 ProcessExit、NTSTATUS、Win32、Winsock、HRESULT、Security、QUIC 和 WebSocket 等原始状态域；
+- Visual Studio 2026 下 x64 Debug 全 Solution 构建通过，最新 UnitTest 为 373/373；x86 配置已删除，ARM64 后续按需加入；
+- Web、Managed、Native、QUIC 与 Client 本地闭环已经跑通，QUIC 启用 KeepAlive，并保留 ProcessExit、NTSTATUS、Win32、Winsock、HRESULT、Security 和 QUIC 等原始状态域；
 - Terminal、File、Registry、Process、Service、EventLog、Window、WMI、Audio、Video、Tunnel、Browser、Execution 和 Administration 管理路径均已接入 Web；
 - 网络共享、网络适配器、IPv4/IPv6 路由表及 TCP/UDP 端点已经完成真实只读联调；网卡启用/禁用只验证调用路径，未在开发机执行；
 - 固件读取按 CPUID、SMBIOS 和 ACPI 分页签组织并按需获取；UEFI 变量和启动项写入能力只编码，不在开发机执行破坏性测试；
@@ -71,6 +71,6 @@ Managed SDK 封装与 Web 无关的远程操作和长生命周期会话；Web �
 
 1. 继续以 Owner 的实际试用反馈为优先，修正功能完整性和交互一致性。
 2. 审计模块内部重复分配、重复 Encode 模式和可复用 MLE 候选；发现通用抽象先向 Owner 提案，不直接修改 MLE。
-3. 保持 QUIC、TLS/TCP、WSS 的 Transport 边界；EventLog 不恢复系统级实时订阅。
+3. 保持 QUIC、TLS/TCP、DTLS/UDP 的 Transport 边界；EventLog 不恢复系统级实时订阅。
 
 当前没有外部阻塞。发布前仍需完成当前代码的 x64 Release、干净环境和普通用户权限验证。

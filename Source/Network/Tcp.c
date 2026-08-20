@@ -13,7 +13,7 @@ typedef struct _ZP_TCP_SEND_IO
     WSABUF Buffer;
     ULONG Offset;
     ULONG Length;
-    BYTE Data[ANYSIZE_ARRAY];
+    PBYTE Data;
 } ZP_TCP_SEND_IO, *PZP_TCP_SEND_IO;
 
 #define ZP_TCP_KEEP_ALIVE_TIMEOUT_MILLISECONDS 20000
@@ -64,7 +64,7 @@ static
 ZP_STATUS
 ZpTcpConnection_PostSend(
     _Inout_ PZP_TCP_CONNECTION Connection,
-    _In_reads_bytes_(DataLength) const VOID* Data,
+    _Post_invalid_ _In_reads_bytes_(DataLength) PBYTE Data,
     _In_ ULONG DataLength)
 {
     PZP_TCP_SEND_IO Send;
@@ -73,20 +73,22 @@ ZpTcpConnection_PostSend(
 
     if (InterlockedCompareExchange(&Connection->Closing, FALSE, FALSE))
     {
+        Mem_Free(Data);
         return ZpStatus_FromNtStatus(STATUS_CONNECTION_DISCONNECTED);
     }
-    Send = Mem_Alloc(FIELD_OFFSET(ZP_TCP_SEND_IO, Data) + DataLength);
+    Send = Mem_Alloc(sizeof(*Send));
     if (Send == NULL)
     {
+        Mem_Free(Data);
         return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
     }
     RtlZeroMemory(&Send->Io.Overlapped, sizeof(Send->Io.Overlapped));
     Send->Io.Type = ZpTcpIoSend;
-    Send->Buffer.buf = (PCHAR)Send->Data;
+    Send->Buffer.buf = (PCHAR)Data;
     Send->Buffer.len = DataLength;
     Send->Offset = 0;
     Send->Length = DataLength;
-    RtlCopyMemory(Send->Data, Data, DataLength);
+    Send->Data = Data;
     InterlockedIncrement(&Connection->ReferenceCount);
     Error = WSASend(Connection->Socket,
                     &Send->Buffer,
@@ -97,6 +99,7 @@ ZpTcpConnection_PostSend(
                     NULL);
     if (Error == SOCKET_ERROR && (Error = WSAGetLastError()) != WSA_IO_PENDING)
     {
+        Mem_Free(Data);
         Mem_Free(Send);
         ZpTcpConnection_Release(Connection);
         return ZpStatus_FromCode(ZpStatusWinsock, (ULONG)Error);
@@ -145,7 +148,6 @@ ZpTcpConnection_ProcessHandshake(
     if (TokenLength != 0)
     {
         Status = ZpTcpConnection_PostSend(Connection, Token, TokenLength);
-        Mem_Free(Token);
         if (!ZpStatus_IsSuccess(Status))
         {
             return Status;
@@ -279,35 +281,19 @@ ZpTcpConnection_SendFrame(
     _In_ ULONG BodyLength)
 {
     PBYTE Frame, Encrypted;
-    ULONG FrameSize, BytesWritten, EncryptedLength;
+    ULONG FrameSize, EncryptedLength;
     NTSTATUS Status;
     ZP_STATUS TransportStatus;
 
-    Status = ZpFrame_GetSize(BodyLength, &FrameSize);
+    Status = ZpConnection_AllocateFrame(MessageType, Body, BodyLength, &Frame, &FrameSize);
     if (!NT_SUCCESS(Status))
     {
-        return Status;
-    }
-    Frame = Mem_Alloc(FrameSize);
-    if (Frame == NULL)
-    {
-        return STATUS_NO_MEMORY;
-    }
-    Status = ZpFrame_Encode(MessageType,
-                            Body,
-                            BodyLength,
-                            Frame,
-                            FrameSize,
-                            &BytesWritten);
-    if (!NT_SUCCESS(Status))
-    {
-        Mem_Free(Frame);
         return Status;
     }
     RtlEnterCriticalSection(&TcpConnection->Lock);
     TransportStatus = ZpTls_Encrypt(&TcpConnection->Tls,
                                     Frame,
-                                    BytesWritten,
+                                    FrameSize,
                                     &Encrypted,
                                     &EncryptedLength);
     if (ZpStatus_IsSuccess(TransportStatus))
@@ -315,7 +301,6 @@ ZpTcpConnection_SendFrame(
         TransportStatus = ZpTcpConnection_PostSend(TcpConnection,
                                                    Encrypted,
                                                    EncryptedLength);
-        Mem_Free(Encrypted);
     }
     RtlLeaveCriticalSection(&TcpConnection->Lock);
     Mem_Free(Frame);
@@ -392,6 +377,7 @@ ZpTcpConnection_ProcessCompletion(
             }
             Status = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
         }
+        Mem_Free(Send->Data);
         Mem_Free(Send);
     }
     if (!ZpStatus_IsSuccess(Status))
@@ -433,48 +419,4 @@ ZpTcp_Worker(
                                           Error);
     }
     return 0;
-}
-
-ZP_STATUS
-ZpTcp_ResolveAddress(
-    _In_opt_ PCWSTR Host,
-    _In_ USHORT Port,
-    _In_ LOGICAL Passive,
-    _Out_ SOCKADDR_STORAGE* Address,
-    _Out_ PINT AddressLength)
-{
-    ADDRINFOW Hints = { 0 };
-    PADDRINFOW Result;
-    INT Error;
-
-    Hints.ai_family = AF_UNSPEC;
-    Hints.ai_socktype = SOCK_STREAM;
-    Hints.ai_protocol = IPPROTO_TCP;
-    Hints.ai_flags = Passive ? AI_PASSIVE : 0;
-    Error = GetAddrInfoW(Host, NULL, &Hints, &Result);
-    if (Error != 0)
-    {
-        return ZpStatus_FromCode(ZpStatusWinsock, (ULONG)Error);
-    }
-    if (Result->ai_addrlen > sizeof(*Address))
-    {
-        FreeAddrInfoW(Result);
-        return ZpStatus_FromNtStatus(STATUS_INVALID_ADDRESS);
-    }
-    RtlCopyMemory(Address, Result->ai_addr, Result->ai_addrlen);
-    *AddressLength = (INT)Result->ai_addrlen;
-    FreeAddrInfoW(Result);
-    if (Address->ss_family == AF_INET)
-    {
-        ((SOCKADDR_IN*)Address)->sin_port = htons(Port);
-    }
-    else if (Address->ss_family == AF_INET6)
-    {
-        ((SOCKADDR_IN6*)Address)->sin6_port = htons(Port);
-    }
-    else
-    {
-        return ZpStatus_FromNtStatus(STATUS_INVALID_ADDRESS);
-    }
-    return ZpStatus_FromNtStatus(STATUS_SUCCESS);
 }

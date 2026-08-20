@@ -234,7 +234,7 @@ NTSTATUS
 ZpFile_EncodeEnumeratePageRequest(
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
-    _In_ ULONGLONG EnumerationId,
+    _In_ ULONG EnumerationId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
@@ -249,7 +249,7 @@ ZpFile_EncodeEnumeratePageRequest(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(ULONGLONG) + sizeof(ULONG) +
+    RequiredSize = 2 * sizeof(ULONG) +
                    (ULONGLONG)PathLength * sizeof(WCHAR);
     if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
     {
@@ -265,7 +265,7 @@ ZpFile_EncodeEnumeratePageRequest(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt64(&Writer, EnumerationId);
+    Status = ZpCodec_WriteUInt32(&Writer, EnumerationId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_WriteString(&Writer, Path, PathLength);
@@ -278,13 +278,13 @@ ZpFile_DecodeEnumeratePageRequest(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_STRING_VIEW Path,
-    _Out_ PULONGLONG EnumerationId)
+    _Out_ PULONG EnumerationId)
 {
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadUInt64(&Reader, EnumerationId);
+    Status = ZpCodec_ReadUInt32(&Reader, EnumerationId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadString(&Reader, Path);
@@ -367,7 +367,7 @@ ZpFile_DecodeOpenReadRequest(
 
 NTSTATUS
 ZpFile_EncodeOpenReadResponse(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ULONGLONG FileSize,
     _In_ ULONGLONG Offset,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
@@ -381,7 +381,7 @@ ZpFile_EncodeOpenReadResponse(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    *BytesWritten = 3 * sizeof(ULONGLONG);
+    *BytesWritten = sizeof(ULONG) + 2 * sizeof(ULONGLONG);
     if (Buffer == NULL)
     {
         return STATUS_SUCCESS;
@@ -391,7 +391,7 @@ ZpFile_EncodeOpenReadResponse(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt64(&Writer, ChannelId);
+    Status = ZpCodec_WriteUInt32(&Writer, ChannelId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_WriteUInt64(&Writer, FileSize);
@@ -407,19 +407,19 @@ NTSTATUS
 ZpFile_DecodeOpenReadResponse(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONG ChannelId,
     _Out_ PULONGLONG FileSize,
     _Out_ PULONGLONG Offset)
 {
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
-    if (PayloadLength != 3 * sizeof(ULONGLONG))
+    if (PayloadLength != sizeof(ULONG) + 2 * sizeof(ULONGLONG))
     {
         return STATUS_DATA_ERROR;
     }
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadUInt64(&Reader, ChannelId);
+    Status = ZpCodec_ReadUInt32(&Reader, ChannelId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadUInt64(&Reader, FileSize);
@@ -522,7 +522,7 @@ ZpFile_DecodeOpenWriteRequest(
 
 NTSTATUS
 ZpFile_EncodeOpenWriteResponse(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ULONGLONG FileSize,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
@@ -535,7 +535,7 @@ ZpFile_EncodeOpenWriteResponse(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    *BytesWritten = 2 * sizeof(ULONGLONG);
+    *BytesWritten = sizeof(ULONG) + sizeof(ULONGLONG);
     if (Buffer == NULL)
     {
         return STATUS_SUCCESS;
@@ -545,7 +545,7 @@ ZpFile_EncodeOpenWriteResponse(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt64(&Writer, ChannelId);
+    Status = ZpCodec_WriteUInt32(&Writer, ChannelId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_WriteUInt64(&Writer, FileSize);
@@ -557,18 +557,18 @@ NTSTATUS
 ZpFile_DecodeOpenWriteResponse(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONG ChannelId,
     _Out_ PULONGLONG FileSize)
 {
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
-    if (PayloadLength != 2 * sizeof(ULONGLONG))
+    if (PayloadLength != sizeof(ULONG) + sizeof(ULONGLONG))
     {
         return STATUS_DATA_ERROR;
     }
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadUInt64(&Reader, ChannelId);
+    Status = ZpCodec_ReadUInt32(&Reader, ChannelId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadUInt64(&Reader, FileSize);
@@ -980,7 +980,7 @@ NTSTATUS
 ZpFile_EncodePage(
     _In_reads_opt_(FileCount) PCZP_FILE_RECORD Files,
     _In_ ULONG FileCount,
-    _In_ ULONGLONG EnumerationId,
+    _In_ ULONG EnumerationId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
@@ -1000,7 +1000,7 @@ ZpFile_EncodePage(
     {
         return Status;
     }
-    RequiredSize = sizeof(ULONGLONG) + ListLength;
+    RequiredSize = sizeof(ULONG) + ListLength;
     if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12)
     {
         return STATUS_BUFFER_OVERFLOW;
@@ -1015,7 +1015,7 @@ ZpFile_EncodePage(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt64(&Writer, EnumerationId);
+    Status = ZpCodec_WriteUInt32(&Writer, EnumerationId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpFile_EncodeList(Files,
@@ -1037,7 +1037,7 @@ ZpFile_DecodePage(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadUInt64(&Reader, &View->EnumerationId);
+    Status = ZpCodec_ReadUInt32(&Reader, &View->EnumerationId);
     if (NT_SUCCESS(Status))
     {
         Status = ZpFile_DecodeList(Add2Ptr(Payload, Reader.Offset),

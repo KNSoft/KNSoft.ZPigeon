@@ -115,7 +115,7 @@ typedef const ZP_FILE_LIST_VIEW* PCZP_FILE_LIST_VIEW;
 
 typedef struct _ZP_FILE_PAGE_VIEW
 {
-    ULONGLONG EnumerationId;
+    ULONG EnumerationId;
     ZP_FILE_LIST_VIEW Files;
 } ZP_FILE_PAGE_VIEW, *PZP_FILE_PAGE_VIEW;
 
@@ -198,7 +198,7 @@ NTSTATUS
 ZpFile_EncodeEnumeratePageRequest(
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
-    _In_ ULONGLONG EnumerationId,
+    _In_ ULONG EnumerationId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);
@@ -208,13 +208,13 @@ ZpFile_DecodeEnumeratePageRequest(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_STRING_VIEW Path,
-    _Out_ PULONGLONG EnumerationId);
+    _Out_ PULONG EnumerationId);
 
 NTSTATUS
 ZpFile_EncodePage(
     _In_reads_opt_(FileCount) PCZP_FILE_RECORD Files,
     _In_ ULONG FileCount,
-    _In_ ULONGLONG EnumerationId,
+    _In_ ULONG EnumerationId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);
@@ -243,7 +243,7 @@ ZpFile_DecodeOpenReadRequest(
 
 NTSTATUS
 ZpFile_EncodeOpenReadResponse(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ULONGLONG FileSize,
     _In_ ULONGLONG Offset,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
@@ -254,7 +254,7 @@ NTSTATUS
 ZpFile_DecodeOpenReadResponse(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONG ChannelId,
     _Out_ PULONGLONG FileSize,
     _Out_ PULONGLONG Offset);
 
@@ -278,7 +278,7 @@ ZpFile_DecodeOpenWriteRequest(
 
 NTSTATUS
 ZpFile_EncodeOpenWriteResponse(
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ULONGLONG FileSize,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
@@ -288,7 +288,7 @@ NTSTATUS
 ZpFile_DecodeOpenWriteResponse(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
-    _Out_ PULONGLONG ChannelId,
+    _Out_ PULONG ChannelId,
     _Out_ PULONGLONG FileSize);
 
 NTSTATUS

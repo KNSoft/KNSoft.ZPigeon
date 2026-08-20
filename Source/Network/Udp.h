@@ -3,8 +3,11 @@
 #include "Dtls.h"
 #include "Connection.h"
 
-#define ZP_UDP_HEADER_SIZE 16UL
+#define ZP_UDP_HEADER_SIZE 13UL
 #define ZP_UDP_MAX_DATAGRAM_SIZE (ZP_UDP_HEADER_SIZE + ZP_DTLS_MTU)
+#define ZP_UDP_PACKET_HANDSHAKE 1
+#define ZP_UDP_PACKET_ESTABLISHED 2
+#define ZP_UDP_PACKET_DATA 3
 
 typedef struct _ZP_UDP_CONNECTION ZP_UDP_CONNECTION, *PZP_UDP_CONNECTION;
 
@@ -59,18 +62,11 @@ struct _ZP_UDP_CONNECTION
     LOGICAL Closed;
 };
 
-ZP_STATUS
-ZpUdp_ResolveAddress(
-    _In_ PCWSTR Host,
-    _In_ USHORT Port,
-    _In_ LOGICAL Passive,
-    _Out_ PSOCKADDR_STORAGE Address,
-    _Out_ PINT AddressLength);
-
 LOGICAL
 ZpUdp_DecodeHeader(
     _In_reads_bytes_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,
+    _Out_ PBYTE Type,
     _Out_ PULONGLONG ConnectionId);
 
 LOGICAL
@@ -106,6 +102,11 @@ ZpUdpConnection_ProcessDatagram(
 
 ZP_STATUS
 ZpUdpConnection_Tick(
+    _Inout_ PZP_UDP_CONNECTION Connection,
+    _In_ ULONGLONG TickCount);
+
+ULONG
+ZpUdpConnection_GetWaitMilliseconds(
     _Inout_ PZP_UDP_CONNECTION Connection,
     _In_ ULONGLONG TickCount);
 

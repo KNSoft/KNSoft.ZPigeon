@@ -35,7 +35,7 @@ static
 NTSTATUS
 ZpWmi_Send(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_(NamespaceLength) PCWCH Namespace,
     _In_ ULONG NamespaceLength,
     _In_reads_opt_(QueryLength) PCWCH Query,

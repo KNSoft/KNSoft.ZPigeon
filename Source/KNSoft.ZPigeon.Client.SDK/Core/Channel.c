@@ -4,7 +4,7 @@ static
 PZP_CLIENT_LOCAL_CHANNEL
 ZpClientLocalChannel_FindLocked(
     _In_ PZP_CLIENT_OBJECT Object,
-    _In_ ULONGLONG ChannelId)
+    _In_ ULONG ChannelId)
 {
     PZP_CLIENT_LOCAL_CHANNEL Channel;
     PLIST_ENTRY Entry;
@@ -43,8 +43,8 @@ ZpClientLocalChannel_NormalizeStatus(
 NTSTATUS
 ZpClientLocalChannel_ReferenceById(
     _Inout_ PZP_CLIENT_OBJECT Object,
-    _In_ ULONGLONG ChannelId,
-    _In_ USHORT ModuleId,
+    _In_ ULONG ChannelId,
+    _In_ BYTE ModuleId,
     _Out_ PZP_CLIENT_LOCAL_CHANNEL* Channel)
 {
     PZP_CLIENT_LOCAL_CHANNEL ChannelObject;
@@ -76,7 +76,7 @@ NTSTATUS
 ZpClientLocalChannel_Insert(
     _Inout_ PZP_CLIENT_OBJECT Object,
     _Inout_ PZP_CLIENT_LOCAL_CHANNEL Channel,
-    _In_ USHORT ModuleId,
+    _In_ BYTE ModuleId,
     _In_opt_ ZP_CLIENT_LOCAL_CHANNEL_DATA_ROUTINE ReceiveData,
     _In_opt_ ZP_CLIENT_LOCAL_CHANNEL_WINDOW_ROUTINE ReceiveWindow,
     _In_ ZP_CLIENT_LOCAL_CHANNEL_CLOSE_ROUTINE ReceiveClose,
@@ -164,7 +164,7 @@ ZpClientLocalChannel_ReceiveData(
 NTSTATUS
 ZpClientLocalChannel_ReceiveWindow(
     _Inout_ PZP_CLIENT_OBJECT Object,
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ULONG CreditBytes)
 {
     PZP_CLIENT_LOCAL_CHANNEL Channel = NULL;

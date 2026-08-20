@@ -68,7 +68,7 @@ TEST_FUNC(ProtocolCodec)
 
 TEST_FUNC(ProtocolFrame)
 {
-    BYTE PingBody[8], Frame[128], ClientHello[4 + ZP_CLIENT_PUBLIC_KEY_SIZE], InvalidFrame[5] = { 1, 0, 0, 0, 0xFF };
+    BYTE PingBody[8], Frame[128], ClientHello[2 + ZP_CLIENT_PUBLIC_KEY_SIZE], InvalidFrame[5] = { 1, 0, 0, 0, 0xFF };
     ZP_CODEC_WRITER Writer;
     ZP_FRAME_VIEW View;
     ULONG FrameSize, BytesConsumed;
@@ -108,8 +108,8 @@ TEST_FUNC(ProtocolFrame)
     TEST_OK(ZpFrame_Decode(InvalidFrame, sizeof(InvalidFrame), &View, &BytesConsumed) == STATUS_DATA_ERROR);
 
     ZpCodec_InitializeWriter(&Writer, ClientHello, sizeof(ClientHello));
-    TEST_OK(NT_SUCCESS(ZpCodec_WriteUInt16(&Writer, ZP_CORE_VERSION)));
-    TEST_OK(NT_SUCCESS(ZpCodec_WriteUInt16(&Writer, 0)));
+    TEST_OK(NT_SUCCESS(ZpCodec_WriteByte(&Writer, ZP_CORE_VERSION)));
+    TEST_OK(NT_SUCCESS(ZpCodec_WriteByte(&Writer, 0)));
     ClientHello[Writer.Offset] = 0x04;
     RtlZeroMemory(ClientHello + Writer.Offset + 1, ZP_CLIENT_PUBLIC_KEY_SIZE - 1);
     TEST_OK(NT_SUCCESS(ZpFrame_Encode(ZpMessageClientHello,
@@ -130,7 +130,7 @@ TEST_FUNC(ProtocolFrame)
                             &FrameSize);
     TEST_OK(Status == STATUS_REVISION_MISMATCH);
     ClientHello[0] = ZP_CORE_VERSION;
-    ClientHello[4] = 0x03;
+    ClientHello[2] = 0x03;
     TEST_OK(ZpFrame_Encode(ZpMessageClientHello,
                           ClientHello,
                           sizeof(ClientHello),

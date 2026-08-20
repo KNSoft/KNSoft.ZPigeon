@@ -17,8 +17,8 @@ ZpServerChannel_ReleaseReservation(
 NTSTATUS
 ZpServerChannel_Create(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ ULONGLONG ChannelId,
-    _In_ USHORT ModuleId,
+    _In_ ULONG ChannelId,
+    _In_ BYTE ModuleId,
     _In_ LOGICAL BoundedReceive,
     _In_ ULONGLONG RemainingBytes,
     _In_ LOGICAL BoundedSend,
@@ -39,8 +39,8 @@ NTSTATUS
 ZpServerChannel_GetId(
     _In_ PZP_SERVER_CHANNEL_OBJECT Channel,
     _In_ PZP_CONNECTION_OBJECT Connection,
-    _In_ USHORT ModuleId,
-    _Out_ PULONGLONG ChannelId);
+    _In_ BYTE ModuleId,
+    _Out_ PULONG ChannelId);
 
 VOID
 ZpServerChannel_Abort(
@@ -50,7 +50,7 @@ ZpServerChannel_Abort(
 VOID
 ZpServerConnection_RejectChannel(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ ZP_STATUS Status);
 
 VOID

@@ -119,7 +119,7 @@ static
 NTSTATUS
 ZpWindow_Send(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
@@ -335,7 +335,7 @@ ZpWindow_OpenCaptureComplete(
 {
     PZP_WINDOW_CAPTURE_CONTEXT CaptureContext = Context;
     PZP_SERVER_CHANNEL_OBJECT Channel = NULL;
-    ULONGLONG ChannelId = 0;
+    ULONG ChannelId = 0;
     NTSTATUS ChannelStatus;
 
     if (ZpStatus_IsSuccess(Status))

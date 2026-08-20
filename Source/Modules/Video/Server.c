@@ -82,7 +82,7 @@ ZpVideo_OpenComplete(
 {
     PZP_VIDEO_STREAM_CONTEXT StreamContext = Context;
     PZP_SERVER_CHANNEL_OBJECT Channel = NULL;
-    ULONGLONG ChannelId = 0;
+    ULONG ChannelId = 0;
     NTSTATUS ChannelStatus;
 
     if (ZpStatus_IsSuccess(Status))

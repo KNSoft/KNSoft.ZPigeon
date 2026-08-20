@@ -142,7 +142,7 @@ ZpTerminal_SendCloseLocked(
     _Inout_ PZP_CLIENT_TERMINAL_CHANNEL Channel,
     _In_ ZP_STATUS CloseStatus)
 {
-    BYTE Body[sizeof(ULONGLONG) + ZP_STATUS_WIRE_SIZE];
+    BYTE Body[sizeof(ULONG) + ZP_STATUS_WIRE_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -165,7 +165,7 @@ ZpTerminal_SendWindowLocked(
     _Inout_ PZP_CLIENT_TERMINAL_CHANNEL Channel,
     _In_ ULONG CreditBytes)
 {
-    BYTE Body[sizeof(ULONGLONG) + sizeof(ULONG)];
+    BYTE Body[2 * sizeof(ULONG)];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -386,7 +386,7 @@ ZpTerminal_OutputThread(
     {
         goto Finish;
     }
-    Body = Mem_Alloc(sizeof(ULONGLONG) + ZP_TERMINAL_CHANNEL_CHUNK_SIZE);
+    Body = Mem_Alloc(sizeof(ULONG) + ZP_TERMINAL_CHANNEL_CHUNK_SIZE);
     if (Body == NULL)
     {
         Status = STATUS_NO_MEMORY;
@@ -448,7 +448,7 @@ ZpTerminal_OutputThread(
                             NULL,
                             NULL,
                             &IoStatusBlock,
-                            Add2Ptr(Body, sizeof(ULONGLONG)),
+                            Add2Ptr(Body, sizeof(ULONG)),
                             ReadLength,
                             NULL,
                             NULL);
@@ -503,10 +503,10 @@ ZpTerminal_OutputThread(
 
         Status = ZpMessage_EncodeChannelData(
             Channel->Header.ChannelId,
-            Add2Ptr(Body, sizeof(ULONGLONG)),
+            Add2Ptr(Body, sizeof(ULONG)),
             BytesRead,
             Body,
-            sizeof(ULONGLONG) + ZP_TERMINAL_CHANNEL_CHUNK_SIZE,
+            sizeof(ULONG) + ZP_TERMINAL_CHANNEL_CHUNK_SIZE,
             &BodyLength);
         if (!NT_SUCCESS(Status))
         {
@@ -1008,7 +1008,7 @@ static
 ZP_STATUS
 ZpTerminal_Resize(
     _Inout_ PZP_CLIENT_OBJECT Object,
-    _In_ ULONGLONG ChannelId,
+    _In_ ULONG ChannelId,
     _In_ USHORT Columns,
     _In_ USHORT Rows)
 {
@@ -1046,7 +1046,7 @@ ZpTerminal_Resize(
 ZP_STATUS
 ZpTerminal_Execute(
     _Inout_ PZP_CLIENT_OBJECT Client,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_bytes_(RequestLength) const VOID* Request,
     _In_ ULONG RequestLength,
     _Outptr_result_maybenull_ PBYTE* Response,
@@ -1055,7 +1055,7 @@ ZpTerminal_Execute(
 {
     ZP_TERMINAL_CREATE_VIEW Create;
     PZP_CLIENT_TERMINAL_CHANNEL ChannelObject = NULL;
-    ULONGLONG ChannelId;
+    ULONG ChannelId;
     USHORT Columns, Rows;
     NTSTATUS Status;
     ZP_STATUS ResultStatus;

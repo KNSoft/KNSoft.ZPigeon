@@ -62,7 +62,7 @@ static
 NTSTATUS
 ZpAdministration_Send(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
@@ -95,7 +95,7 @@ NTSTATUS
 NTAPI
 ZpServer_EnumerateAdministration(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_ADMINISTRATION_ENUMERATE_CALLBACK Callback,
     _In_opt_ PVOID Context,
@@ -144,7 +144,7 @@ NTSTATUS
 NTAPI
 ZpServer_QueryAdministration(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_(IdentityLength) PCWCH Identity,
     _In_ ULONG IdentityLength,
     _In_ ULONG TimeoutMilliseconds,
@@ -199,7 +199,7 @@ NTSTATUS
 NTAPI
 ZpServer_ControlAdministration(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ZP_ADMINISTRATION_ACTION Action,
     _In_reads_opt_(IdentityLength) PCWCH Identity,
     _In_ ULONG IdentityLength,

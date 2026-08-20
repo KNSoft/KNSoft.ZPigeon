@@ -61,7 +61,7 @@ static
 NTSTATUS
 ZpServer_EnumerateRegistryPage(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ZP_REGISTRY_ROOT Root,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
@@ -490,7 +490,7 @@ static
 NTSTATUS
 ZpServer_SendRegistryStatusRequest(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
@@ -724,7 +724,7 @@ static
 NTSTATUS
 ZpServer_SendRegistryValueStatusRequest(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ZP_REGISTRY_ROOT Root,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
@@ -814,7 +814,7 @@ static
 NTSTATUS
 ZpServer_SendRegistryKeyStatusRequest(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ZP_REGISTRY_ROOT Root,
     _In_reads_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,
@@ -918,7 +918,7 @@ static
 NTSTATUS
 ZpServer_RenameRegistryEntry(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ZP_REGISTRY_ROOT Root,
     _In_reads_opt_(PathLength) PCWCH Path,
     _In_ ULONG PathLength,

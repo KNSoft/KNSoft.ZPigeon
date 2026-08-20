@@ -115,12 +115,11 @@ ZpDtls_Handshake(
     TimeStamp Expiry;
     SECURITY_STATUS SecurityStatus, CompletionStatus;
     ULONG Attributes, Mtu = ZP_DTLS_MTU;
+    PBYTE OutputToken = NULL;
+    ULONG OutputTokenLength = 0;
+    LOGICAL HasMore = FALSE, HandshakeComplete = FALSE;
     ZP_STATUS Status;
 
-    *Token = NULL;
-    *TokenLength = 0;
-    *More = FALSE;
-    *Complete = FALSE;
     if ((DataLength != 0 && Data == NULL) ||
         (Context->Role == ZpDtlsServer && (Address == NULL || AddressLength <= 0)))
     {
@@ -184,27 +183,25 @@ ZpDtls_Handshake(
     }
     if (OutputBuffers[0].cbBuffer != 0)
     {
-        *Token = Mem_Alloc(OutputBuffers[0].cbBuffer);
-        if (*Token == NULL)
+        OutputToken = Mem_Alloc(OutputBuffers[0].cbBuffer);
+        if (OutputToken == NULL)
         {
             Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
             goto Cleanup;
         }
-        RtlCopyMemory(*Token, OutputBuffers[0].pvBuffer, OutputBuffers[0].cbBuffer);
-        *TokenLength = OutputBuffers[0].cbBuffer;
+        RtlCopyMemory(OutputToken, OutputBuffers[0].pvBuffer, OutputBuffers[0].cbBuffer);
+        OutputTokenLength = OutputBuffers[0].cbBuffer;
     }
     if (CompletionStatus == SEC_I_MESSAGE_FRAGMENT)
     {
-        *More = TRUE;
-        Status = ZpStatus_FromNtStatus(STATUS_SUCCESS);
-        goto Cleanup;
+        HasMore = TRUE;
+        goto Succeeded;
     }
     if (CompletionStatus == SEC_E_INCOMPLETE_MESSAGE ||
         CompletionStatus == SEC_I_CONTINUE_NEEDED ||
         CompletionStatus == SEC_I_COMPLETE_AND_CONTINUE)
     {
-        Status = ZpStatus_FromNtStatus(STATUS_SUCCESS);
-        goto Cleanup;
+        goto Succeeded;
     }
     if (CompletionStatus != SEC_E_OK && CompletionStatus != SEC_I_COMPLETE_NEEDED)
     {
@@ -227,7 +224,14 @@ ZpDtls_Handshake(
         goto Cleanup;
     }
     Context->HandshakeComplete = TRUE;
-    *Complete = TRUE;
+    HandshakeComplete = TRUE;
+
+Succeeded:
+    *Token = OutputToken;
+    *TokenLength = OutputTokenLength;
+    *More = HasMore;
+    *Complete = HandshakeComplete;
+    OutputToken = NULL;
     Status = ZpStatus_FromNtStatus(STATUS_SUCCESS);
 
 Cleanup:
@@ -238,6 +242,10 @@ Cleanup:
     if (OutputBuffers[1].pvBuffer != NULL)
     {
         FreeContextBuffer(OutputBuffers[1].pvBuffer);
+    }
+    if (OutputToken != NULL)
+    {
+        Mem_Free(OutputToken);
     }
     return Status;
 }
@@ -305,8 +313,6 @@ ZpDtls_Decrypt(
     SECURITY_STATUS SecurityStatus;
     ULONG Index;
 
-    *Plaintext = NULL;
-    *PlaintextLength = 0;
     if (!Context->HandshakeComplete || Data == NULL || DataLength == 0)
     {
         return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);

@@ -91,7 +91,7 @@ static
 NTSTATUS
 ZpAudio_Send(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_ ULONG TimeoutMilliseconds,
     _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
@@ -172,7 +172,7 @@ static
 NTSTATUS
 ZpAudio_SendControl(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_ USHORT OperationId,
+    _In_ BYTE OperationId,
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _In_ ULONG TimeoutMilliseconds,
@@ -304,7 +304,7 @@ ZpAudio_OpenComplete(
 {
     PZP_AUDIO_STREAM_CONTEXT StreamContext = Context;
     PZP_SERVER_CHANNEL_OBJECT Channel = NULL;
-    ULONGLONG ChannelId = 0;
+    ULONG ChannelId = 0;
     NTSTATUS ChannelStatus;
 
     if (ZpStatus_IsSuccess(Status))

@@ -86,7 +86,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ULONGLONG FileLastWriteTime;
     ZP_STATUS FilePageStatus;
     ULONG FilePageCount;
-    ULONGLONG FilePageEnumerationId;
+    ULONG FilePageEnumerationId;
     WCHAR FilePageName[MAX_PATH];
     ULONG FilePageNameLength;
     ZP_STATUS EventLogPageStatus;
@@ -1274,8 +1274,8 @@ SDKIntegration_Run(
         { ZP_EVENT_LOG_MODULE_ID, ZP_EVENT_LOG_MODULE_VERSION },
         { ZP_REGISTRY_MODULE_ID, ZP_REGISTRY_MODULE_VERSION }
     };
-    ZP_ENDPOINT Endpoint = { Transport, L"127.0.0.1", 0, ServerName, NULL };
-    ZP_LISTENER_ENDPOINT Listener = { Transport, L"127.0.0.1", 0, NULL };
+    ZP_ENDPOINT Endpoint = { Transport, L"127.0.0.1", 0, ServerName };
+    ZP_LISTENER_ENDPOINT Listener = { Transport, L"127.0.0.1", 0 };
     ZP_SERVER_DEPLOYMENT Deployment = { ServerName, NULL };
     ZP_CLIENT_CONFIG ClientConfig = { 0 };
     ZP_SERVER_CONFIG ServerConfig = { 0 };
@@ -1398,7 +1398,6 @@ SDKIntegration_Run(
     }
     Deployment.Certificate = Certificate;
 
-    ClientConfig.Size = sizeof(ClientConfig);
     ClientConfig.Endpoints = &Endpoint;
     ClientConfig.EndpointCount = 1;
     ClientConfig.DeploymentRootCertificate = Certificate->pbCertEncoded;
@@ -1412,7 +1411,6 @@ SDKIntegration_Run(
     ClientConfig.CallbackContext = &TestContext;
     ClientConfig.MaxRequestPayloadBytesPerConnection = 4096;
 
-    ServerConfig.Size = sizeof(ServerConfig);
     ServerConfig.Listeners = &Listener;
     ServerConfig.ListenerCount = 1;
     ServerConfig.Deployments = &Deployment;

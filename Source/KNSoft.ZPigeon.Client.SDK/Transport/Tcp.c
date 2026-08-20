@@ -160,11 +160,13 @@ ZpClientTcp_ConnectThread(
     INT AddressLength, Error, NonBlocking;
     ZP_STATUS Status;
 
-    Status = ZpTcp_ResolveAddress(Endpoint->Host,
-                                  Endpoint->Port,
-                                  FALSE,
-                                  &Address,
-                                  &AddressLength);
+    Status = ZpSocket_ResolveAddress(Endpoint->Host,
+                                     Endpoint->Port,
+                                     FALSE,
+                                     SOCK_STREAM,
+                                     IPPROTO_TCP,
+                                     &Address,
+                                     &AddressLength);
     if (!ZpStatus_IsSuccess(Status))
     {
         goto Failed;
@@ -237,7 +239,11 @@ ZpClientTcp_ConnectThread(
         }
     }
     NonBlocking = FALSE;
-    ioctlsocket(Socket, FIONBIO, (PULONG)&NonBlocking);
+    if (ioctlsocket(Socket, FIONBIO, (PULONG)&NonBlocking) == SOCKET_ERROR)
+    {
+        Status = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
+        goto Failed;
+    }
     Status = ZpTcpConnection_Initialize(&Transport->Connection,
                                         Transport->CompletionPort,
                                         Socket,
