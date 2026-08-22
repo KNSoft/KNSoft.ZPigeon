@@ -19,7 +19,7 @@ ZpServerQuic_SetShutdownStatus(
     _In_ ZP_STATUS Status)
 {
     RtlAcquireSRWLockExclusive(&Connection->Public.Lock);
-    if (Connection->ShutdownStatus.Type == ZpStatusNone)
+    if (ZpStatus_IsSuccess(Connection->ShutdownStatus))
     {
         Connection->ShutdownStatus = Status;
     }

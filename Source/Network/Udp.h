@@ -97,7 +97,7 @@ ZpUdpConnection_StartHandshake(
 ZP_STATUS
 ZpUdpConnection_ProcessDatagram(
     _Inout_ PZP_UDP_CONNECTION Connection,
-    _In_reads_bytes_(DataLength) const VOID* Data,
+    _Inout_updates_bytes_(DataLength) PVOID Data,
     _In_ ULONG DataLength);
 
 ZP_STATUS

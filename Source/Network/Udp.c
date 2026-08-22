@@ -561,10 +561,10 @@ ZpUdpConnection_ProcessData(
 ZP_STATUS
 ZpUdpConnection_ProcessDatagram(
     _Inout_ PZP_UDP_CONNECTION Connection,
-    _In_reads_bytes_(DataLength) const VOID* Data,
+    _Inout_updates_bytes_(DataLength) PVOID Data,
     _In_ ULONG DataLength)
 {
-    const BYTE* Buffer = Data;
+    PBYTE Buffer = Data;
     ULONGLONG ConnectionId;
     BYTE Type;
     ZP_STATUS Status;
@@ -670,7 +670,7 @@ ZpUdpConnection_Tick(
             Buffer = CONTAINING_RECORD(Entry, ZP_UDP_BUFFER, ListEntry);
             if (Buffer->SentTickCount == 0)
             {
-                continue;
+                break;
             }
             if (TickCount - Buffer->SentTickCount < ZP_UDP_RETRY_MILLISECONDS)
             {
@@ -731,7 +731,6 @@ ZpUdpConnection_GetWaitMilliseconds(
     _Inout_ PZP_UDP_CONNECTION Connection,
     _In_ ULONGLONG TickCount)
 {
-    PLIST_ENTRY Entry;
     ULONG Wait;
 
     RtlEnterCriticalSection(&Connection->Lock);
@@ -756,11 +755,11 @@ ZpUdpConnection_GetWaitMilliseconds(
                    ZpUdp_GetRemainingMilliseconds(
                        Connection->LastSendTickCount + ZP_UDP_KEEP_ALIVE_MILLISECONDS,
                        TickCount));
-        for (Entry = Connection->SendQueue.Flink;
-             Entry != &Connection->SendQueue;
-             Entry = Entry->Flink)
+        if (!IsListEmpty(&Connection->SendQueue))
         {
-            PZP_UDP_BUFFER Buffer = CONTAINING_RECORD(Entry, ZP_UDP_BUFFER, ListEntry);
+            PZP_UDP_BUFFER Buffer = CONTAINING_RECORD(Connection->SendQueue.Flink,
+                                                      ZP_UDP_BUFFER,
+                                                      ListEntry);
 
             if (Buffer->SentTickCount != 0)
             {

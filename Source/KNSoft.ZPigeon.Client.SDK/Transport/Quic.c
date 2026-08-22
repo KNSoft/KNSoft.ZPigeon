@@ -30,7 +30,7 @@ ZpClientQuic_SetShutdownStatus(
     _In_ ZP_STATUS Status)
 {
     RtlAcquireSRWLockExclusive(&Transport->Owner->Lock);
-    if (Transport->ShutdownStatus.Type == ZpStatusNone)
+    if (ZpStatus_IsSuccess(Transport->ShutdownStatus))
     {
         Transport->ShutdownStatus = Status;
     }
