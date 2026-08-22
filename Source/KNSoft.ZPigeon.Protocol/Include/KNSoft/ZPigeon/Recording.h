@@ -166,9 +166,9 @@ ZpRecording_DecodeRecords(
     _Out_ PZP_RECORDING_LIST_VIEW View);
 
 NTSTATUS
-ZpRecording_GetRecord(
+ZpRecording_GetNextRecord(
     _In_ PCZP_RECORDING_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_RECORDING_RECORD_VIEW Record);
 
 NTSTATUS

@@ -130,21 +130,18 @@ ZpProcess_DecodeList(
 }
 
 NTSTATUS
-ZpProcess_GetRecord(
+ZpProcess_GetNextRecord(
     _In_ PCZP_PROCESS_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_PROCESS_RECORD_VIEW Record)
 {
     ZP_CODEC_READER Reader;
-    NTSTATUS Status = STATUS_SUCCESS;
-    ULONG CurrentIndex;
+    NTSTATUS Status;
 
-    if (Index >= List->Count) return STATUS_INVALID_PARAMETER;
-    ZpCodec_InitializeReader(&Reader, List->Buffer, List->Length);
-    for (CurrentIndex = 0; NT_SUCCESS(Status) && CurrentIndex <= Index; CurrentIndex++)
-    {
-        Status = ZpProcess_ReadRecord(&Reader, CurrentIndex == Index ? Record : NULL);
-    }
+    if (*Offset >= List->Length) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, Add2Ptr(List->Buffer, *Offset), List->Length - *Offset);
+    Status = ZpProcess_ReadRecord(&Reader, Record);
+    if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
     return Status;
 }
 

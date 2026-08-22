@@ -533,7 +533,7 @@ SDKTest_ProcessListCallback(
 {
     PSDK_SYSTEM_LOOPBACK Loopback = Context;
     ZP_PROCESS_RECORD_VIEW Process;
-    ULONG Index;
+    ULONG Index, Offset = 0;
 
     Loopback->CallbackCount++;
     Loopback->Status = Status;
@@ -542,7 +542,7 @@ SDKTest_ProcessListCallback(
         Loopback->ProcessCount = Processes->Count;
         for (Index = 0; Index < Processes->Count; Index++)
         {
-            if (NT_SUCCESS(ZpProcess_GetRecord(Processes, Index, &Process)) &&
+            if (NT_SUCCESS(ZpProcess_GetNextRecord(Processes, &Offset, &Process)) &&
                 Process.ProcessId == GetCurrentProcessId())
             {
                 Loopback->FoundCurrentProcess = TRUE;

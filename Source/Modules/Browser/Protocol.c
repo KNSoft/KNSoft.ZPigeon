@@ -141,21 +141,18 @@ ZpBrowser_DecodePage(
 }
 
 NTSTATUS
-ZpBrowser_GetRecord(
+ZpBrowser_GetNextRecord(
     _In_ PCZP_BROWSER_PAGE_VIEW Page,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_BROWSER_RECORD_VIEW Record)
 {
     ZP_CODEC_READER Reader;
-    NTSTATUS Status = STATUS_SUCCESS;
-    ULONG Current;
+    NTSTATUS Status;
 
-    if (Index >= Page->Count) return STATUS_INVALID_PARAMETER;
-    ZpCodec_InitializeReader(&Reader, Page->Buffer, Page->Length);
-    for (Current = 0; NT_SUCCESS(Status) && Current <= Index; Current++)
-    {
-        Status = ZpBrowser_ReadRecord(&Reader, Current == Index ? Record : NULL);
-    }
+    if (*Offset >= Page->Length) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, Add2Ptr(Page->Buffer, *Offset), Page->Length - *Offset);
+    Status = ZpBrowser_ReadRecord(&Reader, Record);
+    if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
     return Status;
 }
 

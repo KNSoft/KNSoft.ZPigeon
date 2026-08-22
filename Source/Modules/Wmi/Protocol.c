@@ -160,26 +160,6 @@ ZpWmi_GetNextRow(
 }
 
 NTSTATUS
-ZpWmi_GetRow(
-    _In_ PCZP_WMI_PAGE_VIEW Page,
-    _In_ ULONG Index,
-    _Out_ PZP_WMI_ROW_VIEW Row)
-{
-    ULONG Current, Offset = 0;
-    NTSTATUS Status = STATUS_SUCCESS;
-
-    if (Index >= Page->RowCount) return STATUS_INVALID_PARAMETER;
-    for (Current = 0; NT_SUCCESS(Status) && Current <= Index; Current++)
-    {
-        ZP_WMI_ROW_VIEW Local;
-
-        Status = ZpWmi_GetNextRow(Page, &Offset, &Local);
-        if (NT_SUCCESS(Status) && Current == Index) *Row = Local;
-    }
-    return Status;
-}
-
-NTSTATUS
 ZpWmi_GetNextCell(
     _In_ PCZP_WMI_ROW_VIEW Row,
     _Inout_ PULONG Offset,
@@ -192,26 +172,6 @@ ZpWmi_GetNextCell(
     ZpCodec_InitializeReader(&Reader, Add2Ptr(Row->Buffer, *Offset), Row->Length - *Offset);
     Status = ZpWmi_ReadCell(&Reader, Cell);
     if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
-    return Status;
-}
-
-NTSTATUS
-ZpWmi_GetCell(
-    _In_ PCZP_WMI_ROW_VIEW Row,
-    _In_ ULONG Index,
-    _Out_ PZP_WMI_CELL Cell)
-{
-    ULONG Current, Offset = 0;
-    NTSTATUS Status = STATUS_SUCCESS;
-
-    if (Index >= Row->CellCount) return STATUS_INVALID_PARAMETER;
-    for (Current = 0; NT_SUCCESS(Status) && Current <= Index; Current++)
-    {
-        ZP_WMI_CELL Local;
-
-        Status = ZpWmi_GetNextCell(Row, &Offset, &Local);
-        if (NT_SUCCESS(Status) && Current == Index) *Cell = Local;
-    }
     return Status;
 }
 

@@ -53,9 +53,9 @@ ZpRtc_DecodeOpenRequest(
     _Out_ PZP_RTC_OPEN_REQUEST_VIEW Request);
 
 NTSTATUS
-ZpRtc_GetIceServer(
+ZpRtc_GetNextIceServer(
     _In_ PCZP_RTC_OPEN_REQUEST_VIEW Request,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_STRING_VIEW IceServer);
 
 NTSTATUS

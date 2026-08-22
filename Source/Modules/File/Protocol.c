@@ -1055,27 +1055,18 @@ ZpFile_DecodePage(
 }
 
 NTSTATUS
-ZpFile_GetRecord(
+ZpFile_GetNextRecord(
     _In_ PCZP_FILE_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_FILE_RECORD_VIEW Record)
 {
     ZP_CODEC_READER Reader;
-    NTSTATUS Status = STATUS_SUCCESS;
-    ULONG CurrentIndex;
+    NTSTATUS Status;
 
-    if (Index >= List->Count)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-    ZpCodec_InitializeReader(&Reader, List->Buffer, List->Length);
-    for (CurrentIndex = 0;
-         NT_SUCCESS(Status) && CurrentIndex <= Index;
-         CurrentIndex++)
-    {
-        Status = ZpFile_ReadRecord(&Reader,
-                                   CurrentIndex == Index ? Record : NULL);
-    }
+    if (*Offset >= List->Length) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, Add2Ptr(List->Buffer, *Offset), List->Length - *Offset);
+    Status = ZpFile_ReadRecord(&Reader, Record);
+    if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
     return Status;
 }
 
@@ -1246,21 +1237,18 @@ ZpFile_DecodeOwnerList(
 }
 
 NTSTATUS
-ZpFile_GetOwnerRecord(
+ZpFile_GetNextOwnerRecord(
     _In_ PCZP_FILE_OWNER_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_FILE_OWNER_RECORD_VIEW Record)
 {
     ZP_CODEC_READER Reader;
-    NTSTATUS Status = STATUS_SUCCESS;
-    ULONG Current;
+    NTSTATUS Status;
 
-    if (Index >= List->Count) return STATUS_INVALID_PARAMETER;
-    ZpCodec_InitializeReader(&Reader, List->Buffer, List->Length);
-    for (Current = 0; NT_SUCCESS(Status) && Current <= Index; Current++)
-    {
-        Status = ZpFile_ReadOwner(&Reader, Current == Index ? Record : NULL);
-    }
+    if (*Offset >= List->Length) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, Add2Ptr(List->Buffer, *Offset), List->Length - *Offset);
+    Status = ZpFile_ReadOwner(&Reader, Record);
+    if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
     return Status;
 }
 

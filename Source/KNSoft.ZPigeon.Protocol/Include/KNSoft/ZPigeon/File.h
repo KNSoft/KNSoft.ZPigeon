@@ -423,9 +423,9 @@ ZpFile_DecodeList(
     _Out_ PZP_FILE_LIST_VIEW View);
 
 NTSTATUS
-ZpFile_GetRecord(
+ZpFile_GetNextRecord(
     _In_ PCZP_FILE_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_FILE_RECORD_VIEW Record);
 
 NTSTATUS
@@ -456,9 +456,9 @@ ZpFile_DecodeOwnerList(
     _Out_ PZP_FILE_OWNER_LIST_VIEW View);
 
 NTSTATUS
-ZpFile_GetOwnerRecord(
+ZpFile_GetNextOwnerRecord(
     _In_ PCZP_FILE_OWNER_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_FILE_OWNER_RECORD_VIEW Record);
 
 NTSTATUS

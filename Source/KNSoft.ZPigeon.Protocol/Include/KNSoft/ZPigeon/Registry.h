@@ -224,9 +224,9 @@ ZpRegistry_DecodeKeyPage(
     _Out_ PZP_REGISTRY_PAGE_VIEW Page);
 
 NTSTATUS
-ZpRegistry_GetKeyRecord(
+ZpRegistry_GetNextKeyRecord(
     _In_ PCZP_REGISTRY_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_REGISTRY_KEY_RECORD_VIEW Record);
 
 NTSTATUS
@@ -247,9 +247,9 @@ ZpRegistry_DecodeValuePage(
     _Out_ PZP_REGISTRY_PAGE_VIEW Page);
 
 NTSTATUS
-ZpRegistry_GetValueRecord(
+ZpRegistry_GetNextValueRecord(
     _In_ PCZP_REGISTRY_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_REGISTRY_VALUE_RECORD_VIEW Record);
 
 NTSTATUS

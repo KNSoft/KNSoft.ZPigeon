@@ -93,23 +93,20 @@ ZpRtc_DecodeOpenRequest(
 }
 
 NTSTATUS
-ZpRtc_GetIceServer(
+ZpRtc_GetNextIceServer(
     _In_ PCZP_RTC_OPEN_REQUEST_VIEW Request,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_STRING_VIEW IceServer)
 {
     ZP_CODEC_READER Reader;
-    ZP_STRING_VIEW CurrentIceServer;
-    NTSTATUS Status = STATUS_SUCCESS;
-    ULONG Current;
+    NTSTATUS Status;
 
-    if (Index >= Request->IceServerCount) return STATUS_INVALID_PARAMETER;
-    ZpCodec_InitializeReader(&Reader, Request->IceServers, Request->IceServersLength);
-    for (Current = 0; NT_SUCCESS(Status) && Current <= Index; Current++)
-    {
-        Status = ZpCodec_ReadString(&Reader, &CurrentIceServer);
-        if (NT_SUCCESS(Status) && Current == Index) *IceServer = CurrentIceServer;
-    }
+    if (*Offset >= Request->IceServersLength) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader,
+                             Add2Ptr(Request->IceServers, *Offset),
+                             Request->IceServersLength - *Offset);
+    Status = ZpCodec_ReadString(&Reader, IceServer);
+    if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
     return Status;
 }
 

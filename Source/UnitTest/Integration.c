@@ -212,7 +212,7 @@ SDKIntegration_ProcessListCallback(
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
     ZP_PROCESS_RECORD_VIEW Process;
-    ULONG Index;
+    ULONG Index, Offset = 0;
 
     UNREFERENCED_PARAMETER(Request);
     if (ZpStatus_IsSuccess(Status) && TestContext->CollectProcessDetails)
@@ -221,7 +221,7 @@ SDKIntegration_ProcessListCallback(
         for (Index = 0; Index < Processes->Count; Index++)
         {
             Status = ZpStatus_FromNtStatus(
-                ZpProcess_GetRecord(Processes, Index, &Process));
+                ZpProcess_GetNextRecord(Processes, &Offset, &Process));
             if (!ZpStatus_IsSuccess(Status))
             {
                 break;
@@ -275,7 +275,7 @@ SDKIntegration_ServiceListCallback(
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
     ZP_SERVICE_RECORD_VIEW Service;
-    ULONG Index;
+    ULONG Index, Offset = 0;
 
     UNREFERENCED_PARAMETER(Request);
     if (ZpStatus_IsSuccess(Status))
@@ -284,7 +284,7 @@ SDKIntegration_ServiceListCallback(
         for (Index = 0; Index < Services->Count; Index++)
         {
             Status = ZpStatus_FromNtStatus(
-                ZpService_GetRecord(Services, Index, &Service));
+                ZpService_GetNextRecord(Services, &Offset, &Service));
             if (!ZpStatus_IsSuccess(Status))
             {
                 break;
@@ -400,6 +400,7 @@ SDKIntegration_FilePageCallback(
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
     ZP_FILE_RECORD_VIEW File;
+    ULONG Offset = 0;
 
     UNREFERENCED_PARAMETER(Request);
     if (ZpStatus_IsSuccess(Status))
@@ -410,7 +411,7 @@ SDKIntegration_FilePageCallback(
     if (ZpStatus_IsSuccess(Status) && Page->Files.Count != 0)
     {
         Status = ZpStatus_FromNtStatus(
-            ZpFile_GetRecord(&Page->Files, 0, &File));
+            ZpFile_GetNextRecord(&Page->Files, &Offset, &File));
         if (ZpStatus_IsSuccess(Status) &&
             File.Name.Length >= ARRAYSIZE(TestContext->FilePageName))
         {
@@ -439,7 +440,7 @@ SDKIntegration_EventLogPageCallback(
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
     ZP_EVENT_LOG_RECORD_VIEW Record;
-    ULONG Index;
+    ULONG Index, Offset = 0;
 
     UNREFERENCED_PARAMETER(Request);
     if (ZpStatus_IsSuccess(Status))
@@ -464,7 +465,7 @@ SDKIntegration_EventLogPageCallback(
          Index++)
     {
         Status = ZpStatus_FromNtStatus(
-            ZpEventLog_GetRecord(&Page->Records, Index, &Record));
+            ZpEventLog_GetNextRecord(&Page->Records, &Offset, &Record));
         if (ZpStatus_IsSuccess(Status) &&
             (Record.Bookmark.Length == 0 || Record.Xml.Length == 0))
         {
@@ -732,6 +733,7 @@ SDKIntegration_RegistryPageCallback(
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
     ZP_REGISTRY_VALUE_RECORD_VIEW Record;
+    ULONG Offset = 0;
 
     UNREFERENCED_PARAMETER(Request);
     TestContext->RegistryRecordCount = 0;
@@ -751,7 +753,7 @@ SDKIntegration_RegistryPageCallback(
         }
         if (TestContext->RegistryPageValues &&
             Page->Records.Count != 0 &&
-            NT_SUCCESS(ZpRegistry_GetValueRecord(&Page->Records, 0, &Record)))
+            NT_SUCCESS(ZpRegistry_GetNextValueRecord(&Page->Records, &Offset, &Record)))
         {
             TestContext->RegistryRecordNameLength = Record.Name.Length;
             if (Record.Name.Length <=

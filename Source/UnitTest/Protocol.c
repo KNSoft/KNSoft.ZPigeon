@@ -58,7 +58,7 @@ TEST_FUNC(ProtocolWindow)
     ZP_WINDOW_MONITOR_VIEW Monitor;
     ZP_WINDOW_CAPTURE_OPTIONS Decoded, Invalid;
     BYTE Buffer[256];
-    ULONG Length;
+    ULONG Length, Offset = 0;
 
     TEST_OK(NT_SUCCESS(ZpWindow_EncodeCaptureRequest(&Desktop, Buffer, sizeof(Buffer), &Length)) &&
             NT_SUCCESS(ZpWindow_DecodeCaptureRequest(Buffer, Length, &Decoded)) &&
@@ -74,7 +74,8 @@ TEST_FUNC(ProtocolWindow)
                                                   &Length)) &&
             NT_SUCCESS(ZpWindow_DecodeMonitorList(Buffer, Length, &MonitorList)) &&
             MonitorList.Count == ARRAYSIZE(Monitors) &&
-            NT_SUCCESS(ZpWindow_GetMonitor(&MonitorList, 1, &Monitor)) &&
+            NT_SUCCESS(ZpWindow_GetNextMonitor(&MonitorList, &Offset, &Monitor)) &&
+            NT_SUCCESS(ZpWindow_GetNextMonitor(&MonitorList, &Offset, &Monitor)) &&
             Monitor.Index == 1 && Monitor.Right == 1920 && Monitor.Device.Length == 8);
 }
 
@@ -136,11 +137,11 @@ TEST_FUNC(ProtocolFileOwners)
     ZP_FILE_OWNER_CONTROL_REQUEST_VIEW Request;
     ZP_FILE_OWNER_CONTROL_RESULT_VIEW ResultView;
     ZP_FILE_OWNER_CONTROL_RESULT Result;
-    ULONG Length, ProcessId;
+    ULONG Length, Offset = 0, ProcessId;
 
     TEST_OK(NT_SUCCESS(ZpFile_EncodeOwnerList(Owners, ARRAYSIZE(Owners), Buffer, sizeof(Buffer), &Length)) &&
             NT_SUCCESS(ZpFile_DecodeOwnerList(Buffer, Length, &List)) && List.Count == ARRAYSIZE(Owners) &&
-            NT_SUCCESS(ZpFile_GetOwnerRecord(&List, 0, &Owner)) && Owner.ProcessId == 42 &&
+            NT_SUCCESS(ZpFile_GetNextOwnerRecord(&List, &Offset, &Owner)) && Owner.ProcessId == 42 &&
             Owner.ImageName.Length == 8 && Owner.CommandLineStatus == STATUS_ACCESS_DENIED &&
             Owner.ServiceNames.Length == 9);
     TEST_OK(ZpFile_DecodeOwnerList(Buffer, Length - 1, &List) == STATUS_DATA_ERROR);
@@ -310,7 +311,7 @@ TEST_FUNC(ProtocolRtc)
     ZP_RTC_OPEN_REQUEST_VIEW Request;
     ZP_STRING_VIEW String;
     const BYTE* DecodedSessionId;
-    ULONG Length;
+    ULONG Length, Offset = 0;
 
     TEST_OK(NT_SUCCESS(ZpRtc_EncodeOpenRequest(SessionId,
                                                L"offer",
@@ -323,10 +324,12 @@ TEST_FUNC(ProtocolRtc)
     TEST_OK(NT_SUCCESS(ZpRtc_DecodeOpenRequest(Buffer, Length, &Request)) &&
             Request.Offer.Length == 5 && Request.IceServerCount == ARRAYSIZE(Servers) &&
             RtlCompareMemory(Request.SessionId, SessionId, sizeof(SessionId)) == sizeof(SessionId));
-    TEST_OK(NT_SUCCESS(ZpRtc_GetIceServer(&Request, 1, &String)) && String.Length == Servers[1].UrlLength &&
+    TEST_OK(NT_SUCCESS(ZpRtc_GetNextIceServer(&Request, &Offset, &String)) &&
+            NT_SUCCESS(ZpRtc_GetNextIceServer(&Request, &Offset, &String)) &&
+            String.Length == Servers[1].UrlLength &&
             RtlCompareMemory(String.Buffer, Servers[1].Url, String.Length * sizeof(WCHAR)) ==
                 String.Length * sizeof(WCHAR));
-    TEST_OK(ZpRtc_GetIceServer(&Request, ARRAYSIZE(Servers), &String) == STATUS_INVALID_PARAMETER);
+    TEST_OK(ZpRtc_GetNextIceServer(&Request, &Offset, &String) == STATUS_INVALID_PARAMETER);
     TEST_OK(ZpRtc_DecodeOpenRequest(Buffer, Length - 1, &Request) == STATUS_DATA_ERROR);
 
     TEST_OK(NT_SUCCESS(ZpRtc_EncodeAnswer(L"answer", 6, Buffer, sizeof(Buffer), &Length)) &&
@@ -404,7 +407,7 @@ TEST_FUNC(ProtocolRecording)
     ZP_RECORDING_LIST_VIEW List;
     ZP_RECORDING_RECORD_VIEW Record;
     BYTE Buffer[512];
-    ULONG Length, Value;
+    ULONG Length, Offset = 0, Value;
 
     TEST_OK(NT_SUCCESS(ZpRecording_EncodeStart(&Start, Buffer, sizeof(Buffer), &Length)) &&
             NT_SUCCESS(ZpRecording_DecodeStart(Buffer, Length, &StartView)) &&
@@ -414,7 +417,7 @@ TEST_FUNC(ProtocolRecording)
     TEST_OK(ZpRecording_DecodeStart(Buffer, Length - 1, &StartView) == STATUS_DATA_ERROR);
     TEST_OK(NT_SUCCESS(ZpRecording_EncodeRecords(Records, ARRAYSIZE(Records), Buffer, sizeof(Buffer), &Length)) &&
             NT_SUCCESS(ZpRecording_DecodeRecords(Buffer, Length, &List)) && List.Count == ARRAYSIZE(Records) &&
-            NT_SUCCESS(ZpRecording_GetRecord(&List, 0, &Record)) && Record.RecordingId == 7 &&
+            NT_SUCCESS(ZpRecording_GetNextRecord(&List, &Offset, &Record)) && Record.RecordingId == 7 &&
             Record.Path.Length == Records[0].PathLength);
     TEST_OK(NT_SUCCESS(ZpRecording_EncodeCapabilities(0x1F, Buffer, sizeof(Buffer), &Length)) &&
             NT_SUCCESS(ZpRecording_DecodeCapabilities(Buffer, Length, &Value)) && Value == 0x1F);

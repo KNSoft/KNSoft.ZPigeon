@@ -269,7 +269,7 @@ ZpNative_FilePageCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_FILE_RECORD Records = NULL;
     ZP_FILE_RECORD_VIEW Record;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status) && Page->Files.Count != 0)
@@ -284,7 +284,7 @@ ZpNative_FilePageCallback(
          ZpStatus_IsSuccess(Status) && Index < Page->Files.Count;
          Index++)
     {
-        DecodeStatus = ZpFile_GetRecord(&Page->Files, Index, &Record);
+        DecodeStatus = ZpFile_GetNextRecord(&Page->Files, &Offset, &Record);
         if (!NT_SUCCESS(DecodeStatus))
         {
             Status = ZpStatus_FromNtStatus(DecodeStatus);
@@ -476,7 +476,7 @@ ZpNative_FileOwnersCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_FILE_OWNER_RECORD Records = NULL;
     ZP_FILE_OWNER_RECORD_VIEW Owner;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status) && Owners->Count != 0)
@@ -486,7 +486,7 @@ ZpNative_FileOwnersCallback(
     }
     for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Owners->Count; Index++)
     {
-        DecodeStatus = ZpFile_GetOwnerRecord(Owners, Index, &Owner);
+        DecodeStatus = ZpFile_GetNextOwnerRecord(Owners, &Offset, &Owner);
         if (!NT_SUCCESS(DecodeStatus))
         {
             Status = ZpStatus_FromNtStatus(DecodeStatus);
@@ -558,7 +558,7 @@ ZpNative_ProcessListCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_PROCESS_RECORD Records = NULL;
     ZP_PROCESS_RECORD_VIEW Record;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status) && Processes->Count != 0)
@@ -573,7 +573,7 @@ ZpNative_ProcessListCallback(
          ZpStatus_IsSuccess(Status) && Index < Processes->Count;
          Index++)
     {
-        DecodeStatus = ZpProcess_GetRecord(Processes, Index, &Record);
+        DecodeStatus = ZpProcess_GetNextRecord(Processes, &Offset, &Record);
         if (!NT_SUCCESS(DecodeStatus))
         {
             Status = ZpStatus_FromNtStatus(DecodeStatus);
@@ -785,7 +785,7 @@ ZpNative_ExecutionSessionsCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_EXECUTION_SESSION_RECORD Records = NULL;
     ZP_EXECUTION_SESSION_RECORD_VIEW Record;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status) && Sessions->Count != 0)
@@ -795,7 +795,7 @@ ZpNative_ExecutionSessionsCallback(
     }
     for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Sessions->Count; Index++)
     {
-        DecodeStatus = ZpExecution_GetSession(Sessions, Index, &Record);
+        DecodeStatus = ZpExecution_GetNextSession(Sessions, &Offset, &Record);
         if (!NT_SUCCESS(DecodeStatus))
         {
             Status = ZpStatus_FromNtStatus(DecodeStatus);
@@ -831,7 +831,7 @@ ZpNative_ExecutionJobsCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_EXECUTION_JOB_RECORD Records = NULL;
     ZP_EXECUTION_JOB_RECORD_VIEW Record;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status) && Jobs->Count != 0)
@@ -841,7 +841,7 @@ ZpNative_ExecutionJobsCallback(
     }
     for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Jobs->Count; Index++)
     {
-        DecodeStatus = ZpExecution_GetJob(Jobs, Index, &Record);
+        DecodeStatus = ZpExecution_GetNextJob(Jobs, &Offset, &Record);
         if (!NT_SUCCESS(DecodeStatus))
         {
             Status = ZpStatus_FromNtStatus(DecodeStatus);
@@ -902,7 +902,7 @@ ZpNative_WindowListCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_WINDOW_RECORD Records = NULL;
     ZP_WINDOW_RECORD_VIEW Record;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status) && Windows->Count != 0)
@@ -912,7 +912,7 @@ ZpNative_WindowListCallback(
     }
     for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Windows->Count; Index++)
     {
-        DecodeStatus = ZpWindow_GetRecord(Windows, Index, &Record);
+        DecodeStatus = ZpWindow_GetNextRecord(Windows, &Offset, &Record);
         if (!NT_SUCCESS(DecodeStatus))
         {
             Status = ZpStatus_FromNtStatus(DecodeStatus);
@@ -1381,7 +1381,7 @@ ZpNative_RecordingRecordsCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_RECORDING_RECORD Records = NULL;
     ZP_RECORDING_RECORD_VIEW Record;
-    ULONG Count = 0, Index;
+    ULONG Count = 0, Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status))
@@ -1400,7 +1400,7 @@ ZpNative_RecordingRecordsCallback(
             }
             else for (Index = 0; Index < Count; Index++)
             {
-                DecodeStatus = ZpRecording_GetRecord(List, Index, &Record);
+                DecodeStatus = ZpRecording_GetNextRecord(List, &Offset, &Record);
                 if (!NT_SUCCESS(DecodeStatus))
                 {
                     Status = ZpStatus_FromNtStatus(DecodeStatus);
@@ -1508,7 +1508,7 @@ ZpNative_ServiceListCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_SERVICE_RECORD Records = NULL;
     ZP_SERVICE_RECORD_VIEW Record;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status) && Services->Count != 0)
@@ -1523,7 +1523,7 @@ ZpNative_ServiceListCallback(
          ZpStatus_IsSuccess(Status) && Index < Services->Count;
          Index++)
     {
-        DecodeStatus = ZpService_GetRecord(Services, Index, &Record);
+        DecodeStatus = ZpService_GetNextRecord(Services, &Offset, &Record);
         if (!NT_SUCCESS(DecodeStatus))
         {
             Status = ZpStatus_FromNtStatus(DecodeStatus);
@@ -1718,7 +1718,7 @@ ZpNative_AdministrationCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_ADMINISTRATION_RECORD Records = NULL;
     ZP_ADMINISTRATION_RECORD_VIEW Record;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status) && List->Count != 0)
@@ -1728,7 +1728,7 @@ ZpNative_AdministrationCallback(
     }
     for (Index = 0; ZpStatus_IsSuccess(Status) && Index < List->Count; Index++)
     {
-        DecodeStatus = ZpAdministration_GetRecord(List, Index, &Record);
+        DecodeStatus = ZpAdministration_GetNextRecord(List, &Offset, &Record);
         if (!NT_SUCCESS(DecodeStatus))
         {
             Status = ZpStatus_FromNtStatus(DecodeStatus);
@@ -1768,7 +1768,7 @@ ZpNative_BrowserCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_BROWSER_RECORD Records = NULL;
     ZP_BROWSER_RECORD_VIEW Record;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status) && Page->Count != 0)
@@ -1778,7 +1778,7 @@ ZpNative_BrowserCallback(
     }
     for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Page->Count; Index++)
     {
-        DecodeStatus = ZpBrowser_GetRecord(Page, Index, &Record);
+        DecodeStatus = ZpBrowser_GetNextRecord(Page, &Offset, &Record);
         if (!NT_SUCCESS(DecodeStatus))
         {
             Status = ZpStatus_FromNtStatus(DecodeStatus);
@@ -1898,7 +1898,7 @@ ZpNative_EventLogCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_EVENT_LOG_RECORD Records = NULL;
     ZP_EVENT_LOG_RECORD_VIEW Record;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus = STATUS_SUCCESS;
 
     if (ZpStatus_IsSuccess(Status) && Page->Records.Count != 0)
@@ -1913,7 +1913,7 @@ ZpNative_EventLogCallback(
          ZpStatus_IsSuccess(Status) && Index < Page->Records.Count;
          Index++)
     {
-        DecodeStatus = ZpEventLog_GetRecord(&Page->Records, Index, &Record);
+        DecodeStatus = ZpEventLog_GetNextRecord(&Page->Records, &Offset, &Record);
         if (NT_SUCCESS(DecodeStatus))
         {
             Records[Index].Bookmark = (PCWCH)Record.Bookmark.Buffer;
@@ -1950,7 +1950,7 @@ ZpNative_EventLogChannelsCallback(
 {
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_STRING_VIEW Values = NULL;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus = STATUS_SUCCESS;
 
     if (ZpStatus_IsSuccess(Status) && Channels->Count != 0)
@@ -1960,7 +1960,7 @@ ZpNative_EventLogChannelsCallback(
     }
     for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Channels->Count; Index++)
     {
-        DecodeStatus = ZpEventLog_GetChannel(Channels, Index, &Values[Index]);
+        DecodeStatus = ZpEventLog_GetNextChannel(Channels, &Offset, &Values[Index]);
         if (!NT_SUCCESS(DecodeStatus)) Status = ZpStatus_FromNtStatus(DecodeStatus);
     }
     CallbackContext->Callback.EventLogChannels(Status,
@@ -2012,7 +2012,7 @@ ZpNative_RegistryKeyPageCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_REGISTRY_KEY_RECORD Records = NULL;
     ZP_REGISTRY_KEY_RECORD_VIEW Record;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status) && Page->Records.Count != 0)
@@ -2027,7 +2027,7 @@ ZpNative_RegistryKeyPageCallback(
          ZpStatus_IsSuccess(Status) && Index < Page->Records.Count;
          Index++)
     {
-        DecodeStatus = ZpRegistry_GetKeyRecord(&Page->Records, Index, &Record);
+        DecodeStatus = ZpRegistry_GetNextKeyRecord(&Page->Records, &Offset, &Record);
         if (!NT_SUCCESS(DecodeStatus))
         {
             Status = ZpStatus_FromNtStatus(DecodeStatus);
@@ -2063,7 +2063,7 @@ ZpNative_RegistryValuePageCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_REGISTRY_VALUE_RECORD Records = NULL;
     ZP_REGISTRY_VALUE_RECORD_VIEW Record;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status) && Page->Records.Count != 0)
@@ -2078,9 +2078,9 @@ ZpNative_RegistryValuePageCallback(
          ZpStatus_IsSuccess(Status) && Index < Page->Records.Count;
          Index++)
     {
-        DecodeStatus = ZpRegistry_GetValueRecord(&Page->Records,
-                                                  Index,
-                                                  &Record);
+        DecodeStatus = ZpRegistry_GetNextValueRecord(&Page->Records,
+                                                      &Offset,
+                                                      &Record);
         if (!NT_SUCCESS(DecodeStatus))
         {
             Status = ZpStatus_FromNtStatus(DecodeStatus);
@@ -2528,7 +2528,7 @@ ZpNative_WindowMonitorsCallback(
     PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
     PZP_NATIVE_WINDOW_MONITOR Records = NULL;
     ZP_WINDOW_MONITOR_VIEW Monitor;
-    ULONG Index;
+    ULONG Index, Offset = 0;
     NTSTATUS DecodeStatus;
 
     if (ZpStatus_IsSuccess(Status) && Monitors->Count != 0)
@@ -2538,7 +2538,7 @@ ZpNative_WindowMonitorsCallback(
     }
     for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Monitors->Count; Index++)
     {
-        DecodeStatus = ZpWindow_GetMonitor(Monitors, Index, &Monitor);
+        DecodeStatus = ZpWindow_GetNextMonitor(Monitors, &Offset, &Monitor);
         if (!NT_SUCCESS(DecodeStatus))
         {
             Status = ZpStatus_FromNtStatus(DecodeStatus);

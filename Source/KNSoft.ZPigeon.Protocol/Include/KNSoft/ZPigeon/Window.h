@@ -304,9 +304,9 @@ ZpWindow_DecodeList(
     _Out_ PZP_WINDOW_LIST_VIEW View);
 
 NTSTATUS
-ZpWindow_GetRecord(
+ZpWindow_GetNextRecord(
     _In_ PCZP_WINDOW_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_WINDOW_RECORD_VIEW Record);
 
 NTSTATUS
@@ -354,9 +354,9 @@ ZpWindow_DecodeMonitorList(
     _Out_ PZP_WINDOW_MONITOR_LIST_VIEW View);
 
 NTSTATUS
-ZpWindow_GetMonitor(
+ZpWindow_GetNextMonitor(
     _In_ PCZP_WINDOW_MONITOR_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_WINDOW_MONITOR_VIEW Monitor);
 
 NTSTATUS

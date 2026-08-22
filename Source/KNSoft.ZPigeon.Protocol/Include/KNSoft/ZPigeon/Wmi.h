@@ -81,22 +81,10 @@ ZpWmi_DecodePage(
     _Out_ PZP_WMI_PAGE_VIEW Page);
 
 NTSTATUS
-ZpWmi_GetRow(
-    _In_ PCZP_WMI_PAGE_VIEW Page,
-    _In_ ULONG Index,
-    _Out_ PZP_WMI_ROW_VIEW Row);
-
-NTSTATUS
 ZpWmi_GetNextRow(
     _In_ PCZP_WMI_PAGE_VIEW Page,
     _Inout_ PULONG Offset,
     _Out_ PZP_WMI_ROW_VIEW Row);
-
-NTSTATUS
-ZpWmi_GetCell(
-    _In_ PCZP_WMI_ROW_VIEW Row,
-    _In_ ULONG Index,
-    _Out_ PZP_WMI_CELL Cell);
 
 NTSTATUS
 ZpWmi_GetNextCell(

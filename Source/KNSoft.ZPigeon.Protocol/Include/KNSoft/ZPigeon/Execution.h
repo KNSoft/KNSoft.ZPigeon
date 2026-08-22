@@ -168,9 +168,9 @@ ZpExecution_DecodeSessions(
     _Out_ PZP_EXECUTION_SESSION_LIST_VIEW View);
 
 NTSTATUS
-ZpExecution_GetSession(
+ZpExecution_GetNextSession(
     _In_ PCZP_EXECUTION_SESSION_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_EXECUTION_SESSION_RECORD_VIEW Record);
 
 NTSTATUS
@@ -201,9 +201,9 @@ ZpExecution_DecodeJobs(
     _Out_ PZP_EXECUTION_JOB_LIST_VIEW View);
 
 NTSTATUS
-ZpExecution_GetJob(
+ZpExecution_GetNextJob(
     _In_ PCZP_EXECUTION_JOB_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_EXECUTION_JOB_RECORD_VIEW Record);
 
 NTSTATUS

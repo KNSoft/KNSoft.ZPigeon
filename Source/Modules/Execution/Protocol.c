@@ -94,21 +94,18 @@ ZpExecution_DecodeSessions(
 }
 
 NTSTATUS
-ZpExecution_GetSession(
+ZpExecution_GetNextSession(
     _In_ PCZP_EXECUTION_SESSION_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_EXECUTION_SESSION_RECORD_VIEW Record)
 {
     ZP_CODEC_READER Reader;
-    ULONG Current;
-    NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS Status;
 
-    if (Index >= List->Count) return STATUS_INVALID_PARAMETER;
-    ZpCodec_InitializeReader(&Reader, List->Buffer, List->Length);
-    for (Current = 0; NT_SUCCESS(Status) && Current <= Index; Current++)
-    {
-        Status = ZpExecution_ReadSession(&Reader, Current == Index ? Record : NULL);
-    }
+    if (*Offset >= List->Length) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, Add2Ptr(List->Buffer, *Offset), List->Length - *Offset);
+    Status = ZpExecution_ReadSession(&Reader, Record);
+    if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
     return Status;
 }
 
@@ -313,21 +310,18 @@ ZpExecution_DecodeJobs(
 }
 
 NTSTATUS
-ZpExecution_GetJob(
+ZpExecution_GetNextJob(
     _In_ PCZP_EXECUTION_JOB_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_EXECUTION_JOB_RECORD_VIEW Record)
 {
     ZP_CODEC_READER Reader;
-    ULONG Current;
-    NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS Status;
 
-    if (Index >= List->Count) return STATUS_INVALID_PARAMETER;
-    ZpCodec_InitializeReader(&Reader, List->Buffer, List->Length);
-    for (Current = 0; NT_SUCCESS(Status) && Current <= Index; Current++)
-    {
-        Status = ZpExecution_ReadJob(&Reader, Current == Index ? Record : NULL);
-    }
+    if (*Offset >= List->Length) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, Add2Ptr(List->Buffer, *Offset), List->Length - *Offset);
+    Status = ZpExecution_ReadJob(&Reader, Record);
+    if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
     return Status;
 }
 

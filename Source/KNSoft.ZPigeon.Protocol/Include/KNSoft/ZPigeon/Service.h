@@ -247,9 +247,9 @@ ZpService_DecodeList(
     _Out_ PZP_SERVICE_LIST_VIEW View);
 
 NTSTATUS
-ZpService_GetRecord(
+ZpService_GetNextRecord(
     _In_ PCZP_SERVICE_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_SERVICE_RECORD_VIEW Record);
 
 NTSTATUS

@@ -148,9 +148,9 @@ ZpEventLog_DecodePage(
     _Out_ PZP_EVENT_LOG_PAGE_VIEW View);
 
 NTSTATUS
-ZpEventLog_GetRecord(
+ZpEventLog_GetNextRecord(
     _In_ PCZP_EVENT_LOG_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_EVENT_LOG_RECORD_VIEW Record);
 
 NTSTATUS
@@ -198,9 +198,9 @@ ZpEventLog_DecodeChannels(
     _Out_ PZP_EVENT_LOG_CHANNEL_LIST_VIEW View);
 
 NTSTATUS
-ZpEventLog_GetChannel(
+ZpEventLog_GetNextChannel(
     _In_ PCZP_EVENT_LOG_CHANNEL_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_STRING_VIEW Channel);
 
 NTSTATUS

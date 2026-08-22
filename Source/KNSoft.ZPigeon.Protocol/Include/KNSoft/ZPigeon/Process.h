@@ -227,9 +227,9 @@ ZpProcess_DecodeList(
     _Out_ PZP_PROCESS_LIST_VIEW View);
 
 NTSTATUS
-ZpProcess_GetRecord(
+ZpProcess_GetNextRecord(
     _In_ PCZP_PROCESS_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_PROCESS_RECORD_VIEW Record);
 
 NTSTATUS

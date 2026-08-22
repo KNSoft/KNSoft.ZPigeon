@@ -450,7 +450,7 @@ ZpRtc_CreateMessages(
 {
     ZP_STRING_VIEW IceServer;
     SIZE_T ConfigurationLength = 7;
-    ULONG Index;
+    ULONG Index, Offset = 0;
 
     Session->OfferMessage = (PWSTR)Mem_Alloc(((SIZE_T)Request->Offer.Length + 7) * sizeof(WCHAR));
     if (Session->OfferMessage == NULL) return STATUS_NO_MEMORY;
@@ -461,16 +461,17 @@ ZpRtc_CreateMessages(
     Session->OfferMessage[Request->Offer.Length + 6] = UNICODE_NULL;
     for (Index = 0; Index < Request->IceServerCount; Index++)
     {
-        if (!NT_SUCCESS(ZpRtc_GetIceServer(Request, Index, &IceServer))) return STATUS_DATA_ERROR;
+        if (!NT_SUCCESS(ZpRtc_GetNextIceServer(Request, &Offset, &IceServer))) return STATUS_DATA_ERROR;
         ConfigurationLength += IceServer.Length + 1;
     }
     Session->ConfigurationMessage = (PWSTR)Mem_Alloc((ConfigurationLength + 1) * sizeof(WCHAR));
     if (Session->ConfigurationMessage == NULL) return STATUS_NO_MEMORY;
     RtlCopyMemory(Session->ConfigurationMessage, L"CONFIG\n", 7 * sizeof(WCHAR));
     ConfigurationLength = 7;
+    Offset = 0;
     for (Index = 0; Index < Request->IceServerCount; Index++)
     {
-        ZpRtc_GetIceServer(Request, Index, &IceServer);
+        ZpRtc_GetNextIceServer(Request, &Offset, &IceServer);
         RtlCopyMemory(Session->ConfigurationMessage + ConfigurationLength,
                       IceServer.Buffer,
                       (SIZE_T)IceServer.Length * sizeof(WCHAR));

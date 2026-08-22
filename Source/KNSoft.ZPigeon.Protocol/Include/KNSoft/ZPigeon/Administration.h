@@ -224,9 +224,9 @@ ZpAdministration_DecodeList(
     _Out_ PZP_ADMINISTRATION_LIST_VIEW View);
 
 NTSTATUS
-ZpAdministration_GetRecord(
+ZpAdministration_GetNextRecord(
     _In_ PCZP_ADMINISTRATION_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_ADMINISTRATION_RECORD_VIEW Record);
 
 NTSTATUS

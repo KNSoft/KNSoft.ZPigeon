@@ -239,21 +239,18 @@ ZpRecording_DecodeRecords(
 }
 
 NTSTATUS
-ZpRecording_GetRecord(
+ZpRecording_GetNextRecord(
     _In_ PCZP_RECORDING_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_RECORDING_RECORD_VIEW Record)
 {
     ZP_CODEC_READER Reader;
-    ULONG Current;
-    NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS Status;
 
-    if (Index >= List->Count) return STATUS_INVALID_PARAMETER;
-    ZpCodec_InitializeReader(&Reader, List->Buffer, List->Length);
-    for (Current = 0; NT_SUCCESS(Status) && Current <= Index; Current++)
-    {
-        Status = ZpRecording_ReadRecord(&Reader, Current == Index ? Record : NULL);
-    }
+    if (*Offset >= List->Length) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, Add2Ptr(List->Buffer, *Offset), List->Length - *Offset);
+    Status = ZpRecording_ReadRecord(&Reader, Record);
+    if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
     return Status;
 }
 

@@ -385,28 +385,18 @@ ZpRegistry_DecodeKeyPage(
 }
 
 NTSTATUS
-ZpRegistry_GetKeyRecord(
+ZpRegistry_GetNextKeyRecord(
     _In_ PCZP_REGISTRY_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_REGISTRY_KEY_RECORD_VIEW Record)
 {
     ZP_CODEC_READER Reader;
-    ULONG CurrentIndex;
-    NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS Status;
 
-    if (Index >= List->Count)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-    ZpCodec_InitializeReader(&Reader, List->Buffer, List->Length);
-    for (CurrentIndex = 0;
-         NT_SUCCESS(Status) && CurrentIndex <= Index;
-         CurrentIndex++)
-    {
-        Status = ZpRegistry_ReadKeyRecord(
-            &Reader,
-            CurrentIndex == Index ? Record : NULL);
-    }
+    if (*Offset >= List->Length) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, Add2Ptr(List->Buffer, *Offset), List->Length - *Offset);
+    Status = ZpRegistry_ReadKeyRecord(&Reader, Record);
+    if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
     return Status;
 }
 
@@ -558,28 +548,18 @@ ZpRegistry_DecodeValuePage(
 }
 
 NTSTATUS
-ZpRegistry_GetValueRecord(
+ZpRegistry_GetNextValueRecord(
     _In_ PCZP_REGISTRY_LIST_VIEW List,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_REGISTRY_VALUE_RECORD_VIEW Record)
 {
     ZP_CODEC_READER Reader;
-    ULONG CurrentIndex;
-    NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS Status;
 
-    if (Index >= List->Count)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-    ZpCodec_InitializeReader(&Reader, List->Buffer, List->Length);
-    for (CurrentIndex = 0;
-         NT_SUCCESS(Status) && CurrentIndex <= Index;
-         CurrentIndex++)
-    {
-        Status = ZpRegistry_ReadValueRecord(
-            &Reader,
-            CurrentIndex == Index ? Record : NULL);
-    }
+    if (*Offset >= List->Length) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, Add2Ptr(List->Buffer, *Offset), List->Length - *Offset);
+    Status = ZpRegistry_ReadValueRecord(&Reader, Record);
+    if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
     return Status;
 }
 

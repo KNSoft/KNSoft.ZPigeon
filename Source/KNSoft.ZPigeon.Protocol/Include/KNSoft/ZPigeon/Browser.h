@@ -102,9 +102,9 @@ ZpBrowser_DecodePage(
     _Out_ PZP_BROWSER_PAGE_VIEW View);
 
 NTSTATUS
-ZpBrowser_GetRecord(
+ZpBrowser_GetNextRecord(
     _In_ PCZP_BROWSER_PAGE_VIEW Page,
-    _In_ ULONG Index,
+    _Inout_ PULONG Offset,
     _Out_ PZP_BROWSER_RECORD_VIEW Record);
 
 NTSTATUS
