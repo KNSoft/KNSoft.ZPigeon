@@ -91,7 +91,7 @@ ZpCredential_ParseIdentity(
     _Out_ PZP_CREDENTIAL_IDENTITY Parsed)
 {
     UNICODE_STRING NumberString;
-    PCWCH Buffer = (PCWCH)Identity->Buffer;
+    PCWCH Buffer = Identity->Buffer;
     ULONG Separator;
     NTSTATUS Status;
 
@@ -110,14 +110,14 @@ ZpCredential_ParseIdentity(
     Status = RtlUnicodeStringToInteger(&NumberString, 10, &Parsed->Number);
     if (!NT_SUCCESS(Status)) return Status;
     Parsed->Store = Buffer[0];
-    Parsed->Primary.Buffer = (PBYTE)(Buffer + Separator + 1);
+    Parsed->Primary.Buffer = Buffer + Separator + 1;
     Parsed->Primary.Length = Identity->Length - Separator - 1;
     Parsed->Secondary.Buffer = NULL;
     Parsed->Secondary.Length = 0;
     if (Parsed->Store == L'V')
     {
         if (Parsed->Number == 0 || Parsed->Number >= Parsed->Primary.Length) return STATUS_INVALID_PARAMETER;
-        Parsed->Secondary.Buffer = (PBYTE)((PCWCH)Parsed->Primary.Buffer + Parsed->Number);
+        Parsed->Secondary.Buffer = Parsed->Primary.Buffer + Parsed->Number;
         Parsed->Secondary.Length = Parsed->Primary.Length - Parsed->Number;
         Parsed->Primary.Length = Parsed->Number;
     }

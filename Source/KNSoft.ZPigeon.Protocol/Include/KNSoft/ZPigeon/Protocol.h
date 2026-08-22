@@ -143,7 +143,7 @@ typedef const ZP_BUFFER_VIEW* PCZP_BUFFER_VIEW;
 
 typedef struct _ZP_STRING_VIEW
 {
-    const BYTE* Buffer;
+    PCWCH Buffer;
     ULONG Length;
 } ZP_STRING_VIEW, *PZP_STRING_VIEW;
 

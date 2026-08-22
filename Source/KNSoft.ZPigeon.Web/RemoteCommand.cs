@@ -10,9 +10,10 @@ internal static class RemoteCommand
     internal static async Task<RemoteCommandResult> RunAsync(
         NativeServer server,
         string commandLine,
-        string? workingDirectory = null)
+        string? workingDirectory = null,
+        ushort columns = 120)
     {
-        await using var terminal = await server.CreateTerminalAsync(commandLine, 120, 30, workingDirectory);
+        await using var terminal = await server.CreateTerminalAsync(commandLine, columns, 30, workingDirectory);
         using var output = new MemoryStream();
         await foreach (var data in terminal.Output.ReadAllAsync())
         {

@@ -681,7 +681,7 @@ ZpEventLog_EnumerateChannels(
             break;
         }
         Channels = Values;
-        Channels[Count].Buffer = (const BYTE*)Buffer;
+        Channels[Count].Buffer = Buffer;
         Channels[Count++].Length = Required - 1;
         Buffer = NULL;
     }

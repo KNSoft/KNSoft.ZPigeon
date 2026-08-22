@@ -209,8 +209,7 @@ TEST_FUNC(ProtocolCodec)
     TEST_OK(NT_SUCCESS(ZpCodec_ReadUInt64(&Reader, &UInt64Value)) && UInt64Value == 0x0123456789ABCDEFULL);
     TEST_OK(NT_SUCCESS(ZpCodec_ReadBoolean(&Reader, &BooleanValue)) && BooleanValue == TRUE);
     TEST_OK(NT_SUCCESS(ZpCodec_ReadString(&Reader, &StringView)) && StringView.Length == 2 &&
-            StringView.Buffer[0] == 'A' && StringView.Buffer[1] == 0 &&
-            StringView.Buffer[2] == 'Z' && StringView.Buffer[3] == 0);
+            StringView.Buffer[0] == L'A' && StringView.Buffer[1] == L'Z');
     TEST_OK(NT_SUCCESS(ZpCodec_ReadByteString(&Reader, &BufferView)) &&
             BufferView.Length == sizeof(ByteString) &&
             RtlCompareMemory(BufferView.Buffer, ByteString, sizeof(ByteString)) == sizeof(ByteString));

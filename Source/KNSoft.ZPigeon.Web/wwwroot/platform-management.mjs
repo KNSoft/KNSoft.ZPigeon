@@ -34,7 +34,7 @@ export class KeyboardManager{
 
 export class LocationManager{
   constructor(root,{call,notify}){this.root=root;this.call=call;this.notify=notify;this.connected=false;root.innerHTML='<div class="manager-toolbar"><button data-action="refresh">获取位置</button><span data-role="state" class="status"></span></div><div class="system-information"><section><h2>当前位置</h2><pre data-role="value">点击“获取位置”读取被控端位置服务当前报告。</pre></section></div>';this.button=root.querySelector('button');this.state=root.querySelector('[data-role=state]');this.value=root.querySelector('[data-role=value]');this.button.onclick=()=>this.load()}
-  activate(connected){this.connected=connected;this.button.disabled=!connected;if(!connected)this.state.textContent='Client 未连接'}
+  activate(connected){this.connected=connected;this.button.disabled=!connected;this.state.textContent=connected?'':'Client 未连接'}
   disconnect(){this.connected=false;this.button.disabled=true;this.state.textContent='Client 未连接';this.value.textContent='点击“获取位置”读取被控端位置服务当前报告。'}
   async load(){if(!this.connected||this.loading)return;this.loading=true;this.button.disabled=true;this.state.textContent='正在获取位置…';try{const record=(await this.call('/api/location'))[0];this.value.textContent=record?.detail||'位置服务没有返回坐标';this.state.textContent=record?`报告时间：${new Date(Number((BigInt(record.value)-116444736000000000n)/10000n)).toLocaleString()}`:'没有位置报告'}catch(error){this.state.textContent=error.message;this.notify(error)}finally{this.loading=false;this.button.disabled=!this.connected}}
 }

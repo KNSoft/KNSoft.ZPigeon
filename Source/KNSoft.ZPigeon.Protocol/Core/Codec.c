@@ -351,7 +351,7 @@ ZpCodec_ReadString(
     Status = ZpCodec_ReadData(Reader, Length * sizeof(WCHAR), &BufferView);
     if (NT_SUCCESS(Status))
     {
-        View->Buffer = BufferView.Buffer;
+        View->Buffer = (PCWCH)BufferView.Buffer;
         View->Length = Length;
     }
     return Status;

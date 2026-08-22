@@ -225,7 +225,7 @@ ZpRegistry_JoinPath(
         Buffer[Path->Length] = L'\\';
     }
     RtlCopyMemory(Buffer + Path->Length + (Path->Length != 0), Name->Buffer, (SIZE_T)Name->Length * sizeof(WCHAR));
-    Result->Buffer = (const BYTE*)Buffer;
+    Result->Buffer = Buffer;
     Result->Length = (ULONG)Length;
     return STATUS_SUCCESS;
 }

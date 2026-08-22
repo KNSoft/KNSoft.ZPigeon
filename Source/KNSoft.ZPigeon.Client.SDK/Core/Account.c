@@ -47,6 +47,7 @@ ZpAccount_QuerySidName(
     SID_NAME_USE Use;
     ULONG NameLength = 0, DomainLength = 0, Length;
     PWCHAR Name, Domain;
+    WCHAR EmptyDomain;
 
     if (LookupAccountSidLocalW(Sid, NULL, &NameLength, NULL, &DomainLength, &Use) ||
         GetLastError() != ERROR_INSUFFICIENT_BUFFER || NameLength == 0)
@@ -70,9 +71,8 @@ ZpAccount_QuerySidName(
     }
     else
     {
-        Domain = NULL;
+        Domain = DomainLength != 0 ? &EmptyDomain : NULL;
         Name = Value->Buffer;
-        DomainLength = 0;
     }
     if (!LookupAccountSidLocalW(Sid, Name, &NameLength, Domain, &DomainLength, &Use))
     {
@@ -80,7 +80,7 @@ ZpAccount_QuerySidName(
         NT_FreeStringW(Value);
         return NTSTATUS_FROM_WIN32(Length);
     }
-    if (Domain != NULL)
+    if (Domain == Value->Buffer)
     {
         Name[-1] = L'\\';
     }

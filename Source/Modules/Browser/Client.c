@@ -13,7 +13,7 @@ typedef int (SQLITE_API *ZP_SQLITE_STEP)(sqlite3_stmt*);
 typedef int (SQLITE_API *ZP_SQLITE_FINALIZE)(sqlite3_stmt*);
 typedef int (SQLITE_API *ZP_SQLITE_BIND_INT)(sqlite3_stmt*, int, int);
 typedef int (SQLITE_API *ZP_SQLITE_BIND_INT64)(sqlite3_stmt*, int, sqlite3_int64);
-typedef int (SQLITE_API *ZP_SQLITE_BUSY_TIMEOUT)(sqlite3*, int);
+typedef int (SQLITE_API *ZP_SQLITE_DESERIALIZE)(sqlite3*, const char*, unsigned char*, sqlite3_int64, sqlite3_int64, unsigned);
 typedef int (SQLITE_API *ZP_SQLITE_COLUMN_INT)(sqlite3_stmt*, int);
 typedef sqlite3_int64 (SQLITE_API *ZP_SQLITE_COLUMN_INT64)(sqlite3_stmt*, int);
 typedef const void* (SQLITE_API *ZP_SQLITE_COLUMN_TEXT16)(sqlite3_stmt*, int);
@@ -29,7 +29,7 @@ typedef struct _ZP_SQLITE
     ZP_SQLITE_FINALIZE Finalize;
     ZP_SQLITE_BIND_INT BindInt;
     ZP_SQLITE_BIND_INT64 BindInt64;
-    ZP_SQLITE_BUSY_TIMEOUT BusyTimeout;
+    ZP_SQLITE_DESERIALIZE Deserialize;
     ZP_SQLITE_COLUMN_INT ColumnInt;
     ZP_SQLITE_COLUMN_INT64 ColumnInt64;
     ZP_SQLITE_COLUMN_TEXT16 ColumnText16;
@@ -431,7 +431,7 @@ ZpBrowser_LoadSqlite(
     ZP_BROWSER_LOAD_SQLITE(Finalize, "sqlite3_finalize");
     ZP_BROWSER_LOAD_SQLITE(BindInt, "sqlite3_bind_int");
     ZP_BROWSER_LOAD_SQLITE(BindInt64, "sqlite3_bind_int64");
-    ZP_BROWSER_LOAD_SQLITE(BusyTimeout, "sqlite3_busy_timeout");
+    Api->Deserialize = (PVOID)GetProcAddress(Api->Module, "sqlite3_deserialize");
     ZP_BROWSER_LOAD_SQLITE(ColumnInt, "sqlite3_column_int");
     ZP_BROWSER_LOAD_SQLITE(ColumnInt64, "sqlite3_column_int64");
     ZP_BROWSER_LOAD_SQLITE(ColumnText16, "sqlite3_column_text16");
@@ -446,29 +446,190 @@ MissingExport:
 
 static
 PSTR
-ZpBrowser_PathToUtf8(
+ZpBrowser_PathToUri(
     _In_ PCWSTR Path)
 {
-    ULONG Bytes;
-    PSTR Value;
+    static const CHAR Prefix[] = "file:";
+    static const CHAR Suffix[] = "?mode=ro&nolock=1";
+    static const CHAR Hex[] = "0123456789ABCDEF";
+    CHAR Utf8[MAX_PATH * 3];
+    ULONG Bytes, Index;
+    PSTR Value, Output;
     NTSTATUS Status;
 
-    Status = RtlUnicodeToUTF8N(NULL, 0, &Bytes, Path, (ULONG)wcslen(Path) * sizeof(WCHAR));
-    if (Status != STATUS_BUFFER_TOO_SMALL && !NT_SUCCESS(Status)) return NULL;
-    Value = Mem_Alloc((SIZE_T)Bytes + 1);
-    if (Value == NULL) return NULL;
-    Status = RtlUnicodeToUTF8N(Value,
-                               Bytes,
+    Status = RtlUnicodeToUTF8N(Utf8,
+                               sizeof(Utf8),
                                &Bytes,
                                Path,
                                (ULONG)wcslen(Path) * sizeof(WCHAR));
-    if (!NT_SUCCESS(Status))
+    if (!NT_SUCCESS(Status)) return NULL;
+    Value = Mem_Alloc(sizeof(Prefix) - 1 + (SIZE_T)Bytes * 3 + sizeof(Suffix));
+    if (Value == NULL) return NULL;
+    Output = Value;
+    RtlCopyMemory(Output, Prefix, sizeof(Prefix) - 1);
+    Output += sizeof(Prefix) - 1;
+    for (Index = 0; Index < Bytes; Index++)
     {
-        Mem_Free(Value);
-        return NULL;
+        if (Utf8[Index] == '%' || Utf8[Index] == '?' || Utf8[Index] == '#')
+        {
+            *Output++ = '%';
+            *Output++ = Hex[(UCHAR)Utf8[Index] >> 4];
+            *Output++ = Hex[(UCHAR)Utf8[Index] & 0xF];
+        }
+        else
+        {
+            *Output++ = Utf8[Index] == '\\' ? '/' : Utf8[Index];
+        }
     }
-    Value[Bytes] = ANSI_NULL;
+    RtlCopyMemory(Output, Suffix, sizeof(Suffix));
     return Value;
+}
+
+static
+NTSTATUS
+ZpBrowser_QueryProcessHandles(
+    _In_ HANDLE Process,
+    _Outptr_ PPROCESS_HANDLE_SNAPSHOT_INFORMATION* Handles)
+{
+    ULONG Length = 64 * 1024, Required;
+    NTSTATUS Status;
+
+    for (;;)
+    {
+        *Handles = Mem_Alloc(Length);
+        if (*Handles == NULL) return STATUS_NO_MEMORY;
+        Status = NtQueryInformationProcess(Process, ProcessHandleInformation, *Handles, Length, &Required);
+        if (Status != STATUS_INFO_LENGTH_MISMATCH) break;
+        Mem_Free(*Handles);
+        Length = max(Length * 2, Required);
+        if (Length > 16 * 1024 * 1024) return STATUS_QUOTA_EXCEEDED;
+    }
+    if (!NT_SUCCESS(Status)) Mem_Free(*Handles);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpBrowser_QueryDatabaseId(
+    _In_ PCWSTR DatabasePath,
+    _Out_ PFILE_ID_INFORMATION Id)
+{
+    DECLSPEC_ALIGN(8) BYTE Buffer[PAGE_SIZE];
+    PFILE_ID_EXTD_DIR_INFORMATION Information = (PVOID)Buffer;
+    WCHAR DirectoryPath[MAX_PATH];
+    OBJECT_ATTRIBUTES Object;
+    UNICODE_STRING NtPath, Search;
+    IO_STATUS_BLOCK IoStatus;
+    HANDLE Directory;
+    PWSTR Name;
+    BOOL HasData;
+    NTSTATUS Status;
+
+    RtlCopyMemory(DirectoryPath, DatabasePath, (wcslen(DatabasePath) + 1) * sizeof(WCHAR));
+    Name = wcsrchr(DirectoryPath, L'\\');
+    if (Name == NULL || Name[1] == UNICODE_NULL) return STATUS_INVALID_PARAMETER;
+    RtlInitUnicodeString(&Search, Name + 1);
+    *Name = UNICODE_NULL;
+    Status = NT_InitWin32PathObject(&Object, DirectoryPath, NULL, &NtPath);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = NtOpenFile(&Directory,
+                        FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+                        &Object,
+                        &IoStatus,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT);
+    NT_FreeNtPath(&NtPath);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = NtQueryInformationFile(Directory, &IoStatus, Id, sizeof(*Id), FileIdInformation);
+    if (NT_SUCCESS(Status))
+    {
+        Status = IO_FindFile(Directory,
+                             Buffer,
+                             sizeof(Buffer),
+                             FileIdExtdDirectoryInformation,
+                             &Search,
+                             TRUE,
+                             &HasData);
+    }
+    NtClose(Directory);
+    if (NT_SUCCESS(Status) && !HasData) return STATUS_OBJECT_NAME_NOT_FOUND;
+    if (NT_SUCCESS(Status)) Id->FileId = Information->FileId;
+    return Status;
+}
+
+static
+NTSTATUS
+ZpBrowser_MapDatabaseHandle(
+    _In_ ZP_BROWSER_TYPE Browser,
+    _In_ PCWSTR DatabasePath,
+    _Out_ PIO_FILE_MAP Map)
+{
+    PSYSTEM_PROCESS_INFORMATION Processes, Process;
+    PPROCESS_HANDLE_SNAPSHOT_INFORMATION Handles;
+    FILE_ID_INFORMATION Id, CandidateId;
+    UNICODE_STRING ImageName;
+    IO_STATUS_BLOCK IoStatus;
+    HANDLE BrowserProcess, Candidate;
+    ULONG_PTR Index;
+    NTSTATUS Status;
+
+    Status = ZpBrowser_QueryDatabaseId(DatabasePath, &Id);
+    if (!NT_SUCCESS(Status)) return Status;
+    RtlInitUnicodeString(&ImageName, Browser == ZpBrowserChrome ? L"chrome.exe" : L"msedge.exe");
+    Status = Sys_QueryDynamicInfo(SystemProcessInformation, (PVOID*)&Processes);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = STATUS_OBJECT_NAME_NOT_FOUND;
+    Process = Processes;
+    for (;;)
+    {
+        if (RtlEqualUnicodeString(&Process->ImageName, &ImageName, TRUE) &&
+            NT_SUCCESS(PS_OpenProcess(&BrowserProcess,
+                                      PROCESS_DUP_HANDLE | PROCESS_QUERY_INFORMATION,
+                                      (ULONG)(ULONG_PTR)Process->UniqueProcessId)))
+        {
+            if (NT_SUCCESS(ZpBrowser_QueryProcessHandles(BrowserProcess, &Handles)))
+            {
+                for (Index = 0; Index < Handles->NumberOfHandles; Index++)
+                {
+                    if (!NT_SUCCESS(NtDuplicateObject(BrowserProcess,
+                                                      Handles->Handles[Index].HandleValue,
+                                                      NtCurrentProcess(),
+                                                      &Candidate,
+                                                      FILE_READ_DATA | FILE_READ_ATTRIBUTES,
+                                                      0,
+                                                      0)))
+                    {
+                        continue;
+                    }
+                    if (GetFileType(Candidate) == FILE_TYPE_DISK &&
+                        NT_SUCCESS(NtQueryInformationFile(Candidate,
+                                                          &IoStatus,
+                                                          &CandidateId,
+                                                          sizeof(CandidateId),
+                                                          FileIdInformation)) &&
+                        RtlEqualMemory(&CandidateId, &Id, sizeof(Id)))
+                    {
+                        Status = IO_MapReadOnlyFile(Candidate, Map);
+                        NtClose(Candidate);
+                        break;
+                    }
+                    NtClose(Candidate);
+                }
+                Mem_Free(Handles);
+            }
+            NtClose(BrowserProcess);
+            if (NT_SUCCESS(Status)) break;
+        }
+        if (Process->NextEntryOffset == 0) break;
+        Process = Add2Ptr(Process, Process->NextEntryOffset);
+    }
+    Sys_FreeInfo(Processes);
+    if (NT_SUCCESS(Status) && (ULONGLONG)Map->FileSize > (ULONGLONG)MAXLONGLONG)
+    {
+        IO_UnmapFile(Map);
+        Status = STATUS_FILE_TOO_LARGE;
+    }
+    return Status;
 }
 
 static
@@ -586,25 +747,54 @@ ZpBrowser_QueryDatabase(
     ZP_SQLITE Api;
     sqlite3* Database = NULL;
     sqlite3_stmt* Statement = NULL;
+    IO_FILE_MAP Map;
     PCSTR Sql = Query->Kind == ZpBrowserKindHistory ? HistorySql :
                   Query->Kind == ZpBrowserKindDownload ? DownloadSql : CookieSql;
     PSTR Utf8Path;
     ULONGLONG NextCursor = 0;
     NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS MapStatus = STATUS_NOT_FOUND;
     ZP_STATUS LoadStatus;
     int Result;
 
     LoadStatus = ZpBrowser_LoadSqlite(&Api);
     if (!ZpStatus_IsSuccess(LoadStatus)) return LoadStatus;
-    Utf8Path = ZpBrowser_PathToUtf8(DatabasePath);
+    Utf8Path = ZpBrowser_PathToUri(DatabasePath);
     if (Utf8Path == NULL)
     {
         FreeLibrary(Api.Module);
         return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
     }
-    Result = Api.OpenV2(Utf8Path, &Database, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, NULL);
+    Result = Api.OpenV2(Utf8Path,
+                        &Database,
+                        SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_URI,
+                        NULL);
     Mem_Free(Utf8Path);
-    if (Result == SQLITE_OK) Api.BusyTimeout(Database, 2000);
+    if (Result == SQLITE_CANTOPEN && Query->Kind == ZpBrowserKindCookie && Api.Deserialize != NULL)
+    {
+        if (Database != NULL)
+        {
+            Api.Close(Database);
+            Database = NULL;
+        }
+        MapStatus = ZpBrowser_MapDatabaseHandle(Query->Browser, DatabasePath, &Map);
+        if (NT_SUCCESS(MapStatus))
+        {
+            Result = Api.OpenV2(":memory:",
+                                &Database,
+                                SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
+                                NULL);
+            if (Result == SQLITE_OK)
+            {
+                Result = Api.Deserialize(Database,
+                                         "main",
+                                         Map.BaseAddress,
+                                         (sqlite3_int64)Map.FileSize,
+                                         (sqlite3_int64)Map.FileSize,
+                                         SQLITE_DESERIALIZE_READONLY);
+            }
+        }
+    }
     if (Result == SQLITE_OK) Result = Api.PrepareV2(Database, Sql, -1, &Statement, NULL);
     if (Result == SQLITE_OK) Result = Api.BindInt64(Statement, 1, (sqlite3_int64)Query->Cursor);
     if (Result == SQLITE_OK) Result = Api.BindInt(Statement, 2, (int)Query->Limit);
@@ -630,6 +820,7 @@ ZpBrowser_QueryDatabase(
 
         if (Result == SQLITE_OK && CloseResult != SQLITE_OK) Result = CloseResult;
     }
+    if (NT_SUCCESS(MapStatus)) IO_UnmapFile(&Map);
     FreeLibrary(Api.Module);
     if (!NT_SUCCESS(Status)) Result = SQLITE_OK;
     if (NT_SUCCESS(Status) && Result == SQLITE_OK)

@@ -62,7 +62,7 @@ internal sealed class CdpSessionManager(
             """;
         var command = "powershell.exe -NoProfile -NonInteractive -EncodedCommand " +
                       Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
-        var result = await RemoteCommand.RunAsync(server, command);
+        var result = await RemoteCommand.RunAsync(server, command, columns: 1024);
         if (!result.Status.IsSuccess)
         {
             throw new NativeException(result.Status);
@@ -286,7 +286,14 @@ internal sealed class CdpSessionManager(
         }
         try
         {
-            value = Encoding.Unicode.GetString(Convert.FromBase64String(line[(index + marker.Length)..].Trim()));
+            var encoded = line.AsSpan(index + marker.Length).TrimStart();
+            var length = 0;
+            while (length < encoded.Length &&
+                   (char.IsAsciiLetterOrDigit(encoded[length]) || encoded[length] is '+' or '/' or '='))
+            {
+                length++;
+            }
+            value = Encoding.Unicode.GetString(Convert.FromBase64String(encoded[..length].ToString()));
             return true;
         }
         catch (FormatException)
