@@ -17,6 +17,12 @@ HRESULT
 ZpWindowCapture_CheckSupport(VOID);
 
 HRESULT
+ZpWindowCapture_ResolveMonitor(
+    _In_ ULONG MonitorIndex,
+    _Out_ HMONITOR* Monitor,
+    _Out_opt_ PRECT MonitorRect);
+
+HRESULT
 ZpWindowCapture_Create(
     _In_ HWND Window,
     _In_ PCZP_WINDOW_CAPTURE_OPTIONS Options,

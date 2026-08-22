@@ -4,6 +4,8 @@
 TEST_DECL_FUNC(ProtocolCodec);
 TEST_DECL_FUNC(ProtocolFrame);
 TEST_DECL_FUNC(ProtocolRtc);
+TEST_DECL_FUNC(ProtocolWindow);
+TEST_DECL_FUNC(ProtocolProcess);
 TEST_DECL_FUNC(ProtocolSerial);
 TEST_DECL_FUNC(ProtocolRecording);
 TEST_DECL_FUNC(ProtocolPortable);
@@ -19,6 +21,8 @@ CONST UNITTEST_ENTRY UnitTestList[] = {
     TEST_DECL_ENTRY(ProtocolCodec),
     TEST_DECL_ENTRY(ProtocolFrame),
     TEST_DECL_ENTRY(ProtocolRtc),
+    TEST_DECL_ENTRY(ProtocolWindow),
+    TEST_DECL_ENTRY(ProtocolProcess),
     TEST_DECL_ENTRY(ProtocolSerial),
     TEST_DECL_ENTRY(ProtocolRecording),
     TEST_DECL_ENTRY(ProtocolPortable),

@@ -39,6 +39,20 @@ internal static class ExecutionWebApi
             {
                 return Results.BadRequest();
             }
+            if (request.Identity == ExecutionIdentity.AppContainer)
+            {
+                if (request.Engine != ExecutionEngine.CreateProcess || request.SessionId != uint.MaxValue ||
+                    string.IsNullOrWhiteSpace(request.AppContainerSid) || request.AppContainerSid.Length > 184 ||
+                    !string.IsNullOrEmpty(request.Verb) || !string.IsNullOrEmpty(request.UserName) ||
+                    !string.IsNullOrEmpty(request.Password))
+                {
+                    return Results.BadRequest();
+                }
+            }
+            else if (!string.IsNullOrEmpty(request.AppContainerSid))
+            {
+                return Results.BadRequest();
+            }
             var start = request.ToExecutionStart();
             var job = await server.StartExecutionAsync(start);
             if (!string.IsNullOrEmpty(request.CleanupPath))
@@ -71,16 +85,25 @@ internal static class ExecutionWebApi
                 return Results.BadRequest();
             }
             var extension = request.Extension.ToLowerInvariant();
-            if (request.Shell == TerminalShell.CommandPrompt ?
-                    extension is not (".cmd" or ".bat") :
-                    extension != ".ps1")
+            var valid = request.Shell switch
+            {
+                TerminalShell.CommandPrompt => extension is ".cmd" or ".bat",
+                TerminalShell.WindowsPowerShell or TerminalShell.PowerShell => extension == ".ps1",
+                TerminalShell.ConsoleScriptHost or TerminalShell.WindowsScriptHost => extension == ".vbs",
+                TerminalShell.HtmlApplication => extension == ".hta",
+                _ => false
+            };
+            if (!valid)
             {
                 return Results.BadRequest();
             }
             var path = await server.CreateExecutionStagingAsync("Script" + extension);
-            var encoding = request.Shell == TerminalShell.WindowsPowerShell ?
-                new UTF8Encoding(true) :
-                new UTF8Encoding(false);
+            var encoding = request.Shell switch
+            {
+                TerminalShell.WindowsPowerShell or TerminalShell.HtmlApplication => new UTF8Encoding(true),
+                TerminalShell.ConsoleScriptHost or TerminalShell.WindowsScriptHost => Encoding.Unicode,
+                _ => new UTF8Encoding(false)
+            };
             try
             {
                 await UploadAsync(server, path, encoding.GetBytes(request.Script));
@@ -127,6 +150,7 @@ internal sealed record ExecutionStartRequest(
     string? Verb,
     string? UserName,
     string? Password,
+    string? AppContainerSid,
     string? CleanupPath)
 {
     internal ExecutionStart ToExecutionStart() =>
@@ -139,7 +163,8 @@ internal sealed record ExecutionStartRequest(
             WorkingDirectory,
             Verb,
             UserName,
-            Password);
+            Password,
+            AppContainerSid);
 }
 
 internal sealed record ExecutionJobRequest(string JobId);

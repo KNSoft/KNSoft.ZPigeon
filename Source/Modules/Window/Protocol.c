@@ -202,7 +202,10 @@ LOGICAL
 ZpWindow_IsCaptureOptionsValid(
     _In_ PCZP_WINDOW_CAPTURE_OPTIONS Options)
 {
-    return Options->Handle != 0 && Options->ProcessId != 0 && Options->ThreadId != 0 &&
+    LOGICAL Desktop = FlagOn(Options->Flags, ZP_WINDOW_CAPTURE_DESKTOP);
+
+    return (Desktop ? Options->Handle == 0 && Options->ProcessId == 0 && Options->ThreadId == 0 :
+                      Options->Handle != 0 && Options->ProcessId != 0 && Options->ThreadId != 0) &&
            !FlagOn(Options->Flags, ~ZP_WINDOW_CAPTURE_FLAGS_MASK) &&
            Options->MaxDimension != 0 && Options->MaxDimension <= ZP_WINDOW_CAPTURE_MAX_DIMENSION &&
            Options->FrameRate != 0 && Options->FrameRate <= ZP_WINDOW_CAPTURE_MAX_FRAME_RATE &&
@@ -220,7 +223,7 @@ ZpWindow_EncodeCaptureRequest(
     NTSTATUS Status;
 
     if (!ZpWindow_IsCaptureOptionsValid(Options)) return STATUS_INVALID_PARAMETER;
-    *BytesWritten = sizeof(ULONGLONG) + 5 * sizeof(ULONG) + 2 * sizeof(USHORT);
+    *BytesWritten = ZP_WINDOW_CAPTURE_REQUEST_WIRE_SIZE;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < *BytesWritten) return STATUS_BUFFER_TOO_SMALL;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
@@ -232,6 +235,7 @@ ZpWindow_EncodeCaptureRequest(
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, Options->FrameRate);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, Options->Quality);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Options->DirectStreamId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Options->MonitorIndex);
     return Status;
 }
 
@@ -244,7 +248,7 @@ ZpWindow_DecodeCaptureRequest(
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
-    if (PayloadLength != sizeof(ULONGLONG) + 5 * sizeof(ULONG) + 2 * sizeof(USHORT))
+    if (PayloadLength != ZP_WINDOW_CAPTURE_REQUEST_WIRE_SIZE)
     {
         return STATUS_DATA_ERROR;
     }
@@ -257,7 +261,130 @@ ZpWindow_DecodeCaptureRequest(
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(&Reader, &Options->FrameRate);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(&Reader, &Options->Quality);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Options->DirectStreamId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Options->MonitorIndex);
     return NT_SUCCESS(Status) && ZpWindow_IsCaptureOptionsValid(Options) ? STATUS_SUCCESS : STATUS_DATA_ERROR;
+}
+
+static
+NTSTATUS
+ZpWindow_WriteMonitor(
+    _Inout_ PZP_CODEC_WRITER Writer,
+    _In_ PCZP_WINDOW_MONITOR Monitor)
+{
+    NTSTATUS Status;
+
+    Status = ZpCodec_WriteUInt32(Writer, Monitor->Index);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Monitor->Flags);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Monitor->Left);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Monitor->Top);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Monitor->Right);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Monitor->Bottom);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Monitor->WorkLeft);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Monitor->WorkTop);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Monitor->WorkRight);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Monitor->WorkBottom);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(Writer, Monitor->Device, Monitor->DeviceLength);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpWindow_ReadMonitor(
+    _Inout_ PZP_CODEC_READER Reader,
+    _Out_opt_ PZP_WINDOW_MONITOR_VIEW Monitor)
+{
+    ZP_WINDOW_MONITOR_VIEW Local;
+    NTSTATUS Status;
+
+    Status = ZpCodec_ReadUInt32(Reader, &Local.Index);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.Flags);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, (PULONG)&Local.Left);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, (PULONG)&Local.Top);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, (PULONG)&Local.Right);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, (PULONG)&Local.Bottom);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, (PULONG)&Local.WorkLeft);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, (PULONG)&Local.WorkTop);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, (PULONG)&Local.WorkRight);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, (PULONG)&Local.WorkBottom);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.Device);
+    if (NT_SUCCESS(Status) && Monitor != NULL) *Monitor = Local;
+    return Status;
+}
+
+NTSTATUS
+ZpWindow_EncodeMonitorList(
+    _In_reads_opt_(MonitorCount) PCZP_WINDOW_MONITOR Monitors,
+    _In_ ULONG MonitorCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+    ULONG Index;
+
+    if (MonitorCount > ZP_CODEC_MAX_ELEMENT_COUNT || (MonitorCount != 0 && Monitors == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteArrayCount(&Writer, MonitorCount);
+    for (Index = 0; NT_SUCCESS(Status) && Index < MonitorCount; Index++)
+    {
+        if (Monitors[Index].DeviceLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+            (Monitors[Index].DeviceLength != 0 && Monitors[Index].Device == NULL))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+        Status = ZpWindow_WriteMonitor(&Writer, &Monitors[Index]);
+    }
+    *BytesWritten = Writer.Offset;
+    return Status;
+}
+
+NTSTATUS
+ZpWindow_DecodeMonitorList(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_WINDOW_MONITOR_LIST_VIEW View)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+    ULONG Count, Index;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+    for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
+    {
+        Status = ZpWindow_ReadMonitor(&Reader, NULL);
+    }
+    if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    View->Buffer = Add2Ptr(Payload, sizeof(ULONG));
+    View->Length = PayloadLength - sizeof(ULONG);
+    View->Count = Count;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpWindow_GetMonitor(
+    _In_ PCZP_WINDOW_MONITOR_LIST_VIEW List,
+    _In_ ULONG Index,
+    _Out_ PZP_WINDOW_MONITOR_VIEW Monitor)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status = STATUS_SUCCESS;
+    ULONG Current;
+
+    if (Index >= List->Count) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, List->Buffer, List->Length);
+    for (Current = 0; NT_SUCCESS(Status) && Current <= Index; Current++)
+    {
+        Status = ZpWindow_ReadMonitor(&Reader, Current == Index ? Monitor : NULL);
+    }
+    return Status;
 }
 
 NTSTATUS

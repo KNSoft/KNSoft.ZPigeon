@@ -9,6 +9,15 @@
 
 EXTERN_C_START
 
+typedef struct _ZP_SERVER_CONNECTION_STATISTICS
+{
+    ULONGLONG CompletedRequests;
+    ULONGLONG FailedRequests;
+    ULONGLONG SmoothedRequestMilliseconds;
+    ULONG PendingRequests;
+    ULONG ConsecutiveFailures;
+} ZP_SERVER_CONNECTION_STATISTICS, *PZP_SERVER_CONNECTION_STATISTICS;
+
 NTSTATUS
 NTAPI
 ZpServer_EnumeratePortableDevices(
@@ -302,6 +311,12 @@ ZpServer_SendRequest(
     _In_ ZP_REQUEST_COMPLETE_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryConnectionStatistics(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _Out_ PZP_SERVER_CONNECTION_STATISTICS Statistics);
 
 NTSTATUS
 NTAPI
@@ -684,10 +699,30 @@ ZpServer_WriteProcessMemory(
 
 NTSTATUS
 NTAPI
+ZpServer_QueryProcessMemoryMap(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PROCESS_MEMORY_MAP_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_EnumerateWindows(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_WINDOW_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateMonitors(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WINDOW_MONITOR_ENUMERATE_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);
 

@@ -180,6 +180,22 @@ internal static class ManagementWebApi
             await server.RenameFileAsync(request.Path, request.NewPath));
         app.MapPost("/api/file/attributes", async (FileAttributesRequest request) =>
             await server.SetFileAttributesAsync(request.Path, request.Attributes));
+        app.MapPost("/api/file/open", async (FileOpenRequest request) =>
+        {
+            await server.StartExecutionAsync(new ExecutionStart(
+                ExecutionEngine.ShellExecute,
+                ExecutionIdentity.Current,
+                uint.MaxValue,
+                request.Hidden ? ExecutionFlags.Hidden : ExecutionFlags.None,
+                request.Path,
+                null,
+                null,
+                "open",
+                null,
+                null,
+                null));
+            return Results.NoContent();
+        });
         app.MapPost("/api/file/owners", async (PathRequest request) =>
             await server.QueryFileOwnersAsync(request.Path));
         app.MapPost("/api/file/owners/control", async (FileOwnerControlRequest request) =>
@@ -215,6 +231,7 @@ internal static class ManagementWebApi
                 ExecutionFlags.Hidden,
                 "format.com",
                 arguments,
+                null,
                 null,
                 null,
                 null,
@@ -301,6 +318,9 @@ internal static class ManagementWebApi
         });
         app.MapPost("/api/processes", async () =>
             (await server.EnumerateProcessesAsync()).Select(ProcessWebRecord.From));
+        app.MapPost("/api/winobj", async (WinObjRequest request) =>
+            await server.QueryAdministrationAsync(AdministrationOperation.QueryObjectDirectory,
+                                                    request.Path));
         app.MapPost("/api/process/info", async (ProcessIdentityRequest request) =>
             ProcessInfoWebRecord.From(
                 await server.QueryProcessAsync(request.ProcessId, ulong.Parse(request.CreateTime))));
@@ -336,6 +356,11 @@ internal static class ManagementWebApi
             }
             await server.WriteProcessMemoryAsync(request.ProcessId, createTime, address, request.Data);
             return Results.NoContent();
+        });
+        app.MapPost("/api/process/memory/map", async (ProcessIdentityRequest request) =>
+        {
+            if (!ulong.TryParse(request.CreateTime, out var createTime)) return Results.BadRequest();
+            return Results.Ok(await server.QueryProcessMemoryMapAsync(request.ProcessId, createTime));
         });
         app.MapPost("/api/process/dump", async (HttpContext context, ProcessDumpRequest request) =>
         {
@@ -519,6 +544,62 @@ internal static class ManagementWebApi
             await server.QueryAdministrationAsync(AdministrationOperation.QueryLocation, "current"));
         MapAdministration(app, server, "fonts", AdministrationOperation.EnumerateFonts,
                           AdministrationOperation.ControlFont);
+        app.MapPost("/api/app-containers", async () =>
+            await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateAppContainers));
+        app.MapPost("/api/app-containers/control", async (AppContainerControlRequest request) =>
+        {
+            switch (request.Action)
+            {
+                case AdministrationAction.Create:
+                    if (string.IsNullOrEmpty(request.Identity) ||
+                        !System.Text.RegularExpressions.Regex.IsMatch(request.Identity, "^[-_. A-Za-z0-9]{1,64}$") ||
+                        string.IsNullOrEmpty(request.DisplayName) || request.DisplayName.Length > 512 ||
+                        request.DisplayName.IndexOfAny(['\r', '\n', '\0']) >= 0 ||
+                        request.Description is null || request.Description.Length > 2048 ||
+                        request.Description.Contains('\0') ||
+                        request.Capabilities is null or { Length: > 64 } ||
+                        request.Capabilities.Any(value => string.IsNullOrWhiteSpace(value) ||
+                            value.Length > 256 || value.Contains('\n') || value.Contains('\0')))
+                    {
+                        return Results.BadRequest();
+                    }
+                    await server.ControlAdministrationAsync(
+                        AdministrationOperation.ControlAppContainer,
+                        request.Action,
+                        request.Identity,
+                        $"{request.DisplayName}\n{request.Description}",
+                        string.Join('\n', request.Capabilities.Distinct(StringComparer.OrdinalIgnoreCase)));
+                    break;
+
+                case AdministrationAction.Configure:
+                    if (string.IsNullOrEmpty(request.Identity) || request.Identity.Length > 184 ||
+                        request.Loopback is null)
+                    {
+                        return Results.BadRequest();
+                    }
+                    await server.ControlAdministrationAsync(
+                        AdministrationOperation.ControlAppContainer,
+                        request.Action,
+                        request.Identity,
+                        request.Loopback.Value ? "1" : "0");
+                    break;
+
+                case AdministrationAction.Delete:
+                    if (string.IsNullOrEmpty(request.Identity) || request.Identity.Length > 64)
+                    {
+                        return Results.BadRequest();
+                    }
+                    await server.ControlAdministrationAsync(
+                        AdministrationOperation.ControlAppContainer,
+                        request.Action,
+                        request.Identity);
+                    break;
+
+                default:
+                    return Results.BadRequest();
+            }
+            return Results.NoContent();
+        });
         MapAdministration(app, server, "software", AdministrationOperation.EnumerateSoftware,
                           AdministrationOperation.ControlSoftware);
         MapAdministration(app, server, "hardware", AdministrationOperation.EnumerateHardware,
@@ -738,7 +819,9 @@ internal sealed record FileRangeRequest(string Path, string Offset, uint Length)
 internal sealed record FileRangeWriteRequest(string Path, string Offset, byte[] Data);
 internal sealed record ProcessMemoryReadRequest(uint ProcessId, string CreateTime, string Address, uint Length);
 internal sealed record ProcessMemoryWriteRequest(uint ProcessId, string CreateTime, string Address, byte[] Data);
+internal sealed record WinObjRequest(string Path);
 internal sealed record FileAttributesRequest(string Path, uint Attributes);
+internal sealed record FileOpenRequest(string Path, bool Hidden);
 internal sealed record FileOwnerControlRequest(
     string Path,
     FileOwnerControl Control,
@@ -746,6 +829,13 @@ internal sealed record FileOwnerControlRequest(
 internal sealed record FileVolumeLabelRequest(string Path, string Label);
 internal sealed record FileVolumeFormatRequest(string Path, string FileSystem, string Label, bool Quick);
 internal sealed record FileSearchRequest(string Path, string Query, uint Mode);
+internal sealed record AppContainerControlRequest(
+    AdministrationAction Action,
+    string Identity,
+    string? DisplayName,
+    string? Description,
+    string[]? Capabilities,
+    bool? Loopback);
 internal sealed record ServiceRequest(string ServiceName);
 internal sealed record ServiceControlRequest(string ServiceName, ServiceControl Control, string? Argument);
 internal sealed record ProcessIdentityRequest(uint ProcessId, string CreateTime);

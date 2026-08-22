@@ -7,9 +7,11 @@ public readonly record struct WindowCaptureOptions(
     bool CaptureCursor = false,
     uint MaxDimension = 1280,
     ushort FrameRate = 12,
-    ushort ImageQuality = 85)
+    ushort ImageQuality = 85,
+    bool Desktop = false,
+    uint MonitorIndex = uint.MaxValue)
 {
-    internal uint Flags => CaptureCursor ? 1U : 0;
+    internal uint Flags => (CaptureCursor ? 1U : 0) | (Desktop ? 2U : 0);
 }
 
 public readonly record struct WindowCaptureCompletion(ZpStatus Status);
@@ -41,6 +43,7 @@ public sealed partial class NativeServer
                                                      options.FrameRate,
                                                      options.ImageQuality,
                                                      directStreamId,
+                                                     options.MonitorIndex,
                                                      WindowCaptureOpenCallback,
                                                      WindowCaptureDataCallback,
                                                      WindowCaptureCloseCallback,
@@ -131,6 +134,18 @@ public sealed class WindowCaptureStream : IAsyncDisposable
         completion.TrySetResult(new(status));
     }
 
+    public unsafe void Send(ReadOnlySpan<byte> data)
+    {
+        ObjectDisposedException.ThrowIf(disposed != 0, this);
+        fixed (byte* pointer = data)
+        {
+            NativeServer.ThrowIfFailed(NativeMethods.SendWindowCaptureInput(
+                stream,
+                pointer,
+                (uint)data.Length));
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
@@ -163,6 +178,7 @@ internal static partial class NativeMethods
         ushort frameRate,
         ushort quality,
         uint directStreamId,
+        uint monitorIndex,
         WindowCaptureOpenCallback openCallback,
         WindowCaptureDataCallback dataCallback,
         WindowCaptureCloseCallback closeCallback,
@@ -170,4 +186,10 @@ internal static partial class NativeMethods
 
     [LibraryImport(Library, EntryPoint = "ZpNative_CloseWindowCapture")]
     internal static partial int CloseWindowCapture(nint stream);
+
+    [LibraryImport(Library, EntryPoint = "ZpNative_SendWindowCaptureInput")]
+    internal static unsafe partial int SendWindowCaptureInput(
+        nint stream,
+        byte* data,
+        uint dataLength);
 }

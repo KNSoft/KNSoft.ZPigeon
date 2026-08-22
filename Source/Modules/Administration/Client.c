@@ -177,6 +177,8 @@ typedef const VOID* PCVOID;
 #include "Keyboard.inl"
 #include "Location.inl"
 #include "Font.inl"
+#include "AppContainer.inl"
+#include "WinObj.inl"
 
 ZP_STATUS
 ZpAdministration_Execute(
@@ -312,6 +314,11 @@ ZpAdministration_Execute(
                        ZpAdministration_EnumerateFonts(Response, ResponseLength) :
                        ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
 
+        case ZP_ADMINISTRATION_OPERATION_ENUMERATE_APP_CONTAINERS:
+            return RequestLength == 0 ?
+                       ZpAdministration_EnumerateAppContainers(Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+
         case ZP_ADMINISTRATION_OPERATION_QUERY_CERTIFICATE:
             Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
             return NT_SUCCESS(Status) ?
@@ -358,6 +365,12 @@ ZpAdministration_Execute(
             Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
             return NT_SUCCESS(Status) ?
                        ZpAdministration_QueryLocation(&Identity, Response, ResponseLength) :
+                       ZpStatus_FromNtStatus(Status);
+
+        case ZP_ADMINISTRATION_OPERATION_QUERY_OBJECT_DIRECTORY:
+            Status = ZpAdministration_DecodeQuery(Request, RequestLength, &Identity);
+            return NT_SUCCESS(Status) ?
+                       ZpAdministration_QueryObjectDirectory(&Identity, Response, ResponseLength) :
                        ZpStatus_FromNtStatus(Status);
     }
     Status = ZpAdministration_DecodeControl(Request, RequestLength, &Control);
@@ -426,6 +439,9 @@ ZpAdministration_Execute(
 
         case ZP_ADMINISTRATION_OPERATION_CONTROL_FONT:
             return ZpAdministration_ControlFont(&Control);
+
+        case ZP_ADMINISTRATION_OPERATION_CONTROL_APP_CONTAINER:
+            return ZpAdministration_ControlAppContainer(&Control);
     }
     return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
 }

@@ -29,6 +29,10 @@ struct _ZP_CONNECTION_OBJECT
     ZP_CONNECTION_PHASE Phase;
     ULONG RequestCount;
     ULONG MaxRequests;
+    ULONGLONG CompletedRequests;
+    ULONGLONG FailedRequests;
+    ULONGLONG SmoothedRequestMilliseconds;
+    ULONG ConsecutiveFailures;
     ULONG ChannelCount;
     ULONG ChannelReservations;
     ULONG MaxChannels;

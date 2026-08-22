@@ -26,6 +26,7 @@ typedef USHORT ZP_EXECUTION_IDENTITY, *PZP_EXECUTION_IDENTITY;
 #define ZpExecutionIdentitySystem ((ZP_EXECUTION_IDENTITY)4)
 #define ZpExecutionIdentityTrustedInstaller ((ZP_EXECUTION_IDENTITY)5)
 #define ZpExecutionIdentityOtherUser ((ZP_EXECUTION_IDENTITY)6)
+#define ZpExecutionIdentityAppContainer ((ZP_EXECUTION_IDENTITY)7)
 
 #define ZP_EXECUTION_SESSION_CURRENT MAXULONG
 #define ZP_EXECUTION_SESSION_FLAG_CLIENT 0x00000001UL
@@ -87,6 +88,8 @@ typedef struct _ZP_EXECUTION_START
     ULONG UserNameLength;
     PCWCH Password;
     ULONG PasswordLength;
+    PCWCH AppContainerSid;
+    ULONG AppContainerSidLength;
 } ZP_EXECUTION_START, *PZP_EXECUTION_START;
 
 typedef const ZP_EXECUTION_START* PCZP_EXECUTION_START;
@@ -103,6 +106,7 @@ typedef struct _ZP_EXECUTION_START_VIEW
     ZP_STRING_VIEW Verb;
     ZP_STRING_VIEW UserName;
     ZP_STRING_VIEW Password;
+    ZP_STRING_VIEW AppContainerSid;
 } ZP_EXECUTION_START_VIEW, *PZP_EXECUTION_START_VIEW;
 
 typedef const ZP_EXECUTION_START_VIEW* PCZP_EXECUTION_START_VIEW;

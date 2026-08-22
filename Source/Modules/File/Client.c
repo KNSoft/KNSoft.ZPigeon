@@ -1656,8 +1656,8 @@ ZpFile_EnumerateDrives(
 
     Status = NtQueryInformationProcess(NtCurrentProcess(),
                                        ProcessDeviceMap,
-                                       &DeviceMap,
-                                       sizeof(DeviceMap),
+                                       &DeviceMap.Query,
+                                       sizeof(DeviceMap.Query),
                                        NULL);
     if (!NT_SUCCESS(Status)) return Status;
     for (Index = 0; Index < 26; Index++)

@@ -6,6 +6,7 @@
 typedef union _ZP_WINDOW_CALLBACK
 {
     ZP_WINDOW_ENUMERATE_CALLBACK Enumerate;
+    ZP_WINDOW_MONITOR_ENUMERATE_CALLBACK EnumerateMonitors;
     ZP_WINDOW_QUERY_CALLBACK Query;
     ZP_WINDOW_CAPTURE_CALLBACK Capture;
     ZP_REQUEST_STATUS_CALLBACK Status;
@@ -47,6 +48,30 @@ ZpWindow_EnumerateComplete(
                                       Status,
                                       ZpStatus_IsSuccess(Status) ? &Windows : NULL,
                                       WindowContext->Context);
+    Mem_Free(WindowContext);
+}
+
+static
+VOID
+NTAPI
+ZpWindow_EnumerateMonitorsComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_WINDOW_CONTEXT WindowContext = Context;
+    ZP_WINDOW_MONITOR_LIST_VIEW Monitors;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(
+            ZpWindow_DecodeMonitorList(Payload->Buffer, Payload->Length, &Monitors));
+    }
+    WindowContext->Callback.EnumerateMonitors(Request,
+                                              Status,
+                                              ZpStatus_IsSuccess(Status) ? &Monitors : NULL,
+                                              WindowContext->Context);
     Mem_Free(WindowContext);
 }
 
@@ -167,6 +192,30 @@ ZpServer_EnumerateWindows(
                          NULL,
                          0,
                          ZpWindow_EnumerateComplete,
+                         WindowCallback,
+                         Context,
+                         Request);
+}
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateMonitors(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_WINDOW_MONITOR_ENUMERATE_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_WINDOW_CALLBACK WindowCallback;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    WindowCallback.EnumerateMonitors = Callback;
+    return ZpWindow_Send(Connection,
+                         ZP_WINDOW_OPERATION_ENUMERATE_MONITORS,
+                         TimeoutMilliseconds,
+                         NULL,
+                         0,
+                         ZpWindow_EnumerateMonitorsComplete,
                          WindowCallback,
                          Context,
                          Request);
@@ -301,7 +350,7 @@ ZpServer_CaptureWindow(
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
     ZP_WINDOW_CALLBACK WindowCallback;
-    BYTE Payload[sizeof(ULONGLONG) + 5 * sizeof(ULONG) + 2 * sizeof(USHORT)];
+    BYTE Payload[ZP_WINDOW_CAPTURE_REQUEST_WIRE_SIZE];
     ULONG PayloadLength;
     NTSTATUS Status;
 
@@ -404,7 +453,7 @@ ZpServer_OpenWindowCapture(
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
     PZP_WINDOW_CAPTURE_CONTEXT CaptureContext;
-    BYTE Payload[sizeof(ULONGLONG) + 5 * sizeof(ULONG) + 2 * sizeof(USHORT)];
+    BYTE Payload[ZP_WINDOW_CAPTURE_REQUEST_WIRE_SIZE];
     ULONG PayloadLength;
     NTSTATUS Status;
     LOGICAL Reserved = FALSE;

@@ -229,6 +229,41 @@ VOID
     _In_opt_ const ZP_PROCESS_INFO_VIEW* Info,
     _In_opt_ PVOID Context);
 
+typedef struct _ZP_NATIVE_PROCESS_MEMORY_REGION
+{
+    ULONGLONG BaseAddress;
+    ULONGLONG AllocationBase;
+    ULONGLONG RegionSize;
+    ULONGLONG CommitSize;
+    ULONGLONG WorkingSetBytes;
+    ULONGLONG PrivateWorkingSetBytes;
+    ULONGLONG SharedWorkingSetBytes;
+    ULONGLONG ShareableWorkingSetBytes;
+    ULONGLONG LockedWorkingSetBytes;
+    ULONGLONG SharedOriginalBytes;
+    ULONG State;
+    ULONG Type;
+    ULONG Protect;
+    ULONG AllocationProtect;
+    ULONG RegionType;
+    ULONG Priority;
+    NTSTATUS RegionStatus;
+    NTSTATUS WorkingSetStatus;
+    NTSTATUS MappedPathStatus;
+    PCWCH MappedPath;
+    ULONG MappedPathLength;
+} ZP_NATIVE_PROCESS_MEMORY_REGION, *PZP_NATIVE_PROCESS_MEMORY_REGION;
+
+typedef const ZP_NATIVE_PROCESS_MEMORY_REGION* PCZP_NATIVE_PROCESS_MEMORY_REGION;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_PROCESS_MEMORY_MAP_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(RegionCount) PCZP_NATIVE_PROCESS_MEMORY_REGION Regions,
+    _In_ ULONG RegionCount,
+    _In_opt_ PVOID Context);
+
 typedef
 VOID
 (NTAPI *ZP_NATIVE_PROCESS_DUMP_CALLBACK)(
@@ -323,6 +358,24 @@ typedef struct _ZP_NATIVE_WINDOW_RECORD
 } ZP_NATIVE_WINDOW_RECORD, *PZP_NATIVE_WINDOW_RECORD;
 
 typedef const ZP_NATIVE_WINDOW_RECORD* PCZP_NATIVE_WINDOW_RECORD;
+
+typedef struct _ZP_NATIVE_WINDOW_MONITOR
+{
+    ULONG Index;
+    ULONG Flags;
+    LONG Left;
+    LONG Top;
+    LONG Right;
+    LONG Bottom;
+    LONG WorkLeft;
+    LONG WorkTop;
+    LONG WorkRight;
+    LONG WorkBottom;
+    PCWCH Device;
+    ULONG DeviceLength;
+} ZP_NATIVE_WINDOW_MONITOR, *PZP_NATIVE_WINDOW_MONITOR;
+
+typedef const ZP_NATIVE_WINDOW_MONITOR* PCZP_NATIVE_WINDOW_MONITOR;
 
 typedef struct _ZP_NATIVE_AUDIO_DEVICE_RECORD
 {
@@ -491,6 +544,14 @@ VOID
     _In_ ZP_STATUS Status,
     _In_reads_opt_(RecordCount) PCZP_NATIVE_WINDOW_RECORD Records,
     _In_ ULONG RecordCount,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_WINDOW_MONITORS_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(MonitorCount) PCZP_NATIVE_WINDOW_MONITOR Monitors,
+    _In_ ULONG MonitorCount,
     _In_opt_ PVOID Context);
 
 typedef
@@ -805,6 +866,12 @@ ZpNative_IsClientConnected(VOID);
 __declspec(dllexport)
 NTSTATUS
 NTAPI
+ZpNative_QueryConnectionStatistics(
+    _Out_ PZP_SERVER_CONNECTION_STATISTICS Statistics);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
 ZpNative_GetSystemInfo(
     _In_ ZP_NATIVE_SYSTEM_INFO_CALLBACK Callback,
     _In_opt_ PVOID Context);
@@ -1046,6 +1113,15 @@ ZpNative_WriteProcessMemory(
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_QueryProcessMemoryMap(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ZP_NATIVE_PROCESS_MEMORY_MAP_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
 typedef struct _ZP_NATIVE_TUNNEL* ZP_NATIVE_TUNNEL_HANDLE;
 
 typedef
@@ -1121,6 +1197,8 @@ ZpNative_StartExecution(
     _In_ ULONG UserNameLength,
     _In_reads_opt_(PasswordLength) PCWCH Password,
     _In_ ULONG PasswordLength,
+    _In_reads_opt_(AppContainerSidLength) PCWCH AppContainerSid,
+    _In_ ULONG AppContainerSidLength,
     _In_ ZP_NATIVE_EXECUTION_JOBS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
@@ -1153,6 +1231,13 @@ NTSTATUS
 NTAPI
 ZpNative_EnumerateWindows(
     _In_ ZP_NATIVE_WINDOW_LIST_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateMonitors(
+    _In_ ZP_NATIVE_WINDOW_MONITORS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
 __declspec(dllexport)
@@ -1206,6 +1291,7 @@ ZpNative_CaptureWindow(
     _In_ ULONG MaxDimension,
     _In_ USHORT FrameRate,
     _In_ USHORT Quality,
+    _In_ ULONG MonitorIndex,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
@@ -1221,6 +1307,7 @@ ZpNative_OpenWindowCapture(
     _In_ USHORT FrameRate,
     _In_ USHORT Quality,
     _In_ ULONG DirectStreamId,
+    _In_ ULONG MonitorIndex,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_DATA_CALLBACK DataCallback,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_CLOSE_CALLBACK CloseCallback,
@@ -1231,6 +1318,14 @@ NTSTATUS
 NTAPI
 ZpNative_CloseWindowCapture(
     _In_ ZP_NATIVE_WINDOW_CAPTURE_STREAM_HANDLE Stream);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_SendWindowCaptureInput(
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_STREAM_HANDLE Stream,
+    _In_reads_bytes_(DataLength) const VOID* Data,
+    _In_ ULONG DataLength);
 
 __declspec(dllexport)
 NTSTATUS

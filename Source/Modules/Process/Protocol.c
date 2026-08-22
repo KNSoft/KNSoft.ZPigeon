@@ -551,3 +551,143 @@ ZpProcess_DecodeMemoryData(
            (Data->Length == 0 || Data->Length > ZP_PROCESS_MEMORY_MAX_LENGTH || Reader.Offset != PayloadLength) ?
                STATUS_DATA_ERROR : Status;
 }
+
+static
+NTSTATUS
+ZpProcess_WriteMemoryRegion(
+    _Inout_ PZP_CODEC_WRITER Writer,
+    _In_ PCZP_PROCESS_MEMORY_REGION Region)
+{
+    NTSTATUS Status;
+
+    Status = ZpCodec_WriteUInt64(Writer, Region->BaseAddress);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->AllocationBase);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->RegionSize);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->CommitSize);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->WorkingSetBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->PrivateWorkingSetBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->SharedWorkingSetBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->ShareableWorkingSetBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->LockedWorkingSetBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->SharedOriginalBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Region->State);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Region->Type);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Region->Protect);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Region->AllocationProtect);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Region->RegionType);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Region->Priority);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Region->RegionStatus);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Region->WorkingSetStatus);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Region->MappedPathStatus);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_WriteString(Writer, Region->MappedPath, Region->MappedPathLength);
+    }
+    return Status;
+}
+
+static
+NTSTATUS
+ZpProcess_ReadMemoryRegion(
+    _Inout_ PZP_CODEC_READER Reader,
+    _Out_opt_ PZP_PROCESS_MEMORY_REGION_VIEW Region)
+{
+    ZP_PROCESS_MEMORY_REGION_VIEW Local;
+    NTSTATUS Status;
+
+    Status = ZpCodec_ReadUInt64(Reader, &Local.BaseAddress);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.AllocationBase);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.RegionSize);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.CommitSize);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.WorkingSetBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.PrivateWorkingSetBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.SharedWorkingSetBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.ShareableWorkingSetBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.LockedWorkingSetBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.SharedOriginalBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.State);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.Type);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.Protect);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.AllocationProtect);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.RegionType);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.Priority);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, (PULONG)&Local.RegionStatus);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, (PULONG)&Local.WorkingSetStatus);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, (PULONG)&Local.MappedPathStatus);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.MappedPath);
+    if (NT_SUCCESS(Status) && Region != NULL) *Region = Local;
+    return Status;
+}
+
+NTSTATUS
+ZpProcess_EncodeMemoryMap(
+    _In_reads_opt_(RegionCount) PCZP_PROCESS_MEMORY_REGION Regions,
+    _In_ ULONG RegionCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    ZP_CODEC_WRITER Writer;
+    NTSTATUS Status;
+    ULONG Index;
+
+    if (RegionCount > ZP_CODEC_MAX_ELEMENT_COUNT || (RegionCount != 0 && Regions == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
+    Status = ZpCodec_WriteArrayCount(&Writer, RegionCount);
+    for (Index = 0; NT_SUCCESS(Status) && Index < RegionCount; Index++)
+    {
+        if (Regions[Index].MappedPathLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+            (Regions[Index].MappedPathLength != 0 && Regions[Index].MappedPath == NULL))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+        Status = ZpProcess_WriteMemoryRegion(&Writer, &Regions[Index]);
+    }
+    *BytesWritten = Writer.Offset;
+    return Status;
+}
+
+NTSTATUS
+ZpProcess_DecodeMemoryMap(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_PROCESS_MEMORY_MAP_VIEW View)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+    ULONG Count, Index;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+    for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
+    {
+        Status = ZpProcess_ReadMemoryRegion(&Reader, NULL);
+    }
+    if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    View->Buffer = Add2Ptr(Payload, sizeof(ULONG));
+    View->Length = PayloadLength - sizeof(ULONG);
+    View->Count = Count;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpProcess_ReadMemoryMapRegion(
+    _In_ PCZP_PROCESS_MEMORY_MAP_VIEW Map,
+    _Inout_ PULONG Offset,
+    _Out_ PZP_PROCESS_MEMORY_REGION_VIEW Region)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    if (*Offset >= Map->Length) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, Add2Ptr(Map->Buffer, *Offset), Map->Length - *Offset);
+    Status = ZpProcess_ReadMemoryRegion(&Reader, Region);
+    if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
+    return Status;
+}

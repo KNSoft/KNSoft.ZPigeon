@@ -29,6 +29,7 @@ struct _ZP_WINDOW_SHARED_SOURCE
     HWND Window;
     ULONG CaptureCount;
     ULONG Flags;
+    ULONG MonitorIndex;
 };
 
 static RTL_SRWLOCK ZpWindowSharedLock = RTL_SRWLOCK_INIT;
@@ -58,6 +59,7 @@ ZpWindowShared_GetOptions(
     ULONG FrameRate = 0;
 
     Options->Flags = Source->Flags;
+    Options->MonitorIndex = Source->MonitorIndex;
     Options->MaxDimension = 0;
     Options->Quality = 0;
     for (Entry = Source->Captures.Flink; Entry != &Source->Captures; Entry = Entry->Flink)
@@ -174,7 +176,11 @@ ZpWindowShared_Open(
     for (Entry = ZpWindowSharedSources.Flink; Entry != &ZpWindowSharedSources; Entry = Entry->Flink)
     {
         Source = CONTAINING_RECORD(Entry, ZP_WINDOW_SHARED_SOURCE, ListEntry);
-        if (Source->Window == Window && Source->Flags == Options->Flags) break;
+        if (Source->Window == Window && Source->Flags == Options->Flags &&
+            Source->MonitorIndex == Options->MonitorIndex)
+        {
+            break;
+        }
     }
     if (Entry == &ZpWindowSharedSources)
     {
@@ -192,6 +198,7 @@ ZpWindowShared_Open(
         InitializeListHead(&Source->Captures);
         Source->Window = Window;
         Source->Flags = Options->Flags;
+        Source->MonitorIndex = Options->MonitorIndex;
         Status = NtCreateEvent(&Source->StopEvent,
                                EVENT_MODIFY_STATE | SYNCHRONIZE,
                                NULL,

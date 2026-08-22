@@ -119,7 +119,10 @@ public enum AdministrationOperation : ushort
     WaitKeyboard,
     QueryLocation,
     EnumerateFonts,
-    ControlFont
+    ControlFont,
+    EnumerateAppContainers,
+    ControlAppContainer,
+    QueryObjectDirectory
 }
 
 public enum AdministrationKind : ushort
@@ -170,7 +173,12 @@ public enum AdministrationKind : ushort
     BluetoothDevice,
     KeyboardEvent,
     Location,
-    Font
+    Font,
+    AppContainerProfile,
+    AppContainerCapability,
+    AppContainerBinary,
+    ObjectDirectory,
+    Object
 }
 
 public enum CredentialStore : ushort

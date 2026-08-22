@@ -157,6 +157,7 @@ internal sealed class CdpSessionManager(
             null,
             null,
             null,
+            null,
             null));
         try
         {

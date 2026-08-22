@@ -6,6 +6,7 @@
 #include <WtsApi32.h>
 
 #include "../../KNSoft.ZPigeon.Client.SDK/Client.inl"
+#include "../../KNSoft.ZPigeon.Client.SDK/Core/AppContainer.h"
 
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Shell32.lib")
@@ -487,6 +488,83 @@ ZpExecution_AddJob(
 
 static
 ZP_STATUS
+ZpExecution_CreateAppContainerProcess(
+    _In_ PCWSTR Sid,
+    _In_ PCWSTR FileName,
+    _Inout_ PWSTR CommandLine,
+    _In_opt_ PCWSTR WorkingDirectory,
+    _In_ BOOLEAN Hidden,
+    _Out_ PPROCESS_INFORMATION ProcessInformation)
+{
+    ZP_APP_CONTAINER_SECURITY_CONTEXT SecurityContext;
+    STARTUPINFOEXW Startup = { 0 };
+    PPROC_THREAD_ATTRIBUTE_LIST Attributes;
+    SIZE_T AttributesSize = 0;
+    BOOLEAN AttributesInitialized = FALSE;
+    ZP_STATUS Status;
+
+    Status = ZpAppContainer_QuerySecurityCapabilities(Sid, &SecurityContext);
+    if (!ZpStatus_IsSuccess(Status)) return Status;
+    InitializeProcThreadAttributeList(NULL, 1, 0, &AttributesSize);
+    Attributes = Mem_Alloc(AttributesSize);
+    if (Attributes == NULL)
+    {
+        Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+        goto Cleanup;
+    }
+    if (!InitializeProcThreadAttributeList(Attributes, 1, 0, &AttributesSize))
+    {
+        Status = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
+        goto Cleanup;
+    }
+    AttributesInitialized = TRUE;
+    if (!UpdateProcThreadAttribute(Attributes,
+                                   0,
+                                   PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+                                   &SecurityContext.Capabilities,
+                                   sizeof(SecurityContext.Capabilities),
+                                   NULL,
+                                   NULL))
+    {
+        Status = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
+        goto Cleanup;
+    }
+    Startup.StartupInfo.cb = sizeof(Startup);
+    if (Hidden)
+    {
+        Startup.StartupInfo.dwFlags = STARTF_USESHOWWINDOW;
+        Startup.StartupInfo.wShowWindow = SW_HIDE;
+    }
+    Startup.lpAttributeList = Attributes;
+    if (!CreateProcessW(FileName,
+                        CommandLine,
+                        NULL,
+                        NULL,
+                        FALSE,
+                        EXTENDED_STARTUPINFO_PRESENT |
+                            NORMAL_PRIORITY_CLASS |
+                            CREATE_NEW_CONSOLE |
+                            CREATE_DEFAULT_ERROR_MODE,
+                        NULL,
+                        WorkingDirectory,
+                        &Startup.StartupInfo,
+                        ProcessInformation))
+    {
+        Status = ZpStatus_FromCode(ZpStatusWin32, GetLastError());
+    }
+    else
+    {
+        Status = ZpStatus_Make(ZpStatusNone, 0);
+    }
+Cleanup:
+    if (AttributesInitialized) DeleteProcThreadAttributeList(Attributes);
+    Mem_Free(Attributes);
+    ZpAppContainer_FreeSecurityCapabilities(&SecurityContext);
+    return Status;
+}
+
+static
+ZP_STATUS
 ZpExecution_Start(
     _Inout_ PZP_CLIENT_OBJECT Client,
     _In_ PCZP_EXECUTION_START_VIEW Start,
@@ -499,7 +577,7 @@ ZpExecution_Start(
     HANDLE Token = NULL;
     PZP_EXECUTION_JOB Job;
     ZP_EXECUTION_JOB_RECORD Record;
-    PWSTR FileName, Arguments, WorkingDirectory, Verb, UserName, Password, CommandLine = NULL;
+    PWSTR FileName, Arguments, WorkingDirectory, Verb, UserName, Password, AppContainerSid, CommandLine = NULL;
     ULONG CurrentSessionId, SessionId, Length;
     INT CommandLineLength;
     PBYTE Buffer;
@@ -513,8 +591,9 @@ ZpExecution_Start(
     Verb = ZpExecution_CopyString(&Start->Verb);
     UserName = ZpExecution_CopyString(&Start->UserName);
     Password = ZpExecution_CopyString(&Start->Password);
+    AppContainerSid = ZpExecution_CopyString(&Start->AppContainerSid);
     if (FileName == NULL || Arguments == NULL || WorkingDirectory == NULL || Verb == NULL ||
-        UserName == NULL || Password == NULL)
+        UserName == NULL || Password == NULL || AppContainerSid == NULL)
     {
         ExecutionStatus = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
         goto Cleanup;
@@ -553,12 +632,6 @@ ZpExecution_Start(
             ExecutionStatus = ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
             goto Cleanup;
         }
-        ExecutionStatus = ZpExecution_QueryToken(Start->Identity,
-                                                  SessionId,
-                                                  Start->UserName.Length != 0 ? UserName : NULL,
-                                                  Start->Password.Length != 0 ? Password : NULL,
-                                                  &Token);
-        if (!ZpStatus_IsSuccess(ExecutionStatus)) goto Cleanup;
         CommandLineLength = _scwprintf(L"\"%s\"%s%s",
                                        FileName,
                                        Start->Arguments.Length != 0 ? L" " : L"",
@@ -581,24 +654,41 @@ ZpExecution_Start(
                      FileName,
                      Start->Arguments.Length != 0 ? L" " : L"",
                      Arguments);
-        Startup.lpDesktop = Token != NULL ? L"winsta0\\default" : NULL;
-        if (FlagOn(Start->Flags, ZP_EXECUTION_FLAG_HIDDEN))
+        if (Start->Identity == ZpExecutionIdentityAppContainer)
         {
-            Startup.dwFlags = STARTF_USESHOWWINDOW;
-            Startup.wShowWindow = SW_HIDE;
+            ExecutionStatus = ZpExecution_CreateAppContainerProcess(
+                AppContainerSid,
+                FileName,
+                CommandLine,
+                Start->WorkingDirectory.Length != 0 ? WorkingDirectory : NULL,
+                FlagOn(Start->Flags, ZP_EXECUTION_FLAG_HIDDEN),
+                &ProcessInfo);
         }
-        Result = PS_CreateProcess(Token,
-                                  FileName,
-                                  CommandLine,
-                                  FALSE,
-                                  Start->WorkingDirectory.Length != 0 ? WorkingDirectory : NULL,
-                                  &Startup,
-                                  &ProcessInfo);
-        if (Result != ERROR_SUCCESS)
+        else
         {
-            ExecutionStatus = ZpStatus_FromCode(ZpStatusWin32, Result);
-            goto Cleanup;
+            ExecutionStatus = ZpExecution_QueryToken(Start->Identity,
+                                                      SessionId,
+                                                      Start->UserName.Length != 0 ? UserName : NULL,
+                                                      Start->Password.Length != 0 ? Password : NULL,
+                                                      &Token);
+            if (!ZpStatus_IsSuccess(ExecutionStatus)) goto Cleanup;
+            Startup.lpDesktop = Token != NULL ? L"winsta0\\default" : NULL;
+            if (FlagOn(Start->Flags, ZP_EXECUTION_FLAG_HIDDEN))
+            {
+                Startup.dwFlags = STARTF_USESHOWWINDOW;
+                Startup.wShowWindow = SW_HIDE;
+            }
+            Result = PS_CreateProcess(Token,
+                                      FileName,
+                                      CommandLine,
+                                      FALSE,
+                                      Start->WorkingDirectory.Length != 0 ? WorkingDirectory : NULL,
+                                      &Startup,
+                                      &ProcessInfo);
+            ExecutionStatus = Result == ERROR_SUCCESS ? ZpStatus_Make(ZpStatusNone, 0) :
+                                                        ZpStatus_FromCode(ZpStatusWin32, Result);
         }
+        if (!ZpStatus_IsSuccess(ExecutionStatus)) goto Cleanup;
         NtClose(ProcessInfo.hThread);
         ProcessInfo.hThread = NULL;
     }
@@ -638,6 +728,7 @@ Cleanup:
     }
     Mem_Free(CommandLine);
     Mem_Free(Password);
+    Mem_Free(AppContainerSid);
     Mem_Free(UserName);
     Mem_Free(Verb);
     Mem_Free(WorkingDirectory);

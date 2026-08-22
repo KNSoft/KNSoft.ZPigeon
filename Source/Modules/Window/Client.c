@@ -29,6 +29,8 @@ struct _ZP_CLIENT_WINDOW_CAPTURE_CHANNEL
     HANDLE CreditEvent;
     HANDLE WorkerThread;
     ZP_WINDOW_CAPTURE_OPTIONS Options;
+    RECT MonitorRect;
+    RECT VirtualRect;
 };
 
 static
@@ -175,6 +177,120 @@ ZpWindow_Enumerate(
     return STATUS_SUCCESS;
 }
 
+typedef struct _ZP_WINDOW_MONITOR_ENUMERATION
+{
+    PZP_WINDOW_MONITOR Monitors;
+    PWCHAR Devices;
+    ULONG Capacity;
+    ULONG Count;
+    NTSTATUS Status;
+} ZP_WINDOW_MONITOR_ENUMERATION, *PZP_WINDOW_MONITOR_ENUMERATION;
+
+static
+BOOL
+CALLBACK
+ZpWindow_EnumerateMonitorCallback(
+    _In_ HMONITOR Monitor,
+    _In_ HDC DeviceContext,
+    _In_ PRECT MonitorRect,
+    _In_ LPARAM Parameter)
+{
+    PZP_WINDOW_MONITOR_ENUMERATION Enumeration = (PVOID)Parameter;
+    MONITORINFOEXW Info = { sizeof(Info) };
+    PZP_WINDOW_MONITOR Record;
+
+    UNREFERENCED_PARAMETER(DeviceContext);
+    UNREFERENCED_PARAMETER(MonitorRect);
+    if (Enumeration->Count == Enumeration->Capacity)
+    {
+        Enumeration->Status = STATUS_BUFFER_TOO_SMALL;
+        return FALSE;
+    }
+    if (!GetMonitorInfoW(Monitor, (LPMONITORINFO)&Info))
+    {
+        Enumeration->Status = NTSTATUS_FROM_WIN32(GetLastError());
+        return FALSE;
+    }
+    Record = &Enumeration->Monitors[Enumeration->Count];
+    Record->Index = Enumeration->Count;
+    Record->Flags = Info.dwFlags;
+    Record->Left = Info.rcMonitor.left;
+    Record->Top = Info.rcMonitor.top;
+    Record->Right = Info.rcMonitor.right;
+    Record->Bottom = Info.rcMonitor.bottom;
+    Record->WorkLeft = Info.rcWork.left;
+    Record->WorkTop = Info.rcWork.top;
+    Record->WorkRight = Info.rcWork.right;
+    Record->WorkBottom = Info.rcWork.bottom;
+    Record->Device = Enumeration->Devices + (SIZE_T)Enumeration->Count * CCHDEVICENAME;
+    RtlCopyMemory((PVOID)Record->Device, Info.szDevice, sizeof(Info.szDevice));
+    Record->DeviceLength = (ULONG)wcslen(Record->Device);
+    Enumeration->Count++;
+    return TRUE;
+}
+
+static
+NTSTATUS
+ZpWindow_EnumerateMonitors(
+    _Outptr_result_bytebuffer_(*PayloadLength) PBYTE* Payload,
+    _Out_ PULONG PayloadLength)
+{
+    ZP_WINDOW_MONITOR_ENUMERATION Enumeration;
+    SIZE_T AllocationSize;
+    PBYTE Buffer;
+    ULONG Length;
+    NTSTATUS Status;
+
+    Enumeration.Capacity = (ULONG)GetSystemMetrics(SM_CMONITORS);
+    if (Enumeration.Capacity == 0) return STATUS_NOT_FOUND;
+    if (Enumeration.Capacity > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        (SIZE_T)Enumeration.Capacity > MAXSIZE_T /
+            (sizeof(*Enumeration.Monitors) + CCHDEVICENAME * sizeof(WCHAR)))
+    {
+        return STATUS_INTEGER_OVERFLOW;
+    }
+    AllocationSize = (SIZE_T)Enumeration.Capacity *
+                     (sizeof(*Enumeration.Monitors) + CCHDEVICENAME * sizeof(WCHAR));
+    Enumeration.Monitors = Mem_Alloc(AllocationSize);
+    if (Enumeration.Monitors == NULL) return STATUS_NO_MEMORY;
+    Enumeration.Devices = (PWCHAR)(Enumeration.Monitors + Enumeration.Capacity);
+    Enumeration.Count = 0;
+    Enumeration.Status = STATUS_SUCCESS;
+    if (!EnumDisplayMonitors(NULL, NULL, ZpWindow_EnumerateMonitorCallback, (LPARAM)&Enumeration) &&
+        NT_SUCCESS(Enumeration.Status))
+    {
+        Enumeration.Status = NTSTATUS_FROM_WIN32(GetLastError());
+    }
+    Status = Enumeration.Status;
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpWindow_EncodeMonitorList(Enumeration.Monitors,
+                                           Enumeration.Count,
+                                           NULL,
+                                           0,
+                                           &Length);
+    }
+    Buffer = NT_SUCCESS(Status) ? Mem_Alloc(Length) : NULL;
+    if (NT_SUCCESS(Status) && Buffer == NULL) Status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpWindow_EncodeMonitorList(Enumeration.Monitors,
+                                           Enumeration.Count,
+                                           Buffer,
+                                           Length,
+                                           &Length);
+    }
+    Mem_Free(Enumeration.Monitors);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Buffer);
+        return Status;
+    }
+    *Payload = Buffer;
+    *PayloadLength = Length;
+    return STATUS_SUCCESS;
+}
+
 static
 ZP_STATUS
 ZpWindow_ValidateIdentity(
@@ -194,6 +310,27 @@ ZpWindow_ValidateIdentity(
     }
     *Window = LocalWindow;
     return ZpStatus_Make(ZpStatusNone, 0);
+}
+
+static
+ZP_STATUS
+ZpWindow_ValidateCaptureIdentity(
+    _In_ PCZP_WINDOW_CAPTURE_OPTIONS Options,
+    _Out_ HWND* Window)
+{
+    if (FlagOn(Options->Flags, ZP_WINDOW_CAPTURE_DESKTOP))
+    {
+        if (Options->Handle != 0 || Options->ProcessId != 0 || Options->ThreadId != 0)
+        {
+            return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+        }
+        *Window = NULL;
+        return ZpStatus_Make(ZpStatusNone, 0);
+    }
+    return ZpWindow_ValidateIdentity(Options->Handle,
+                                     Options->ProcessId,
+                                     Options->ThreadId,
+                                     Window);
 }
 
 static
@@ -432,10 +569,7 @@ ZpWindow_Capture(
     HRESULT Result;
     ZP_STATUS Status;
 
-    Status = ZpWindow_ValidateIdentity(Options->Handle,
-                                       Options->ProcessId,
-                                       Options->ThreadId,
-                                       &Window);
+    Status = ZpWindow_ValidateCaptureIdentity(Options, &Window);
     if (!ZpStatus_IsSuccess(Status)) return Status;
     Result = ZpWindowCapture_Create(Window, Options, &Capture);
     do
@@ -597,18 +731,12 @@ ZpWindowCapture_Worker(
     NTSTATUS Status = STATUS_SUCCESS;
     ZP_STATUS CompletionStatus;
 
-    CompletionStatus = ZpWindow_ValidateIdentity(Channel->Options.Handle,
-                                                  Channel->Options.ProcessId,
-                                                  Channel->Options.ThreadId,
-                                                  &Window);
+    CompletionStatus = ZpWindow_ValidateCaptureIdentity(&Channel->Options, &Window);
     Result = ZpStatus_IsSuccess(CompletionStatus) ?
                  ZpWindowShared_Open(Window, &Channel->Options, &Capture) : E_HANDLE;
     while (SUCCEEDED(Result))
     {
-        CompletionStatus = ZpWindow_ValidateIdentity(Channel->Options.Handle,
-                                                      Channel->Options.ProcessId,
-                                                      Channel->Options.ThreadId,
-                                                      &Window);
+        CompletionStatus = ZpWindow_ValidateCaptureIdentity(&Channel->Options, &Window);
         if (!ZpStatus_IsSuccess(CompletionStatus)) break;
         Result = ZpWindowShared_Next(Capture, 1000, &Image);
         if (Result == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || Result == S_FALSE)
@@ -651,6 +779,131 @@ ZpWindowCapture_Worker(
                                      ZpStatus_FromNtStatus(Status));
     }
     return Status;
+}
+
+static
+USHORT
+ZpWindowCapture_ReadUInt16(
+    _In_reads_bytes_(sizeof(USHORT)) const BYTE* Data)
+{
+    USHORT Value;
+
+    RtlCopyMemory(&Value, Data, sizeof(Value));
+    return Value;
+}
+
+static
+NTSTATUS
+ZpWindowCapture_SetClipboard(
+    _In_reads_bytes_(Length) const BYTE* Data,
+    _In_ ULONG Length)
+{
+    HGLOBAL Memory;
+    PWCHAR Text;
+
+    if (Length > 0x00100000 || (Length & 1) != 0) return STATUS_INVALID_PARAMETER;
+    Memory = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)Length + sizeof(WCHAR));
+    if (Memory == NULL) return STATUS_SUCCESS;
+    Text = GlobalLock(Memory);
+    if (Text != NULL)
+    {
+        RtlCopyMemory(Text, Data, Length);
+        Text[Length / sizeof(WCHAR)] = UNICODE_NULL;
+        GlobalUnlock(Memory);
+    }
+    if (Text != NULL && OpenClipboard(NULL))
+    {
+        if (EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, Memory) != NULL) Memory = NULL;
+        CloseClipboard();
+    }
+    if (Memory != NULL) GlobalFree(Memory);
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpWindowCapture_MapPointer(
+    _In_ PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel,
+    _Inout_ PLONG X,
+    _Inout_ PLONG Y)
+{
+    LONG PixelX, PixelY;
+
+    PixelX = Channel->MonitorRect.left +
+             MulDiv(*X, Channel->MonitorRect.right - Channel->MonitorRect.left - 1, MAXUSHORT);
+    PixelY = Channel->MonitorRect.top +
+             MulDiv(*Y, Channel->MonitorRect.bottom - Channel->MonitorRect.top - 1, MAXUSHORT);
+    *X = MulDiv(PixelX - Channel->VirtualRect.left,
+                MAXUSHORT,
+                Channel->VirtualRect.right - Channel->VirtualRect.left - 1);
+    *Y = MulDiv(PixelY - Channel->VirtualRect.top,
+                MAXUSHORT,
+                Channel->VirtualRect.bottom - Channel->VirtualRect.top - 1);
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpWindowCapture_ChannelData(
+    _Inout_ PZP_CLIENT_LOCAL_CHANNEL LocalChannel,
+    _In_ const ZP_CHANNEL_DATA_VIEW* Message)
+{
+    PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel = (PZP_CLIENT_WINDOW_CAPTURE_CHANNEL)LocalChannel;
+    const BYTE* Data = Message->Data.Buffer;
+    ULONG Length = Message->Data.Length;
+    INPUT Input = { 0 };
+    USHORT Type, Flags;
+    NTSTATUS Status;
+
+    if (!FlagOn(Channel->Options.Flags, ZP_WINDOW_CAPTURE_DESKTOP) || Length < sizeof(USHORT))
+    {
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    Type = ZpWindowCapture_ReadUInt16(Data);
+    if (Type == ZpWindowInputClipboard)
+    {
+        return ZpWindowCapture_SetClipboard(Data + sizeof(USHORT), Length - sizeof(USHORT));
+    }
+    if (Type == ZpWindowInputKeyboard)
+    {
+        if (Length != 3 * sizeof(USHORT)) return STATUS_PROTOCOL_UNREACHABLE;
+        Flags = ZpWindowCapture_ReadUInt16(Data + sizeof(USHORT));
+        if (FlagOn(Flags, ~ZP_WINDOW_KEY_FLAGS_MASK)) return STATUS_PROTOCOL_UNREACHABLE;
+        Input.type = INPUT_KEYBOARD;
+        Input.ki.wScan = ZpWindowCapture_ReadUInt16(Data + 2 * sizeof(USHORT));
+        if (Input.ki.wScan == 0) return STATUS_PROTOCOL_UNREACHABLE;
+        Input.ki.dwFlags = KEYEVENTF_SCANCODE |
+                           (FlagOn(Flags, ZP_WINDOW_KEY_UP) ? KEYEVENTF_KEYUP : 0) |
+                           (FlagOn(Flags, ZP_WINDOW_KEY_EXTENDED) ? KEYEVENTF_EXTENDEDKEY : 0);
+    }
+    else if (Type == ZpWindowInputMouse)
+    {
+        if (Length != 5 * sizeof(USHORT)) return STATUS_PROTOCOL_UNREACHABLE;
+        Flags = ZpWindowCapture_ReadUInt16(Data + sizeof(USHORT));
+        if (Flags == 0 || FlagOn(Flags, ~ZP_WINDOW_MOUSE_FLAGS_MASK)) return STATUS_PROTOCOL_UNREACHABLE;
+        Input.type = INPUT_MOUSE;
+        Input.mi.dx = ZpWindowCapture_ReadUInt16(Data + 2 * sizeof(USHORT));
+        Input.mi.dy = ZpWindowCapture_ReadUInt16(Data + 3 * sizeof(USHORT));
+        Status = ZpWindowCapture_MapPointer(Channel, &Input.mi.dx, &Input.mi.dy);
+        if (!NT_SUCCESS(Status)) return Status;
+        Input.mi.mouseData = (ULONG)(LONG)(SHORT)ZpWindowCapture_ReadUInt16(Data + 4 * sizeof(USHORT));
+        Input.mi.dwFlags = (FlagOn(Flags, ZP_WINDOW_MOUSE_MOVE) ?
+                                MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK : 0) |
+                           (FlagOn(Flags, ZP_WINDOW_MOUSE_LEFT_DOWN) ? MOUSEEVENTF_LEFTDOWN : 0) |
+                           (FlagOn(Flags, ZP_WINDOW_MOUSE_LEFT_UP) ? MOUSEEVENTF_LEFTUP : 0) |
+                           (FlagOn(Flags, ZP_WINDOW_MOUSE_RIGHT_DOWN) ? MOUSEEVENTF_RIGHTDOWN : 0) |
+                           (FlagOn(Flags, ZP_WINDOW_MOUSE_RIGHT_UP) ? MOUSEEVENTF_RIGHTUP : 0) |
+                           (FlagOn(Flags, ZP_WINDOW_MOUSE_MIDDLE_DOWN) ? MOUSEEVENTF_MIDDLEDOWN : 0) |
+                           (FlagOn(Flags, ZP_WINDOW_MOUSE_MIDDLE_UP) ? MOUSEEVENTF_MIDDLEUP : 0) |
+                           (FlagOn(Flags, ZP_WINDOW_MOUSE_WHEEL) ? MOUSEEVENTF_WHEEL : 0) |
+                           (FlagOn(Flags, ZP_WINDOW_MOUSE_HWHEEL) ? MOUSEEVENTF_HWHEEL : 0);
+    }
+    else
+    {
+        return STATUS_PROTOCOL_UNREACHABLE;
+    }
+    NtUserSendInput(1, &Input, sizeof(Input));
+    return STATUS_SUCCESS;
 }
 
 static
@@ -732,6 +985,28 @@ ZpWindowCapture_CreateChannel(
     if (CaptureChannel == NULL) return STATUS_NO_MEMORY;
     RtlZeroMemory(CaptureChannel, sizeof(*CaptureChannel));
     CaptureChannel->Options = *Options;
+    if (FlagOn(Options->Flags, ZP_WINDOW_CAPTURE_DESKTOP))
+    {
+        HMONITOR Monitor;
+        HRESULT Result = ZpWindowCapture_ResolveMonitor(Options->MonitorIndex,
+                                                        &Monitor,
+                                                        &CaptureChannel->MonitorRect);
+
+        CaptureChannel->VirtualRect.left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        CaptureChannel->VirtualRect.top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        CaptureChannel->VirtualRect.right = CaptureChannel->VirtualRect.left +
+                                            GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        CaptureChannel->VirtualRect.bottom = CaptureChannel->VirtualRect.top +
+                                             GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if (FAILED(Result) || CaptureChannel->MonitorRect.right - CaptureChannel->MonitorRect.left < 2 ||
+            CaptureChannel->MonitorRect.bottom - CaptureChannel->MonitorRect.top < 2 ||
+            CaptureChannel->VirtualRect.right - CaptureChannel->VirtualRect.left < 2 ||
+            CaptureChannel->VirtualRect.bottom - CaptureChannel->VirtualRect.top < 2)
+        {
+            Mem_Free(CaptureChannel);
+            return FAILED(Result) && Result != E_INVALIDARG ? STATUS_NOT_FOUND : STATUS_INVALID_PARAMETER;
+        }
+    }
     Status = NtCreateEvent(&CaptureChannel->CreditEvent,
                            EVENT_MODIFY_STATE | SYNCHRONIZE,
                            NULL,
@@ -742,7 +1017,7 @@ ZpWindowCapture_CreateChannel(
         Status = ZpClientLocalChannel_Insert(Object,
                                              &CaptureChannel->Header,
                                              ZP_WINDOW_MODULE_ID,
-                                             NULL,
+                                             ZpWindowCapture_ChannelData,
                                              ZpWindowCapture_ChannelWindow,
                                              ZpWindowCapture_ChannelClose,
                                              ZpWindowCapture_ChannelAbort,
@@ -785,6 +1060,12 @@ ZpWindow_Execute(
         case ZP_WINDOW_OPERATION_ENUMERATE:
             Status = RequestLength == 0 ?
                          ZpWindow_Enumerate(Response, ResponseLength) :
+                         STATUS_INVALID_PARAMETER;
+            return ZpStatus_FromNtStatus(Status);
+
+        case ZP_WINDOW_OPERATION_ENUMERATE_MONITORS:
+            Status = RequestLength == 0 ?
+                         ZpWindow_EnumerateMonitors(Response, ResponseLength) :
                          STATUS_INVALID_PARAMETER;
             return ZpStatus_FromNtStatus(Status);
 
@@ -840,10 +1121,7 @@ ZpWindow_Execute(
             if (!NT_SUCCESS(Status)) return ZpStatus_FromNtStatus(Status);
             CaptureResult = ZpWindowCapture_CheckSupport();
             if (FAILED(CaptureResult)) return ZpStatus_FromCode(ZpStatusHResult, (ULONG)CaptureResult);
-            Result = ZpWindow_ValidateIdentity(CaptureOptions.Handle,
-                                               CaptureOptions.ProcessId,
-                                               CaptureOptions.ThreadId,
-                                               &Window);
+            Result = ZpWindow_ValidateCaptureIdentity(&CaptureOptions, &Window);
             if (!ZpStatus_IsSuccess(Result)) return Result;
             Status = ZpWindowCapture_CreateChannel(Client,
                                                     &CaptureOptions,

@@ -8,7 +8,10 @@ public enum TerminalShell : uint
 {
     CommandPrompt = 0x00000001,
     WindowsPowerShell = 0x00000002,
-    PowerShell = 0x00000004
+    PowerShell = 0x00000004,
+    ConsoleScriptHost = 0x00000008,
+    WindowsScriptHost = 0x00000010,
+    HtmlApplication = 0x00000020
 }
 
 public sealed record TerminalShellInfo(
@@ -80,15 +83,20 @@ public sealed partial class NativeServer
         ushort rows)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        var descriptor = GetTerminalShell(shell);
-        var commandLine = shell switch
+        var profile = shell switch
         {
-            TerminalShell.CommandPrompt => $"cmd.exe /D /Q /C call \"{path}\"",
-            TerminalShell.WindowsPowerShell => $"powershell.exe -File \"{path}\"",
-            TerminalShell.PowerShell => $"pwsh.exe -File \"{path}\"",
+            TerminalShell.CommandPrompt => ($"cmd.exe /D /Q /C call \"{path}\"", GetTerminalShell(shell).Info),
+            TerminalShell.WindowsPowerShell => ($"powershell.exe -File \"{path}\"", GetTerminalShell(shell).Info),
+            TerminalShell.PowerShell => ($"pwsh.exe -File \"{path}\"", GetTerminalShell(shell).Info),
+            TerminalShell.ConsoleScriptHost => ($"cscript.exe //NoLogo \"{path}\"",
+                                                new TerminalShellInfo(shell, "VBScript (cscript)")),
+            TerminalShell.WindowsScriptHost => ($"wscript.exe //NoLogo \"{path}\"",
+                                                new TerminalShellInfo(shell, "VBScript (wscript)")),
+            TerminalShell.HtmlApplication => ($"mshta.exe \"{path}\"",
+                                              new TerminalShellInfo(shell, "HTML Application")),
             _ => throw new ArgumentOutOfRangeException(nameof(shell))
         };
-        return CreateTerminalAsync(commandLine, columns, rows, null, descriptor.Info);
+        return CreateTerminalAsync(profile.Item1, columns, rows, null, profile.Item2);
     }
 
     public Task<TerminalSession> CreateTerminalAsync(

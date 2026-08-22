@@ -124,21 +124,28 @@ ZpExecution_EncodeStart(
     NTSTATUS Status;
 
     if ((Start->Engine != ZpExecutionEngineCreateProcess && Start->Engine != ZpExecutionEngineShellExecute) ||
-        Start->Identity < ZpExecutionIdentityCurrent || Start->Identity > ZpExecutionIdentityOtherUser ||
+        Start->Identity < ZpExecutionIdentityCurrent || Start->Identity > ZpExecutionIdentityAppContainer ||
         (Start->Flags & ~(ZP_EXECUTION_FLAG_HIDDEN | ZP_EXECUTION_FLAG_DELETE_FILE)) != 0 ||
         Start->FileNameLength == 0 || Start->FileName == NULL ||
         (Start->ArgumentsLength != 0 && Start->Arguments == NULL) ||
         (Start->WorkingDirectoryLength != 0 && Start->WorkingDirectory == NULL) ||
         (Start->VerbLength != 0 && Start->Verb == NULL) ||
         (Start->UserNameLength != 0 && Start->UserName == NULL) ||
-        (Start->PasswordLength != 0 && Start->Password == NULL))
+        (Start->PasswordLength != 0 && Start->Password == NULL) ||
+        (Start->AppContainerSidLength != 0 && Start->AppContainerSid == NULL) ||
+        (Start->Identity == ZpExecutionIdentityAppContainer ?
+             Start->Engine != ZpExecutionEngineCreateProcess ||
+                 Start->SessionId != ZP_EXECUTION_SESSION_CURRENT || Start->AppContainerSidLength == 0 ||
+                 Start->VerbLength != 0 || Start->UserNameLength != 0 || Start->PasswordLength != 0 :
+             Start->AppContainerSidLength != 0))
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 2 * sizeof(USHORT) + 2 * sizeof(ULONG) + 6 * sizeof(ULONG) +
+    RequiredSize = 2 * sizeof(USHORT) + 2 * sizeof(ULONG) + 7 * sizeof(ULONG) +
                    ((ULONGLONG)Start->FileNameLength + Start->ArgumentsLength +
                     Start->WorkingDirectoryLength + Start->VerbLength +
-                    Start->UserNameLength + Start->PasswordLength) * sizeof(WCHAR);
+                     Start->UserNameLength + Start->PasswordLength +
+                     Start->AppContainerSidLength) * sizeof(WCHAR);
     if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12) return STATUS_BUFFER_OVERFLOW;
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
@@ -156,6 +163,7 @@ ZpExecution_EncodeStart(
     ZP_EXECUTION_WRITE_START_STRING(Verb);
     ZP_EXECUTION_WRITE_START_STRING(UserName);
     ZP_EXECUTION_WRITE_START_STRING(Password);
+    ZP_EXECUTION_WRITE_START_STRING(AppContainerSid);
 #undef ZP_EXECUTION_WRITE_START_STRING
     return Status;
 }
@@ -182,11 +190,17 @@ ZpExecution_DecodeStart(
     ZP_EXECUTION_READ_START_STRING(Verb);
     ZP_EXECUTION_READ_START_STRING(UserName);
     ZP_EXECUTION_READ_START_STRING(Password);
+    ZP_EXECUTION_READ_START_STRING(AppContainerSid);
 #undef ZP_EXECUTION_READ_START_STRING
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength || Start->FileName.Length == 0 ||
         (Start->Engine != ZpExecutionEngineCreateProcess && Start->Engine != ZpExecutionEngineShellExecute) ||
-        Start->Identity < ZpExecutionIdentityCurrent || Start->Identity > ZpExecutionIdentityOtherUser ||
-        (Start->Flags & ~(ZP_EXECUTION_FLAG_HIDDEN | ZP_EXECUTION_FLAG_DELETE_FILE)) != 0)
+        Start->Identity < ZpExecutionIdentityCurrent || Start->Identity > ZpExecutionIdentityAppContainer ||
+        (Start->Flags & ~(ZP_EXECUTION_FLAG_HIDDEN | ZP_EXECUTION_FLAG_DELETE_FILE)) != 0 ||
+        (Start->Identity == ZpExecutionIdentityAppContainer ?
+             Start->Engine != ZpExecutionEngineCreateProcess ||
+                 Start->SessionId != ZP_EXECUTION_SESSION_CURRENT || Start->AppContainerSid.Length == 0 ||
+                 Start->Verb.Length != 0 || Start->UserName.Length != 0 || Start->Password.Length != 0 :
+             Start->AppContainerSid.Length != 0))
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
     }

@@ -26,6 +26,10 @@ ZpServerConnection_Initialize(
     Connection->Phase = ZpConnectionPhaseConnecting;
     Connection->RequestCount = 0;
     Connection->MaxRequests = MaxRequests;
+    Connection->CompletedRequests = 0;
+    Connection->FailedRequests = 0;
+    Connection->SmoothedRequestMilliseconds = 0;
+    Connection->ConsecutiveFailures = 0;
     Connection->ChannelCount = 0;
     Connection->ChannelReservations = 0;
     Connection->MaxChannels = MaxChannels;

@@ -692,6 +692,55 @@ Cleanup:
     return Result;
 }
 
+typedef struct _ZP_WINDOW_MONITOR_SEARCH
+{
+    ULONG Target;
+    ULONG Current;
+    HMONITOR Monitor;
+    RECT Rect;
+} ZP_WINDOW_MONITOR_SEARCH, *PZP_WINDOW_MONITOR_SEARCH;
+
+static
+BOOL
+CALLBACK
+ZpWindowCapture_FindMonitor(
+    _In_ HMONITOR Value,
+    _In_ HDC DeviceContext,
+    _In_ PRECT Rect,
+    _In_ LPARAM Parameter)
+{
+    PZP_WINDOW_MONITOR_SEARCH Search = (PVOID)Parameter;
+    MONITORINFO Info = { sizeof(Info) };
+
+    UNREFERENCED_PARAMETER(DeviceContext);
+    if ((Search->Target == ZP_WINDOW_CAPTURE_PRIMARY_MONITOR &&
+         GetMonitorInfoW(Value, &Info) && FlagOn(Info.dwFlags, MONITORINFOF_PRIMARY)) ||
+        Search->Target == Search->Current)
+    {
+        Search->Monitor = Value;
+        Search->Rect = *Rect;
+        return FALSE;
+    }
+    Search->Current++;
+    return TRUE;
+}
+
+HRESULT
+ZpWindowCapture_ResolveMonitor(
+    _In_ ULONG MonitorIndex,
+    _Out_ HMONITOR* Monitor,
+    _Out_opt_ PRECT MonitorRect)
+{
+    ZP_WINDOW_MONITOR_SEARCH Search = { MonitorIndex };
+
+    if (Monitor == NULL) return E_INVALIDARG;
+    EnumDisplayMonitors(NULL, NULL, ZpWindowCapture_FindMonitor, (LPARAM)&Search);
+    if (Search.Monitor == NULL) return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    *Monitor = Search.Monitor;
+    if (MonitorRect != NULL) *MonitorRect = Search.Rect;
+    return S_OK;
+}
+
 HRESULT
 ZpWindowCapture_Create(
     _In_ HWND Window,
@@ -707,6 +756,7 @@ ZpWindowCapture_Create(
     IDXGIDevice* DxgiDevice = NULL;
     IInspectable* InspectableDevice = NULL;
     struct __x_ABI_CWindows_CFoundation_CTimeSpan Interval;
+    HMONITOR CaptureMonitor = NULL;
     HRESULT Result;
 
     Result = ZpWindowCapture_CheckSupport();
@@ -765,10 +815,21 @@ ZpWindowCapture_Create(
         &WgcCaptureItemInteropIid,
         (PVOID*)&ItemInterop);
     if (FAILED(Result)) goto Cleanup;
-    Result = ItemInterop->lpVtbl->CreateForWindow(ItemInterop,
-                                                  Window,
-                                                  &WgcCaptureItemIid,
-                                                  (PVOID*)&Object->Item);
+    if (FlagOn(Options->Flags, ZP_WINDOW_CAPTURE_DESKTOP))
+    {
+        Result = ZpWindowCapture_ResolveMonitor(Options->MonitorIndex, &CaptureMonitor, NULL);
+        if (FAILED(Result)) goto Cleanup;
+    }
+    Result = FlagOn(Options->Flags, ZP_WINDOW_CAPTURE_DESKTOP) ?
+                 ItemInterop->lpVtbl->CreateForMonitor(
+                     ItemInterop,
+                     CaptureMonitor,
+                     &WgcCaptureItemIid,
+                     (PVOID*)&Object->Item) :
+                 ItemInterop->lpVtbl->CreateForWindow(ItemInterop,
+                                                      Window,
+                                                      &WgcCaptureItemIid,
+                                                      (PVOID*)&Object->Item);
     if (FAILED(Result)) goto Cleanup;
     Result = Object->Item->lpVtbl->get_Size(Object->Item, &Object->Size);
     if (FAILED(Result)) goto Cleanup;

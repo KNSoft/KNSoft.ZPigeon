@@ -1,3 +1,4 @@
+using KNSoft.ZPigeon.Server.Managed;
 using System.Net;
 
 namespace KNSoft.ZPigeon.Web;
@@ -8,17 +9,47 @@ internal static class RemoteAccessWebApi
         this WebApplication app,
         TcpForwardManager tcpForwards,
         UdpForwardManager udpForwards,
+        RdpForwardManager rdpForwards,
         CdpSessionManager cdp,
+        NativeServer server,
         string proxyUserHeader)
     {
-        app.MapPost("/api/remote/rdp", (HttpContext context) =>
+        app.MapPost("/api/remote/rdp", (HttpContext context, RdpForwardRequest request) =>
         {
             if (!IsAuthenticated(context, proxyUserHeader) ||
-                context.Connection.RemoteIpAddress is not IPAddress sourceAddress)
+                context.Connection.RemoteIpAddress is not IPAddress sourceAddress || request.Port == 0)
             {
-                return Results.Unauthorized();
+                return request.Port == 0 ? Results.BadRequest() : Results.Unauthorized();
             }
-            return Results.Ok(tcpForwards.Create(sourceAddress, sourceAddress, "RDP", "127.0.0.1", 3389));
+            return Results.Ok(rdpForwards.Create(sourceAddress, request.Port));
+        });
+        app.MapPost("/api/remote/desktop/image", async (HttpContext context, DesktopCaptureRequest request) =>
+        {
+            if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
+            return Results.File(
+                await server.CaptureWindowAsync(0,
+                                                0,
+                                                0,
+                                                new(request.CaptureCursor,
+                                                    request.MaxDimension,
+                                                    request.FrameRate,
+                                                    request.ImageQuality,
+                                                    true,
+                                                    request.MonitorIndex)),
+                "image/jpeg");
+        });
+        app.MapPost("/api/remote/desktop/monitors", async (HttpContext context) =>
+            IsAuthenticated(context, proxyUserHeader) ?
+                Results.Ok(await server.EnumerateMonitorsAsync()) :
+                Results.Unauthorized());
+        app.Map("/api/remote/desktop", async context =>
+        {
+            if (!IsAuthenticated(context, proxyUserHeader))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+            await WindowCaptureWebSocket.RunAsync(context, server);
         });
         app.MapPost("/api/remote/forward/{id:guid}", (
             HttpContext context,
@@ -29,7 +60,8 @@ internal static class RemoteAccessWebApi
             {
                 return Results.Unauthorized();
             }
-            var info = tcpForwards.Get(id, sourceAddress) ?? udpForwards.Get(id, sourceAddress);
+            var info = rdpForwards.Get(id, sourceAddress) ?? tcpForwards.Get(id, sourceAddress) ??
+                       udpForwards.Get(id, sourceAddress);
             return info is null ? Results.NotFound() : Results.Ok(info);
         });
         app.MapPost("/api/remote/forwards", (HttpContext context) =>
@@ -42,8 +74,9 @@ internal static class RemoteAccessWebApi
             return Results.Ok(new
             {
                 SourceAddress = sourceAddress.ToString(),
-                Rules = tcpForwards.GetAll(sourceAddress)
-                    .Concat(udpForwards.GetAll(sourceAddress))
+                Rules = rdpForwards.GetAll(sourceAddress)
+                    .Concat(tcpForwards.GetAll(sourceAddress).Where(rule => rule.Kind != "RDP"))
+                    .Concat(udpForwards.GetAll(sourceAddress).Where(rule => rule.Kind != "RDP"))
                     .OrderBy(rule => rule.Port)
             });
         });
@@ -97,7 +130,8 @@ internal static class RemoteAccessWebApi
             {
                 return Results.Unauthorized();
             }
-            var info = tcpForwards.Get(id, sourceAddress) ?? udpForwards.Get(id, sourceAddress);
+            var info = rdpForwards.Get(id, sourceAddress) ?? tcpForwards.Get(id, sourceAddress) ??
+                       udpForwards.Get(id, sourceAddress);
             if (info is null)
             {
                 return Results.NotFound();
@@ -106,7 +140,8 @@ internal static class RemoteAccessWebApi
             {
                 return Results.NoContent();
             }
-            return tcpForwards.Close(id, sourceAddress) || udpForwards.Close(id, sourceAddress) ?
+            return rdpForwards.Close(id, sourceAddress) || tcpForwards.Close(id, sourceAddress) ||
+                   udpForwards.Close(id, sourceAddress) ?
                 Results.NoContent() : Results.NotFound();
         });
         app.MapPost("/api/remote/cdp/browsers", async (HttpContext context) =>
@@ -171,6 +206,13 @@ internal static class RemoteAccessWebApi
 
 internal sealed record CdpStartRequest(string Browser, string Mode, string? Profile);
 internal sealed record CdpSessionRequest(Guid Id);
+internal sealed record RdpForwardRequest(ushort Port);
+internal sealed record DesktopCaptureRequest(
+    bool CaptureCursor,
+    uint MaxDimension,
+    ushort FrameRate,
+    ushort ImageQuality,
+    uint MonitorIndex);
 internal sealed record PortForwardRequest(
     string? Kind,
     string? Protocol,

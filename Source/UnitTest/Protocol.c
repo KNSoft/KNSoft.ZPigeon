@@ -6,6 +6,77 @@
 #include <KNSoft/ZPigeon/Serial.h>
 #include <KNSoft/ZPigeon/Recording.h>
 #include <KNSoft/ZPigeon/PortableDevice.h>
+#include <KNSoft/ZPigeon/Window.h>
+#include <KNSoft/ZPigeon/Process.h>
+
+TEST_FUNC(ProtocolProcess)
+{
+    const ZP_PROCESS_MEMORY_REGION Regions[] = {
+        { 0x1000, 0x1000, 0x3000, 0x2000, 0x1800, 0x1000, 0x800, 0x1000, 0, 0x800,
+          MEM_COMMIT, MEM_IMAGE, PAGE_EXECUTE_READ, PAGE_READONLY, 1, 5, STATUS_SUCCESS,
+          STATUS_SUCCESS, STATUS_SUCCESS, L"\\Device\\Test", 12 },
+        { 0x4000, 0, 0x1000, 0, 0, 0, 0, 0, 0, 0, MEM_FREE, 0, 0, 0, 0, 0,
+          STATUS_NOT_FOUND, STATUS_NOT_FOUND, STATUS_SUCCESS, NULL, 0 }
+    };
+    ZP_PROCESS_MEMORY_MAP_VIEW Map;
+    ZP_PROCESS_MEMORY_REGION_VIEW Region;
+    BYTE Buffer[512];
+    ULONG Length, Offset = 0;
+
+    TEST_OK(NT_SUCCESS(ZpProcess_EncodeMemoryMap(Regions,
+                                                ARRAYSIZE(Regions),
+                                                Buffer,
+                                                sizeof(Buffer),
+                                                &Length)) &&
+            NT_SUCCESS(ZpProcess_DecodeMemoryMap(Buffer, Length, &Map)) && Map.Count == 2 &&
+            NT_SUCCESS(ZpProcess_ReadMemoryMapRegion(&Map, &Offset, &Region)) &&
+            Region.BaseAddress == 0x1000 && Region.CommitSize == 0x2000 &&
+            Region.WorkingSetBytes == 0x1800 && Region.Priority == 5 &&
+            Region.MappedPath.Length == 12 &&
+            NT_SUCCESS(ZpProcess_ReadMemoryMapRegion(&Map, &Offset, &Region)) && Region.State == MEM_FREE &&
+            Offset == Map.Length);
+}
+
+TEST_FUNC(ProtocolWindow)
+{
+    const ZP_WINDOW_CAPTURE_OPTIONS Desktop = {
+        0,
+        0,
+        0,
+        ZP_WINDOW_CAPTURE_DESKTOP | ZP_WINDOW_CAPTURE_CURSOR,
+        1280,
+        12,
+        85,
+        7,
+        ZP_WINDOW_CAPTURE_PRIMARY_MONITOR
+    };
+    const ZP_WINDOW_MONITOR Monitors[] = {
+        { 0, MONITORINFOF_PRIMARY, -1920, 0, 0, 1080, -1920, 0, 0, 1040, L"DISPLAY1", 8 },
+        { 1, 0, 0, 0, 1920, 1080, 0, 0, 1920, 1040, L"DISPLAY2", 8 }
+    };
+    ZP_WINDOW_MONITOR_LIST_VIEW MonitorList;
+    ZP_WINDOW_MONITOR_VIEW Monitor;
+    ZP_WINDOW_CAPTURE_OPTIONS Decoded, Invalid;
+    BYTE Buffer[256];
+    ULONG Length;
+
+    TEST_OK(NT_SUCCESS(ZpWindow_EncodeCaptureRequest(&Desktop, Buffer, sizeof(Buffer), &Length)) &&
+            NT_SUCCESS(ZpWindow_DecodeCaptureRequest(Buffer, Length, &Decoded)) &&
+            Decoded.Handle == 0 && Decoded.Flags == Desktop.Flags && Decoded.DirectStreamId == 7 &&
+            Decoded.MonitorIndex == ZP_WINDOW_CAPTURE_PRIMARY_MONITOR);
+    Invalid = Desktop;
+    Invalid.Handle = 1;
+    TEST_OK(ZpWindow_EncodeCaptureRequest(&Invalid, Buffer, sizeof(Buffer), &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpWindow_EncodeMonitorList(Monitors,
+                                                  ARRAYSIZE(Monitors),
+                                                  Buffer,
+                                                  sizeof(Buffer),
+                                                  &Length)) &&
+            NT_SUCCESS(ZpWindow_DecodeMonitorList(Buffer, Length, &MonitorList)) &&
+            MonitorList.Count == ARRAYSIZE(Monitors) &&
+            NT_SUCCESS(ZpWindow_GetMonitor(&MonitorList, 1, &Monitor)) &&
+            Monitor.Index == 1 && Monitor.Right == 1920 && Monitor.Device.Length == 8);
+}
 
 TEST_FUNC(ProtocolPortable)
 {

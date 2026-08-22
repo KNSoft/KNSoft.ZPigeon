@@ -21,13 +21,14 @@ internal sealed class UdpForwardManager(NativeServer server) : IDisposable
         string kind,
         string targetHost,
         ushort targetPort,
-        TimeSpan? idleTimeout = null)
+        TimeSpan? idleTimeout = null,
+        int listenPort = 0)
     {
         var socket = new Socket(AddressFamily.InterNetworkV6, SocketType.Dgram, ProtocolType.Udp)
         {
             DualMode = true
         };
-        socket.Bind(new IPEndPoint(IPAddress.IPv6Any, 0));
+        socket.Bind(new IPEndPoint(IPAddress.IPv6Any, listenPort));
         var lease = new Lease(socket,
                               Normalize(ownerAddress),
                               Normalize(sourceAddress),

@@ -3,8 +3,11 @@
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Account.h"
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
+#include <KNSoft/NDK/NT/Mm/Info.h>
 
 #include <Winsvc.h>
+
+#define ZP_PROCESS_WORKING_SET_BUFFER_SIZE 0x00010000UL
 
 typedef struct _ZP_PROCESS_ALLOCATION
 {
@@ -554,6 +557,253 @@ ZpProcess_WriteMemory(
 
 static
 NTSTATUS
+ZpProcess_QueryMappedPath(
+    _In_ HANDLE Process,
+    _In_ PVOID Address,
+    _Outptr_result_buffer_maybenull_(*PathLength) PWCHAR* Path,
+    _Out_ PULONG PathLength)
+{
+    PUNICODE_STRING Name;
+    SIZE_T BufferLength;
+    NTSTATUS Status;
+
+    Status = NtQueryVirtualMemory(Process,
+                                  Address,
+                                  MemoryMappedFilenameInformation,
+                                  NULL,
+                                  0,
+                                  &BufferLength);
+    if (Status != STATUS_INFO_LENGTH_MISMATCH && Status != STATUS_BUFFER_TOO_SMALL)
+    {
+        return Status;
+    }
+    Name = Mem_Alloc(BufferLength);
+    if (Name == NULL) return STATUS_NO_MEMORY;
+    Status = NtQueryVirtualMemory(Process,
+                                  Address,
+                                  MemoryMappedFilenameInformation,
+                                  Name,
+                                  BufferLength,
+                                  &BufferLength);
+    if (NT_SUCCESS(Status))
+    {
+        *PathLength = Name->Length / sizeof(WCHAR);
+        *Path = Mem_Alloc((SIZE_T)Name->Length + sizeof(WCHAR));
+        if (*Path == NULL) Status = STATUS_NO_MEMORY;
+        else
+        {
+            RtlCopyMemory(*Path, Name->Buffer, Name->Length);
+            (*Path)[*PathLength] = UNICODE_NULL;
+        }
+    }
+    Mem_Free(Name);
+    return Status;
+}
+
+static
+NTSTATUS
+ZpProcess_QueryWorkingSet(
+    _In_ HANDLE Process,
+    _In_ PVOID BaseAddress,
+    _In_ SIZE_T RegionSize,
+    _In_ ULONG Type,
+    _Inout_ PZP_PROCESS_MEMORY_REGION Region,
+    _Out_writes_(EntryCapacity) PMEMORY_WORKING_SET_EX_INFORMATION Entries,
+    _In_ SIZE_T EntryCapacity)
+{
+    ULONG_PTR Address = (ULONG_PTR)BaseAddress;
+    SIZE_T RemainingPages = RegionSize / PAGE_SIZE;
+    SIZE_T Count, Index;
+    NTSTATUS Status;
+
+    while (RemainingPages != 0)
+    {
+        Count = min(RemainingPages, EntryCapacity);
+        for (Index = 0; Index < Count; Index++)
+        {
+            Entries[Index].VirtualAddress = (PVOID)Address;
+            Address += PAGE_SIZE;
+        }
+        Status = NtQueryVirtualMemory(Process,
+                                      NULL,
+                                      MemoryWorkingSetExInformation,
+                                      Entries,
+                                      Count * sizeof(*Entries),
+                                      NULL);
+        if (!NT_SUCCESS(Status)) return Status;
+        for (Index = 0; Index < Count; Index++)
+        {
+            PMEMORY_WORKING_SET_EX_BLOCK Block = &Entries[Index].VirtualAttributes;
+
+            if (Block->Valid)
+            {
+                Region->WorkingSetBytes += PAGE_SIZE;
+                if (Block->ShareCount > 1) Region->SharedWorkingSetBytes += PAGE_SIZE;
+                if (!Block->Shared) Region->PrivateWorkingSetBytes += PAGE_SIZE;
+                if (Block->Shared) Region->ShareableWorkingSetBytes += PAGE_SIZE;
+                if (Block->Locked) Region->LockedWorkingSetBytes += PAGE_SIZE;
+                if ((Type == MEM_MAPPED || Type == MEM_IMAGE) && Block->SharedOriginal)
+                {
+                    Region->SharedOriginalBytes += PAGE_SIZE;
+                }
+                if (Block->Priority > Region->Priority) Region->Priority = (ULONG)Block->Priority;
+            }
+            else
+            {
+                if (Block->Invalid.Shared) Region->ShareableWorkingSetBytes += PAGE_SIZE;
+                if ((Type == MEM_MAPPED || Type == MEM_IMAGE) && Block->Invalid.SharedOriginal)
+                {
+                    Region->SharedOriginalBytes += PAGE_SIZE;
+                }
+            }
+        }
+        RemainingPages -= Count;
+    }
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpProcess_QueryMemoryMap(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    PZP_PROCESS_MEMORY_REGION Regions = NULL, NewRegions;
+    PMEMORY_WORKING_SET_EX_INFORMATION WorkingSetEntries;
+    MEMORY_BASIC_INFORMATION Information;
+    MEMORY_REGION_INFORMATION RegionInformation;
+    HANDLE Process;
+    PVOID Address = NULL;
+    SIZE_T ReturnLength;
+    ULONG Count = 0, Capacity = 0, Index, EncodedLength;
+    NTSTATUS Status;
+
+    Status = ZpProcess_OpenVerified(&Process, PROCESS_QUERY_INFORMATION, ProcessId, CreateTime);
+    if (!NT_SUCCESS(Status)) return Status;
+    WorkingSetEntries = Mem_Alloc(ZP_PROCESS_WORKING_SET_BUFFER_SIZE);
+    if (WorkingSetEntries == NULL)
+    {
+        NtClose(Process);
+        return STATUS_NO_MEMORY;
+    }
+    while (TRUE)
+    {
+        Status = NtQueryVirtualMemory(Process,
+                                      Address,
+                                      MemoryBasicInformation,
+                                      &Information,
+                                      sizeof(Information),
+                                      &ReturnLength);
+        if (Status == STATUS_INVALID_PARAMETER && Count != 0)
+        {
+            Status = STATUS_SUCCESS;
+            break;
+        }
+        if (!NT_SUCCESS(Status)) break;
+        if (Information.RegionSize == 0 ||
+            (ULONG_PTR)Information.BaseAddress + Information.RegionSize <= (ULONG_PTR)Address)
+        {
+            Status = STATUS_DATA_ERROR;
+            break;
+        }
+        if (Count == ZP_CODEC_MAX_ELEMENT_COUNT)
+        {
+            Status = STATUS_QUOTA_EXCEEDED;
+            break;
+        }
+        if (Count == Capacity)
+        {
+            Capacity = Capacity == 0 ? 256 : Capacity * 2;
+            NewRegions = Mem_ReAlloc(Regions, (SIZE_T)Capacity * sizeof(*Regions));
+            if (NewRegions == NULL)
+            {
+                Status = STATUS_NO_MEMORY;
+                break;
+            }
+            Regions = NewRegions;
+        }
+        Regions[Count].BaseAddress = (ULONG_PTR)Information.BaseAddress;
+        Regions[Count].AllocationBase = (ULONG_PTR)Information.AllocationBase;
+        Regions[Count].RegionSize = Information.RegionSize;
+        Regions[Count].CommitSize = Information.State == MEM_COMMIT ? Information.RegionSize : 0;
+        Regions[Count].WorkingSetBytes = 0;
+        Regions[Count].PrivateWorkingSetBytes = 0;
+        Regions[Count].SharedWorkingSetBytes = 0;
+        Regions[Count].ShareableWorkingSetBytes = 0;
+        Regions[Count].LockedWorkingSetBytes = 0;
+        Regions[Count].SharedOriginalBytes = 0;
+        Regions[Count].State = Information.State;
+        Regions[Count].Type = Information.Type;
+        Regions[Count].Protect = Information.Protect;
+        Regions[Count].AllocationProtect = Information.AllocationProtect;
+        Regions[Count].RegionType = 0;
+        Regions[Count].Priority = 0;
+        Regions[Count].RegionStatus = Information.State == MEM_FREE ? STATUS_NOT_FOUND :
+                                          NtQueryVirtualMemory(Process,
+                                                               Information.BaseAddress,
+                                                               MemoryRegionInformation,
+                                                               &RegionInformation,
+                                                               sizeof(RegionInformation),
+                                                               &ReturnLength);
+        if (NT_SUCCESS(Regions[Count].RegionStatus))
+        {
+            Regions[Count].RegionType = RegionInformation.RegionType;
+        }
+        Regions[Count].WorkingSetStatus = Information.State == MEM_COMMIT ?
+                                              ZpProcess_QueryWorkingSet(
+                                                  Process,
+                                                  Information.BaseAddress,
+                                                  Information.RegionSize,
+                                                  Information.Type,
+                                                  &Regions[Count],
+                                                  WorkingSetEntries,
+                                                  ZP_PROCESS_WORKING_SET_BUFFER_SIZE /
+                                                      sizeof(*WorkingSetEntries)) :
+                                              STATUS_NOT_FOUND;
+        Regions[Count].MappedPathStatus = STATUS_SUCCESS;
+        Regions[Count].MappedPath = NULL;
+        Regions[Count].MappedPathLength = 0;
+        if (Information.State != MEM_FREE &&
+            (Information.Type == MEM_IMAGE || Information.Type == MEM_MAPPED))
+        {
+            Regions[Count].MappedPathStatus = ZpProcess_QueryMappedPath(
+                Process,
+                Information.BaseAddress,
+                (PWCHAR*)&Regions[Count].MappedPath,
+                &Regions[Count].MappedPathLength);
+        }
+        Count++;
+        Address = Add2Ptr(Information.BaseAddress, Information.RegionSize);
+    }
+    NtClose(Process);
+    Mem_Free(WorkingSetEntries);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpProcess_EncodeMemoryMap(Regions, Count, NULL, 0, &EncodedLength);
+        if (NT_SUCCESS(Status))
+        {
+            *Response = Mem_Alloc(EncodedLength);
+            if (*Response == NULL) Status = STATUS_NO_MEMORY;
+        }
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpProcess_EncodeMemoryMap(Regions,
+                                              Count,
+                                              *Response,
+                                              EncodedLength,
+                                              ResponseLength);
+            if (!NT_SUCCESS(Status)) Mem_Free(*Response);
+        }
+    }
+    for (Index = 0; Index < Count; Index++) Mem_Free((PVOID)Regions[Index].MappedPath);
+    Mem_Free(Regions);
+    return Status;
+}
+
+static
+NTSTATUS
 ZpProcess_TerminateTree(
     _In_ ULONG ProcessId,
     _In_ ULONGLONG CreateTime)
@@ -883,6 +1133,16 @@ ZpProcess_Execute(
             {
                 *Response = NULL;
                 *ResponseLength = 0;
+            }
+            return ZpStatus_FromNtStatus(Status);
+        case ZP_PROCESS_OPERATION_QUERY_MEMORY_MAP:
+            Status = ZpProcess_DecodeQuery(Request, RequestLength, &ProcessId, &CreateTime);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpProcess_QueryMemoryMap(ProcessId,
+                                                 CreateTime,
+                                                 Response,
+                                                 ResponseLength);
             }
             return ZpStatus_FromNtStatus(Status);
         default:

@@ -11,7 +11,9 @@ var terminalSessions = new TerminalWebSessionManager(server);
 var eventLogStreams = new EventLogStreamManager(server);
 var tcpForwards = new TcpForwardManager(server);
 var udpForwards = new UdpForwardManager(server);
+var rdpForwards = new RdpForwardManager(tcpForwards, udpForwards);
 var cdpSessions = new CdpSessionManager(server, tcpForwards);
+var networkQuality = new NetworkQualityMonitor(server);
 var proxyUserHeader = builder.Configuration["ReverseProxy:UserHeader"] ?? "X-Forwarded-User";
 var iceServers = builder.Configuration.GetSection("P2p:IceServers").Get<string[]>() ?? [];
 builder.Services.AddSingleton(server);
@@ -19,7 +21,9 @@ builder.Services.AddSingleton(terminalSessions);
 builder.Services.AddSingleton(eventLogStreams);
 builder.Services.AddSingleton(tcpForwards);
 builder.Services.AddSingleton(udpForwards);
+builder.Services.AddSingleton(rdpForwards);
 builder.Services.AddSingleton(cdpSessions);
+builder.Services.AddSingleton(networkQuality);
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -73,7 +77,8 @@ app.UseStaticFiles();
 app.MapGet("/api/status", () => new
 {
     server.State,
-    server.ClientConnected
+    server.ClientConnected,
+    Quality = networkQuality.Current
 });
 app.MapPost("/api/system", async () => await server.GetSystemInfoAsync());
 app.MapPost("/api/eventlog/query", async (EventLogQueryRequest request) =>
@@ -116,7 +121,9 @@ app.MapGet("/api/terminal/shells", async () =>
 app.MapGet("/api/terminal/sessions", () => terminalSessions.GetSessions());
 app.MapPost("/api/terminal/session", async (TerminalCreateRequest request) =>
 {
-    if (!Enum.IsDefined(request.Shell) ||
+    if (request.Shell is not (TerminalShell.CommandPrompt or
+                              TerminalShell.WindowsPowerShell or
+                              TerminalShell.PowerShell) ||
         request.Columns == 0 || request.Rows == 0)
     {
         return Results.BadRequest();
@@ -150,7 +157,7 @@ app.MapRegistryApi(server);
 app.MapManagementApi(server);
 app.MapRecordingApi(server);
 app.MapExecutionApi(server, terminalSessions);
-app.MapRemoteAccessApi(tcpForwards, udpForwards, cdpSessions, proxyUserHeader);
+app.MapRemoteAccessApi(tcpForwards, udpForwards, rdpForwards, cdpSessions, server, proxyUserHeader);
 app.Lifetime.ApplicationStopping.Register(server.Dispose);
 app.Lifetime.ApplicationStopping.Register(() =>
     terminalSessions.DisposeAsync().AsTask().GetAwaiter().GetResult());
@@ -158,6 +165,7 @@ app.Lifetime.ApplicationStopping.Register(eventLogStreams.Dispose);
 app.Lifetime.ApplicationStopping.Register(cdpSessions.Dispose);
 app.Lifetime.ApplicationStopping.Register(tcpForwards.Dispose);
 app.Lifetime.ApplicationStopping.Register(udpForwards.Dispose);
+app.Lifetime.ApplicationStopping.Register(rdpForwards.Dispose);
 server.Start();
 app.Run();
 

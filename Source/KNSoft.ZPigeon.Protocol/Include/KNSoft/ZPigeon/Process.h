@@ -12,6 +12,7 @@ EXTERN_C_START
 #define ZP_PROCESS_OPERATION_DUMP 4
 #define ZP_PROCESS_OPERATION_READ_MEMORY 5
 #define ZP_PROCESS_OPERATION_WRITE_MEMORY 6
+#define ZP_PROCESS_OPERATION_QUERY_MEMORY_MAP 7
 #define ZP_PROCESS_MEMORY_MAX_LENGTH 0x00010000UL
 
 typedef struct _ZP_PROCESS_MEMORY_VIEW
@@ -23,6 +24,66 @@ typedef struct _ZP_PROCESS_MEMORY_VIEW
 } ZP_PROCESS_MEMORY_VIEW, *PZP_PROCESS_MEMORY_VIEW;
 
 typedef const ZP_PROCESS_MEMORY_VIEW* PCZP_PROCESS_MEMORY_VIEW;
+
+typedef struct _ZP_PROCESS_MEMORY_REGION
+{
+    ULONGLONG BaseAddress;
+    ULONGLONG AllocationBase;
+    ULONGLONG RegionSize;
+    ULONGLONG CommitSize;
+    ULONGLONG WorkingSetBytes;
+    ULONGLONG PrivateWorkingSetBytes;
+    ULONGLONG SharedWorkingSetBytes;
+    ULONGLONG ShareableWorkingSetBytes;
+    ULONGLONG LockedWorkingSetBytes;
+    ULONGLONG SharedOriginalBytes;
+    ULONG State;
+    ULONG Type;
+    ULONG Protect;
+    ULONG AllocationProtect;
+    ULONG RegionType;
+    ULONG Priority;
+    NTSTATUS RegionStatus;
+    NTSTATUS WorkingSetStatus;
+    NTSTATUS MappedPathStatus;
+    PCWCH MappedPath;
+    ULONG MappedPathLength;
+} ZP_PROCESS_MEMORY_REGION, *PZP_PROCESS_MEMORY_REGION;
+
+typedef const ZP_PROCESS_MEMORY_REGION* PCZP_PROCESS_MEMORY_REGION;
+
+typedef struct _ZP_PROCESS_MEMORY_REGION_VIEW
+{
+    ULONGLONG BaseAddress;
+    ULONGLONG AllocationBase;
+    ULONGLONG RegionSize;
+    ULONGLONG CommitSize;
+    ULONGLONG WorkingSetBytes;
+    ULONGLONG PrivateWorkingSetBytes;
+    ULONGLONG SharedWorkingSetBytes;
+    ULONGLONG ShareableWorkingSetBytes;
+    ULONGLONG LockedWorkingSetBytes;
+    ULONGLONG SharedOriginalBytes;
+    ULONG State;
+    ULONG Type;
+    ULONG Protect;
+    ULONG AllocationProtect;
+    ULONG RegionType;
+    ULONG Priority;
+    NTSTATUS RegionStatus;
+    NTSTATUS WorkingSetStatus;
+    NTSTATUS MappedPathStatus;
+    ZP_STRING_VIEW MappedPath;
+} ZP_PROCESS_MEMORY_REGION_VIEW, *PZP_PROCESS_MEMORY_REGION_VIEW;
+
+typedef struct _ZP_PROCESS_MEMORY_MAP_VIEW
+{
+    const BYTE* Buffer;
+    ULONG Length;
+    ULONG Count;
+} ZP_PROCESS_MEMORY_MAP_VIEW, *PZP_PROCESS_MEMORY_MAP_VIEW;
+
+typedef const ZP_PROCESS_MEMORY_MAP_VIEW* PCZP_PROCESS_MEMORY_MAP_VIEW;
 
 typedef USHORT ZP_PROCESS_CONTROL;
 #define ZpProcessControlTerminate ((ZP_PROCESS_CONTROL)1)
@@ -298,5 +359,25 @@ ZpProcess_DecodeMemoryData(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_BUFFER_VIEW Data);
+
+NTSTATUS
+ZpProcess_EncodeMemoryMap(
+    _In_reads_opt_(RegionCount) PCZP_PROCESS_MEMORY_REGION Regions,
+    _In_ ULONG RegionCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpProcess_DecodeMemoryMap(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_PROCESS_MEMORY_MAP_VIEW View);
+
+NTSTATUS
+ZpProcess_ReadMemoryMapRegion(
+    _In_ PCZP_PROCESS_MEMORY_MAP_VIEW Map,
+    _Inout_ PULONG Offset,
+    _Out_ PZP_PROCESS_MEMORY_REGION_VIEW Region);
 
 EXTERN_C_END

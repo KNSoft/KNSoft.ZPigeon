@@ -15,7 +15,9 @@ public sealed partial class NativeServer
     private static readonly NativeMethods.ProcessInfoCallback ProcessInfoCallback = CompleteProcessInfo;
     private static readonly NativeMethods.ProcessDumpCallback ProcessDumpCallback = CompleteProcessDump;
     private static readonly NativeMethods.ProcessMemoryCallback ProcessMemoryCallback = CompleteProcessMemory;
+    private static readonly NativeMethods.ProcessMemoryMapCallback ProcessMemoryMapCallback = CompleteProcessMemoryMap;
     private static readonly NativeMethods.WindowListCallback WindowListCallback = CompleteWindowList;
+    private static readonly NativeMethods.WindowMonitorsCallback WindowMonitorsCallback = CompleteWindowMonitors;
     private static readonly NativeMethods.WindowInfoCallback WindowInfoCallback = CompleteWindowInfo;
     private static readonly NativeMethods.WindowCaptureCallback WindowCaptureCallback = CompleteWindowCapture;
     private static readonly NativeMethods.ServiceListCallback ServiceListCallback = CompleteServiceList;
@@ -220,9 +222,20 @@ public sealed partial class NativeServer
         return completion.Task;
     }
 
+    public Task<ProcessMemoryRegion[]> QueryProcessMemoryMapAsync(uint processId, ulong createTime) =>
+        RunManagementAsync<ProcessMemoryRegion[]>(context => NativeMethods.QueryProcessMemoryMap(
+            processId,
+            createTime,
+            ProcessMemoryMapCallback,
+            context));
+
     public Task<WindowRecord[]> EnumerateWindowsAsync() =>
         RunManagementAsync<WindowRecord[]>((context) =>
             NativeMethods.EnumerateWindows(WindowListCallback, context));
+
+    public Task<WindowMonitor[]> EnumerateMonitorsAsync() =>
+        RunManagementAsync<WindowMonitor[]>((context) =>
+            NativeMethods.EnumerateMonitors(WindowMonitorsCallback, context));
 
     public Task<WindowInfo> QueryWindowAsync(ulong handle, uint processId, uint threadId) =>
         RunManagementAsync<WindowInfo>((context) =>
@@ -272,6 +285,7 @@ public sealed partial class NativeServer
                                         options.MaxDimension,
                                         options.FrameRate,
                                         options.ImageQuality,
+                                        options.MonitorIndex,
                                         WindowCaptureCallback,
                                         context));
     }
@@ -641,6 +655,39 @@ public sealed partial class NativeServer
         completion.SetResult(result);
     }
 
+    private static void CompleteWindowMonitors(
+        ZpStatus status,
+        nint monitors,
+        uint monitorCount,
+        nint context)
+    {
+        var completion = GetCompletion<WindowMonitor[]>(context);
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        var result = new WindowMonitor[monitorCount];
+        var size = Marshal.SizeOf<NativeMethods.WindowMonitor>();
+        for (var index = 0; index < result.Length; index++)
+        {
+            var monitor = Marshal.PtrToStructure<NativeMethods.WindowMonitor>(monitors + index * size);
+            result[index] = new WindowMonitor(
+                monitor.Index,
+                (monitor.Flags & 1) != 0,
+                monitor.Left,
+                monitor.Top,
+                monitor.Right,
+                monitor.Bottom,
+                monitor.WorkLeft,
+                monitor.WorkTop,
+                monitor.WorkRight,
+                monitor.WorkBottom,
+                Marshal.PtrToStringUni(monitor.Device, (int)monitor.DeviceLength) ?? string.Empty);
+        }
+        completion.SetResult(result);
+    }
+
     private static void CompleteWindowInfo(ZpStatus status, nint info, nint context)
     {
         var completion = GetCompletion<WindowInfo>(context);
@@ -713,6 +760,48 @@ public sealed partial class NativeServer
         }
         var result = new byte[dataLength];
         Marshal.Copy(data, result, 0, result.Length);
+        completion.SetResult(result);
+    }
+
+    private static void CompleteProcessMemoryMap(
+        ZpStatus status,
+        nint regions,
+        uint regionCount,
+        nint context)
+    {
+        var completion = GetCompletion<ProcessMemoryRegion[]>(context);
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        var result = new ProcessMemoryRegion[regionCount];
+        var size = Marshal.SizeOf<NativeMethods.ProcessMemoryRegion>();
+        for (var index = 0; index < result.Length; index++)
+        {
+            var region = Marshal.PtrToStructure<NativeMethods.ProcessMemoryRegion>(regions + index * size);
+            result[index] = new(region.BaseAddress.ToString(),
+                                region.AllocationBase.ToString(),
+                                region.RegionSize.ToString(),
+                                region.CommitSize.ToString(),
+                                region.WorkingSetBytes.ToString(),
+                                region.PrivateWorkingSetBytes.ToString(),
+                                region.SharedWorkingSetBytes.ToString(),
+                                region.ShareableWorkingSetBytes.ToString(),
+                                region.LockedWorkingSetBytes.ToString(),
+                                region.SharedOriginalBytes.ToString(),
+                                region.State,
+                                region.Type,
+                                region.Protect,
+                                region.AllocationProtect,
+                                region.RegionType,
+                                region.Priority,
+                                region.RegionStatus,
+                                region.WorkingSetStatus,
+                                region.MappedPathStatus,
+                                Marshal.PtrToStringUni(region.MappedPath,
+                                                       (int)region.MappedPathLength) ?? string.Empty);
+        }
         completion.SetResult(result);
     }
 
@@ -882,6 +971,27 @@ public sealed record ProcessInfo(
     string ImagePath,
     int CommandLineStatus,
     string CommandLine);
+public sealed record ProcessMemoryRegion(
+    string BaseAddress,
+    string AllocationBase,
+    string RegionSize,
+    string CommitSize,
+    string WorkingSetBytes,
+    string PrivateWorkingSetBytes,
+    string SharedWorkingSetBytes,
+    string ShareableWorkingSetBytes,
+    string LockedWorkingSetBytes,
+    string SharedOriginalBytes,
+    uint State,
+    uint Type,
+    uint Protect,
+    uint AllocationProtect,
+    uint RegionType,
+    uint Priority,
+    int RegionStatus,
+    int WorkingSetStatus,
+    int MappedPathStatus,
+    string MappedPath);
 public enum ProcessControl : ushort
 {
     Terminate = 1,
@@ -902,6 +1012,18 @@ public sealed record WindowRecord(
     uint Flags,
     string Caption,
     string ClassName);
+public sealed record WindowMonitor(
+    uint Index,
+    bool Primary,
+    int Left,
+    int Top,
+    int Right,
+    int Bottom,
+    int WorkLeft,
+    int WorkTop,
+    int WorkRight,
+    int WorkBottom,
+    string Device);
 public sealed record WindowInfo(
     string Handle,
     string ParentHandle,
@@ -1103,7 +1225,13 @@ internal static partial class NativeMethods
     internal delegate void ProcessMemoryCallback(ZpStatus status, nint data, uint dataLength, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void ProcessMemoryMapCallback(ZpStatus status, nint regions, uint regionCount, nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void WindowListCallback(ZpStatus status, nint records, uint recordCount, nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void WindowMonitorsCallback(ZpStatus status, nint monitors, uint monitorCount, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void WindowInfoCallback(ZpStatus status, nint info, nint context);
@@ -1215,6 +1343,32 @@ internal static partial class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct ProcessMemoryRegion
+    {
+        internal readonly ulong BaseAddress;
+        internal readonly ulong AllocationBase;
+        internal readonly ulong RegionSize;
+        internal readonly ulong CommitSize;
+        internal readonly ulong WorkingSetBytes;
+        internal readonly ulong PrivateWorkingSetBytes;
+        internal readonly ulong SharedWorkingSetBytes;
+        internal readonly ulong ShareableWorkingSetBytes;
+        internal readonly ulong LockedWorkingSetBytes;
+        internal readonly ulong SharedOriginalBytes;
+        internal readonly uint State;
+        internal readonly uint Type;
+        internal readonly uint Protect;
+        internal readonly uint AllocationProtect;
+        internal readonly uint RegionType;
+        internal readonly uint Priority;
+        internal readonly int RegionStatus;
+        internal readonly int WorkingSetStatus;
+        internal readonly int MappedPathStatus;
+        internal readonly nint MappedPath;
+        internal readonly uint MappedPathLength;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal readonly struct WindowRecord
     {
         internal readonly ulong Handle;
@@ -1228,6 +1382,23 @@ internal static partial class NativeMethods
         internal readonly uint CaptionLength;
         internal readonly nint ClassName;
         internal readonly uint ClassNameLength;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct WindowMonitor
+    {
+        internal readonly uint Index;
+        internal readonly uint Flags;
+        internal readonly int Left;
+        internal readonly int Top;
+        internal readonly int Right;
+        internal readonly int Bottom;
+        internal readonly int WorkLeft;
+        internal readonly int WorkTop;
+        internal readonly int WorkRight;
+        internal readonly int WorkBottom;
+        internal readonly nint Device;
+        internal readonly uint DeviceLength;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1508,8 +1679,18 @@ internal static partial class NativeMethods
         StatusCallback callback,
         nint context);
 
+    [LibraryImport(Library, EntryPoint = "ZpNative_QueryProcessMemoryMap")]
+    internal static partial int QueryProcessMemoryMap(
+        uint processId,
+        ulong createTime,
+        ProcessMemoryMapCallback callback,
+        nint context);
+
     [LibraryImport(Library, EntryPoint = "ZpNative_EnumerateWindows")]
     internal static partial int EnumerateWindows(WindowListCallback callback, nint context);
+
+    [LibraryImport(Library, EntryPoint = "ZpNative_EnumerateMonitors")]
+    internal static partial int EnumerateMonitors(WindowMonitorsCallback callback, nint context);
 
     [LibraryImport(Library, EntryPoint = "ZpNative_QueryWindow")]
     internal static partial int QueryWindow(
@@ -1556,6 +1737,7 @@ internal static partial class NativeMethods
         uint maxDimension,
         ushort frameRate,
         ushort quality,
+        uint monitorIndex,
         WindowCaptureCallback callback,
         nint context);
 

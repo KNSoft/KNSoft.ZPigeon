@@ -4,6 +4,13 @@ using System.Security.Cryptography.X509Certificates;
 
 namespace KNSoft.ZPigeon.Server.Managed;
 
+public readonly record struct ConnectionStatistics(
+    ulong CompletedRequests,
+    ulong FailedRequests,
+    ulong SmoothedRequestMilliseconds,
+    uint PendingRequests,
+    uint ConsecutiveFailures);
+
 public sealed partial class NativeServer(string directory) : IDisposable
 {
     private const ushort Port = 4433;
@@ -21,6 +28,17 @@ public sealed partial class NativeServer(string directory) : IDisposable
 
     public int State => NativeMethods.GetState();
     public bool ClientConnected => NativeMethods.IsClientConnected();
+
+    public bool TryGetConnectionStatistics(out ConnectionStatistics statistics)
+    {
+        var status = NativeMethods.QueryConnectionStatistics(out var native);
+        statistics = new(native.CompletedRequests,
+                         native.FailedRequests,
+                         native.SmoothedRequestMilliseconds,
+                         native.PendingRequests,
+                         native.ConsecutiveFailures);
+        return status >= 0;
+    }
 
     public void Start()
     {
@@ -519,6 +537,19 @@ internal static partial class NativeMethods
     [LibraryImport(Library, EntryPoint = "ZpNative_IsClientConnected")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool IsClientConnected();
+
+    [LibraryImport(Library, EntryPoint = "ZpNative_QueryConnectionStatistics")]
+    internal static partial int QueryConnectionStatistics(out ConnectionStatistics statistics);
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct ConnectionStatistics
+    {
+        internal readonly ulong CompletedRequests;
+        internal readonly ulong FailedRequests;
+        internal readonly ulong SmoothedRequestMilliseconds;
+        internal readonly uint PendingRequests;
+        internal readonly uint ConsecutiveFailures;
+    }
 
     [LibraryImport(Library, EntryPoint = "ZpNative_GetSystemInfo")]
     internal static partial int GetSystemInfo(SystemInfoCallback callback,

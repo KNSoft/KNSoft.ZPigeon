@@ -9,10 +9,37 @@ typedef struct _ZP_SERVER_REQUEST_OBJECT
     PZP_CONNECTION_OBJECT Owner;
     volatile LONG Pending;
     ULONG RequestId;
+    ULONGLONG StartTickCount;
     ULONGLONG DeadlineTickCount;
     ZP_REQUEST_COMPLETE_CALLBACK Callback;
     PVOID Context;
 } ZP_SERVER_REQUEST_OBJECT, *PZP_SERVER_REQUEST_OBJECT;
+
+static
+VOID
+ZpServerConnection_RecordRequest(
+    _Inout_ PZP_CONNECTION_OBJECT Connection,
+    _In_ PZP_SERVER_REQUEST_OBJECT Request,
+    _In_ LOGICAL Completed)
+{
+    ULONGLONG Milliseconds;
+
+    if (Completed)
+    {
+        Milliseconds = GetTickCount64() - Request->StartTickCount;
+        Connection->CompletedRequests++;
+        Connection->SmoothedRequestMilliseconds = Connection->SmoothedRequestMilliseconds == 0 ?
+                                                       Milliseconds :
+                                                       (Connection->SmoothedRequestMilliseconds * 7 +
+                                                        Milliseconds * 3 + 5) / 10;
+        Connection->ConsecutiveFailures = 0;
+    }
+    else
+    {
+        Connection->FailedRequests++;
+        if (Connection->ConsecutiveFailures != MAXULONG) Connection->ConsecutiveFailures++;
+    }
+}
 
 static
 VOID
@@ -146,6 +173,7 @@ ZpServerConnection_RequestTimerCallback(
         InterlockedExchange(&Request->Pending, FALSE);
         RemoveEntryList(&Request->ListEntry);
         Connection->RequestCount--;
+        ZpServerConnection_RecordRequest(Connection, Request, FALSE);
         RtlReleaseSRWLockExclusive(&Connection->Lock);
         ZpServerConnection_SendCancel(Connection, Request->RequestId);
         ZpServerConnection_InvokeRequest(
@@ -297,8 +325,9 @@ ZpServer_SendRequest(
     }
     RequestObject->RequestId = ConnectionObject->NextRequestId;
     ConnectionObject->NextRequestId++;
+    RequestObject->StartTickCount = GetTickCount64();
     RequestObject->DeadlineTickCount = TimeoutMilliseconds != 0 ?
-                                           GetTickCount64() + TimeoutMilliseconds :
+                                           RequestObject->StartTickCount + TimeoutMilliseconds :
                                            0;
     InsertTailList(&ConnectionObject->Requests, &RequestObject->ListEntry);
     ConnectionObject->RequestCount++;
@@ -330,6 +359,7 @@ ZpServer_SendRequest(
         {
             RemoveEntryList(&RequestObject->ListEntry);
             ConnectionObject->RequestCount--;
+            ZpServerConnection_RecordRequest(ConnectionObject, RequestObject, FALSE);
             ZpServerConnection_ArmRequestTimer(ConnectionObject);
         }
         RtlReleaseSRWLockExclusive(&ConnectionObject->Lock);
@@ -379,11 +409,31 @@ ZpServerConnection_ReceiveResponse(
     InterlockedExchange(&Request->Pending, FALSE);
     RemoveEntryList(&Request->ListEntry);
     Connection->RequestCount--;
+    ZpServerConnection_RecordRequest(Connection, Request, TRUE);
     ZpServerConnection_ArmRequestTimer(Connection);
     RtlReleaseSRWLockExclusive(&Connection->Lock);
     ZpServerConnection_InvokeRequest(Request,
                                      Response->Status,
                                      &Response->Payload);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_QueryConnectionStatistics(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _Out_ PZP_SERVER_CONNECTION_STATISTICS Statistics)
+{
+    PZP_CONNECTION_OBJECT ConnectionObject = Connection;
+
+    if (ConnectionObject == NULL || Statistics == NULL) return STATUS_INVALID_PARAMETER;
+    RtlAcquireSRWLockShared(&ConnectionObject->Lock);
+    Statistics->CompletedRequests = ConnectionObject->CompletedRequests;
+    Statistics->FailedRequests = ConnectionObject->FailedRequests;
+    Statistics->SmoothedRequestMilliseconds = ConnectionObject->SmoothedRequestMilliseconds;
+    Statistics->PendingRequests = ConnectionObject->RequestCount;
+    Statistics->ConsecutiveFailures = ConnectionObject->ConsecutiveFailures;
+    RtlReleaseSRWLockShared(&ConnectionObject->Lock);
     return STATUS_SUCCESS;
 }
 

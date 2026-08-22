@@ -34,6 +34,8 @@ public sealed partial class NativeServer
             (uint)(start.UserName?.Length ?? 0),
             start.Password,
             (uint)(start.Password?.Length ?? 0),
+            start.AppContainerSid,
+            (uint)(start.AppContainerSid?.Length ?? 0),
             ExecutionJobsCallback,
             context));
         return jobs.Length == 1 ? jobs[0] : throw new InvalidDataException("The execution response is invalid.");
@@ -133,7 +135,8 @@ public enum ExecutionIdentity : ushort
     Administrator,
     System,
     TrustedInstaller,
-    OtherUser
+    OtherUser,
+    AppContainer
 }
 
 [Flags]
@@ -162,7 +165,8 @@ public sealed record ExecutionStart(
     string? WorkingDirectory,
     string? Verb,
     string? UserName,
-    string? Password);
+    string? Password,
+    string? AppContainerSid);
 
 public sealed record ExecutionJob(
     string JobId,
@@ -235,6 +239,8 @@ internal static partial class NativeMethods
         uint userNameLength,
         string? password,
         uint passwordLength,
+        string? appContainerSid,
+        uint appContainerSidLength,
         ExecutionJobsCallback callback,
         nint context);
 

@@ -355,6 +355,14 @@ VOID
 
 typedef
 VOID
+(NTAPI *ZP_PROCESS_MEMORY_MAP_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_PROCESS_MEMORY_MAP_VIEW Map,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
 (NTAPI *ZP_SERVICE_ENUMERATE_CALLBACK)(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
@@ -407,6 +415,14 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
     _In_opt_ PCZP_WINDOW_LIST_VIEW Windows,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_WINDOW_MONITOR_ENUMERATE_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_WINDOW_MONITOR_LIST_VIEW Monitors,
     _In_opt_ PVOID Context);
 
 typedef
