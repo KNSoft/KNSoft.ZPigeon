@@ -65,15 +65,16 @@ ZpDtls_Encrypt(
     _Inout_ PZP_DTLS_CONTEXT Context,
     _In_reads_bytes_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,
-    _Outptr_result_bytebuffer_(*EncryptedLength) PBYTE* Encrypted,
+    _Out_writes_bytes_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
     _Out_ PULONG EncryptedLength);
 
 ZP_STATUS
 ZpDtls_Decrypt(
     _Inout_ PZP_DTLS_CONTEXT Context,
-    _In_reads_bytes_(DataLength) const VOID* Data,
+    _Inout_updates_bytes_(DataLength) PVOID Data,
     _In_ ULONG DataLength,
-    _Outptr_result_bytebuffer_(*PlaintextLength) PBYTE* Plaintext,
+    _Outptr_result_bytebuffer_(*PlaintextLength) const BYTE** Plaintext,
     _Out_ PULONG PlaintextLength);
 
 ZP_STATUS

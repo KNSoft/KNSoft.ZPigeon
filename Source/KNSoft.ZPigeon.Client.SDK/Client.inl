@@ -8,6 +8,8 @@
 #include "Transport/Tcp.h"
 #include "Transport/Udp.h"
 
+#define ZP_CLIENT_LOOKUP_BUCKET_COUNT 16
+
 typedef struct _ZP_CLIENT_OBJECT
 {
     RTL_SRWLOCK Lock;
@@ -18,6 +20,8 @@ typedef struct _ZP_CLIENT_OBJECT
     ULONG CallbackCount;
     LIST_ENTRY InboundRequests;
     LIST_ENTRY LocalChannels;
+    LIST_ENTRY InboundRequestBuckets[ZP_CLIENT_LOOKUP_BUCKET_COUNT];
+    LIST_ENTRY LocalChannelBuckets[ZP_CLIENT_LOOKUP_BUCKET_COUNT];
     LIST_ENTRY ExecutionJobs;
     LIST_ENTRY RecordingJobs;
     LIST_ENTRY FileEnumerations;

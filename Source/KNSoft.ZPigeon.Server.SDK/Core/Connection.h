@@ -2,6 +2,8 @@
 
 #include <KNSoft/ZPigeon/Server.h>
 
+#define ZP_CONNECTION_LOOKUP_BUCKET_COUNT 16
+
 typedef struct _ZP_CONNECTION_OBJECT ZP_CONNECTION_OBJECT, *PZP_CONNECTION_OBJECT;
 
 typedef
@@ -22,7 +24,10 @@ struct _ZP_CONNECTION_OBJECT
     RTL_SRWLOCK Lock;
     RTL_CRITICAL_SECTION RequestSendLock;
     LIST_ENTRY Requests;
+    LIST_ENTRY TimedRequests;
     LIST_ENTRY Channels;
+    LIST_ENTRY RequestBuckets[ZP_CONNECTION_LOOKUP_BUCKET_COUNT];
+    LIST_ENTRY ChannelBuckets[ZP_CONNECTION_LOOKUP_BUCKET_COUNT];
     ULONG NextRequestId;
     ULONG HighestChannelId;
     PTP_TIMER RequestTimer;

@@ -4,6 +4,8 @@
 
 #include "../../Network/Udp.h"
 
+#define ZP_SERVER_UDP_CONNECTION_BUCKET_COUNT 256
+
 struct _ZP_SERVER_OBJECT;
 
 typedef struct _ZP_SERVER_UDP_TRANSPORT
@@ -22,6 +24,7 @@ typedef struct _ZP_SERVER_UDP_TRANSPORT
     WSAPOLLFD PollDescriptors[ZP_LISTENER_MAX_COUNT];
     ULONG ListenerCount;
     LIST_ENTRY Connections;
+    LIST_ENTRY ConnectionBuckets[ZP_SERVER_UDP_CONNECTION_BUCKET_COUNT];
 } ZP_SERVER_UDP_TRANSPORT, *PZP_SERVER_UDP_TRANSPORT;
 
 VOID

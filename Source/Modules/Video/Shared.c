@@ -86,7 +86,7 @@ ZpVideoShared_Worker(
     Request.FrameRateDenominator = Source->Format.FrameRateDenominator;
     Request.DirectStreamId = 0;
     Request.Quality = 100;
-    Request.DeviceId.Buffer = (const BYTE*)Source->DeviceId;
+    Request.DeviceId.Buffer = Source->DeviceId;
     Request.DeviceId.Length = Source->DeviceIdLength;
     if (SUCCEEDED(Result)) Result = ZpVideoCapture_Create(&Request, &Source->Device);
     RtlAcquireSRWLockExclusive(&Source->Lock);

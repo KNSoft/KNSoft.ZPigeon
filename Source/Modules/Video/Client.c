@@ -183,7 +183,7 @@ ZpVideo_Worker(
     Uninitialize = SUCCEEDED(Result);
     if (Result == RPC_E_CHANGED_MODE) Result = S_OK;
     Request.DirectStreamId = Channel->DirectStreamId;
-    Request.DeviceId.Buffer = (const BYTE*)Channel->DeviceId;
+    Request.DeviceId.Buffer = Channel->DeviceId;
     Request.DeviceId.Length = Channel->DeviceIdLength;
     while (SUCCEEDED(Result) && NT_SUCCESS(Status))
     {

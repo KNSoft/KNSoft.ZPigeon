@@ -280,22 +280,17 @@ ZpTcpConnection_SendFrame(
     _In_reads_bytes_opt_(BodyLength) const VOID* Body,
     _In_ ULONG BodyLength)
 {
-    PBYTE Frame, Encrypted;
-    ULONG FrameSize, EncryptedLength;
-    NTSTATUS Status;
+    PBYTE Encrypted;
+    ULONG EncryptedLength;
     ZP_STATUS TransportStatus;
 
-    Status = ZpConnection_AllocateFrame(MessageType, Body, BodyLength, &Frame, &FrameSize);
-    if (!NT_SUCCESS(Status))
-    {
-        return Status;
-    }
     RtlEnterCriticalSection(&TcpConnection->Lock);
-    TransportStatus = ZpTls_Encrypt(&TcpConnection->Tls,
-                                    Frame,
-                                    FrameSize,
-                                    &Encrypted,
-                                    &EncryptedLength);
+    TransportStatus = ZpTls_EncryptFrame(&TcpConnection->Tls,
+                                         MessageType,
+                                         Body,
+                                         BodyLength,
+                                         &Encrypted,
+                                         &EncryptedLength);
     if (ZpStatus_IsSuccess(TransportStatus))
     {
         TransportStatus = ZpTcpConnection_PostSend(TcpConnection,
@@ -303,7 +298,6 @@ ZpTcpConnection_SendFrame(
                                                    EncryptedLength);
     }
     RtlLeaveCriticalSection(&TcpConnection->Lock);
-    Mem_Free(Frame);
     if (!ZpStatus_IsSuccess(TransportStatus))
     {
         ZpTcpConnection_Close(TcpConnection, TransportStatus);

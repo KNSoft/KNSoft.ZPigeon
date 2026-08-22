@@ -199,7 +199,7 @@ TEST_FUNC(ProtocolMessage)
     ZP_EVENT_LOG_RECORD_VIEW EventLogRecord;
     ZP_STRING_VIEW EventLogChannel;
     ZP_STRING_VIEW EventLogChannels[] = {
-        { (const BYTE*)EventChannel, ARRAYSIZE(EventChannel) - 1 }
+        { EventChannel, ARRAYSIZE(EventChannel) - 1 }
     };
     ZP_EVENT_LOG_CHANNEL_LIST_VIEW EventLogChannelList;
     BOOLEAN EventLogEnabled;

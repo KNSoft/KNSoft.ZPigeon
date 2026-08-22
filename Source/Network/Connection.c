@@ -62,6 +62,9 @@ ZpConnection_Close(
         Mem_Free(Connection->ReceiveBuffer);
         Connection->ReceiveBuffer = NULL;
     }
+    Connection->ReceiveBufferLength = 0;
+    Connection->ReceiveBufferSize = 0;
+    Connection->ReceiveFrameSize = 0;
     Connection->State = ZpConnectionStateClosed;
 }
 
@@ -259,39 +262,6 @@ ZpConnection_Uninitialize(
 }
 
 NTSTATUS
-ZpConnection_AllocateFrame(
-    _In_ ZP_MESSAGE_TYPE MessageType,
-    _In_reads_bytes_opt_(BodyLength) const VOID* Body,
-    _In_ ULONG BodyLength,
-    _Outptr_result_bytebuffer_(*FrameSize) PBYTE* Frame,
-    _Out_ PULONG FrameSize)
-{
-    PBYTE Buffer;
-    ULONG Size;
-    NTSTATUS Status;
-
-    Status = ZpFrame_GetSize(BodyLength, &Size);
-    if (!NT_SUCCESS(Status))
-    {
-        return Status;
-    }
-    Buffer = Mem_Alloc(Size);
-    if (Buffer == NULL)
-    {
-        return STATUS_NO_MEMORY;
-    }
-    Status = ZpFrame_Encode(MessageType, Body, BodyLength, Buffer, Size, &Size);
-    if (!NT_SUCCESS(Status))
-    {
-        Mem_Free(Buffer);
-        return Status;
-    }
-    *Frame = Buffer;
-    *FrameSize = Size;
-    return STATUS_SUCCESS;
-}
-
-NTSTATUS
 ZpConnection_NotifyMessageSent(
     _Inout_ PZP_CONNECTION Connection,
     _In_ ZP_MESSAGE_TYPE MessageType)
@@ -354,7 +324,7 @@ ZpConnection_Receive(
     NTSTATUS Status;
     const BYTE* Input = Data;
     PBYTE FrameBuffer;
-    ULONG CopyLength, FrameSize;
+    ULONG CopyLength, FrameBufferSize, FrameSize;
 
     if ((DataLength != 0 && Data == NULL) || Connection->State == ZpConnectionStateClosed)
     {
@@ -363,7 +333,7 @@ ZpConnection_Receive(
 
     while (DataLength != 0)
     {
-        if (Connection->ReceiveBuffer != NULL)
+        if (Connection->ReceiveFrameSize != 0)
         {
             CopyLength = min(DataLength, Connection->ReceiveFrameSize - Connection->ReceiveBufferLength);
             Status = ZpConnection_ReserveReceiveBuffer(Connection,
@@ -383,13 +353,24 @@ ZpConnection_Receive(
             }
 
             FrameBuffer = Connection->ReceiveBuffer;
+            FrameBufferSize = Connection->ReceiveBufferSize;
             FrameSize = Connection->ReceiveFrameSize;
             Connection->ReceiveBuffer = NULL;
             Connection->ReceiveBufferLength = 0;
             Connection->ReceiveBufferSize = 0;
             Connection->ReceiveFrameSize = 0;
             Status = ZpConnection_DecodeAndDispatch(Connection, FrameBuffer, FrameSize);
-            Mem_Free(FrameBuffer);
+            if (Connection->State != ZpConnectionStateClosed &&
+                Connection->ReceiveBuffer == NULL &&
+                FrameBufferSize <= ZP_CONNECTION_MAX_CACHED_RECEIVE_BUFFER_SIZE)
+            {
+                Connection->ReceiveBuffer = FrameBuffer;
+                Connection->ReceiveBufferSize = FrameBufferSize;
+            }
+            else
+            {
+                Mem_Free(FrameBuffer);
+            }
             if (!NT_SUCCESS(Status))
             {
                 return Status;

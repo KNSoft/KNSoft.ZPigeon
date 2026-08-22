@@ -159,7 +159,10 @@ TEST_FUNC(NetworkConnection)
                                            HelloFrameLength - 3)) &&
             Context.Count == 1 &&
             Context.MessageTypes[0] == ZpMessageClientHello &&
-            Context.States[0] == ZpConnectionStateServerSendChallenge);
+            Context.States[0] == ZpConnectionStateServerSendChallenge &&
+            Connection.ReceiveBuffer != NULL &&
+            Connection.ReceiveBufferLength == 0 &&
+            Connection.ReceiveFrameSize == 0);
     TEST_OK(NT_SUCCESS(ZpConnection_NotifyMessageSent(&Connection, ZpMessageServerChallenge)) &&
             Connection.State == ZpConnectionStateServerWaitAuthenticate);
     TEST_OK(NT_SUCCESS(ZpConnection_Receive(&Connection,

@@ -4,6 +4,7 @@
 #include <WinSock2.h>
 
 #define ZP_CONNECTION_INITIAL_RECEIVE_BUFFER_SIZE 4096
+#define ZP_CONNECTION_MAX_CACHED_RECEIVE_BUFFER_SIZE (64 * 1024)
 
 EXTERN_C_START
 
@@ -69,14 +70,6 @@ ZpConnection_Initialize(
 VOID
 ZpConnection_Uninitialize(
     _Inout_ PZP_CONNECTION Connection);
-
-NTSTATUS
-ZpConnection_AllocateFrame(
-    _In_ ZP_MESSAGE_TYPE MessageType,
-    _In_reads_bytes_opt_(BodyLength) const VOID* Body,
-    _In_ ULONG BodyLength,
-    _Outptr_result_bytebuffer_(*FrameSize) PBYTE* Frame,
-    _Out_ PULONG FrameSize);
 
 NTSTATUS
 ZpConnection_NotifyMessageSent(

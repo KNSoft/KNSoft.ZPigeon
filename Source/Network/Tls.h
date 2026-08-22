@@ -31,6 +31,7 @@ typedef struct _ZP_TLS_CONTEXT
     LOGICAL HandshakeComplete;
     SecPkgContext_StreamSizes StreamSizes;
     PBYTE Input;
+    ULONG InputOffset;
     ULONG InputLength;
     ULONG InputSize;
     PCWSTR ServerName;
@@ -67,10 +68,11 @@ ZpTls_Handshake(
     _Out_ PLOGICAL Complete);
 
 ZP_STATUS
-ZpTls_Encrypt(
+ZpTls_EncryptFrame(
     _Inout_ PZP_TLS_CONTEXT Context,
-    _In_reads_bytes_(DataLength) const VOID* Data,
-    _In_ ULONG DataLength,
+    _In_ ZP_MESSAGE_TYPE MessageType,
+    _In_reads_bytes_opt_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
     _Outptr_result_bytebuffer_(*EncryptedLength) PBYTE* Encrypted,
     _Out_ PULONG EncryptedLength);
 

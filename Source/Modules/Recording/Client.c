@@ -414,7 +414,7 @@ ZpRecording_RunCamera(
     HRESULT Result;
 
     Result = ZpRecording_StartAudioTrack(Job);
-    Request.DeviceId.Buffer = (const BYTE*)Job->SourceId;
+    Request.DeviceId.Buffer = Job->SourceId;
     Request.DeviceId.Length = Job->SourceIdLength;
     Request.DirectStreamId = 0;
     Request.Quality = 85;

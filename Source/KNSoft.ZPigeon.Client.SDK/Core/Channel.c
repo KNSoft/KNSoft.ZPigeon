@@ -7,15 +7,14 @@ ZpClientLocalChannel_FindLocked(
     _In_ ULONG ChannelId)
 {
     PZP_CLIENT_LOCAL_CHANNEL Channel;
+    PLIST_ENTRY Bucket = &Object->LocalChannelBuckets[ChannelId & (ZP_CLIENT_LOOKUP_BUCKET_COUNT - 1)];
     PLIST_ENTRY Entry;
 
-    for (Entry = Object->LocalChannels.Flink;
-         Entry != &Object->LocalChannels;
-         Entry = Entry->Flink)
+    for (Entry = Bucket->Flink; Entry != Bucket; Entry = Entry->Flink)
     {
         Channel = CONTAINING_RECORD(Entry,
                                     ZP_CLIENT_LOCAL_CHANNEL,
-                                    ListEntry);
+                                    BucketEntry);
         if (Channel->ChannelId == ChannelId)
         {
             return Channel;
@@ -118,6 +117,9 @@ ZpClientLocalChannel_Insert(
         Channel->Destroy = Destroy;
         Object->NextLocalChannelId++;
         InsertTailList(&Object->LocalChannels, &Channel->ListEntry);
+        InsertTailList(&Object->LocalChannelBuckets[
+                           Channel->ChannelId & (ZP_CLIENT_LOOKUP_BUCKET_COUNT - 1)],
+                       &Channel->BucketEntry);
         Object->LocalChannelCount++;
         Status = STATUS_SUCCESS;
     }
@@ -134,6 +136,7 @@ ZpClientLocalChannel_RemoveLocked(
         return FALSE;
     }
     RemoveEntryList(&Channel->ListEntry);
+    RemoveEntryList(&Channel->BucketEntry);
     Channel->Owner->LocalChannelCount--;
     return TRUE;
 }

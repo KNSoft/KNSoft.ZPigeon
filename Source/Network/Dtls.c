@@ -255,12 +255,12 @@ ZpDtls_Encrypt(
     _Inout_ PZP_DTLS_CONTEXT Context,
     _In_reads_bytes_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,
-    _Outptr_result_bytebuffer_(*EncryptedLength) PBYTE* Encrypted,
+    _Out_writes_bytes_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
     _Out_ PULONG EncryptedLength)
 {
     SecBuffer Buffers[4] = { 0 };
     SecBufferDesc Descriptor = { SECBUFFER_VERSION, RTL_NUMBER_OF(Buffers), Buffers };
-    PBYTE Buffer;
     ULONG Size;
     SECURITY_STATUS Status;
 
@@ -272,16 +272,15 @@ ZpDtls_Encrypt(
         return ZpStatus_FromNtStatus(STATUS_INVALID_BUFFER_SIZE);
     }
     Size = Context->StreamSizes.cbHeader + DataLength + Context->StreamSizes.cbTrailer;
-    Buffer = Mem_Alloc(Size);
-    if (Buffer == NULL)
+    if (Buffer == NULL || BufferSize < Size)
     {
-        return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+        return ZpStatus_FromNtStatus(STATUS_BUFFER_TOO_SMALL);
     }
     Buffers[0].BufferType = SECBUFFER_STREAM_HEADER;
     Buffers[0].pvBuffer = Buffer;
     Buffers[0].cbBuffer = Context->StreamSizes.cbHeader;
     Buffers[1].BufferType = SECBUFFER_DATA;
-    Buffers[1].pvBuffer = Buffer + Context->StreamSizes.cbHeader;
+    Buffers[1].pvBuffer = Add2Ptr(Buffer, Context->StreamSizes.cbHeader);
     Buffers[1].cbBuffer = DataLength;
     Buffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
     Buffers[2].pvBuffer = Add2Ptr(Buffers[1].pvBuffer, DataLength);
@@ -291,10 +290,8 @@ ZpDtls_Encrypt(
     Status = EncryptMessage(&Context->Handle, 0, &Descriptor, 0);
     if (Status != SEC_E_OK)
     {
-        Mem_Free(Buffer);
         return ZpDtls_FromSecurityStatus(Status);
     }
-    *Encrypted = Buffer;
     *EncryptedLength = Buffers[0].cbBuffer + Buffers[1].cbBuffer + Buffers[2].cbBuffer;
     return ZpStatus_FromNtStatus(STATUS_SUCCESS);
 }
@@ -302,14 +299,13 @@ ZpDtls_Encrypt(
 ZP_STATUS
 ZpDtls_Decrypt(
     _Inout_ PZP_DTLS_CONTEXT Context,
-    _In_reads_bytes_(DataLength) const VOID* Data,
+    _Inout_updates_bytes_(DataLength) PVOID Data,
     _In_ ULONG DataLength,
-    _Outptr_result_bytebuffer_(*PlaintextLength) PBYTE* Plaintext,
+    _Outptr_result_bytebuffer_(*PlaintextLength) const BYTE** Plaintext,
     _Out_ PULONG PlaintextLength)
 {
     SecBuffer Buffers[4] = { 0 };
     SecBufferDesc Descriptor = { SECBUFFER_VERSION, RTL_NUMBER_OF(Buffers), Buffers };
-    PBYTE Buffer = NULL;
     SECURITY_STATUS SecurityStatus;
     ULONG Index;
 
@@ -318,7 +314,7 @@ ZpDtls_Decrypt(
         return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
     Buffers[0].BufferType = SECBUFFER_DATA;
-    Buffers[0].pvBuffer = (PVOID)Data;
+    Buffers[0].pvBuffer = Data;
     Buffers[0].cbBuffer = DataLength;
     SecurityStatus = DecryptMessage(&Context->Handle, &Descriptor, 0, NULL);
     if (SecurityStatus != SEC_E_OK)
@@ -329,13 +325,7 @@ ZpDtls_Decrypt(
     {
         if (Buffers[Index].BufferType == SECBUFFER_DATA && Buffers[Index].cbBuffer != 0)
         {
-            Buffer = Mem_Alloc(Buffers[Index].cbBuffer);
-            if (Buffer == NULL)
-            {
-                return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
-            }
-            RtlCopyMemory(Buffer, Buffers[Index].pvBuffer, Buffers[Index].cbBuffer);
-            *Plaintext = Buffer;
+            *Plaintext = Buffers[Index].pvBuffer;
             *PlaintextLength = Buffers[Index].cbBuffer;
             return ZpStatus_FromNtStatus(STATUS_SUCCESS);
         }

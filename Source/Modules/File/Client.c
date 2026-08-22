@@ -57,24 +57,7 @@ typedef enum _ZP_CLIENT_FILE_CHANNEL_TYPE
 
 struct _ZP_CLIENT_FILE_CHANNEL
 {
-    union
-    {
-        ZP_CLIENT_LOCAL_CHANNEL Header;
-        struct
-        {
-            LIST_ENTRY ListEntry;
-            PZP_CLIENT_OBJECT Owner;
-            volatile LONG ReferenceCount;
-            volatile LONG Pending;
-            ULONG ChannelId;
-            BYTE ModuleId;
-            ZP_CLIENT_LOCAL_CHANNEL_DATA_ROUTINE ReceiveData;
-            ZP_CLIENT_LOCAL_CHANNEL_WINDOW_ROUTINE ReceiveWindow;
-            ZP_CLIENT_LOCAL_CHANNEL_CLOSE_ROUTINE ReceiveClose;
-            ZP_CLIENT_LOCAL_CHANNEL_ABORT_ROUTINE Abort;
-            ZP_CLIENT_LOCAL_CHANNEL_DESTROY_ROUTINE Destroy;
-        };
-    };
+    ZP_CLIENT_LOCAL_CHANNEL Header;
     LOGICAL WorkerActive;
     ZP_CLIENT_FILE_CHANNEL_TYPE Type;
     ULONGLONG Credit;
@@ -211,13 +194,13 @@ ZpFile_SendCloseLocked(
     ULONG BodyLength;
     NTSTATUS Status;
 
-    Status = ZpMessage_EncodeChannelClose(Channel->ChannelId,
+    Status = ZpMessage_EncodeChannelClose(Channel->Header.ChannelId,
                                           ZpStatus_FromNtStatus(CloseStatus),
                                           Body,
                                           sizeof(Body),
                                           &BodyLength);
     return NT_SUCCESS(Status) ?
-               ZpFile_SendLocked(Channel->Owner,
+               ZpFile_SendLocked(Channel->Header.Owner,
                                  ZpMessageChannelClose,
                                  Body,
                                  BodyLength) :
@@ -230,7 +213,7 @@ ZpFile_CompleteChannel(
     _Inout_ PZP_CLIENT_FILE_CHANNEL Channel,
     _In_ NTSTATUS Status)
 {
-    PZP_CLIENT_OBJECT Object = Channel->Owner;
+    PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
     LOGICAL Removed;
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
@@ -477,7 +460,7 @@ ZpFile_SendWindowLocked(
     ULONG BodyLength;
     NTSTATUS Status;
 
-    Status = ZpMessage_EncodeChannelWindow(Channel->ChannelId,
+    Status = ZpMessage_EncodeChannelWindow(Channel->Header.ChannelId,
                                            CreditBytes,
                                            Body,
                                            sizeof(Body),
@@ -485,7 +468,7 @@ ZpFile_SendWindowLocked(
     if (NT_SUCCESS(Status))
     {
         Channel->ReceiveCredit += CreditBytes;
-        Status = ZpFile_SendLocked(Channel->Owner,
+        Status = ZpFile_SendLocked(Channel->Header.Owner,
                                   ZpMessageChannelWindow,
                                   Body,
                                   BodyLength);
@@ -504,7 +487,7 @@ ZpFile_FinishWorker(
     _In_ NTSTATUS Status,
     _In_ LOGICAL Notify)
 {
-    PZP_CLIENT_OBJECT Object = Channel->Owner;
+    PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
     LOGICAL Removed;
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
@@ -531,7 +514,7 @@ ZpFile_ReadChannelCallback(
     _In_opt_ PVOID Context)
 {
     PZP_CLIENT_FILE_CHANNEL Channel = Context;
-    PZP_CLIENT_OBJECT Object = Channel->Owner;
+    PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
     PBYTE Body;
     LARGE_INTEGER Offset;
     ULONG ReadLength, BytesRead, BodyLength;
@@ -548,7 +531,7 @@ ZpFile_ReadChannelCallback(
     for (;;)
     {
         RtlAcquireSRWLockExclusive(&Object->Lock);
-        if (!Channel->Pending)
+        if (!Channel->Header.Pending)
         {
             Channel->WorkerActive = FALSE;
             Object->CallbackCount--;
@@ -594,7 +577,7 @@ ZpFile_ReadChannelCallback(
             return;
         }
         Status = ZpMessage_EncodeChannelData(
-            Channel->ChannelId,
+            Channel->Header.ChannelId,
             Add2Ptr(Body, sizeof(ULONG)),
             BytesRead,
             Body,
@@ -607,7 +590,7 @@ ZpFile_ReadChannelCallback(
             return;
         }
         RtlAcquireSRWLockExclusive(&Object->Lock);
-        if (!Channel->Pending)
+        if (!Channel->Header.Pending)
         {
             Channel->WorkerActive = FALSE;
             Object->CallbackCount--;
@@ -645,7 +628,7 @@ ZpFile_CommitChannel(
     _Inout_ PZP_CLIENT_FILE_CHANNEL Channel,
     _In_ LOGICAL ResponseSent)
 {
-    PZP_CLIENT_OBJECT Object = Channel->Owner;
+    PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
     NTSTATUS Status = STATUS_SUCCESS;
     ULONG CreditBytes;
     LOGICAL Removed = FALSE;
@@ -695,11 +678,11 @@ ZpFile_ChannelWindow(
 {
     PZP_CLIENT_FILE_CHANNEL Channel =
         (PZP_CLIENT_FILE_CHANNEL)LocalChannel;
-    PZP_CLIENT_OBJECT Object = Channel->Owner;
+    PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
     LOGICAL Queue = FALSE;
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
-    if (!Channel->Pending || Channel->Type != ZpClientFileChannelRead ||
+    if (!Channel->Header.Pending || Channel->Type != ZpClientFileChannelRead ||
         MAXULONGLONG - Channel->Credit < CreditBytes)
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);
@@ -731,13 +714,13 @@ ZpFile_ChannelData(
 {
     PZP_CLIENT_FILE_CHANNEL Channel =
         (PZP_CLIENT_FILE_CHANNEL)LocalChannel;
-    PZP_CLIENT_OBJECT Object = Channel->Owner;
+    PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
     ULONG BytesWritten, CreditBytes;
     NTSTATUS Status;
     LOGICAL Removed = FALSE;
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
-    if (!Channel->Pending || Channel->Type != ZpClientFileChannelWrite ||
+    if (!Channel->Header.Pending || Channel->Type != ZpClientFileChannelWrite ||
         Message->Data.Length > Channel->ReceiveCredit ||
         Message->Data.Length > Channel->RemainingBytes)
     {
@@ -800,7 +783,7 @@ ZpFile_ChannelClose(
 {
     PZP_CLIENT_FILE_CHANNEL Channel =
         (PZP_CLIENT_FILE_CHANNEL)LocalChannel;
-    PZP_CLIENT_OBJECT Object = Channel->Owner;
+    PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
     LOGICAL Removed;
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
@@ -2567,7 +2550,7 @@ ZpFile_Execute(
             *Response = Mem_Alloc(*ResponseLength);
             Status = *Response == NULL ? STATUS_NO_MEMORY :
                          ZpFile_EncodeOpenReadResponse(
-                             FileChannel->ChannelId,
+                             FileChannel->Header.ChannelId,
                              FileSize,
                              Offset,
                              *Response,
@@ -2610,7 +2593,7 @@ ZpFile_Execute(
             *Response = Mem_Alloc(*ResponseLength);
             Status = *Response == NULL ? STATUS_NO_MEMORY :
                          ZpFile_EncodeOpenWriteResponse(
-                             FileChannel->ChannelId,
+                             FileChannel->Header.ChannelId,
                              FileSize,
                              *Response,
                              *ResponseLength,

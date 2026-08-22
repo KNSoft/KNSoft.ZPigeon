@@ -6,6 +6,8 @@ typedef struct _ZP_SERVER_REQUEST_OBJECT
 {
     ZP_REQUEST_HEADER Header;
     LIST_ENTRY ListEntry;
+    LIST_ENTRY BucketEntry;
+    LIST_ENTRY TimerEntry;
     PZP_CONNECTION_OBJECT Owner;
     volatile LONG Pending;
     ULONG RequestId;
@@ -14,6 +16,58 @@ typedef struct _ZP_SERVER_REQUEST_OBJECT
     ZP_REQUEST_COMPLETE_CALLBACK Callback;
     PVOID Context;
 } ZP_SERVER_REQUEST_OBJECT, *PZP_SERVER_REQUEST_OBJECT;
+
+static
+PZP_SERVER_REQUEST_OBJECT
+ZpServerConnection_FindRequestLocked(
+    _In_ PZP_CONNECTION_OBJECT Connection,
+    _In_ ULONG RequestId)
+{
+    PLIST_ENTRY Bucket = &Connection->RequestBuckets[RequestId & (ZP_CONNECTION_LOOKUP_BUCKET_COUNT - 1)];
+    PLIST_ENTRY Entry;
+    PZP_SERVER_REQUEST_OBJECT Request;
+
+    for (Entry = Bucket->Flink; Entry != Bucket; Entry = Entry->Flink)
+    {
+        Request = CONTAINING_RECORD(Entry, ZP_SERVER_REQUEST_OBJECT, BucketEntry);
+        if (Request->RequestId == RequestId) return Request;
+    }
+    return NULL;
+}
+
+static
+VOID
+ZpServerConnection_RemoveRequestLocked(
+    _Inout_ PZP_CONNECTION_OBJECT Connection,
+    _Inout_ PZP_SERVER_REQUEST_OBJECT Request)
+{
+    RemoveEntryList(&Request->ListEntry);
+    RemoveEntryList(&Request->BucketEntry);
+    if (Request->DeadlineTickCount != 0) RemoveEntryList(&Request->TimerEntry);
+    Connection->RequestCount--;
+}
+
+static
+VOID
+ZpServerConnection_InsertTimedRequestLocked(
+    _Inout_ PZP_CONNECTION_OBJECT Connection,
+    _Inout_ PZP_SERVER_REQUEST_OBJECT Request)
+{
+    PLIST_ENTRY Entry;
+
+    for (Entry = Connection->TimedRequests.Flink;
+         Entry != &Connection->TimedRequests;
+         Entry = Entry->Flink)
+    {
+        PZP_SERVER_REQUEST_OBJECT Current = CONTAINING_RECORD(
+            Entry,
+            ZP_SERVER_REQUEST_OBJECT,
+            TimerEntry);
+
+        if (Current->DeadlineTickCount > Request->DeadlineTickCount) break;
+    }
+    InsertTailList(Entry, &Request->TimerEntry);
+}
 
 static
 VOID
@@ -48,35 +102,24 @@ ZpServerConnection_ArmRequestTimer(
 {
     PZP_SERVER_REQUEST_OBJECT Request;
     LARGE_INTEGER DueTime;
-    ULONGLONG Deadline = 0;
     ULONGLONG Now;
-    PLIST_ENTRY Entry;
     ULONG Delay;
 
     if (Connection->RequestTimer == NULL)
     {
         return;
     }
-    for (Entry = Connection->Requests.Flink;
-         Entry != &Connection->Requests;
-         Entry = Entry->Flink)
-    {
-        Request = CONTAINING_RECORD(Entry,
-                                    ZP_SERVER_REQUEST_OBJECT,
-                                    ListEntry);
-        if (Request->DeadlineTickCount != 0 &&
-            (Deadline == 0 || Request->DeadlineTickCount < Deadline))
-        {
-            Deadline = Request->DeadlineTickCount;
-        }
-    }
-    if (Deadline == 0)
+    if (IsListEmpty(&Connection->TimedRequests))
     {
         SetThreadpoolTimer(Connection->RequestTimer, NULL, 0, 0);
         return;
     }
+    Request = CONTAINING_RECORD(Connection->TimedRequests.Flink,
+                                ZP_SERVER_REQUEST_OBJECT,
+                                TimerEntry);
     Now = GetTickCount64();
-    Delay = Deadline > Now ? (ULONG)min(Deadline - Now, MAXULONG) : 1;
+    Delay = Request->DeadlineTickCount > Now ?
+                (ULONG)min(Request->DeadlineTickCount - Now, MAXULONG) : 1;
     DueTime.QuadPart = -(LONGLONG)Delay * 10000;
     SetThreadpoolTimer(Connection->RequestTimer,
                        (PFILETIME)&DueTime,
@@ -140,7 +183,6 @@ ZpServerConnection_RequestTimerCallback(
 {
     PZP_CONNECTION_OBJECT Connection = Context;
     PZP_SERVER_REQUEST_OBJECT Request;
-    PLIST_ENTRY Entry;
     ULONGLONG Now;
 
     UNREFERENCED_PARAMETER(Instance);
@@ -150,19 +192,12 @@ ZpServerConnection_RequestTimerCallback(
         Request = NULL;
         Now = GetTickCount64();
         RtlAcquireSRWLockExclusive(&Connection->Lock);
-        for (Entry = Connection->Requests.Flink;
-             Entry != &Connection->Requests;
-             Entry = Entry->Flink)
+        if (!IsListEmpty(&Connection->TimedRequests))
         {
-            Request = CONTAINING_RECORD(Entry,
+            Request = CONTAINING_RECORD(Connection->TimedRequests.Flink,
                                         ZP_SERVER_REQUEST_OBJECT,
-                                        ListEntry);
-            if (Request->DeadlineTickCount != 0 &&
-                Request->DeadlineTickCount <= Now)
-            {
-                break;
-            }
-            Request = NULL;
+                                        TimerEntry);
+            if (Request->DeadlineTickCount > Now) Request = NULL;
         }
         if (Request == NULL)
         {
@@ -171,8 +206,7 @@ ZpServerConnection_RequestTimerCallback(
             return;
         }
         InterlockedExchange(&Request->Pending, FALSE);
-        RemoveEntryList(&Request->ListEntry);
-        Connection->RequestCount--;
+        ZpServerConnection_RemoveRequestLocked(Connection, Request);
         ZpServerConnection_RecordRequest(Connection, Request, FALSE);
         RtlReleaseSRWLockExclusive(&Connection->Lock);
         ZpServerConnection_SendCancel(Connection, Request->RequestId);
@@ -202,8 +236,7 @@ ZpServerConnection_CancelRequest(
         RtlReleaseSRWLockExclusive(&Connection->Lock);
         return STATUS_INVALID_DEVICE_STATE;
     }
-    RemoveEntryList(&RequestObject->ListEntry);
-    Connection->RequestCount--;
+    ZpServerConnection_RemoveRequestLocked(Connection, RequestObject);
     ZpServerConnection_ArmRequestTimer(Connection);
     RtlReleaseSRWLockExclusive(&Connection->Lock);
     ZpServerConnection_SendCancel(Connection, RequestObject->RequestId);
@@ -245,10 +278,11 @@ ZpServer_SendRequest(
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
+    BYTE StackBody[256];
     PZP_CONNECTION_OBJECT ConnectionObject = Connection;
     PZP_SERVER_REQUEST_OBJECT RequestObject;
     ZP_REQUEST Message = { 1, ModuleId, OperationId, TimeoutMilliseconds, Payload, PayloadLength };
-    PBYTE Body;
+    PBYTE Body = StackBody;
     ULONG BodyLength;
     NTSTATUS Status;
     LOGICAL Pending;
@@ -260,15 +294,16 @@ ZpServer_SendRequest(
         return STATUS_INVALID_PARAMETER;
     }
     Status = ZpMessage_EncodeRequest(&Message, NULL, 0, &BodyLength);
-    Body = NT_SUCCESS(Status) ? Mem_Alloc(BodyLength) : NULL;
-    if (!NT_SUCCESS(Status) || Body == NULL)
+    if (!NT_SUCCESS(Status)) return Status;
+    if (BodyLength > sizeof(StackBody)) Body = Mem_Alloc(BodyLength);
+    if (Body == NULL)
     {
-        return NT_SUCCESS(Status) ? STATUS_NO_MEMORY : Status;
+        return STATUS_NO_MEMORY;
     }
     RequestObject = Mem_Alloc(sizeof(*RequestObject));
     if (RequestObject == NULL)
     {
-        Mem_Free(Body);
+        if (Body != StackBody) Mem_Free(Body);
         return STATUS_NO_MEMORY;
     }
     RequestObject->Header.Cancel = ZpServerConnection_CancelRequest;
@@ -289,7 +324,7 @@ ZpServer_SendRequest(
         RtlReleaseSRWLockExclusive(&ConnectionObject->Lock);
         RtlLeaveCriticalSection(&ConnectionObject->RequestSendLock);
         Mem_Free(RequestObject);
-        Mem_Free(Body);
+        if (Body != StackBody) Mem_Free(Body);
         return Status;
     }
     if (ConnectionObject->RequestCount == ConnectionObject->MaxRequests)
@@ -297,7 +332,7 @@ ZpServer_SendRequest(
         RtlReleaseSRWLockExclusive(&ConnectionObject->Lock);
         RtlLeaveCriticalSection(&ConnectionObject->RequestSendLock);
         Mem_Free(RequestObject);
-        Mem_Free(Body);
+        if (Body != StackBody) Mem_Free(Body);
         return STATUS_QUOTA_EXCEEDED;
     }
     if (ConnectionObject->NextRequestId == 0)
@@ -305,7 +340,7 @@ ZpServer_SendRequest(
         RtlReleaseSRWLockExclusive(&ConnectionObject->Lock);
         RtlLeaveCriticalSection(&ConnectionObject->RequestSendLock);
         Mem_Free(RequestObject);
-        Mem_Free(Body);
+        if (Body != StackBody) Mem_Free(Body);
         return STATUS_INTEGER_OVERFLOW;
     }
     if (TimeoutMilliseconds != 0 && ConnectionObject->RequestTimer == NULL)
@@ -319,7 +354,7 @@ ZpServer_SendRequest(
             RtlReleaseSRWLockExclusive(&ConnectionObject->Lock);
             RtlLeaveCriticalSection(&ConnectionObject->RequestSendLock);
             Mem_Free(RequestObject);
-            Mem_Free(Body);
+            if (Body != StackBody) Mem_Free(Body);
             return STATUS_NO_MEMORY;
         }
     }
@@ -330,6 +365,13 @@ ZpServer_SendRequest(
                                            RequestObject->StartTickCount + TimeoutMilliseconds :
                                            0;
     InsertTailList(&ConnectionObject->Requests, &RequestObject->ListEntry);
+    InsertTailList(&ConnectionObject->RequestBuckets[
+                       RequestObject->RequestId & (ZP_CONNECTION_LOOKUP_BUCKET_COUNT - 1)],
+                   &RequestObject->BucketEntry);
+    if (RequestObject->DeadlineTickCount != 0)
+    {
+        ZpServerConnection_InsertTimedRequestLocked(ConnectionObject, RequestObject);
+    }
     ConnectionObject->RequestCount++;
     ZpConnection_AddRef(Connection);
     ZpServerConnection_ArmRequestTimer(ConnectionObject);
@@ -350,15 +392,14 @@ ZpServer_SendRequest(
     {
         RtlSecureZeroMemory(Body, BodyLength);
     }
-    Mem_Free(Body);
+    if (Body != StackBody) Mem_Free(Body);
     if (!NT_SUCCESS(Status))
     {
         RtlAcquireSRWLockExclusive(&ConnectionObject->Lock);
         Pending = InterlockedExchange(&RequestObject->Pending, FALSE);
         if (Pending)
         {
-            RemoveEntryList(&RequestObject->ListEntry);
-            ConnectionObject->RequestCount--;
+            ZpServerConnection_RemoveRequestLocked(ConnectionObject, RequestObject);
             ZpServerConnection_RecordRequest(ConnectionObject, RequestObject, FALSE);
             ZpServerConnection_ArmRequestTimer(ConnectionObject);
         }
@@ -380,23 +421,10 @@ ZpServerConnection_ReceiveResponse(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
     _In_ PCZP_RESPONSE_VIEW Response)
 {
-    PZP_SERVER_REQUEST_OBJECT Request = NULL;
-    PLIST_ENTRY Entry;
+    PZP_SERVER_REQUEST_OBJECT Request;
 
     RtlAcquireSRWLockExclusive(&Connection->Lock);
-    for (Entry = Connection->Requests.Flink;
-         Entry != &Connection->Requests;
-         Entry = Entry->Flink)
-    {
-        Request = CONTAINING_RECORD(Entry,
-                                    ZP_SERVER_REQUEST_OBJECT,
-                                    ListEntry);
-        if (Request->RequestId == Response->RequestId)
-        {
-            break;
-        }
-        Request = NULL;
-    }
+    Request = ZpServerConnection_FindRequestLocked(Connection, Response->RequestId);
     if (Request == NULL)
     {
         NTSTATUS Status = Response->RequestId != 0 &&
@@ -407,8 +435,7 @@ ZpServerConnection_ReceiveResponse(
         return Status;
     }
     InterlockedExchange(&Request->Pending, FALSE);
-    RemoveEntryList(&Request->ListEntry);
-    Connection->RequestCount--;
+    ZpServerConnection_RemoveRequestLocked(Connection, Request);
     ZpServerConnection_RecordRequest(Connection, Request, TRUE);
     ZpServerConnection_ArmRequestTimer(Connection);
     RtlReleaseSRWLockExclusive(&Connection->Lock);
@@ -477,8 +504,7 @@ ZpServerConnection_Close(
                                     ZP_SERVER_REQUEST_OBJECT,
                                     ListEntry);
         InterlockedExchange(&Request->Pending, FALSE);
-        RemoveEntryList(&Request->ListEntry);
-        Connection->RequestCount--;
+        ZpServerConnection_RemoveRequestLocked(Connection, Request);
         RtlReleaseSRWLockExclusive(&Connection->Lock);
         ZpServerConnection_InvokeRequest(Request, CompletionStatus, NULL);
     }

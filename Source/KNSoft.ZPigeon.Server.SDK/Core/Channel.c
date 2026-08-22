@@ -4,6 +4,7 @@ struct _ZP_SERVER_CHANNEL_OBJECT
 {
     ZP_CHANNEL_HEADER Header;
     LIST_ENTRY ListEntry;
+    LIST_ENTRY BucketEntry;
     PZP_CONNECTION_OBJECT Owner;
     volatile LONG Pending;
     ULONG ChannelId;
@@ -47,21 +48,31 @@ ZpServerConnection_FindChannel(
     _In_ ULONG ChannelId)
 {
     PZP_SERVER_CHANNEL_OBJECT Channel;
+    PLIST_ENTRY Bucket = &Connection->ChannelBuckets[ChannelId & (ZP_CONNECTION_LOOKUP_BUCKET_COUNT - 1)];
     PLIST_ENTRY Entry;
 
-    for (Entry = Connection->Channels.Flink;
-         Entry != &Connection->Channels;
-         Entry = Entry->Flink)
+    for (Entry = Bucket->Flink; Entry != Bucket; Entry = Entry->Flink)
     {
         Channel = CONTAINING_RECORD(Entry,
                                     ZP_SERVER_CHANNEL_OBJECT,
-                                    ListEntry);
+                                    BucketEntry);
         if (Channel->ChannelId == ChannelId)
         {
             return Channel;
         }
     }
     return NULL;
+}
+
+static
+VOID
+ZpServerConnection_RemoveChannelLocked(
+    _Inout_ PZP_CONNECTION_OBJECT Connection,
+    _Inout_ PZP_SERVER_CHANNEL_OBJECT Channel)
+{
+    RemoveEntryList(&Channel->ListEntry);
+    RemoveEntryList(&Channel->BucketEntry);
+    Connection->ChannelCount--;
 }
 
 static
@@ -160,8 +171,7 @@ ZpServerChannel_Complete(
         RtlReleaseSRWLockExclusive(&Connection->Lock);
         return;
     }
-    RemoveEntryList(&Channel->ListEntry);
-    Connection->ChannelCount--;
+    ZpServerConnection_RemoveChannelLocked(Connection, Channel);
     RtlReleaseSRWLockExclusive(&Connection->Lock);
     ZpServerChannel_InvokeClose(Channel, Status);
 }
@@ -250,6 +260,9 @@ ZpServerChannel_Create(
         return STATUS_QUOTA_EXCEEDED;
     }
     InsertTailList(&Connection->Channels, &ChannelObject->ListEntry);
+    InsertTailList(&Connection->ChannelBuckets[
+                       ChannelId & (ZP_CONNECTION_LOOKUP_BUCKET_COUNT - 1)],
+                   &ChannelObject->BucketEntry);
     Connection->ChannelCount++;
     ZpConnection_AddRef((ZP_CONNECTION_HANDLE)Connection);
     RtlReleaseSRWLockExclusive(&Connection->Lock);
@@ -388,8 +401,7 @@ ZpServerChannel_Cancel(
         RtlReleaseSRWLockExclusive(&Connection->Lock);
         return STATUS_INVALID_DEVICE_STATE;
     }
-    RemoveEntryList(&ChannelObject->ListEntry);
-    Connection->ChannelCount--;
+    ZpServerConnection_RemoveChannelLocked(Connection, ChannelObject);
     RtlReleaseSRWLockExclusive(&Connection->Lock);
     ZpServerChannel_SendClose(ChannelObject,
                              ZpStatus_FromNtStatus(STATUS_CANCELLED));
@@ -406,10 +418,11 @@ ZpServerChannel_Send(
     _In_reads_bytes_(DataLength) const VOID* Data,
     _In_ ULONG DataLength)
 {
+    BYTE StackBody[256];
     PZP_SERVER_CHANNEL_OBJECT ChannelObject =
         (PZP_SERVER_CHANNEL_OBJECT)Channel;
     PZP_CONNECTION_OBJECT Connection = ChannelObject->Owner;
-    PBYTE Body;
+    PBYTE Body = StackBody;
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -423,10 +436,11 @@ ZpServerChannel_Send(
                                          NULL,
                                          0,
                                          &BodyLength);
-    Body = NT_SUCCESS(Status) ? Mem_Alloc(BodyLength) : NULL;
-    if (!NT_SUCCESS(Status) || Body == NULL)
+    if (!NT_SUCCESS(Status)) return Status;
+    if (BodyLength > sizeof(StackBody)) Body = Mem_Alloc(BodyLength);
+    if (Body == NULL)
     {
-        return NT_SUCCESS(Status) ? STATUS_NO_MEMORY : Status;
+        return STATUS_NO_MEMORY;
     }
     Status = ZpMessage_EncodeChannelData(ChannelObject->ChannelId,
                                          Data,
@@ -467,7 +481,7 @@ ZpServerChannel_Send(
         }
         RtlReleaseSRWLockExclusive(&Connection->Lock);
     }
-    Mem_Free(Body);
+    if (Body != StackBody) Mem_Free(Body);
     return Status;
 }
 
@@ -558,8 +572,7 @@ ZpServerConnection_ReceiveChannelClose(
         return STATUS_PROTOCOL_UNREACHABLE;
     }
     InterlockedExchange(&Channel->Pending, FALSE);
-    RemoveEntryList(&Channel->ListEntry);
-    Connection->ChannelCount--;
+    ZpServerConnection_RemoveChannelLocked(Connection, Channel);
     RtlReleaseSRWLockExclusive(&Connection->Lock);
     ZpServerChannel_InvokeClose(Channel, Message->Status);
     return STATUS_SUCCESS;
@@ -621,8 +634,7 @@ ZpServerConnection_CloseChannels(
                                     ZP_SERVER_CHANNEL_OBJECT,
                                     ListEntry);
         InterlockedExchange(&Channel->Pending, FALSE);
-        RemoveEntryList(&Channel->ListEntry);
-        Connection->ChannelCount--;
+        ZpServerConnection_RemoveChannelLocked(Connection, Channel);
         RtlReleaseSRWLockExclusive(&Connection->Lock);
         ZpServerChannel_InvokeClose(Channel, Status);
     }

@@ -37,6 +37,7 @@ VOID
 struct _ZP_CLIENT_LOCAL_CHANNEL
 {
     LIST_ENTRY ListEntry;
+    LIST_ENTRY BucketEntry;
     PZP_CLIENT_OBJECT Owner;
     volatile LONG ReferenceCount;
     volatile LONG Pending;

@@ -9,6 +9,7 @@ ZpServerConnection_Initialize(
     _In_ ZP_CONNECTION_DESTROY_ROUTINE Destroy)
 {
     NTSTATUS Status;
+    ULONG Index;
 
     RtlInitializeSRWLock(&Connection->Lock);
     Status = RtlInitializeCriticalSectionEx(&Connection->RequestSendLock,
@@ -19,7 +20,13 @@ ZpServerConnection_Initialize(
         return Status;
     }
     InitializeListHead(&Connection->Requests);
+    InitializeListHead(&Connection->TimedRequests);
     InitializeListHead(&Connection->Channels);
+    for (Index = 0; Index < ZP_CONNECTION_LOOKUP_BUCKET_COUNT; Index++)
+    {
+        InitializeListHead(&Connection->RequestBuckets[Index]);
+        InitializeListHead(&Connection->ChannelBuckets[Index]);
+    }
     Connection->NextRequestId = 1;
     Connection->HighestChannelId = 0;
     Connection->RequestTimer = NULL;

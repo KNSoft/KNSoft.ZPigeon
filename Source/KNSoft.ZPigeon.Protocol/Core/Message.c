@@ -38,7 +38,7 @@ ZpMessage_ValidateModuleRecords(
     {
         return STATUS_DATA_ERROR;
     }
-    ExpectedLength = HeaderLength + Count * sizeof(ZP_MODULE_RECORD) +
+    ExpectedLength = HeaderLength + Count * ZP_MODULE_RECORD_WIRE_SIZE +
                      (HasClientPublicKey ? ZP_CLIENT_PUBLIC_KEY_SIZE : 0);
     if (BodyLength != ExpectedLength)
     {
@@ -53,7 +53,7 @@ ZpMessage_ValidateModuleRecords(
             return STATUS_DATA_ERROR;
         }
         PreviousModuleId = ModuleId;
-        Offset += sizeof(ZP_MODULE_RECORD);
+        Offset += ZP_MODULE_RECORD_WIRE_SIZE;
     }
     if (HasClientPublicKey && Body[Offset] != 0x04)
     {
@@ -238,7 +238,7 @@ ZpMessage_GetModuleRecord(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    Buffer = Modules->Buffer + (ULONG)Index * sizeof(ZP_MODULE_RECORD);
+    Buffer = Modules->Buffer + (ULONG)Index * ZP_MODULE_RECORD_WIRE_SIZE;
     Record->ModuleId = Buffer[0];
     Record->ModuleVersion = Buffer[1];
     return STATUS_SUCCESS;
@@ -270,7 +270,7 @@ ZpMessage_EncodeClientHello(
         return STATUS_INVALID_PARAMETER;
     }
 
-    RequiredSize = 2 + (ULONG)Message->ModuleCount * sizeof(ZP_MODULE_RECORD) +
+    RequiredSize = 2 + (ULONG)Message->ModuleCount * ZP_MODULE_RECORD_WIRE_SIZE +
                    ZP_CLIENT_PUBLIC_KEY_SIZE;
     Status = ZpMessage_PrepareOutput(Buffer, BufferSize, RequiredSize, BytesWritten);
     if (!NT_SUCCESS(Status) || Buffer == NULL)
@@ -315,7 +315,7 @@ ZpMessage_DecodeClientHello(
         View->Modules.Buffer = Buffer + 2;
         View->Modules.Count = Buffer[1];
         View->ClientPublicKey = View->Modules.Buffer +
-                                (ULONG)View->Modules.Count * sizeof(ZP_MODULE_RECORD);
+                                (ULONG)View->Modules.Count * ZP_MODULE_RECORD_WIRE_SIZE;
     }
     return Status;
 }
@@ -384,7 +384,7 @@ ZpMessage_EncodeReady(
         return Status;
     }
     RequiredSize = sizeof(BYTE) +
-                   (ULONG)Message->ModuleCount * sizeof(ZP_MODULE_RECORD);
+                   (ULONG)Message->ModuleCount * ZP_MODULE_RECORD_WIRE_SIZE;
     Status = ZpMessage_PrepareOutput(Buffer, BufferSize, RequiredSize, BytesWritten);
     if (!NT_SUCCESS(Status) || Buffer == NULL)
     {

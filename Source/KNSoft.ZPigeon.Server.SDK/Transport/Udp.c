@@ -11,11 +11,35 @@ typedef struct _ZP_SERVER_UDP_CONNECTION
 {
     ZP_CONNECTION_OBJECT Public;
     LIST_ENTRY ListEntry;
+    LIST_ENTRY BucketEntry;
     PZP_SERVER_UDP_TRANSPORT Transport;
     ZP_SERVER_SESSION Session;
     ZP_UDP_CONNECTION Udp;
     volatile LONG Closing;
 } ZP_SERVER_UDP_CONNECTION, *PZP_SERVER_UDP_CONNECTION;
+
+static
+ULONG
+ZpServerUdp_GetConnectionBucket(
+    _In_ ULONGLONG ConnectionId)
+{
+    return ((ULONG)ConnectionId ^ (ULONG)(ConnectionId >> 32)) &
+           (ZP_SERVER_UDP_CONNECTION_BUCKET_COUNT - 1);
+}
+
+static
+VOID
+ZpServerUdp_InitializeConnectionLists(
+    _Out_ PZP_SERVER_UDP_TRANSPORT Transport)
+{
+    ULONG Index;
+
+    InitializeListHead(&Transport->Connections);
+    for (Index = 0; Index < ZP_SERVER_UDP_CONNECTION_BUCKET_COUNT; Index++)
+    {
+        InitializeListHead(&Transport->ConnectionBuckets[Index]);
+    }
+}
 
 static
 VOID
@@ -81,6 +105,7 @@ ZpServerUdp_DestroyConnection(
     ZpUdpConnection_Uninitialize(&UdpConnection->Udp);
     RtlAcquireSRWLockExclusive(&Transport->Owner->Lock);
     RemoveEntryList(&UdpConnection->ListEntry);
+    RemoveEntryList(&UdpConnection->BucketEntry);
     Transport->ActiveConnectionCount--;
     RtlReleaseSRWLockExclusive(&Transport->Owner->Lock);
     Mem_Free(UdpConnection);
@@ -148,18 +173,19 @@ ZpServerUdp_FindConnection(
     _In_ const SOCKADDR_STORAGE* Address,
     _In_ INT AddressLength)
 {
-    PLIST_ENTRY Entry;
+    PLIST_ENTRY Bucket, Entry;
     PZP_SERVER_UDP_CONNECTION Connection = NULL;
 
+    Bucket = &Transport->ConnectionBuckets[ZpServerUdp_GetConnectionBucket(ConnectionId)];
     RtlAcquireSRWLockShared(&Transport->Owner->Lock);
-    for (Entry = Transport->Connections.Flink;
-         Entry != &Transport->Connections;
+    for (Entry = Bucket->Flink;
+         Entry != Bucket;
          Entry = Entry->Flink)
     {
         PZP_SERVER_UDP_CONNECTION Candidate = CONTAINING_RECORD(
             Entry,
             ZP_SERVER_UDP_CONNECTION,
-            ListEntry);
+            BucketEntry);
 
         if (Candidate->Udp.ConnectionId == ConnectionId &&
             ZpUdp_IsSameAddress(&Candidate->Udp.RemoteAddress,
@@ -245,6 +271,8 @@ ZpServerUdp_CreateConnection(
     }
     RtlAcquireSRWLockExclusive(&Transport->Owner->Lock);
     InsertTailList(&Transport->Connections, &Connection->ListEntry);
+    InsertTailList(&Transport->ConnectionBuckets[ZpServerUdp_GetConnectionBucket(ConnectionId)],
+                   &Connection->BucketEntry);
     Transport->ActiveConnectionCount++;
     RtlReleaseSRWLockExclusive(&Transport->Owner->Lock);
     ZpConnection_AddRef((ZP_CONNECTION_HANDLE)&Connection->Public);
@@ -426,7 +454,10 @@ ZpServerUdp_Worker(
         {
             break;
         }
-        ZpServerUdp_TickConnections(Transport);
+        if (Wait == WAIT_TIMEOUT)
+        {
+            ZpServerUdp_TickConnections(Transport);
+        }
     }
     RtlAcquireSRWLockExclusive(&Transport->Owner->Lock);
     Transport->ReceiveStopped = TRUE;
@@ -500,7 +531,7 @@ ZpServerUdp_Start(
     UNREFERENCED_PARAMETER(EndpointIndex);
     ZpServerUdp_Uninitialize(Transport);
     ResetEvent(Transport->StopEvent);
-    InitializeListHead(&Transport->Connections);
+    ZpServerUdp_InitializeConnectionLists(Transport);
     Error = WSAStartup(MAKEWORD(2, 2), &WsaData);
     if (Error != 0)
     {
@@ -626,7 +657,7 @@ ZpServerUdp_Configure(
 
     Object->UdpTransport.Owner = Object;
     Object->UdpTransport.SocketEvent = WSA_INVALID_EVENT;
-    InitializeListHead(&Object->UdpTransport.Connections);
+    ZpServerUdp_InitializeConnectionLists(&Object->UdpTransport);
     for (Index = 0; Index < ZP_LISTENER_MAX_COUNT; Index++)
     {
         Object->UdpTransport.Listeners[Index] = INVALID_SOCKET;

@@ -28,6 +28,7 @@ typedef USHORT ZP_STATUS_TYPE, *PZP_STATUS_TYPE;
 #define ZpStatusSqlite ((ZP_STATUS_TYPE)9)
 
 #define ZP_STATUS_WIRE_SIZE (sizeof(USHORT) + sizeof(ULONG))
+#define ZP_MODULE_RECORD_WIRE_SIZE (2 * sizeof(BYTE))
 
 typedef struct _ZP_STATUS
 {

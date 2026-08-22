@@ -22,6 +22,7 @@
 typedef struct _ZP_CLIENT_INBOUND_REQUEST
 {
     LIST_ENTRY ListEntry;
+    LIST_ENTRY BucketEntry;
     PZP_CLIENT_OBJECT Owner;
     volatile LONG ReferenceCount;
     volatile LONG Pending;
@@ -33,6 +34,36 @@ typedef struct _ZP_CLIENT_INBOUND_REQUEST
     ULONG PayloadLength;
     BYTE Payload[ANYSIZE_ARRAY];
 } ZP_CLIENT_INBOUND_REQUEST, *PZP_CLIENT_INBOUND_REQUEST;
+
+static
+PZP_CLIENT_INBOUND_REQUEST
+ZpClientInbound_FindRequestLocked(
+    _In_ PZP_CLIENT_OBJECT Object,
+    _In_ ULONG RequestId)
+{
+    PLIST_ENTRY Bucket = &Object->InboundRequestBuckets[RequestId & (ZP_CLIENT_LOOKUP_BUCKET_COUNT - 1)];
+    PLIST_ENTRY Entry;
+    PZP_CLIENT_INBOUND_REQUEST Request;
+
+    for (Entry = Bucket->Flink; Entry != Bucket; Entry = Entry->Flink)
+    {
+        Request = CONTAINING_RECORD(Entry, ZP_CLIENT_INBOUND_REQUEST, BucketEntry);
+        if (Request->RequestId == RequestId) return Request;
+    }
+    return NULL;
+}
+
+static
+VOID
+ZpClientInbound_RemoveRequestLocked(
+    _Inout_ PZP_CLIENT_OBJECT Object,
+    _Inout_ PZP_CLIENT_INBOUND_REQUEST Request)
+{
+    RemoveEntryList(&Request->ListEntry);
+    RemoveEntryList(&Request->BucketEntry);
+    Object->InboundRequestCount--;
+    Object->InboundRequestPayloadBytes -= Request->PayloadLength;
+}
 
 static
 VOID
@@ -63,7 +94,7 @@ ZpClientInbound_SendResponse(
     _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength)
 {
-    BYTE StackBody[64];
+    BYTE StackBody[256];
     ZP_RESPONSE Response = {
         RequestId,
         ResponseStatus,
@@ -372,9 +403,7 @@ ZpClientInbound_RequestCallback(
     Respond = InterlockedExchange(&Request->Pending, FALSE);
     if (Respond)
     {
-        RemoveEntryList(&Request->ListEntry);
-        Object->InboundRequestCount--;
-        Object->InboundRequestPayloadBytes -= Request->PayloadLength;
+        ZpClientInbound_RemoveRequestLocked(Object, Request);
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);
     if (Respond)
@@ -500,6 +529,9 @@ ZpClient_QueueRequest(
                   Request->Payload.Buffer,
                   Request->Payload.Length);
     InsertTailList(&Object->InboundRequests, &RequestObject->ListEntry);
+    InsertTailList(&Object->InboundRequestBuckets[
+                       RequestObject->RequestId & (ZP_CLIENT_LOOKUP_BUCKET_COUNT - 1)],
+                   &RequestObject->BucketEntry);
     Object->InboundRequestCount++;
     Object->InboundRequestPayloadBytes += Request->Payload.Length;
     Object->CallbackCount++;
@@ -512,9 +544,7 @@ ZpClient_QueueRequest(
         ULONG Error = GetLastError();
         RtlAcquireSRWLockExclusive(&Object->Lock);
         InterlockedExchange(&RequestObject->Pending, FALSE);
-        RemoveEntryList(&RequestObject->ListEntry);
-        Object->InboundRequestCount--;
-        Object->InboundRequestPayloadBytes -= RequestObject->PayloadLength;
+        ZpClientInbound_RemoveRequestLocked(Object, RequestObject);
         Object->CallbackCount--;
         RtlReleaseSRWLockExclusive(&Object->Lock);
         Mem_Free(RequestObject);
@@ -534,27 +564,14 @@ ZpClient_CancelInboundRequest(
     _In_ ULONG RequestId)
 {
     PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
-    PZP_CLIENT_INBOUND_REQUEST Request = NULL;
-    PLIST_ENTRY Entry;
+    PZP_CLIENT_INBOUND_REQUEST Request;
 
     if (RequestId == 0)
     {
         return STATUS_PROTOCOL_UNREACHABLE;
     }
     RtlAcquireSRWLockExclusive(&Object->Lock);
-    for (Entry = Object->InboundRequests.Flink;
-         Entry != &Object->InboundRequests;
-         Entry = Entry->Flink)
-    {
-        Request = CONTAINING_RECORD(Entry,
-                                    ZP_CLIENT_INBOUND_REQUEST,
-                                    ListEntry);
-        if (Request->RequestId == RequestId)
-        {
-            break;
-        }
-        Request = NULL;
-    }
+    Request = ZpClientInbound_FindRequestLocked(Object, RequestId);
     if (Request == NULL)
     {
         NTSTATUS Status = RequestId <= Object->HighestInboundRequestId ?
@@ -564,9 +581,7 @@ ZpClient_CancelInboundRequest(
         return Status;
     }
     InterlockedExchange(&Request->Pending, FALSE);
-    RemoveEntryList(&Request->ListEntry);
-    Object->InboundRequestCount--;
-    Object->InboundRequestPayloadBytes -= Request->PayloadLength;
+    ZpClientInbound_RemoveRequestLocked(Object, Request);
     RtlReleaseSRWLockExclusive(&Object->Lock);
     ZpClientInbound_ReleaseRequest(Request);
     return STATUS_SUCCESS;
@@ -586,9 +601,7 @@ ZpClient_CloseInboundRequests(
                                     ZP_CLIENT_INBOUND_REQUEST,
                                     ListEntry);
         InterlockedExchange(&Request->Pending, FALSE);
-        RemoveEntryList(&Request->ListEntry);
-        Object->InboundRequestCount--;
-        Object->InboundRequestPayloadBytes -= Request->PayloadLength;
+        ZpClientInbound_RemoveRequestLocked(Object, Request);
         ZpClientInbound_ReleaseRequest(Request);
     }
     RtlReleaseSRWLockExclusive(&Object->Lock);

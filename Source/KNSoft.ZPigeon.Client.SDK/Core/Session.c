@@ -281,7 +281,7 @@ ZpClientSession_Start(
         Session->Owner->Config.ModuleCount,
         Session->PublicKey
     };
-    BYTE Body[4 + ZP_MODULE_MAX_COUNT * sizeof(ZP_MODULE_RECORD) +
+    BYTE Body[2 * sizeof(BYTE) + ZP_MODULE_MAX_COUNT * ZP_MODULE_RECORD_WIRE_SIZE +
               ZP_CLIENT_PUBLIC_KEY_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;

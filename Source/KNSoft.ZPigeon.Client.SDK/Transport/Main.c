@@ -111,6 +111,11 @@ ZpClient_Create(
     RtlInitializeSRWLock(&Object->RecordingLock);
     InitializeListHead(&Object->InboundRequests);
     InitializeListHead(&Object->LocalChannels);
+    for (Index = 0; Index < ZP_CLIENT_LOOKUP_BUCKET_COUNT; Index++)
+    {
+        InitializeListHead(&Object->InboundRequestBuckets[Index]);
+        InitializeListHead(&Object->LocalChannelBuckets[Index]);
+    }
     InitializeListHead(&Object->ExecutionJobs);
     InitializeListHead(&Object->RecordingJobs);
     InitializeListHead(&Object->FileEnumerations);

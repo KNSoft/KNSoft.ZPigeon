@@ -114,7 +114,7 @@ ZpTls_AppendInput(
     _In_ ULONG DataLength)
 {
     PBYTE Buffer;
-    ULONG Size;
+    ULONG RequiredSize, Size;
 
     if (DataLength == 0)
     {
@@ -127,12 +127,20 @@ ZpTls_AppendInput(
                                         STATUS_INVALID_PARAMETER :
                                         STATUS_BUFFER_OVERFLOW);
     }
-    if (Context->InputLength + DataLength > Context->InputSize)
+    RequiredSize = Context->InputLength + DataLength;
+    if (RequiredSize > Context->InputSize)
     {
         Size = max(4096, Context->InputSize);
-        while (Size < Context->InputLength + DataLength)
+        while (Size < RequiredSize)
         {
             Size = min(Size * 2, ZP_TLS_MAX_BUFFER_SIZE);
+        }
+        if (Context->InputOffset != 0)
+        {
+            RtlMoveMemory(Context->Input,
+                          Context->Input + Context->InputOffset,
+                          Context->InputLength);
+            Context->InputOffset = 0;
         }
         Buffer = Mem_ReAlloc(Context->Input, Size);
         if (Buffer == NULL)
@@ -142,7 +150,14 @@ ZpTls_AppendInput(
         Context->Input = Buffer;
         Context->InputSize = Size;
     }
-    RtlCopyMemory(Context->Input + Context->InputLength, Data, DataLength);
+    else if (Context->InputOffset > Context->InputSize - RequiredSize)
+    {
+        RtlMoveMemory(Context->Input,
+                      Context->Input + Context->InputOffset,
+                      Context->InputLength);
+        Context->InputOffset = 0;
+    }
+    RtlCopyMemory(Context->Input + Context->InputOffset + Context->InputLength, Data, DataLength);
     Context->InputLength += DataLength;
     return ZpStatus_FromNtStatus(STATUS_SUCCESS);
 }
@@ -155,13 +170,12 @@ ZpTls_ConsumeInput(
 {
     if (Extra != NULL && Extra->BufferType == SECBUFFER_EXTRA)
     {
-        RtlMoveMemory(Context->Input,
-                      Context->Input + Context->InputLength - Extra->cbBuffer,
-                      Extra->cbBuffer);
+        Context->InputOffset += Context->InputLength - Extra->cbBuffer;
         Context->InputLength = Extra->cbBuffer;
     }
     else
     {
+        Context->InputOffset = 0;
         Context->InputLength = 0;
     }
 }
@@ -197,7 +211,7 @@ ZpTls_Handshake(
         goto Succeeded;
     }
     InputBuffers[0].BufferType = SECBUFFER_TOKEN;
-    InputBuffers[0].pvBuffer = Context->Input;
+    InputBuffers[0].pvBuffer = Context->Input + Context->InputOffset;
     InputBuffers[0].cbBuffer = Context->InputLength;
     InputBuffers[1].BufferType = SECBUFFER_EMPTY;
     OutputBuffer.BufferType = SECBUFFER_TOKEN;
@@ -301,41 +315,53 @@ Cleanup:
 }
 
 ZP_STATUS
-ZpTls_Encrypt(
+ZpTls_EncryptFrame(
     _Inout_ PZP_TLS_CONTEXT Context,
-    _In_reads_bytes_(DataLength) const VOID* Data,
-    _In_ ULONG DataLength,
+    _In_ ZP_MESSAGE_TYPE MessageType,
+    _In_reads_bytes_opt_(BodyLength) const VOID* Body,
+    _In_ ULONG BodyLength,
     _Outptr_result_bytebuffer_(*EncryptedLength) PBYTE* Encrypted,
     _Out_ PULONG EncryptedLength)
 {
-    const BYTE* Input = Data;
+    BYTE Header[sizeof(ULONG) + sizeof(BYTE)];
     PBYTE Buffer, Cursor;
-    ULONG Chunk, RecordCount, Size = 0;
+    ULONG Chunk, FrameOffset = 0, FrameSize, HeaderChunk, RecordCount, Size = 0;
+    NTSTATUS NtStatus;
     SECURITY_STATUS SecurityStatus;
     SecBuffer Buffers[4];
     SecBufferDesc Descriptor = { SECBUFFER_VERSION, RTL_NUMBER_OF(Buffers), Buffers };
 
-    if (!Context->HandshakeComplete || Data == NULL || DataLength == 0)
+    if (!Context->HandshakeComplete)
     {
         return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
-    RecordCount = (DataLength + Context->StreamSizes.cbMaximumMessage - 1) /
+    NtStatus = ZpFrame_Encode(MessageType, Body, BodyLength, NULL, 0, &FrameSize);
+    if (!NT_SUCCESS(NtStatus))
+    {
+        return ZpStatus_FromNtStatus(NtStatus);
+    }
+    Header[0] = (BYTE)(sizeof(BYTE) + BodyLength);
+    Header[1] = (BYTE)((sizeof(BYTE) + BodyLength) >> 8);
+    Header[2] = (BYTE)((sizeof(BYTE) + BodyLength) >> 16);
+    Header[3] = (BYTE)((sizeof(BYTE) + BodyLength) >> 24);
+    Header[sizeof(ULONG)] = (BYTE)MessageType;
+    RecordCount = (FrameSize + Context->StreamSizes.cbMaximumMessage - 1) /
                   Context->StreamSizes.cbMaximumMessage;
-    if (DataLength > MAXULONG - RecordCount *
+    if (FrameSize > MAXULONG - RecordCount *
                          (Context->StreamSizes.cbHeader + Context->StreamSizes.cbTrailer))
     {
         return ZpStatus_FromNtStatus(STATUS_INTEGER_OVERFLOW);
     }
-    Buffer = Mem_Alloc(DataLength + RecordCount *
+    Buffer = Mem_Alloc(FrameSize + RecordCount *
                            (Context->StreamSizes.cbHeader + Context->StreamSizes.cbTrailer));
     if (Buffer == NULL)
     {
         return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
     }
     Cursor = Buffer;
-    while (DataLength != 0)
+    while (FrameOffset < FrameSize)
     {
-        Chunk = min(DataLength, Context->StreamSizes.cbMaximumMessage);
+        Chunk = min(FrameSize - FrameOffset, Context->StreamSizes.cbMaximumMessage);
         RtlZeroMemory(Buffers, sizeof(Buffers));
         Buffers[0].BufferType = SECBUFFER_STREAM_HEADER;
         Buffers[0].pvBuffer = Cursor;
@@ -343,7 +369,17 @@ ZpTls_Encrypt(
         Buffers[1].BufferType = SECBUFFER_DATA;
         Buffers[1].pvBuffer = Cursor + Context->StreamSizes.cbHeader;
         Buffers[1].cbBuffer = Chunk;
-        RtlCopyMemory(Buffers[1].pvBuffer, Input, Chunk);
+        HeaderChunk = FrameOffset < sizeof(Header) ? min(Chunk, sizeof(Header) - FrameOffset) : 0;
+        if (HeaderChunk != 0)
+        {
+            RtlCopyMemory(Buffers[1].pvBuffer, Header + FrameOffset, HeaderChunk);
+        }
+        if (Chunk != HeaderChunk)
+        {
+            RtlCopyMemory(Add2Ptr(Buffers[1].pvBuffer, HeaderChunk),
+                          Add2Ptr(Body, FrameOffset + HeaderChunk - sizeof(Header)),
+                          Chunk - HeaderChunk);
+        }
         Buffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
         Buffers[2].pvBuffer = Add2Ptr(Buffers[1].pvBuffer, Chunk);
         Buffers[2].cbBuffer = Context->StreamSizes.cbTrailer;
@@ -357,8 +393,7 @@ ZpTls_Encrypt(
         Chunk = Buffers[0].cbBuffer + Buffers[1].cbBuffer + Buffers[2].cbBuffer;
         Cursor += Chunk;
         Size += Chunk;
-        Input += Buffers[1].cbBuffer;
-        DataLength -= Buffers[1].cbBuffer;
+        FrameOffset += Buffers[1].cbBuffer;
     }
     *Encrypted = Buffer;
     *EncryptedLength = Size;
@@ -393,7 +428,7 @@ ZpTls_Decrypt(
     {
         RtlZeroMemory(Buffers, sizeof(Buffers));
         Buffers[0].BufferType = SECBUFFER_DATA;
-        Buffers[0].pvBuffer = Context->Input;
+        Buffers[0].pvBuffer = Context->Input + Context->InputOffset;
         Buffers[0].cbBuffer = Context->InputLength;
         Buffers[1].BufferType = SECBUFFER_EMPTY;
         Buffers[2].BufferType = SECBUFFER_EMPTY;

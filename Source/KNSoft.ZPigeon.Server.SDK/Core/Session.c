@@ -65,7 +65,7 @@ ZpServerSession_MessageCallback(
     ZP_CHANNEL_DATA_VIEW ChannelData;
     ZP_CHANNEL_CLOSE ChannelClose;
     ZP_READY Ready;
-    BYTE Body[sizeof(USHORT) + ZP_MODULE_MAX_COUNT * sizeof(ZP_MODULE_RECORD)];
+    BYTE Body[sizeof(BYTE) + ZP_MODULE_MAX_COUNT * ZP_MODULE_RECORD_WIRE_SIZE];
     ULONG BodyLength, ChannelId, CreditBytes;
     ULONGLONG Token;
     NTSTATUS Status;
