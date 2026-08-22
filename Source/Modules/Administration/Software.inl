@@ -5,7 +5,6 @@ typedef UINT ZP_DISM_SESSION;
 #define ZP_DISM_ONLINE_IMAGE L"DISM_{53BFAE52-B167-4E2F-A258-0A37B57FF845}"
 #define ZpDismPackageNone 0
 
-#pragma pack(push, 1)
 typedef struct _ZP_DISM_FEATURE
 {
     PCWSTR FeatureName;
@@ -22,7 +21,11 @@ typedef struct _ZP_DISM_FEATURE_INFO
     PVOID CustomProperty;
     UINT CustomPropertyCount;
 } ZP_DISM_FEATURE_INFO, *PZP_DISM_FEATURE_INFO;
-#pragma pack(pop)
+
+C_ASSERT(sizeof(ZP_DISM_FEATURE) == 16);
+C_ASSERT(FIELD_OFFSET(ZP_DISM_FEATURE_INFO, DisplayName) == 16);
+C_ASSERT(FIELD_OFFSET(ZP_DISM_FEATURE_INFO, CustomProperty) == 40);
+C_ASSERT(sizeof(ZP_DISM_FEATURE_INFO) == 56);
 
 typedef HRESULT (WINAPI *ZP_DISM_INITIALIZE)(ULONG, PCWSTR, PCWSTR);
 typedef HRESULT (WINAPI *ZP_DISM_SHUTDOWN)(VOID);
