@@ -1,5 +1,7 @@
 ﻿#include "../../KNSoft.ZPigeon.Protocol/Include/KNSoft/ZPigeon/Administration.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
 LOGICAL
 ZpAdministration_IsKindValid(
@@ -26,22 +28,19 @@ ZpAdministration_IsStringValid(
 }
 
 static
-NTSTATUS
+VOID
 ZpAdministration_WriteRecord(
-    _Inout_ PZP_CODEC_WRITER Writer,
+    _Inout_ PBYTE* Cursor,
     _In_ PCZP_ADMINISTRATION_RECORD Record)
 {
-    NTSTATUS Status;
-
-    Status = ZpCodec_WriteUInt16(Writer, Record->Kind);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->State);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->Flags);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Record->Value);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(Writer, Record->Identity, Record->IdentityLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(Writer, Record->Name, Record->NameLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(Writer, Record->Description, Record->DescriptionLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(Writer, Record->Detail, Record->DetailLength);
-    return Status;
+    ZpWire_WriteUInt16(Cursor, Record->Kind);
+    ZpWire_WriteUInt32(Cursor, Record->State);
+    ZpWire_WriteUInt32(Cursor, Record->Flags);
+    ZpWire_WriteUInt64(Cursor, Record->Value);
+    ZpWire_WriteString(Cursor, Record->Identity, Record->IdentityLength);
+    ZpWire_WriteString(Cursor, Record->Name, Record->NameLength);
+    ZpWire_WriteString(Cursor, Record->Description, Record->DescriptionLength);
+    ZpWire_WriteString(Cursor, Record->Detail, Record->DetailLength);
 }
 
 static
@@ -74,17 +73,15 @@ ZpAdministration_EncodeList(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
-    NTSTATUS Status;
+    PBYTE Cursor;
+    ULONGLONG RequiredSize = sizeof(ULONG);
     ULONG Index;
 
     if (RecordCount > ZP_CODEC_MAX_ELEMENT_COUNT || (RecordCount != 0 && Records == NULL))
     {
         return STATUS_INVALID_PARAMETER;
     }
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, RecordCount);
-    for (Index = 0; NT_SUCCESS(Status) && Index < RecordCount; Index++)
+    for (Index = 0; Index < RecordCount; Index++)
     {
         if (!ZpAdministration_IsKindValid(Records[Index].Kind) ||
             !ZpAdministration_IsStringValid(Records[Index].Identity, Records[Index].IdentityLength) ||
@@ -94,10 +91,21 @@ ZpAdministration_EncodeList(
         {
             return STATUS_INVALID_PARAMETER;
         }
-        Status = ZpAdministration_WriteRecord(&Writer, &Records[Index]);
+        RequiredSize += sizeof(USHORT) + 6 * sizeof(ULONG) + sizeof(ULONGLONG) +
+                        ((ULONGLONG)Records[Index].IdentityLength + Records[Index].NameLength +
+                         Records[Index].DescriptionLength + Records[Index].DetailLength) * sizeof(WCHAR);
+        if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12) return STATUS_BUFFER_OVERFLOW;
     }
-    *BytesWritten = Writer.Offset;
-    return Status;
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, RecordCount);
+    for (Index = 0; Index < RecordCount; Index++)
+    {
+        ZpAdministration_WriteRecord(&Cursor, &Records[Index]);
+    }
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS

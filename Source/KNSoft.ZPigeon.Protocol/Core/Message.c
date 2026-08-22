@@ -254,7 +254,7 @@ ZpMessage_EncodeClientHello(
     NTSTATUS Status;
     ULONG RequiredSize;
     USHORT Index;
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
 
     if (Message->CoreVersion != ZP_CORE_VERSION)
     {
@@ -278,25 +278,16 @@ ZpMessage_EncodeClientHello(
         return Status;
     }
 
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteByte(&Writer, Message->CoreVersion);
-    if (NT_SUCCESS(Status))
+    Cursor = Buffer;
+    ZpWire_WriteByte(&Cursor, Message->CoreVersion);
+    ZpWire_WriteByte(&Cursor, (BYTE)Message->ModuleCount);
+    for (Index = 0; Index < Message->ModuleCount; Index++)
     {
-        Status = ZpCodec_WriteByte(&Writer, (BYTE)Message->ModuleCount);
+        ZpWire_WriteByte(&Cursor, Message->Modules[Index].ModuleId);
+        ZpWire_WriteByte(&Cursor, Message->Modules[Index].ModuleVersion);
     }
-    for (Index = 0; NT_SUCCESS(Status) && Index < Message->ModuleCount; Index++)
-    {
-        Status = ZpCodec_WriteByte(&Writer, Message->Modules[Index].ModuleId);
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteByte(&Writer, Message->Modules[Index].ModuleVersion);
-        }
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteData(&Writer, Message->ClientPublicKey, ZP_CLIENT_PUBLIC_KEY_SIZE);
-    }
-    return Status;
+    ZpWire_WriteData(&Cursor, Message->ClientPublicKey, ZP_CLIENT_PUBLIC_KEY_SIZE);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -376,7 +367,7 @@ ZpMessage_EncodeReady(
     NTSTATUS Status;
     ULONG RequiredSize;
     USHORT Index;
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
 
     Status = ZpMessage_ValidateModules(Message->Modules, Message->ModuleCount);
     if (!NT_SUCCESS(Status))
@@ -391,17 +382,14 @@ ZpMessage_EncodeReady(
         return Status;
     }
 
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteByte(&Writer, (BYTE)Message->ModuleCount);
-    for (Index = 0; NT_SUCCESS(Status) && Index < Message->ModuleCount; Index++)
+    Cursor = Buffer;
+    ZpWire_WriteByte(&Cursor, (BYTE)Message->ModuleCount);
+    for (Index = 0; Index < Message->ModuleCount; Index++)
     {
-        Status = ZpCodec_WriteByte(&Writer, Message->Modules[Index].ModuleId);
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteByte(&Writer, Message->Modules[Index].ModuleVersion);
-        }
+        ZpWire_WriteByte(&Cursor, Message->Modules[Index].ModuleId);
+        ZpWire_WriteByte(&Cursor, Message->Modules[Index].ModuleVersion);
     }
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -429,7 +417,7 @@ ZpMessage_EncodeRequest(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     NTSTATUS Status;
     ULONG RequiredSize;
 
@@ -448,25 +436,13 @@ ZpMessage_EncodeRequest(
         return Status;
     }
 
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt32(&Writer, Message->RequestId);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteByte(&Writer, Message->ModuleId);
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteByte(&Writer, Message->OperationId);
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteUInt32(&Writer, Message->TimeoutMilliseconds);
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteData(&Writer, Message->Payload, Message->PayloadLength);
-    }
-    return Status;
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, Message->RequestId);
+    ZpWire_WriteByte(&Cursor, Message->ModuleId);
+    ZpWire_WriteByte(&Cursor, Message->OperationId);
+    ZpWire_WriteUInt32(&Cursor, Message->TimeoutMilliseconds);
+    ZpWire_WriteData(&Cursor, Message->Payload, Message->PayloadLength);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -498,7 +474,7 @@ ZpMessage_EncodeResponse(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     NTSTATUS Status;
     ULONG RequiredSize;
 
@@ -518,21 +494,12 @@ ZpMessage_EncodeResponse(
         return Status;
     }
 
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt32(&Writer, Message->RequestId);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteUInt16(&Writer, Message->Status.Type);
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteUInt32(&Writer, Message->Status.Code);
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteData(&Writer, Message->Payload, Message->PayloadLength);
-    }
-    return Status;
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, Message->RequestId);
+    ZpWire_WriteUInt16(&Cursor, Message->Status.Type);
+    ZpWire_WriteUInt32(&Cursor, Message->Status.Code);
+    ZpWire_WriteData(&Cursor, Message->Payload, Message->PayloadLength);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -566,7 +533,7 @@ ZpMessage_EncodeCancel(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     NTSTATUS Status;
 
     if (RequestId == 0)
@@ -578,8 +545,9 @@ ZpMessage_EncodeCancel(
     {
         return Status;
     }
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    return ZpCodec_WriteUInt32(&Writer, RequestId);
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, RequestId);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -607,7 +575,7 @@ ZpMessage_EncodeChannelData(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     NTSTATUS Status;
     ULONG RequiredSize;
 
@@ -627,13 +595,10 @@ ZpMessage_EncodeChannelData(
     {
         return Status;
     }
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt32(&Writer, ChannelId);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteData(&Writer, Data, DataLength);
-    }
-    return Status;
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, ChannelId);
+    ZpWire_WriteData(&Cursor, Data, DataLength);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -665,7 +630,7 @@ ZpMessage_EncodeChannelClose(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     NTSTATUS Status;
 
     if (ChannelId == 0 || !ZpStatus_IsValid(StatusCode))
@@ -680,17 +645,11 @@ ZpMessage_EncodeChannelClose(
     {
         return Status;
     }
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt32(&Writer, ChannelId);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteUInt16(&Writer, StatusCode.Type);
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteUInt32(&Writer, StatusCode.Code);
-    }
-    return Status;
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, ChannelId);
+    ZpWire_WriteUInt16(&Cursor, StatusCode.Type);
+    ZpWire_WriteUInt32(&Cursor, StatusCode.Code);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -723,7 +682,7 @@ ZpMessage_EncodeChannelWindow(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     NTSTATUS Status;
 
     if (ChannelId == 0 ||
@@ -740,13 +699,10 @@ ZpMessage_EncodeChannelWindow(
     {
         return Status;
     }
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt32(&Writer, ChannelId);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteUInt32(&Writer, CreditBytes);
-    }
-    return Status;
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, ChannelId);
+    ZpWire_WriteUInt32(&Cursor, CreditBytes);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -777,7 +733,7 @@ ZpMessage_EncodePing(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     NTSTATUS Status;
 
     Status = ZpMessage_PrepareOutput(Buffer, BufferSize, sizeof(Token), BytesWritten);
@@ -785,8 +741,9 @@ ZpMessage_EncodePing(
     {
         return Status;
     }
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    return ZpCodec_WriteUInt64(&Writer, Token);
+    Cursor = Buffer;
+    ZpWire_WriteUInt64(&Cursor, Token);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS

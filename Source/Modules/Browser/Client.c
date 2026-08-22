@@ -865,9 +865,7 @@ ZpBrowser_ReadDocument(
                                     &Information,
                                     sizeof(Information),
                                     FileStandardInformation);
-    if (NT_SUCCESS(Status) &&
-        (Information.EndOfFile.QuadPart < 0 ||
-         Information.EndOfFile.QuadPart > ZP_BROWSER_DOCUMENT_MAX_SIZE))
+    if (NT_SUCCESS(Status) && Information.EndOfFile.QuadPart > ZP_BROWSER_DOCUMENT_MAX_SIZE)
     {
         Status = STATUS_FILE_TOO_LARGE;
     }

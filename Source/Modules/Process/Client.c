@@ -464,7 +464,6 @@ ZpProcess_ValidateMemoryRange(
     _In_ ULONG Length)
 {
     MEMORY_BASIC_INFORMATION Information;
-    SIZE_T ResultLength;
     ULONG_PTR Start = (ULONG_PTR)Address;
     ULONG_PTR Base, End;
     NTSTATUS Status;
@@ -475,7 +474,7 @@ ZpProcess_ValidateMemoryRange(
                                   MemoryBasicInformation,
                                   &Information,
                                   sizeof(Information),
-                                  &ResultLength);
+                                  NULL);
     if (!NT_SUCCESS(Status)) return Status;
     Base = (ULONG_PTR)Information.BaseAddress;
     End = Base + Information.RegionSize;
@@ -493,7 +492,6 @@ ZpProcess_ReadMemory(
     _Outptr_result_bytebuffer_(*PayloadLength) PBYTE* Payload,
     _Out_ PULONG PayloadLength)
 {
-    SIZE_T BytesRead;
     PBYTE Data;
     HANDLE Process;
     NTSTATUS Status;
@@ -506,8 +504,7 @@ ZpProcess_ReadMemory(
     if (NT_SUCCESS(Status) && Data == NULL) Status = STATUS_NO_MEMORY;
     if (NT_SUCCESS(Status))
     {
-        Status = NtReadVirtualMemory(Process, (PVOID)(ULONG_PTR)Address, Data, Length, &BytesRead);
-        if (NT_SUCCESS(Status) && BytesRead != Length) Status = STATUS_PARTIAL_COPY;
+        Status = NtReadVirtualMemory(Process, (PVOID)(ULONG_PTR)Address, Data, Length, NULL);
     }
     NtClose(Process);
     if (!NT_SUCCESS(Status))
@@ -532,7 +529,6 @@ NTSTATUS
 ZpProcess_WriteMemory(
     _In_ PCZP_PROCESS_MEMORY_VIEW Memory)
 {
-    SIZE_T BytesWritten;
     HANDLE Process;
     NTSTATUS Status;
 
@@ -548,8 +544,7 @@ ZpProcess_WriteMemory(
                                       (PVOID)(ULONG_PTR)Memory->Address,
                                       (PVOID)Memory->Data.Buffer,
                                       Memory->Data.Length,
-                                      &BytesWritten);
-        if (NT_SUCCESS(Status) && BytesWritten != Memory->Data.Length) Status = STATUS_PARTIAL_COPY;
+                                      NULL);
     }
     NtClose(Process);
     return Status;
@@ -676,7 +671,6 @@ ZpProcess_QueryMemoryMap(
     MEMORY_REGION_INFORMATION RegionInformation;
     HANDLE Process;
     PVOID Address = NULL;
-    SIZE_T ReturnLength;
     ULONG Count = 0, Capacity = 0, Index, EncodedLength;
     NTSTATUS Status;
 
@@ -695,19 +689,13 @@ ZpProcess_QueryMemoryMap(
                                       MemoryBasicInformation,
                                       &Information,
                                       sizeof(Information),
-                                      &ReturnLength);
+                                      NULL);
         if (Status == STATUS_INVALID_PARAMETER && Count != 0)
         {
             Status = STATUS_SUCCESS;
             break;
         }
         if (!NT_SUCCESS(Status)) break;
-        if (Information.RegionSize == 0 ||
-            (ULONG_PTR)Information.BaseAddress + Information.RegionSize <= (ULONG_PTR)Address)
-        {
-            Status = STATUS_DATA_ERROR;
-            break;
-        }
         if (Count == ZP_CODEC_MAX_ELEMENT_COUNT)
         {
             Status = STATUS_QUOTA_EXCEEDED;
@@ -746,7 +734,7 @@ ZpProcess_QueryMemoryMap(
                                                                MemoryRegionInformation,
                                                                &RegionInformation,
                                                                sizeof(RegionInformation),
-                                                               &ReturnLength);
+                                                               NULL);
         if (NT_SUCCESS(Regions[Count].RegionStatus))
         {
             Regions[Count].RegionType = RegionInformation.RegionType;

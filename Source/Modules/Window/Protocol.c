@@ -1,29 +1,22 @@
 ﻿#include "../../KNSoft.ZPigeon.Protocol/Include/KNSoft/ZPigeon/Window.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
-NTSTATUS
+VOID
 ZpWindow_WriteRecord(
-    _Inout_ PZP_CODEC_WRITER Writer,
+    _Inout_ PBYTE* Cursor,
     _In_ PCZP_WINDOW_RECORD Record)
 {
-    NTSTATUS Status;
-
-    Status = ZpCodec_WriteUInt64(Writer, Record->Handle);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Record->ParentHandle);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->ProcessId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->ThreadId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->Style);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->ExStyle);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->Flags);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteString(Writer, Record->Caption, Record->CaptionLength);
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteString(Writer, Record->ClassName, Record->ClassNameLength);
-    }
-    return Status;
+    ZpWire_WriteUInt64(Cursor, Record->Handle);
+    ZpWire_WriteUInt64(Cursor, Record->ParentHandle);
+    ZpWire_WriteUInt32(Cursor, Record->ProcessId);
+    ZpWire_WriteUInt32(Cursor, Record->ThreadId);
+    ZpWire_WriteUInt32(Cursor, Record->Style);
+    ZpWire_WriteUInt32(Cursor, Record->ExStyle);
+    ZpWire_WriteUInt32(Cursor, Record->Flags);
+    ZpWire_WriteString(Cursor, Record->Caption, Record->CaptionLength);
+    ZpWire_WriteString(Cursor, Record->ClassName, Record->ClassNameLength);
 }
 
 static
@@ -64,9 +57,8 @@ ZpWindow_EncodeList(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     ULONGLONG RequiredSize = sizeof(ULONG);
-    NTSTATUS Status;
     ULONG Index;
 
     if (WindowCount > ZP_CODEC_MAX_ELEMENT_COUNT ||
@@ -94,13 +86,13 @@ ZpWindow_EncodeList(
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, WindowCount);
-    for (Index = 0; NT_SUCCESS(Status) && Index < WindowCount; Index++)
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, WindowCount);
+    for (Index = 0; Index < WindowCount; Index++)
     {
-        Status = ZpWindow_WriteRecord(&Writer, &Windows[Index]);
+        ZpWindow_WriteRecord(&Cursor, &Windows[Index]);
     }
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -515,9 +507,8 @@ ZpWindow_EncodeInfo(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     ULONGLONG RequiredSize;
-    NTSTATUS Status;
 
     if (Info->Record.CaptionLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
         Info->Record.ClassNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
@@ -535,36 +526,33 @@ ZpWindow_EncodeInfo(
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpWindow_WriteRecord(&Writer, &Info->Record);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->OwnerHandle);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->WindowLeft);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->WindowTop);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->WindowRight);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->WindowBottom);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->ClientLeft);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->ClientTop);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->ClientRight);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->ClientBottom);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Info->WindowStatus);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Info->BorderWidth);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Info->BorderHeight);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, Info->ClassAtom);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, Info->CreatorVersion);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->PreviousHandle);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->NextHandle);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->FirstChildHandle);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->FirstSiblingHandle);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->LastSiblingHandle);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->MonitorLeft);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->MonitorTop);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->MonitorRight);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Info->MonitorBottom);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteString(&Writer, Info->MonitorDevice, Info->MonitorDeviceLength);
-    }
-    return Status;
+    Cursor = Buffer;
+    ZpWindow_WriteRecord(&Cursor, &Info->Record);
+    ZpWire_WriteUInt64(&Cursor, Info->OwnerHandle);
+    ZpWire_WriteUInt32(&Cursor, (ULONG)Info->WindowLeft);
+    ZpWire_WriteUInt32(&Cursor, (ULONG)Info->WindowTop);
+    ZpWire_WriteUInt32(&Cursor, (ULONG)Info->WindowRight);
+    ZpWire_WriteUInt32(&Cursor, (ULONG)Info->WindowBottom);
+    ZpWire_WriteUInt32(&Cursor, (ULONG)Info->ClientLeft);
+    ZpWire_WriteUInt32(&Cursor, (ULONG)Info->ClientTop);
+    ZpWire_WriteUInt32(&Cursor, (ULONG)Info->ClientRight);
+    ZpWire_WriteUInt32(&Cursor, (ULONG)Info->ClientBottom);
+    ZpWire_WriteUInt32(&Cursor, Info->WindowStatus);
+    ZpWire_WriteUInt32(&Cursor, Info->BorderWidth);
+    ZpWire_WriteUInt32(&Cursor, Info->BorderHeight);
+    ZpWire_WriteUInt16(&Cursor, Info->ClassAtom);
+    ZpWire_WriteUInt16(&Cursor, Info->CreatorVersion);
+    ZpWire_WriteUInt64(&Cursor, Info->PreviousHandle);
+    ZpWire_WriteUInt64(&Cursor, Info->NextHandle);
+    ZpWire_WriteUInt64(&Cursor, Info->FirstChildHandle);
+    ZpWire_WriteUInt64(&Cursor, Info->FirstSiblingHandle);
+    ZpWire_WriteUInt64(&Cursor, Info->LastSiblingHandle);
+    ZpWire_WriteUInt32(&Cursor, (ULONG)Info->MonitorLeft);
+    ZpWire_WriteUInt32(&Cursor, (ULONG)Info->MonitorTop);
+    ZpWire_WriteUInt32(&Cursor, (ULONG)Info->MonitorRight);
+    ZpWire_WriteUInt32(&Cursor, (ULONG)Info->MonitorBottom);
+    ZpWire_WriteString(&Cursor, Info->MonitorDevice, Info->MonitorDeviceLength);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS

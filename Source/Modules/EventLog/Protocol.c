@@ -1,5 +1,7 @@
 ﻿#include "Include/KNSoft/ZPigeon/EventLog.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
 LOGICAL
 ZpEventLog_IsStartModeValid(
@@ -239,9 +241,8 @@ ZpEventLog_EncodePage(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     ULONGLONG RequiredSize;
-    NTSTATUS Status;
     ULONG Index;
 
     if ((HasMore != FALSE && HasMore != TRUE) ||
@@ -301,31 +302,16 @@ ZpEventLog_EncodePage(
     {
         return STATUS_BUFFER_TOO_SMALL;
     }
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteBoolean(&Writer, HasMore);
-    if (NT_SUCCESS(Status))
+    Cursor = Buffer;
+    ZpWire_WriteByte(&Cursor, HasMore);
+    ZpWire_WriteString(&Cursor, NextBookmark, NextBookmarkLength);
+    ZpWire_WriteUInt32(&Cursor, RecordCount);
+    for (Index = 0; Index < RecordCount; Index++)
     {
-        Status = ZpCodec_WriteString(&Writer,
-                                     NextBookmark,
-                                     NextBookmarkLength);
+        ZpWire_WriteString(&Cursor, Records[Index].Bookmark, Records[Index].BookmarkLength);
+        ZpWire_WriteString(&Cursor, Records[Index].Xml, Records[Index].XmlLength);
     }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteArrayCount(&Writer, RecordCount);
-    }
-    for (Index = 0; NT_SUCCESS(Status) && Index < RecordCount; Index++)
-    {
-        Status = ZpCodec_WriteString(&Writer,
-                                     Records[Index].Bookmark,
-                                     Records[Index].BookmarkLength);
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteString(&Writer,
-                                         Records[Index].Xml,
-                                         Records[Index].XmlLength);
-        }
-    }
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -535,9 +521,8 @@ ZpEventLog_EncodeChannels(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     ULONGLONG RequiredSize = sizeof(ULONG);
-    NTSTATUS Status;
     ULONG Index;
 
     if (ChannelCount > ZP_EVENT_LOG_CHANNEL_MAX_COUNT || (ChannelCount != 0 && Channels == NULL))
@@ -557,13 +542,13 @@ ZpEventLog_EncodeChannels(
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, ChannelCount);
-    for (Index = 0; NT_SUCCESS(Status) && Index < ChannelCount; Index++)
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, ChannelCount);
+    for (Index = 0; Index < ChannelCount; Index++)
     {
-        Status = ZpCodec_WriteString(&Writer, (PCWCH)Channels[Index].Buffer, Channels[Index].Length);
+        ZpWire_WriteString(&Cursor, (PCWCH)Channels[Index].Buffer, Channels[Index].Length);
     }
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS

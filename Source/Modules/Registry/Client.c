@@ -541,15 +541,6 @@ ZpRegistry_EnumerateValues(
         {
             break;
         }
-        // Overflow is expected when only a bounded preview fits in the buffer.
-        if (ValueInfo->NameLength > InfoSize - UFIELD_OFFSET(KEY_VALUE_FULL_INFORMATION, Name) ||
-            ValueInfo->NameLength % sizeof(WCHAR) != 0 ||
-            (ValueInfo->DataLength != 0 &&
-             ValueInfo->DataOffset < UFIELD_OFFSET(KEY_VALUE_FULL_INFORMATION, Name) + ValueInfo->NameLength))
-        {
-            Status = STATUS_INFO_LENGTH_MISMATCH;
-            break;
-        }
         Status = STATUS_SUCCESS;
         Name = ValueInfo->NameLength != 0 ? Mem_Alloc(ValueInfo->NameLength) : NULL;
         if (ValueInfo->NameLength != 0 && Name == NULL)

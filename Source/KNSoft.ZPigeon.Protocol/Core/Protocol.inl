@@ -61,6 +61,82 @@ ZpWriteUInt64(
     ZpWriteUInt32(Buffer + sizeof(ULONG), (ULONG)(Value >> 32));
 }
 
+FORCEINLINE
+VOID
+ZpWire_WriteByte(
+    _Inout_ PBYTE* Cursor,
+    _In_ BYTE Value)
+{
+    **Cursor = Value;
+    *Cursor += sizeof(Value);
+}
+
+FORCEINLINE
+VOID
+ZpWire_WriteUInt16(
+    _Inout_ PBYTE* Cursor,
+    _In_ USHORT Value)
+{
+    ZpWriteUInt16(*Cursor, Value);
+    *Cursor += sizeof(Value);
+}
+
+FORCEINLINE
+VOID
+ZpWire_WriteUInt32(
+    _Inout_ PBYTE* Cursor,
+    _In_ ULONG Value)
+{
+    ZpWriteUInt32(*Cursor, Value);
+    *Cursor += sizeof(Value);
+}
+
+FORCEINLINE
+VOID
+ZpWire_WriteUInt64(
+    _Inout_ PBYTE* Cursor,
+    _In_ ULONGLONG Value)
+{
+    ZpWriteUInt64(*Cursor, Value);
+    *Cursor += sizeof(Value);
+}
+
+FORCEINLINE
+VOID
+ZpWire_WriteData(
+    _Inout_ PBYTE* Cursor,
+    _In_reads_bytes_opt_(Length) const VOID* Data,
+    _In_ ULONG Length)
+{
+    if (Length != 0)
+    {
+        RtlCopyMemory(*Cursor, Data, Length);
+        *Cursor += Length;
+    }
+}
+
+FORCEINLINE
+VOID
+ZpWire_WriteByteString(
+    _Inout_ PBYTE* Cursor,
+    _In_reads_bytes_opt_(Length) const VOID* Data,
+    _In_ ULONG Length)
+{
+    ZpWire_WriteUInt32(Cursor, Length);
+    ZpWire_WriteData(Cursor, Data, Length);
+}
+
+FORCEINLINE
+VOID
+ZpWire_WriteString(
+    _Inout_ PBYTE* Cursor,
+    _In_reads_opt_(Length) PCWCH String,
+    _In_ ULONG Length)
+{
+    ZpWire_WriteUInt32(Cursor, Length);
+    ZpWire_WriteData(Cursor, String, Length * sizeof(WCHAR));
+}
+
 NTSTATUS
 ZpMessage_ValidateBody(
     _In_ ZP_MESSAGE_TYPE MessageType,

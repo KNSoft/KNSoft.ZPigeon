@@ -1,5 +1,7 @@
 ﻿#include "Include/KNSoft/ZPigeon/Service.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
 NTSTATUS
 ZpService_ReadRecord(
@@ -57,9 +59,8 @@ ZpService_EncodeList(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     ULONGLONG RequiredSize = sizeof(ULONG);
-    NTSTATUS Status;
     ULONG Index;
 
     if (ServiceCount > ZP_CODEC_MAX_ELEMENT_COUNT ||
@@ -105,53 +106,29 @@ ZpService_EncodeList(
         return STATUS_BUFFER_TOO_SMALL;
     }
 
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, ServiceCount);
-    for (Index = 0; NT_SUCCESS(Status) && Index < ServiceCount; Index++)
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, ServiceCount);
+    for (Index = 0; Index < ServiceCount; Index++)
     {
-        Status = ZpCodec_WriteUInt32(&Writer, Services[Index].ServiceType);
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteUInt32(&Writer, Services[Index].CurrentState);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteUInt32(&Writer, Services[Index].ControlsAccepted);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteUInt32(&Writer, Services[Index].ProcessId);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteUInt32(&Writer, Services[Index].StartType);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteString(&Writer,
-                                         Services[Index].ServiceName,
-                                         Services[Index].ServiceNameLength);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteString(&Writer,
-                                         Services[Index].DisplayName,
-                                         Services[Index].DisplayNameLength);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteString(&Writer,
-                                         Services[Index].Description,
-                                         Services[Index].DescriptionLength);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteString(&Writer,
-                                         Services[Index].StartName,
-                                         Services[Index].StartNameLength);
-        }
+        ZpWire_WriteUInt32(&Cursor, Services[Index].ServiceType);
+        ZpWire_WriteUInt32(&Cursor, Services[Index].CurrentState);
+        ZpWire_WriteUInt32(&Cursor, Services[Index].ControlsAccepted);
+        ZpWire_WriteUInt32(&Cursor, Services[Index].ProcessId);
+        ZpWire_WriteUInt32(&Cursor, Services[Index].StartType);
+        ZpWire_WriteString(&Cursor,
+                           Services[Index].ServiceName,
+                           Services[Index].ServiceNameLength);
+        ZpWire_WriteString(&Cursor,
+                           Services[Index].DisplayName,
+                           Services[Index].DisplayNameLength);
+        ZpWire_WriteString(&Cursor,
+                           Services[Index].Description,
+                           Services[Index].DescriptionLength);
+        ZpWire_WriteString(&Cursor,
+                           Services[Index].StartName,
+                           Services[Index].StartNameLength);
     }
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS

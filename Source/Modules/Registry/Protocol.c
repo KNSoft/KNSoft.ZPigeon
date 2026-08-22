@@ -1,5 +1,7 @@
 ﻿#include "Include/KNSoft/ZPigeon/Registry.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
 LOGICAL
 ZpRegistry_IsScopeValid(
@@ -258,7 +260,7 @@ ZpRegistry_EncodeKeyPage(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     ULONGLONG RequiredSize;
     ULONG Index;
     NTSTATUS Status;
@@ -284,6 +286,7 @@ ZpRegistry_EncodeKeyPage(
     for (Index = 0; Index < RecordCount; Index++)
     {
         if (Records[Index].NameLength == 0 ||
+            Records[Index].HasChildren > TRUE ||
             !ZpRegistry_IsStringValid(Records[Index].Name,
                                       Records[Index].NameLength))
         {
@@ -305,33 +308,17 @@ ZpRegistry_EncodeKeyPage(
     {
         return STATUS_BUFFER_TOO_SMALL;
     }
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteBoolean(&Writer, HasMore);
-    if (NT_SUCCESS(Status))
+    Cursor = Buffer;
+    ZpWire_WriteByte(&Cursor, HasMore);
+    ZpWire_WriteString(&Cursor, NextCursor, NextCursorLength);
+    ZpWire_WriteUInt32(&Cursor, RecordCount);
+    for (Index = 0; Index < RecordCount; Index++)
     {
-        Status = ZpCodec_WriteString(&Writer, NextCursor, NextCursorLength);
+        ZpWire_WriteString(&Cursor, Records[Index].Name, Records[Index].NameLength);
+        ZpWire_WriteUInt64(&Cursor, Records[Index].LastWriteTime);
+        ZpWire_WriteByte(&Cursor, Records[Index].HasChildren);
     }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteArrayCount(&Writer, RecordCount);
-    }
-    for (Index = 0; NT_SUCCESS(Status) && Index < RecordCount; Index++)
-    {
-        Status = ZpCodec_WriteString(&Writer,
-                                     Records[Index].Name,
-                                     Records[Index].NameLength);
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteUInt64(&Writer,
-                                         Records[Index].LastWriteTime);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteBoolean(&Writer,
-                                          Records[Index].HasChildren);
-        }
-    }
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -411,7 +398,7 @@ ZpRegistry_EncodeValuePage(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     ULONGLONG RequiredSize;
     ULONG Index;
     NTSTATUS Status;
@@ -463,38 +450,18 @@ ZpRegistry_EncodeValuePage(
     {
         return STATUS_BUFFER_TOO_SMALL;
     }
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteBoolean(&Writer, HasMore);
-    if (NT_SUCCESS(Status))
+    Cursor = Buffer;
+    ZpWire_WriteByte(&Cursor, HasMore);
+    ZpWire_WriteString(&Cursor, NextCursor, NextCursorLength);
+    ZpWire_WriteUInt32(&Cursor, RecordCount);
+    for (Index = 0; Index < RecordCount; Index++)
     {
-        Status = ZpCodec_WriteString(&Writer, NextCursor, NextCursorLength);
+        ZpWire_WriteString(&Cursor, Records[Index].Name, Records[Index].NameLength);
+        ZpWire_WriteUInt32(&Cursor, Records[Index].Type);
+        ZpWire_WriteUInt32(&Cursor, Records[Index].DataLength);
+        ZpWire_WriteByteString(&Cursor, Records[Index].Preview, Records[Index].PreviewLength);
     }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteArrayCount(&Writer, RecordCount);
-    }
-    for (Index = 0; NT_SUCCESS(Status) && Index < RecordCount; Index++)
-    {
-        Status = ZpCodec_WriteString(&Writer,
-                                     Records[Index].Name,
-                                     Records[Index].NameLength);
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteUInt32(&Writer, Records[Index].Type);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteUInt32(&Writer,
-                                         Records[Index].DataLength);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteByteString(&Writer,
-                                             Records[Index].Preview,
-                                             Records[Index].PreviewLength);
-        }
-    }
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS

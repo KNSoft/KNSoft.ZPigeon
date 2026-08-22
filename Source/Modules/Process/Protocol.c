@@ -1,5 +1,7 @@
 ﻿#include "Include/KNSoft/ZPigeon/Process.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
 NTSTATUS
 ZpProcess_ReadRecord(
@@ -31,31 +33,28 @@ ZpProcess_ReadRecord(
 }
 
 static
-NTSTATUS
+VOID
 ZpProcess_WriteRecord(
-    _Inout_ PZP_CODEC_WRITER Writer,
+    _Inout_ PBYTE* Cursor,
     _In_ PCZP_PROCESS_RECORD Record)
 {
-    NTSTATUS Status;
-
-    Status = ZpCodec_WriteUInt32(Writer, Record->ProcessId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->ParentProcessId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->SessionId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->ThreadCount);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->HandleCount);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->Flags);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(Writer, Record->MachineType);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(Writer, Record->PriorityClass);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Record->CreateTime);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Record->UserTime);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Record->KernelTime);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Record->WorkingSetBytes);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Record->PrivateBytes);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(Writer, Record->ImageName, Record->ImageNameLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(Writer, Record->UserName, Record->UserNameLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(Writer, Record->ImagePath, Record->ImagePathLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(Writer, Record->ServiceNames, Record->ServiceNamesLength);
-    return Status;
+    ZpWire_WriteUInt32(Cursor, Record->ProcessId);
+    ZpWire_WriteUInt32(Cursor, Record->ParentProcessId);
+    ZpWire_WriteUInt32(Cursor, Record->SessionId);
+    ZpWire_WriteUInt32(Cursor, Record->ThreadCount);
+    ZpWire_WriteUInt32(Cursor, Record->HandleCount);
+    ZpWire_WriteUInt32(Cursor, Record->Flags);
+    ZpWire_WriteUInt16(Cursor, Record->MachineType);
+    ZpWire_WriteUInt16(Cursor, Record->PriorityClass);
+    ZpWire_WriteUInt64(Cursor, Record->CreateTime);
+    ZpWire_WriteUInt64(Cursor, Record->UserTime);
+    ZpWire_WriteUInt64(Cursor, Record->KernelTime);
+    ZpWire_WriteUInt64(Cursor, Record->WorkingSetBytes);
+    ZpWire_WriteUInt64(Cursor, Record->PrivateBytes);
+    ZpWire_WriteString(Cursor, Record->ImageName, Record->ImageNameLength);
+    ZpWire_WriteString(Cursor, Record->UserName, Record->UserNameLength);
+    ZpWire_WriteString(Cursor, Record->ImagePath, Record->ImagePathLength);
+    ZpWire_WriteString(Cursor, Record->ServiceNames, Record->ServiceNamesLength);
 }
 
 NTSTATUS
@@ -66,9 +65,8 @@ ZpProcess_EncodeList(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     ULONGLONG RequiredSize = sizeof(ULONG);
-    NTSTATUS Status;
     ULONG Index;
 
     if (ProcessCount > ZP_CODEC_MAX_ELEMENT_COUNT || (ProcessCount != 0 && Processes == NULL))
@@ -97,13 +95,13 @@ ZpProcess_EncodeList(
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, ProcessCount);
-    for (Index = 0; NT_SUCCESS(Status) && Index < ProcessCount; Index++)
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, ProcessCount);
+    for (Index = 0; Index < ProcessCount; Index++)
     {
-        Status = ZpProcess_WriteRecord(&Writer, &Processes[Index]);
+        ZpProcess_WriteRecord(&Cursor, &Processes[Index]);
     }
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -550,37 +548,31 @@ ZpProcess_DecodeMemoryData(
 }
 
 static
-NTSTATUS
+VOID
 ZpProcess_WriteMemoryRegion(
-    _Inout_ PZP_CODEC_WRITER Writer,
+    _Inout_ PBYTE* Cursor,
     _In_ PCZP_PROCESS_MEMORY_REGION Region)
 {
-    NTSTATUS Status;
-
-    Status = ZpCodec_WriteUInt64(Writer, Region->BaseAddress);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->AllocationBase);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->RegionSize);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->CommitSize);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->WorkingSetBytes);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->PrivateWorkingSetBytes);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->SharedWorkingSetBytes);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->ShareableWorkingSetBytes);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->LockedWorkingSetBytes);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Region->SharedOriginalBytes);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Region->State);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Region->Type);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Region->Protect);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Region->AllocationProtect);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Region->RegionType);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Region->Priority);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Region->RegionStatus);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Region->WorkingSetStatus);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, (ULONG)Region->MappedPathStatus);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_WriteString(Writer, Region->MappedPath, Region->MappedPathLength);
-    }
-    return Status;
+    ZpWire_WriteUInt64(Cursor, Region->BaseAddress);
+    ZpWire_WriteUInt64(Cursor, Region->AllocationBase);
+    ZpWire_WriteUInt64(Cursor, Region->RegionSize);
+    ZpWire_WriteUInt64(Cursor, Region->CommitSize);
+    ZpWire_WriteUInt64(Cursor, Region->WorkingSetBytes);
+    ZpWire_WriteUInt64(Cursor, Region->PrivateWorkingSetBytes);
+    ZpWire_WriteUInt64(Cursor, Region->SharedWorkingSetBytes);
+    ZpWire_WriteUInt64(Cursor, Region->ShareableWorkingSetBytes);
+    ZpWire_WriteUInt64(Cursor, Region->LockedWorkingSetBytes);
+    ZpWire_WriteUInt64(Cursor, Region->SharedOriginalBytes);
+    ZpWire_WriteUInt32(Cursor, Region->State);
+    ZpWire_WriteUInt32(Cursor, Region->Type);
+    ZpWire_WriteUInt32(Cursor, Region->Protect);
+    ZpWire_WriteUInt32(Cursor, Region->AllocationProtect);
+    ZpWire_WriteUInt32(Cursor, Region->RegionType);
+    ZpWire_WriteUInt32(Cursor, Region->Priority);
+    ZpWire_WriteUInt32(Cursor, (ULONG)Region->RegionStatus);
+    ZpWire_WriteUInt32(Cursor, (ULONG)Region->WorkingSetStatus);
+    ZpWire_WriteUInt32(Cursor, (ULONG)Region->MappedPathStatus);
+    ZpWire_WriteString(Cursor, Region->MappedPath, Region->MappedPathLength);
 }
 
 static
@@ -624,27 +616,35 @@ ZpProcess_EncodeMemoryMap(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
-    NTSTATUS Status;
+    PBYTE Cursor;
+    ULONGLONG RequiredSize = sizeof(ULONG);
     ULONG Index;
 
     if (RegionCount > ZP_CODEC_MAX_ELEMENT_COUNT || (RegionCount != 0 && Regions == NULL))
     {
         return STATUS_INVALID_PARAMETER;
     }
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, RegionCount);
-    for (Index = 0; NT_SUCCESS(Status) && Index < RegionCount; Index++)
+    for (Index = 0; Index < RegionCount; Index++)
     {
         if (Regions[Index].MappedPathLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
             (Regions[Index].MappedPathLength != 0 && Regions[Index].MappedPath == NULL))
         {
             return STATUS_INVALID_PARAMETER;
         }
-        Status = ZpProcess_WriteMemoryRegion(&Writer, &Regions[Index]);
+        RequiredSize += 10 * sizeof(ULONGLONG) + 10 * sizeof(ULONG) +
+                        (ULONGLONG)Regions[Index].MappedPathLength * sizeof(WCHAR);
+        if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12) return STATUS_BUFFER_OVERFLOW;
     }
-    *BytesWritten = Writer.Offset;
-    return Status;
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, RegionCount);
+    for (Index = 0; Index < RegionCount; Index++)
+    {
+        ZpProcess_WriteMemoryRegion(&Cursor, &Regions[Index]);
+    }
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS

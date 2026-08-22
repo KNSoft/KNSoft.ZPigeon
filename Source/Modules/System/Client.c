@@ -12,7 +12,6 @@ ZpSystem_ExecuteInfo(
     ZP_SYSTEM_INFO Info;
     WCHAR ComputerName[MAX_COMPUTERNAME_LENGTH + 1];
     DWORD ComputerNameLength = ARRAYSIZE(ComputerName);
-    ULONG ReturnLength;
     NTSTATUS Status;
 
     switch (Sys_GetMachineType())
@@ -35,7 +34,7 @@ ZpSystem_ExecuteInfo(
     Status = NtQuerySystemInformation(SystemBasicInformation,
                                       &BasicInfo,
                                       sizeof(BasicInfo),
-                                      &ReturnLength);
+                                      NULL);
     if (!NT_SUCCESS(Status))
     {
         return ZpStatus_FromNtStatus(Status);

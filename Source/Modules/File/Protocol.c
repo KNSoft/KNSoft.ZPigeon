@@ -1,5 +1,7 @@
 ﻿#include "Include/KNSoft/ZPigeon/File.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 NTSTATUS
 ZpFile_EncodePath(
     _In_reads_(PathLength) PCWCH Path,
@@ -878,9 +880,8 @@ ZpFile_EncodeList(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     ULONGLONG RequiredSize = sizeof(ULONG);
-    NTSTATUS Status;
     ULONG Index;
 
     if (FileCount > ZP_CODEC_MAX_ELEMENT_COUNT ||
@@ -892,6 +893,7 @@ ZpFile_EncodeList(
     {
         if (Files[Index].NameLength == 0 ||
             Files[Index].NameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+            Files[Index].Info.HasChildren > TRUE ||
             Files[Index].Name == NULL)
         {
             return STATUS_INVALID_PARAMETER;
@@ -914,40 +916,19 @@ ZpFile_EncodeList(
         return STATUS_BUFFER_TOO_SMALL;
     }
 
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, FileCount);
-    for (Index = 0; NT_SUCCESS(Status) && Index < FileCount; Index++)
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, FileCount);
+    for (Index = 0; Index < FileCount; Index++)
     {
-        Status = ZpCodec_WriteUInt32(&Writer, Files[Index].Info.Attributes);
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteUInt64(&Writer, Files[Index].Info.Size);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteUInt64(&Writer, Files[Index].Info.CreationTime);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteUInt64(&Writer, Files[Index].Info.LastAccessTime);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteUInt64(&Writer, Files[Index].Info.LastWriteTime);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteBoolean(&Writer,
-                                          Files[Index].Info.HasChildren);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteString(&Writer,
-                                         Files[Index].Name,
-                                         Files[Index].NameLength);
-        }
+        ZpWire_WriteUInt32(&Cursor, Files[Index].Info.Attributes);
+        ZpWire_WriteUInt64(&Cursor, Files[Index].Info.Size);
+        ZpWire_WriteUInt64(&Cursor, Files[Index].Info.CreationTime);
+        ZpWire_WriteUInt64(&Cursor, Files[Index].Info.LastAccessTime);
+        ZpWire_WriteUInt64(&Cursor, Files[Index].Info.LastWriteTime);
+        ZpWire_WriteByte(&Cursor, Files[Index].Info.HasChildren);
+        ZpWire_WriteString(&Cursor, Files[Index].Name, Files[Index].NameLength);
     }
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -1156,9 +1137,8 @@ ZpFile_EncodeOwnerList(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     ULONGLONG RequiredSize = sizeof(ULONG);
-    NTSTATUS Status;
     ULONG Index;
 
     if (OwnerCount > ZP_CODEC_MAX_ELEMENT_COUNT || (OwnerCount != 0 && Owners == NULL))
@@ -1186,31 +1166,19 @@ ZpFile_EncodeOwnerList(
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, OwnerCount);
-    for (Index = 0; NT_SUCCESS(Status) && Index < OwnerCount; Index++)
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, OwnerCount);
+    for (Index = 0; Index < OwnerCount; Index++)
     {
-        Status = ZpCodec_WriteUInt32(&Writer, Owners[Index].ProcessId);
-        if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Owners[Index].ImagePathStatus);
-        if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Owners[Index].CommandLineStatus);
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteString(&Writer, Owners[Index].ImageName, Owners[Index].ImageNameLength);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteString(&Writer, Owners[Index].ImagePath, Owners[Index].ImagePathLength);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteString(&Writer, Owners[Index].CommandLine, Owners[Index].CommandLineLength);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteString(&Writer, Owners[Index].ServiceNames, Owners[Index].ServiceNamesLength);
-        }
+        ZpWire_WriteUInt32(&Cursor, Owners[Index].ProcessId);
+        ZpWire_WriteUInt32(&Cursor, (ULONG)Owners[Index].ImagePathStatus);
+        ZpWire_WriteUInt32(&Cursor, (ULONG)Owners[Index].CommandLineStatus);
+        ZpWire_WriteString(&Cursor, Owners[Index].ImageName, Owners[Index].ImageNameLength);
+        ZpWire_WriteString(&Cursor, Owners[Index].ImagePath, Owners[Index].ImagePathLength);
+        ZpWire_WriteString(&Cursor, Owners[Index].CommandLine, Owners[Index].CommandLineLength);
+        ZpWire_WriteString(&Cursor, Owners[Index].ServiceNames, Owners[Index].ServiceNamesLength);
     }
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS

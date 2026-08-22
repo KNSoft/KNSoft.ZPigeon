@@ -1,17 +1,16 @@
 ﻿#include "../../KNSoft.ZPigeon.Protocol/Include/KNSoft/ZPigeon/Wmi.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
-NTSTATUS
+VOID
 ZpWmi_WriteCell(
-    _Inout_ PZP_CODEC_WRITER Writer,
+    _Inout_ PBYTE* Cursor,
     _In_ PCZP_WMI_CELL Cell)
 {
-    NTSTATUS Status;
-
-    Status = ZpCodec_WriteUInt32(Writer, Cell->Type);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(Writer, Cell->Name, Cell->NameLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(Writer, Cell->Value, Cell->ValueLength);
-    return Status;
+    ZpWire_WriteUInt32(Cursor, Cell->Type);
+    ZpWire_WriteString(Cursor, Cell->Name, Cell->NameLength);
+    ZpWire_WriteString(Cursor, Cell->Value, Cell->ValueLength);
 }
 
 static
@@ -81,22 +80,20 @@ ZpWmi_EncodePage(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
+    ULONGLONG RequiredSize = sizeof(ULONG);
     ULONG RowIndex, CellIndex;
-    NTSTATUS Status;
 
     if (RowCount > ZP_WMI_MAX_ROWS || (RowCount != 0 && Rows == NULL)) return STATUS_INVALID_PARAMETER;
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, RowCount);
-    for (RowIndex = 0; NT_SUCCESS(Status) && RowIndex < RowCount; RowIndex++)
+    for (RowIndex = 0; RowIndex < RowCount; RowIndex++)
     {
         if (Rows[RowIndex].CellCount > ZP_WMI_MAX_CELLS ||
             (Rows[RowIndex].CellCount != 0 && Rows[RowIndex].Cells == NULL))
         {
             return STATUS_INVALID_PARAMETER;
         }
-        Status = ZpCodec_WriteArrayCount(&Writer, Rows[RowIndex].CellCount);
-        for (CellIndex = 0; NT_SUCCESS(Status) && CellIndex < Rows[RowIndex].CellCount; CellIndex++)
+        RequiredSize += sizeof(ULONG);
+        for (CellIndex = 0; CellIndex < Rows[RowIndex].CellCount; CellIndex++)
         {
             PCZP_WMI_CELL Cell = &Rows[RowIndex].Cells[CellIndex];
 
@@ -106,11 +103,25 @@ ZpWmi_EncodePage(
             {
                 return STATUS_INVALID_PARAMETER;
             }
-            Status = ZpWmi_WriteCell(&Writer, Cell);
+            RequiredSize += 3 * sizeof(ULONG) +
+                            ((ULONGLONG)Cell->NameLength + Cell->ValueLength) * sizeof(WCHAR);
+            if (RequiredSize > ZP_FRAME_MAX_BODY_SIZE - 12) return STATUS_BUFFER_OVERFLOW;
         }
     }
-    *BytesWritten = Writer.Offset;
-    return Status;
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, RowCount);
+    for (RowIndex = 0; RowIndex < RowCount; RowIndex++)
+    {
+        ZpWire_WriteUInt32(&Cursor, Rows[RowIndex].CellCount);
+        for (CellIndex = 0; CellIndex < Rows[RowIndex].CellCount; CellIndex++)
+        {
+            ZpWmi_WriteCell(&Cursor, &Rows[RowIndex].Cells[CellIndex]);
+        }
+    }
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS

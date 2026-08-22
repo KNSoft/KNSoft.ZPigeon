@@ -1,5 +1,7 @@
 ﻿#include "../../KNSoft.ZPigeon.Protocol/Include/KNSoft/ZPigeon/Execution.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
 NTSTATUS
 ZpExecution_ReadSession(
@@ -26,10 +28,9 @@ ZpExecution_EncodeSessions(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     ULONGLONG RequiredSize = sizeof(ULONG);
     ULONG Index;
-    NTSTATUS Status;
 
     if (Count > ZP_CODEC_MAX_ELEMENT_COUNT || (Count != 0 && Records == NULL)) return STATUS_INVALID_PARAMETER;
     for (Index = 0; Index < Count; Index++)
@@ -48,27 +49,17 @@ ZpExecution_EncodeSessions(
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, Count);
-    for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, Count);
+    for (Index = 0; Index < Count; Index++)
     {
-        Status = ZpCodec_WriteUInt32(&Writer, Records[Index].SessionId);
-        if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Records[Index].State);
-        if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Records[Index].Flags);
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteString(&Writer,
-                                         Records[Index].StationName,
-                                         Records[Index].StationNameLength);
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpCodec_WriteString(&Writer,
-                                         Records[Index].UserName,
-                                         Records[Index].UserNameLength);
-        }
+        ZpWire_WriteUInt32(&Cursor, Records[Index].SessionId);
+        ZpWire_WriteUInt32(&Cursor, Records[Index].State);
+        ZpWire_WriteUInt32(&Cursor, Records[Index].Flags);
+        ZpWire_WriteString(&Cursor, Records[Index].StationName, Records[Index].StationNameLength);
+        ZpWire_WriteString(&Cursor, Records[Index].UserName, Records[Index].UserNameLength);
     }
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -83,7 +74,8 @@ ZpExecution_DecodeSessions(
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadArrayCount(&Reader, &View->Count);
-    View->Buffer = NT_SUCCESS(Status) ? Add2Ptr(Payload, Reader.Offset) : NULL;
+    if (!NT_SUCCESS(Status)) return Status;
+    View->Buffer = Add2Ptr(Payload, Reader.Offset);
     for (Index = 0; NT_SUCCESS(Status) && Index < View->Count; Index++)
     {
         Status = ZpExecution_ReadSession(&Reader, NULL);
@@ -205,25 +197,22 @@ ZpExecution_DecodeStart(
 }
 
 static
-NTSTATUS
+VOID
 ZpExecution_WriteJob(
-    _Inout_ PZP_CODEC_WRITER Writer,
+    _Inout_ PBYTE* Cursor,
     _In_ PCZP_EXECUTION_JOB_RECORD Record)
 {
-    NTSTATUS Status;
-
-    Status = ZpCodec_WriteUInt32(Writer, Record->JobId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Record->CreateTime);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(Writer, Record->ExitTime);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->ProcessId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->SessionId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->ExitCode);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Record->Flags);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(Writer, Record->Engine);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(Writer, Record->Identity);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(Writer, Record->State);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(Writer, Record->FileName, Record->FileNameLength);
-    return Status;
+    ZpWire_WriteUInt32(Cursor, Record->JobId);
+    ZpWire_WriteUInt64(Cursor, Record->CreateTime);
+    ZpWire_WriteUInt64(Cursor, Record->ExitTime);
+    ZpWire_WriteUInt32(Cursor, Record->ProcessId);
+    ZpWire_WriteUInt32(Cursor, Record->SessionId);
+    ZpWire_WriteUInt32(Cursor, Record->ExitCode);
+    ZpWire_WriteUInt32(Cursor, Record->Flags);
+    ZpWire_WriteUInt16(Cursor, Record->Engine);
+    ZpWire_WriteUInt16(Cursor, Record->Identity);
+    ZpWire_WriteUInt16(Cursor, Record->State);
+    ZpWire_WriteString(Cursor, Record->FileName, Record->FileNameLength);
 }
 
 static
@@ -263,10 +252,9 @@ ZpExecution_EncodeJobs(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    ZP_CODEC_WRITER Writer;
+    PBYTE Cursor;
     ULONGLONG RequiredSize = sizeof(ULONG);
     ULONG Index;
-    NTSTATUS Status;
 
     if (Count > ZP_CODEC_MAX_ELEMENT_COUNT || (Count != 0 && Records == NULL)) return STATUS_INVALID_PARAMETER;
     for (Index = 0; Index < Count; Index++)
@@ -283,11 +271,10 @@ ZpExecution_EncodeJobs(
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
-    ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, Count);
-    for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
-        Status = ZpExecution_WriteJob(&Writer, &Records[Index]);
-    return Status;
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, Count);
+    for (Index = 0; Index < Count; Index++) ZpExecution_WriteJob(&Cursor, &Records[Index]);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -302,7 +289,8 @@ ZpExecution_DecodeJobs(
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadArrayCount(&Reader, &View->Count);
-    View->Buffer = NT_SUCCESS(Status) ? Add2Ptr(Payload, Reader.Offset) : NULL;
+    if (!NT_SUCCESS(Status)) return Status;
+    View->Buffer = Add2Ptr(Payload, Reader.Offset);
     for (Index = 0; NT_SUCCESS(Status) && Index < View->Count; Index++) Status = ZpExecution_ReadJob(&Reader, NULL);
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength) return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
     View->Length = PayloadLength - sizeof(ULONG);
