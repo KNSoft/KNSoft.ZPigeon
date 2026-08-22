@@ -13,7 +13,7 @@ typedef struct _ZP_TCP_SEND_IO
     WSABUF Buffer;
     ULONG Offset;
     ULONG Length;
-    PBYTE Data;
+    BYTE Data[ANYSIZE_ARRAY];
 } ZP_TCP_SEND_IO, *PZP_TCP_SEND_IO;
 
 #define ZP_TCP_KEEP_ALIVE_TIMEOUT_MILLISECONDS 20000
@@ -61,34 +61,34 @@ ZpTcpConnection_Close(
 }
 
 static
+PZP_TCP_SEND_IO
+ZpTcpConnection_AllocateSend(
+    _In_ ULONG DataLength)
+{
+    return Mem_Alloc(FIELD_OFFSET(ZP_TCP_SEND_IO, Data) + DataLength);
+}
+
+static
 ZP_STATUS
 ZpTcpConnection_PostSend(
     _Inout_ PZP_TCP_CONNECTION Connection,
-    _Post_invalid_ _In_reads_bytes_(DataLength) PBYTE Data,
+    _Post_invalid_ PZP_TCP_SEND_IO Send,
     _In_ ULONG DataLength)
 {
-    PZP_TCP_SEND_IO Send;
     DWORD BytesSent;
     INT Error;
 
     if (InterlockedCompareExchange(&Connection->Closing, FALSE, FALSE))
     {
-        Mem_Free(Data);
+        Mem_Free(Send);
         return ZpStatus_FromNtStatus(STATUS_CONNECTION_DISCONNECTED);
-    }
-    Send = Mem_Alloc(sizeof(*Send));
-    if (Send == NULL)
-    {
-        Mem_Free(Data);
-        return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
     }
     RtlZeroMemory(&Send->Io.Overlapped, sizeof(Send->Io.Overlapped));
     Send->Io.Type = ZpTcpIoSend;
-    Send->Buffer.buf = (PCHAR)Data;
+    Send->Buffer.buf = (PCHAR)Send->Data;
     Send->Buffer.len = DataLength;
     Send->Offset = 0;
     Send->Length = DataLength;
-    Send->Data = Data;
     InterlockedIncrement(&Connection->ReferenceCount);
     Error = WSASend(Connection->Socket,
                     &Send->Buffer,
@@ -99,7 +99,6 @@ ZpTcpConnection_PostSend(
                     NULL);
     if (Error == SOCKET_ERROR && (Error = WSAGetLastError()) != WSA_IO_PENDING)
     {
-        Mem_Free(Data);
         Mem_Free(Send);
         ZpTcpConnection_Release(Connection);
         return ZpStatus_FromCode(ZpStatusWinsock, (ULONG)Error);
@@ -147,7 +146,16 @@ ZpTcpConnection_ProcessHandshake(
     }
     if (TokenLength != 0)
     {
-        Status = ZpTcpConnection_PostSend(Connection, Token, TokenLength);
+        PZP_TCP_SEND_IO Send = ZpTcpConnection_AllocateSend(TokenLength);
+
+        if (Send == NULL)
+        {
+            Mem_Free(Token);
+            return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+        }
+        RtlCopyMemory(Send->Data, Token, TokenLength);
+        Mem_Free(Token);
+        Status = ZpTcpConnection_PostSend(Connection, Send, TokenLength);
         if (!ZpStatus_IsSuccess(Status))
         {
             return Status;
@@ -280,8 +288,8 @@ ZpTcpConnection_SendFrame(
     _In_reads_bytes_opt_(BodyLength) const VOID* Body,
     _In_ ULONG BodyLength)
 {
-    PBYTE Encrypted;
-    ULONG EncryptedLength;
+    PZP_TCP_SEND_IO Send;
+    ULONG EncryptedLength, RequiredSize;
     ZP_STATUS TransportStatus;
 
     RtlEnterCriticalSection(&TcpConnection->Lock);
@@ -289,13 +297,33 @@ ZpTcpConnection_SendFrame(
                                          MessageType,
                                          Body,
                                          BodyLength,
-                                         &Encrypted,
-                                         &EncryptedLength);
+                                         NULL,
+                                         0,
+                                         &RequiredSize);
+    Send = ZpStatus_IsSuccess(TransportStatus) ? ZpTcpConnection_AllocateSend(RequiredSize) : NULL;
+    if (ZpStatus_IsSuccess(TransportStatus) && Send == NULL)
+    {
+        TransportStatus = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    if (ZpStatus_IsSuccess(TransportStatus))
+    {
+        TransportStatus = ZpTls_EncryptFrame(&TcpConnection->Tls,
+                                             MessageType,
+                                             Body,
+                                             BodyLength,
+                                             Send->Data,
+                                             RequiredSize,
+                                             &EncryptedLength);
+    }
     if (ZpStatus_IsSuccess(TransportStatus))
     {
         TransportStatus = ZpTcpConnection_PostSend(TcpConnection,
-                                                   Encrypted,
+                                                   Send,
                                                    EncryptedLength);
+    }
+    else if (Send != NULL)
+    {
+        Mem_Free(Send);
     }
     RtlLeaveCriticalSection(&TcpConnection->Lock);
     if (!ZpStatus_IsSuccess(TransportStatus))
@@ -371,7 +399,6 @@ ZpTcpConnection_ProcessCompletion(
             }
             Status = ZpStatus_FromCode(ZpStatusWinsock, WSAGetLastError());
         }
-        Mem_Free(Send->Data);
         Mem_Free(Send);
     }
     if (!ZpStatus_IsSuccess(Status))

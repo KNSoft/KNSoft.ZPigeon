@@ -73,7 +73,8 @@ ZpTls_EncryptFrame(
     _In_ ZP_MESSAGE_TYPE MessageType,
     _In_reads_bytes_opt_(BodyLength) const VOID* Body,
     _In_ ULONG BodyLength,
-    _Outptr_result_bytebuffer_(*EncryptedLength) PBYTE* Encrypted,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
     _Out_ PULONG EncryptedLength);
 
 ZP_STATUS
