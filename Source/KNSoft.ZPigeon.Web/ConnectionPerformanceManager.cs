@@ -80,7 +80,7 @@ internal sealed class ConnectionPerformanceManager
                 {
                     server.SetConnectionPolicy(effectiveSpeedClass, effectiveLatencyClass);
                 }
-                if (roundTripMilliseconds is null && speedMbps is null)
+                if (roundTripMilliseconds is null)
                 {
                     qualityLevel = 0;
                 }
@@ -88,9 +88,7 @@ internal sealed class ConnectionPerformanceManager
                 {
                     qualityLevel = Math.Max(
                         1,
-                        Math.Min(speedMbps is null ? 5 : effectiveSpeedClass + 1,
-                                 roundTripMilliseconds is null ? 5 :
-                                     LatencyClass(roundTripMilliseconds.Value) + 1) -
+                        LatencyClass(roundTripMilliseconds.Value) + 1 -
                         (int)Math.Min(statistics.ConsecutiveFailures, 4U));
                 }
                 lastSentSampleTickCount = statistics.SentSampleTickCount;
