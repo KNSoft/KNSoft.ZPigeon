@@ -337,6 +337,8 @@ ZpBrowser_EncodeQuery(
     _In_ ZP_BROWSER_KIND Kind,
     _In_reads_(ProfileLength) PCWCH Profile,
     _In_ ULONG ProfileLength,
+    _In_reads_opt_(UserDataLength) PCWCH UserData,
+    _In_ ULONG UserDataLength,
     _In_ ULONGLONG Cursor,
     _In_ ULONG Limit,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
@@ -349,6 +351,7 @@ ZpBrowser_EncodeQuery(
     if (!ZpBrowser_IsTypeValid(Browser) ||
         Kind < ZpBrowserKindHistory || Kind > ZpBrowserKindPassword ||
         !ZpBrowser_IsStringValid(Profile, ProfileLength) || ProfileLength == 0 ||
+        !ZpBrowser_IsStringValid(UserData, UserDataLength) ||
         Limit == 0 || Limit > ZP_BROWSER_PAGE_SIZE)
     {
         return STATUS_INVALID_PARAMETER;
@@ -359,6 +362,7 @@ ZpBrowser_EncodeQuery(
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Cursor);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Limit);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Profile, ProfileLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, UserData, UserDataLength);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -378,6 +382,7 @@ ZpBrowser_DecodeQuery(
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &Query->Cursor);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Query->Limit);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Query->Profile);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Query->UserData);
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength ||
         !ZpBrowser_IsTypeValid(Query->Browser) ||
         Query->Kind < ZpBrowserKindHistory || Query->Kind > ZpBrowserKindPassword ||
@@ -393,6 +398,8 @@ ZpBrowser_EncodeProfileInspectionRequest(
     _In_ ZP_BROWSER_TYPE Browser,
     _In_reads_(ProfileLength) PCWCH Profile,
     _In_ ULONG ProfileLength,
+    _In_reads_opt_(UserDataLength) PCWCH UserData,
+    _In_ ULONG UserDataLength,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
@@ -401,13 +408,15 @@ ZpBrowser_EncodeProfileInspectionRequest(
     NTSTATUS Status;
 
     if (!ZpBrowser_IsTypeValid(Browser) ||
-        !ZpBrowser_IsStringValid(Profile, ProfileLength) || ProfileLength == 0)
+        !ZpBrowser_IsStringValid(Profile, ProfileLength) || ProfileLength == 0 ||
+        !ZpBrowser_IsStringValid(UserData, UserDataLength))
     {
         return STATUS_INVALID_PARAMETER;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpCodec_WriteByte(&Writer, Browser);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Profile, ProfileLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, UserData, UserDataLength);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -417,7 +426,8 @@ ZpBrowser_DecodeProfileInspectionRequest(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_BROWSER_TYPE Browser,
-    _Out_ PZP_STRING_VIEW Profile)
+    _Out_ PZP_STRING_VIEW Profile,
+    _Out_ PZP_STRING_VIEW UserData)
 {
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
@@ -425,6 +435,7 @@ ZpBrowser_DecodeProfileInspectionRequest(
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadByte(&Reader, Browser);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, Profile);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, UserData);
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength ||
         !ZpBrowser_IsTypeValid(*Browser) || Profile->Length == 0)
     {

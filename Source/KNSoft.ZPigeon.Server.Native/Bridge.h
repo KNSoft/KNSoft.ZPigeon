@@ -2021,6 +2021,8 @@ ZpNative_QueryBrowser(
     _In_ BYTE Kind,
     _In_reads_(ProfileLength) PCWCH Profile,
     _In_ ULONG ProfileLength,
+    _In_reads_opt_(UserDataLength) PCWCH UserData,
+    _In_ ULONG UserDataLength,
     _In_ ULONGLONG Cursor,
     _In_ ULONG Limit,
     _In_ ZP_NATIVE_BROWSER_CALLBACK Callback,
@@ -2034,6 +2036,8 @@ ZpNative_InspectBrowserProfile(
     _In_ BYTE Browser,
     _In_reads_(ProfileLength) PCWCH Profile,
     _In_ ULONG ProfileLength,
+    _In_reads_opt_(UserDataLength) PCWCH UserData,
+    _In_ ULONG UserDataLength,
     _In_ ZP_NATIVE_BROWSER_PROFILE_INSPECTION_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
@@ -2046,6 +2050,8 @@ ZpNative_OpenBrowserDocument(
     _In_ BYTE Kind,
     _In_reads_(ProfileLength) PCWCH Profile,
     _In_ ULONG ProfileLength,
+    _In_reads_opt_(UserDataLength) PCWCH UserData,
+    _In_ ULONG UserDataLength,
     _In_ ZP_NATIVE_BROWSER_DOCUMENT_CALLBACK Callback,
     _In_opt_ PVOID Context);
 

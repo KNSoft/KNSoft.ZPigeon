@@ -21,7 +21,7 @@ TEST_FUNC(ProtocolBrowser)
     ZP_BROWSER_PROFILE_INSPECTION DecodedInspection;
     ZP_BROWSER_DOCUMENT_PAGE_VIEW Page;
     ZP_BROWSER_DOCUMENT_NODE_VIEW Node;
-    ZP_STRING_VIEW Profile;
+    ZP_STRING_VIEW Profile, UserData;
     ZP_BROWSER_TYPE Browser;
     BYTE Buffer[256];
     ULONG Length, Offset = 0, SnapshotId, NodeId, Cursor, Limit;
@@ -52,11 +52,17 @@ TEST_FUNC(ProtocolBrowser)
             NT_SUCCESS(ZpBrowser_EncodeProfileInspectionRequest(ZpBrowserEdge,
                                                                  L"Default",
                                                                  7,
+                                                                 L"C:\\Profiles",
+                                                                 11,
                                                                  Buffer,
                                                                  sizeof(Buffer),
                                                                  &Length)) &&
-            NT_SUCCESS(ZpBrowser_DecodeProfileInspectionRequest(Buffer, Length, &Browser, &Profile)) &&
-            Browser == ZpBrowserEdge && Profile.Length == 7 &&
+            NT_SUCCESS(ZpBrowser_DecodeProfileInspectionRequest(Buffer,
+                                                                 Length,
+                                                                 &Browser,
+                                                                 &Profile,
+                                                                 &UserData)) &&
+            Browser == ZpBrowserEdge && Profile.Length == 7 && UserData.Length == 11 &&
             NT_SUCCESS(ZpBrowser_EncodeProfileInspection(&Inspection,
                                                           Buffer,
                                                           sizeof(Buffer),

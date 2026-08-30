@@ -645,27 +645,39 @@ internal static partial class ManagementWebApi
             if (!Enum.IsDefined(request.Browser) || !Enum.IsDefined(request.Kind) ||
                 request.Kind < BrowserKind.History || request.Profile.Length is 0 or >= 260 ||
                 request.Profile.IndexOfAny(['\\', '/', ':']) >= 0 ||
+                request.ProfileKind is not ("source" or "managed") ||
                 !ulong.TryParse(request.Cursor, out var cursor))
             {
                 return Results.BadRequest();
             }
+            var profile = await ResolveBrowserDataProfileAsync(services,
+                                                               request.Browser,
+                                                               request.ProfileKind,
+                                                               request.Profile);
             return Results.Ok(await server.QueryBrowserAsync(
                 request.Browser,
                 request.Kind,
-                request.Profile,
+                profile.Profile,
+                profile.UserData,
                 cursor));
         });
         app.MapPost("/api/browser/document/open", async (BrowserDocumentOpenRequest request) =>
         {
             if (!Enum.IsDefined(request.Browser) ||
                 request.Kind is not BrowserKind.Bookmark and not BrowserKind.Setting ||
-                request.Profile.Length is 0 or >= 260 || request.Profile.IndexOfAny(['\\', '/', ':']) >= 0)
+                request.Profile.Length is 0 or >= 260 || request.Profile.IndexOfAny(['\\', '/', ':']) >= 0 ||
+                request.ProfileKind is not ("source" or "managed"))
             {
                 return Results.BadRequest();
             }
+            var profile = await ResolveBrowserDataProfileAsync(services,
+                                                               request.Browser,
+                                                               request.ProfileKind,
+                                                               request.Profile);
             return Results.Ok(await server.OpenBrowserDocumentAsync(request.Browser,
                                                                      request.Kind,
-                                                                     request.Profile));
+                                                                     profile.Profile,
+                                                                     profile.UserData));
         });
         app.MapPost("/api/browser/document/node", async (BrowserDocumentNodeRequest request) =>
             Results.Ok(await server.QueryBrowserDocumentNodeAsync(request.SnapshotId,
@@ -680,10 +692,12 @@ internal static partial class ManagementWebApi
             HttpContext context,
             BrowserType browser,
             BrowserKind kind,
-            string profile) =>
+            string profile,
+            string profileKind) =>
         {
             if (!Enum.IsDefined(browser) || !Enum.IsDefined(kind) || kind < BrowserKind.History ||
-                profile.Length is 0 or >= 260 || profile.IndexOfAny(['\\', '/', ':']) >= 0)
+                profile.Length is 0 or >= 260 || profile.IndexOfAny(['\\', '/', ':']) >= 0 ||
+                profileKind is not ("source" or "managed"))
             {
                 context.Response.StatusCode = StatusCodes.Status400BadRequest;
                 return;
@@ -698,10 +712,15 @@ internal static partial class ManagementWebApi
                 new UTF8Encoding(true),
                 leaveOpen: true);
             await writer.WriteLineAsync(BrowserCsvHeader(kind));
+            var dataProfile = await ResolveBrowserDataProfileAsync(services, browser, profileKind, profile);
             ulong cursor = 0;
             do
             {
-                var page = await server.QueryBrowserAsync(browser, kind, profile, cursor);
+                var page = await server.QueryBrowserAsync(browser,
+                                                          kind,
+                                                          dataProfile.Profile,
+                                                          dataProfile.UserData,
+                                                          cursor);
                 foreach (var record in page.Records)
                 {
                     await writer.WriteLineAsync(string.Join(',', BrowserCsvValues(record).Select(BrowserCsv)));
@@ -1431,6 +1450,16 @@ internal static partial class ManagementWebApi
             return [];
         }
     }
+
+    private static Task<CdpDataProfile> ResolveBrowserDataProfileAsync(
+        ClientServicesRegistry services,
+        BrowserType browser,
+        string profileKind,
+        string profile) => profileKind == "source" ?
+            Task.FromResult(new CdpDataProfile(profile, null)) :
+            services.Current.CdpSessions.ResolveDataProfileAsync(
+                browser == BrowserType.Edge ? "edge" : "chrome",
+                profile);
 }
 
 internal sealed record PathRequest(string Path);
@@ -1534,9 +1563,14 @@ internal sealed record WindowUpdateRequest(
 internal sealed record BrowserQueryRequest(
     BrowserType Browser,
     BrowserKind Kind,
+    string ProfileKind,
     string Profile,
     string Cursor);
-internal sealed record BrowserDocumentOpenRequest(BrowserType Browser, BrowserKind Kind, string Profile);
+internal sealed record BrowserDocumentOpenRequest(
+    BrowserType Browser,
+    BrowserKind Kind,
+    string ProfileKind,
+    string Profile);
 internal sealed record BrowserDocumentNodeRequest(uint SnapshotId, uint NodeId, uint Cursor);
 internal sealed record BrowserDocumentCloseRequest(uint SnapshotId);
 internal sealed record WmiNamespaceRequest(string Namespace);

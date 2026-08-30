@@ -164,6 +164,7 @@ internal static class RemoteAccessWebApi
         {
             if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
             if (request.Browser is not { Length: > 0 and <= 32 } ||
+                request.Kind is not ("source" or "managed") ||
                 request.Profile is not { Length: > 0 and <= 260 })
             {
                 return Results.BadRequest();
@@ -172,6 +173,7 @@ internal static class RemoteAccessWebApi
             {
                 return Results.Ok(await services.Current.CdpSessions.InspectProfileAsync(
                     request.Browser,
+                    request.Kind,
                     request.Profile));
             }
             catch (ArgumentException exception)
@@ -185,6 +187,7 @@ internal static class RemoteAccessWebApi
         {
             if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
             if (request.Browser is not { Length: > 0 and <= 32 } ||
+                request.Kind is not ("source" or "managed") ||
                 request.Profile is not { Length: > 0 and <= 260 } ||
                 request.Name is not { Length: > 0 and <= 64 })
             {
@@ -194,8 +197,29 @@ internal static class RemoteAccessWebApi
             {
                 return Results.Ok(await services.Current.CdpSessions.CloneProfileAsync(
                     request.Browser,
+                    request.Kind,
                     request.Profile,
                     request.Name));
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.BadRequest(new { exception.Message });
+            }
+        });
+        app.MapPost("/api/remote/cdp/profile/delete", async (
+            HttpContext context,
+            CdpSourceProfileRequest request) =>
+        {
+            if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
+            if (request.Browser is not { Length: > 0 and <= 32 } || request.Kind != "managed" ||
+                request.Profile is not { Length: > 0 and <= 64 })
+            {
+                return Results.BadRequest();
+            }
+            try
+            {
+                await services.Current.CdpSessions.DeleteProfileAsync(request.Browser, request.Profile);
+                return Results.NoContent();
             }
             catch (ArgumentException exception)
             {
@@ -233,8 +257,7 @@ internal static class RemoteAccessWebApi
                 return Results.Unauthorized();
             }
             if (request.Browser is not { Length: > 0 and <= 32 } ||
-                request.Mode is not ("temporary" or "incognito" or "managed") ||
-                request.Profile?.Length > 64)
+                request.Profile is not { Length: > 0 and <= 64 })
             {
                 return Results.BadRequest();
             }
@@ -243,7 +266,6 @@ internal static class RemoteAccessWebApi
                 return Results.Ok(await services.Current.CdpSessions.StartAsync(
                     sourceAddress,
                     request.Browser,
-                    request.Mode,
                     request.Profile));
             }
             catch (ArgumentException exception)
@@ -364,10 +386,10 @@ internal static class RemoteAccessWebApi
     }
 }
 
-internal sealed record CdpStartRequest(string Browser, string Mode, string? Profile);
+internal sealed record CdpStartRequest(string Browser, string Profile);
 internal sealed record CdpSessionRequest(Guid Id);
-internal sealed record CdpSourceProfileRequest(string Browser, string Profile);
-internal sealed record CdpCloneProfileRequest(string Browser, string Profile, string Name);
+internal sealed record CdpSourceProfileRequest(string Browser, string Kind, string Profile);
+internal sealed record CdpCloneProfileRequest(string Browser, string Kind, string Profile, string Name);
 internal sealed record CdpCreateProfileRequest(string Browser, string Name);
 internal sealed record CdpCreateTargetRequest(Guid Id, string Url);
 internal sealed record CdpTargetRequest(Guid Id, string Target);

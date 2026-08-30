@@ -1310,6 +1310,8 @@ TEST_FUNC(ProtocolMessage)
                                              ZpBrowserKindDownload,
                                              L"Default",
                                              7,
+                                             L"C:\\Profiles",
+                                             11,
                                              42,
                                              100,
                                              Buffer,
@@ -1317,7 +1319,8 @@ TEST_FUNC(ProtocolMessage)
                                              &Length)) &&
             NT_SUCCESS(ZpBrowser_DecodeQuery(Buffer, Length, &BrowserQuery)) &&
             BrowserQuery.Browser == ZpBrowserEdge && BrowserQuery.Kind == ZpBrowserKindDownload &&
-            BrowserQuery.Cursor == 42 && BrowserQuery.Limit == 100 && BrowserQuery.Profile.Length == 7);
+            BrowserQuery.Cursor == 42 && BrowserQuery.Limit == 100 && BrowserQuery.Profile.Length == 7 &&
+            BrowserQuery.UserData.Length == 11);
     TEST_OK(NT_SUCCESS(ZpWmi_EncodePage(WmiRows,
                                         ARRAYSIZE(WmiRows),
                                         Buffer,

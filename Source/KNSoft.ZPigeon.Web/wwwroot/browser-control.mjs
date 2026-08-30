@@ -52,8 +52,7 @@ class RemoteBrowser {
         session = sessions.find((item) => item.id === sessionId);
       if (!session) throw new Error(t("browserControl.sessionEnded"));
       this.session = session;
-      document.querySelector("[data-role=session]").textContent =
-        `${session.browser} · ${profileName(session)}`;
+      document.querySelector("[data-role=session]").textContent = `${session.browser} · ${session.profile}`;
       await this.loadTargets();
     } catch (error) {
       this.fail(error);
@@ -445,9 +444,3 @@ class RemoteBrowser {
 }
 
 new RemoteBrowser().start();
-
-function profileName(session) {
-  if (session.profileKind === "temporary") return t("browserControl.temporaryProfile");
-  if (session.profileKind === "incognito") return t("browserControl.incognitoProfile");
-  return session.profile;
-}

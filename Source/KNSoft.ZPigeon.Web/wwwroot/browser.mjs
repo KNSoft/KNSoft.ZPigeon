@@ -53,6 +53,9 @@ export class BrowserManager {
     root.innerHTML = /* HTML */ `<div class="manager-toolbar">
         <select data-role="browser"></select
         ><select data-role="profile"></select
+        ><button data-action="profile-create" data-i18n="common.create">新建</button
+        ><button data-action="profile-copy" data-i18n="common.copy">复制</button
+        ><button data-action="profile-delete" data-i18n="common.delete">删除</button
         ><select data-role="kind">
           <option value="history">历史记录</option>
           <option value="downloads">下载记录</option>
@@ -78,9 +81,7 @@ export class BrowserManager {
           <p class="property-note" data-i18n="browserControl.headlessNote">
             浏览器始终以 Headless 模式运行，被控端不显示窗口。
           </p>
-          <label><span data-i18n="browserControl.profile">Profile</span
-            ><select data-field="cdp-profile"></select></label
-          ><button data-action="cdp-start" data-i18n="browserControl.start">启动远程浏览器</button>
+          <button data-action="cdp-start" data-i18n="browserControl.start">启动远程浏览器</button>
           <div data-role="cdp-sessions"></div>
         </aside>
         <section class="browser-data">
@@ -114,15 +115,22 @@ export class BrowserManager {
     this.browser.onchange = () => {
       this.fillProfiles();
       this.resetQuery();
-      this.syncCdp();
+      this.syncProfileActions();
     };
-    this.profile.onchange = this.kind.onchange = () => this.resetQuery();
+    this.profile.onchange = () => {
+      this.resetQuery();
+      this.syncProfileActions();
+    };
+    this.kind.onchange = () => this.resetQuery();
     this.reveal.onchange = () => this.syncReveal();
     this.filter.oninput = () => this.render();
     root.querySelector("[data-role=refresh]").onclick = () => this.load(true);
     root.querySelector("[data-role=export]").onclick = () => this.export();
     this.previous.onclick = () => this.move(-1);
     this.next.onclick = () => this.move(1);
+    root.querySelector("[data-action=profile-create]").onclick = () => this.createCdpProfile();
+    root.querySelector("[data-action=profile-copy]").onclick = () => this.copyCdpProfile();
+    root.querySelector("[data-action=profile-delete]").onclick = () => this.deleteCdpProfile();
     root.querySelector("[data-action=cdp-start]").onclick = () => this.startCdp();
     this.syncReveal();
   }
@@ -141,11 +149,13 @@ export class BrowserManager {
     this.loaded = false;
     this.reveal.checked = false;
     this.records = [];
+    this.cdpBrowsers = [];
     this.page = null;
     this.documentSnapshotId = 0;
     this.browser.replaceChildren();
     this.profile.replaceChildren();
     this.overview.replaceChildren();
+    this.root.querySelector("[data-role=cdp-sessions]").replaceChildren();
     this.body.replaceChildren();
     this.head.replaceChildren();
     this.document.replaceChildren();
@@ -153,6 +163,7 @@ export class BrowserManager {
     this.summary.textContent = "";
     this.empty.hidden = false;
     this.empty.textContent = "Client 未连接";
+    this.syncProfileActions();
   }
   async load(force = false) {
     if (!this.connected || this.loading || (this.loaded && !force)) return;
@@ -169,7 +180,6 @@ export class BrowserManager {
       this.browser.replaceChildren(...browsers.map((record) => new Option(browserName(record), String(record.browser))));
       if (browsers.some((record) => String(record.browser) === browser)) this.browser.value = browser;
       this.fillProfiles(profile);
-      if (this.cdpBrowsers) this.syncCdp();
       this.renderOverview();
       await this.query("0");
     } catch (error) {
@@ -181,12 +191,23 @@ export class BrowserManager {
     }
   }
   fillProfiles(selected) {
-    const values = this.records.filter((record) => record.kind === 2 && String(record.browser) === this.browser.value);
-    this.profile.replaceChildren(...values.map((record) => new Option(record.identity, record.identity)));
-    if (values.some((record) => record.identity === selected)) this.profile.value = selected;
+    const source = this.records.filter(
+        (record) => record.kind === 2 && String(record.browser) === this.browser.value,
+      ),
+      browser = this.cdpBrowsers?.find((item) => item.id === this.cdpBrowserId()),
+      managed = browser?.profiles.filter((profile) => profile.kind === "managed") ?? [],
+      sourceGroup = document.createElement("optgroup"),
+      managedGroup = document.createElement("optgroup");
+    sourceGroup.label = t("browserControl.existingProfiles");
+    managedGroup.label = t("browserControl.createdProfiles");
+    sourceGroup.append(...source.map((record) => profileOption(record.identity, "source", false)));
+    managedGroup.append(...managed.map((profile) => profileOption(profile.name, "managed", profile.inUse)));
+    this.profile.replaceChildren(sourceGroup, managedGroup);
+    if ([...this.profile.options].some((option) => option.value === selected)) this.profile.value = selected;
     this.browser.disabled = !this.browser.options.length;
-    this.profile.disabled = !values.length;
-    this.kind.disabled = !values.length;
+    this.profile.disabled = !this.profile.options.length;
+    this.kind.disabled = !this.profile.options.length;
+    this.syncProfileActions();
   }
   renderOverview() {
     const record = this.records.find((value) => value.kind === 1 && String(value.browser) === this.browser.value);
@@ -201,7 +222,7 @@ export class BrowserManager {
       ["程序", record.location],
       [
         "Profile 数量",
-        String(this.records.filter((item) => item.kind === 2 && item.browser === record.browser).length),
+        String(this.profile.options.length),
       ],
     ]) {
       const dt = document.createElement("dt"),
@@ -238,7 +259,8 @@ export class BrowserManager {
   }
   async query(cursor) {
     if (!this.connected || this.querying) return;
-    if (!this.profile.value) {
+    const profile = this.selectedProfile();
+    if (!profile) {
       this.empty.hidden = false;
       this.empty.textContent = this.browser.value ? "没有可读取的 Profile" : "未发现 Chrome 或 Edge";
       return;
@@ -260,7 +282,8 @@ export class BrowserManager {
         this.page = await this.call("/api/browser/document/open", {
           browser: Number(this.browser.value),
           kind: kinds[this.kind.value],
-          profile: this.profile.value,
+          profileKind: profile.kind,
+          profile: profile.name,
         });
         this.documentSnapshotId = this.page.snapshotId;
         this.renderDocument();
@@ -269,7 +292,8 @@ export class BrowserManager {
         this.page = await this.call("/api/browser/query", {
           browser: Number(this.browser.value),
           kind: kinds[this.kind.value],
-          profile: this.profile.value,
+          profileKind: profile.kind,
+          profile: profile.name,
           cursor,
         });
         const existing = this.cursorStack.indexOf(cursor);
@@ -469,7 +493,8 @@ export class BrowserManager {
     return row;
   }
   async export() {
-    if (!this.profile.value) return;
+    const profile = this.selectedProfile();
+    if (!profile) return;
     const button = this.root.querySelector("[data-role=export]");
     button.disabled = true;
     button.textContent = "正在导出…";
@@ -477,7 +502,8 @@ export class BrowserManager {
       const query = new URLSearchParams({
           browser: this.browser.value,
           kind: kinds[this.kind.value],
-          profile: this.profile.value,
+          profileKind: profile.kind,
+          profile: profile.name,
         }),
         response = await fetch(apiUrl(`/api/browser/export?${query}`));
       if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
@@ -496,112 +522,144 @@ export class BrowserManager {
       button.textContent = "导出";
     }
   }
-  async loadCdp() {
+  cdpBrowserId() {
+    return this.browser.value === "2" ? "edge" : "chrome";
+  }
+  selectedProfile() {
+    const option = this.profile.selectedOptions[0];
+    return option
+      ? { name: option.dataset.name, kind: option.dataset.kind, inUse: option.dataset.inUse === "true" }
+      : null;
+  }
+  syncProfileActions() {
+    const profile = this.selectedProfile(),
+      browser = this.cdpBrowsers?.some((item) => item.id === this.cdpBrowserId());
+    this.root.querySelector("[data-action=profile-create]").disabled = !browser;
+    this.root.querySelector("[data-action=profile-copy]").disabled = !browser || !profile;
+    this.root.querySelector("[data-action=profile-delete]").disabled =
+      !browser || profile?.kind !== "managed" || profile.inUse;
+    this.root.querySelector("[data-action=cdp-start]").disabled = !browser || !profile;
+  }
+  async loadCdp(selected = this.profile.value) {
     try {
       const discovery = await this.call("/api/remote/cdp/browsers");
       this.cdpBrowsers = discovery.browsers;
-      this.syncCdp();
+      this.fillProfiles(selected);
+      this.renderOverview();
       await this.loadCdpSessions();
     } catch (error) {
       this.notify(error);
     }
   }
-  syncCdp() {
-    const browser = this.cdpBrowsers?.find(
-        (item) => item.id === (this.browser.value === "2" ? "edge" : "chrome"),
-      ),
-      profile = this.root.querySelector("[data-field=cdp-profile]"),
-      selected = profile.value,
-      source = document.createElement("optgroup"),
-      managed = document.createElement("optgroup");
-    source.label = t("browserControl.existingProfiles");
-    managed.label = t("browserControl.createdProfiles");
-    source.append(
-      ...(browser?.profiles ?? [])
-        .filter((item) => item.kind === "source")
-        .map((item) => new Option(item.name, `source:${item.name}`)),
-    );
-    managed.append(
-      ...(browser?.profiles ?? [])
-        .filter((item) => item.kind === "managed")
-        .map((item) => new Option(item.name, `managed:${item.name}`)),
-    );
-    profile.replaceChildren(
-      new Option(t("browserControl.temporaryProfile"), "temporary:"),
-      new Option(t("browserControl.incognitoProfile"), "incognito:"),
-      source,
-      managed,
-      new Option(t("browserControl.newProfile"), "new:"),
-    );
-    const values = [...profile.options].map((option) => option.value),
-      preferred = `source:${this.profile.value}`;
-    if (values.includes(selected)) profile.value = selected;
-    else if (values.includes(preferred)) profile.value = preferred;
-    this.root.querySelector("[data-action=cdp-start]").disabled = !browser;
-  }
-  async startCdp() {
-    const button = this.root.querySelector("[data-action=cdp-start]"),
-      browser = this.browser.value === "2" ? "edge" : "chrome",
-      selection = this.root.querySelector("[data-field=cdp-profile]").value,
-      separator = selection.indexOf(":"),
-      kind = selection.slice(0, separator),
-      selectedProfile = selection.slice(separator + 1);
+  async createCdpProfile() {
+    const name = prompt(t("browserControl.newProfileName"))?.trim();
+    if (!name) return;
+    const button = this.root.querySelector("[data-action=profile-create]");
     button.disabled = true;
-    button.textContent = t("browserControl.starting");
+    button.textContent = t("browserControl.creatingProfile");
     try {
-      let mode = kind,
-        profile = selectedProfile;
-      if (kind === "source") {
-        button.textContent = t("browserControl.inspectingProfile");
-        const inspection = await this.call("/api/remote/cdp/profile/inspect", {
-            browser,
-            profile: selectedProfile,
-          }),
-          stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 13),
-          name = prompt(t("browserControl.cloneName"), `${selectedProfile.slice(0, 48)}-${stamp}`)?.trim();
-        if (!name) return;
-        const warning = t("browserControl.cloneWarning", {
-          profile: selectedProfile,
-          size: formatBytes(inspection.profileSize),
-          free: formatBytes(inspection.availableSpace),
-          running: inspection.browserRunning ? `\n${t("browserControl.runningWarning")}` : "",
-        });
-        if (inspection.profileSize > inspection.availableSpace) {
-          throw new Error(t("browserControl.insufficientSpace"));
-        }
-        if (!confirm(warning)) return;
-        button.textContent = t("browserControl.cloningProfile");
-        await this.call("/api/remote/cdp/profile/clone", {
-          browser,
-          profile: selectedProfile,
-          name,
-        });
-        mode = "managed";
-        profile = name;
-        await this.loadCdp();
-        this.root.querySelector("[data-field=cdp-profile]").value = `managed:${name}`;
-      } else if (kind === "new") {
-        const name = prompt(t("browserControl.newProfileName"))?.trim();
-        if (!name) return;
-        button.textContent = t("browserControl.creatingProfile");
-        await this.call("/api/remote/cdp/profile/create", { browser, name });
-        mode = "managed";
-        profile = name;
-        await this.loadCdp();
-        this.root.querySelector("[data-field=cdp-profile]").value = `managed:${name}`;
-      }
-      button.textContent = t("browserControl.starting");
-      await this.call("/api/remote/cdp/start", {
-        browser,
-        mode,
-        profile: mode === "managed" ? profile : null,
-      });
-      await this.loadCdpSessions();
+      await this.call("/api/remote/cdp/profile/create", { browser: this.cdpBrowserId(), name });
+      await this.loadCdp(profileValue("managed", name));
+      this.resetQuery();
+      this.notify(t("browserControl.profileCreated"));
     } catch (error) {
       this.notify(error);
     } finally {
-      button.disabled = !this.cdpBrowsers?.some((item) => item.id === browser);
+      button.textContent = t("common.create");
+      this.syncProfileActions();
+    }
+  }
+  async cloneCdpProfile(profile, button) {
+    button.textContent = t("browserControl.inspectingProfile");
+    const browser = this.cdpBrowserId(),
+      inspection = await this.call("/api/remote/cdp/profile/inspect", {
+        browser,
+        kind: profile.kind,
+        profile: profile.name,
+      }),
+      stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 13),
+      name = prompt(t("browserControl.cloneName"), `${profile.name.slice(0, 48)}-${stamp}`)?.trim();
+    if (!name) return null;
+    const warning = t("browserControl.cloneWarning", {
+      profile: profile.name,
+      size: formatBytes(inspection.profileSize),
+      free: formatBytes(inspection.availableSpace),
+      running: inspection.browserRunning ? `\n${t("browserControl.runningWarning")}` : "",
+    });
+    if (inspection.profileSize > inspection.availableSpace) {
+      throw new Error(t("browserControl.insufficientSpace"));
+    }
+    if (!confirm(warning)) return null;
+    button.textContent = t("browserControl.cloningProfile");
+    await this.call("/api/remote/cdp/profile/clone", {
+      browser,
+      kind: profile.kind,
+      profile: profile.name,
+      name,
+    });
+    await this.loadCdp(profileValue("managed", name));
+    return this.selectedProfile();
+  }
+  async copyCdpProfile() {
+    const profile = this.selectedProfile();
+    if (!profile) return;
+    const button = this.root.querySelector("[data-action=profile-copy]");
+    button.disabled = true;
+    try {
+      if (await this.cloneCdpProfile(profile, button)) {
+        this.resetQuery();
+        this.notify(t("browserControl.profileCopied"));
+      }
+    } catch (error) {
+      this.notify(error);
+    } finally {
+      button.textContent = t("common.copy");
+      this.syncProfileActions();
+    }
+  }
+  async deleteCdpProfile() {
+    const profile = this.selectedProfile();
+    if (profile?.kind !== "managed" || profile.inUse ||
+        !confirm(t("browserControl.confirmDeleteProfile", { profile: profile.name }))) return;
+    const button = this.root.querySelector("[data-action=profile-delete]");
+    button.disabled = true;
+    try {
+      await this.call("/api/remote/cdp/profile/delete", {
+        browser: this.cdpBrowserId(),
+        kind: profile.kind,
+        profile: profile.name,
+      });
+      await this.loadCdp();
+      this.resetQuery();
+      this.notify(t("browserControl.profileDeleted"));
+    } catch (error) {
+      this.notify(error);
+    } finally {
+      this.syncProfileActions();
+    }
+  }
+  async startCdp() {
+    const selected = this.selectedProfile();
+    if (!selected) return;
+    const button = this.root.querySelector("[data-action=cdp-start]");
+    button.disabled = true;
+    button.textContent = t("browserControl.starting");
+    try {
+      const profile = selected.kind === "source" || selected.inUse
+        ? await this.cloneCdpProfile(selected, button)
+        : selected;
+      if (!profile) return;
+      button.textContent = t("browserControl.starting");
+      await this.call("/api/remote/cdp/start", {
+        browser: this.cdpBrowserId(),
+        profile: profile.name,
+      });
+      await this.loadCdp(profileValue("managed", profile.name));
+    } catch (error) {
+      this.notify(error);
+    } finally {
       button.textContent = t("browserControl.start");
+      this.syncProfileActions();
     }
   }
   async loadCdpSessions() {
@@ -613,7 +671,7 @@ export class BrowserManager {
         control = document.createElement("button"),
         devtools = document.createElement("button"),
         close = document.createElement("button");
-      row.append(`${session.browser} · ${cdpProfileName(session)} · `);
+      row.append(`${session.browser} · ${session.profile} · `);
       control.type = "button";
       control.textContent = t("browserControl.control");
       control.onclick = () => {
@@ -638,7 +696,7 @@ export class BrowserManager {
       close.onclick = async () => {
         try {
           await this.call("/api/remote/cdp/close", { id: session.id });
-          await this.loadCdpSessions();
+          await this.loadCdp();
         } catch (error) {
           this.notify(error);
         }
@@ -660,10 +718,17 @@ function formatBytes(value) {
   return `${size.toLocaleString(undefined, { maximumFractionDigits: unit ? 2 : 0 })} ${units[unit]}`;
 }
 
-function cdpProfileName(session) {
-  if (session.profileKind === "temporary") return t("browserControl.temporaryProfile");
-  if (session.profileKind === "incognito") return t("browserControl.incognitoProfile");
-  return session.profile;
+function profileValue(kind, name) {
+  return `${kind}:${name}`;
+}
+
+function profileOption(name, kind, inUse) {
+  const option = new Option(name, profileValue(kind, name));
+  option.dataset.name = name;
+  option.dataset.kind = kind;
+  option.dataset.inUse = String(inUse);
+  if (inUse) option.text += t("browserControl.inUseSuffix");
+  return option;
 }
 
 function cdpDevtoolsUrl(session, target) {

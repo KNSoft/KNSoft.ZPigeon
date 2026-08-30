@@ -266,6 +266,22 @@ ZpBrowser_GetPaths(
 }
 
 static
+NTSTATUS
+ZpBrowser_GetUserData(
+    _In_ ZP_BROWSER_TYPE Browser,
+    _In_ PCZP_STRING_VIEW Override,
+    _Out_writes_(MAX_PATH) PWSTR UserData)
+{
+    WCHAR Executable[MAX_PATH];
+
+    if (Override->Length == 0) return ZpBrowser_GetPaths(Browser, Executable, UserData);
+    if (Override->Length >= MAX_PATH) return STATUS_NAME_TOO_LONG;
+    RtlCopyMemory(UserData, Override->Buffer, (SIZE_T)Override->Length * sizeof(WCHAR));
+    UserData[Override->Length] = UNICODE_NULL;
+    return STATUS_SUCCESS;
+}
+
+static
 _Success_(NT_SUCCESS(return))
 NTSTATUS
 ZpBrowser_GetVersion(
@@ -594,6 +610,7 @@ ZP_STATUS
 ZpBrowser_InspectProfile(
     _In_ ZP_BROWSER_TYPE Browser,
     _In_ PCZP_STRING_VIEW Profile,
+    _In_ PCZP_STRING_VIEW UserDataOverride,
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
 {
@@ -601,14 +618,14 @@ ZpBrowser_InspectProfile(
     FILE_NETWORK_OPEN_INFORMATION LocalStateInformation;
     OBJECT_ATTRIBUTES Object;
     UNICODE_STRING NativePath;
-    WCHAR Executable[MAX_PATH], UserData[MAX_PATH], ProfileName[MAX_PATH], Path[MAX_PATH];
+    WCHAR UserData[MAX_PATH], ProfileName[MAX_PATH], Path[MAX_PATH];
     IO_STATUS_BLOCK IoStatus;
     HANDLE Directory;
     ULONG Length;
     NTSTATUS Status;
 
     Status = ZpBrowser_CopyProfile(Profile, ProfileName);
-    if (NT_SUCCESS(Status)) Status = ZpBrowser_GetPaths(Browser, Executable, UserData);
+    if (NT_SUCCESS(Status)) Status = ZpBrowser_GetUserData(Browser, UserDataOverride, UserData);
     if (NT_SUCCESS(Status))
     {
         Status = StringCchPrintfW(Path, ARRAYSIZE(Path), L"%s\\%s", UserData, ProfileName);
@@ -628,7 +645,7 @@ ZpBrowser_InspectProfile(
     NtClose(Directory);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpBrowser_GetEnvironment(L"LOCALAPPDATA", Path, ARRAYSIZE(Path));
+        Status = StringCchCopyW(Path, ARRAYSIZE(Path), UserData);
     }
     if (NT_SUCCESS(Status)) Status = NT_Win32PathToNtPath(Path, NULL, &NativePath);
     if (NT_SUCCESS(Status))
@@ -2141,11 +2158,11 @@ ZpBrowser_Query(
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
 {
-    WCHAR Executable[MAX_PATH], UserData[MAX_PATH], Profile[MAX_PATH], Path[MAX_PATH];
+    WCHAR UserData[MAX_PATH], Profile[MAX_PATH], Path[MAX_PATH];
     NTSTATUS Status;
 
     Status = ZpBrowser_CopyProfile(&Query->Profile, Profile);
-    if (NT_SUCCESS(Status)) Status = ZpBrowser_GetPaths(Query->Browser, Executable, UserData);
+    if (NT_SUCCESS(Status)) Status = ZpBrowser_GetUserData(Query->Browser, &Query->UserData, UserData);
     if (NT_SUCCESS(Status))
     {
         Status = StringCchPrintfW(Path,
@@ -2180,7 +2197,7 @@ ZpBrowser_OpenDocumentQuery(
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
 {
-    WCHAR Executable[MAX_PATH], UserData[MAX_PATH], Profile[MAX_PATH], Path[MAX_PATH];
+    WCHAR UserData[MAX_PATH], Profile[MAX_PATH], Path[MAX_PATH];
     NTSTATUS Status;
 
     if (Query->Kind != ZpBrowserKindBookmark && Query->Kind != ZpBrowserKindSetting)
@@ -2188,7 +2205,7 @@ ZpBrowser_OpenDocumentQuery(
         return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
     Status = ZpBrowser_CopyProfile(&Query->Profile, Profile);
-    if (NT_SUCCESS(Status)) Status = ZpBrowser_GetPaths(Query->Browser, Executable, UserData);
+    if (NT_SUCCESS(Status)) Status = ZpBrowser_GetUserData(Query->Browser, &Query->UserData, UserData);
     if (NT_SUCCESS(Status))
     {
         Status = StringCchPrintfW(Path,
@@ -2214,7 +2231,7 @@ ZpBrowser_Execute(
 {
     ZP_BROWSER_QUERY_VIEW Query;
     ZP_BROWSER_TYPE Browser;
-    ZP_STRING_VIEW Profile;
+    ZP_STRING_VIEW Profile, UserData;
     ULONG SnapshotId, NodeId, Cursor, Limit;
     NTSTATUS Status;
 
@@ -2264,8 +2281,13 @@ ZpBrowser_Execute(
     }
     if (OperationId == ZP_BROWSER_OPERATION_INSPECT_PROFILE)
     {
-        Status = ZpBrowser_DecodeProfileInspectionRequest(Request, RequestLength, &Browser, &Profile);
-        return NT_SUCCESS(Status) ? ZpBrowser_InspectProfile(Browser, &Profile, Response, ResponseLength) :
+        Status = ZpBrowser_DecodeProfileInspectionRequest(Request,
+                                                          RequestLength,
+                                                          &Browser,
+                                                          &Profile,
+                                                          &UserData);
+        return NT_SUCCESS(Status) ?
+                   ZpBrowser_InspectProfile(Browser, &Profile, &UserData, Response, ResponseLength) :
                                     ZpStatus_FromNtStatus(Status);
     }
     return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);

@@ -138,6 +138,7 @@ typedef struct _ZP_BROWSER_QUERY_VIEW
     ULONGLONG Cursor;
     ULONG Limit;
     ZP_STRING_VIEW Profile;
+    ZP_STRING_VIEW UserData;
 } ZP_BROWSER_QUERY_VIEW, *PZP_BROWSER_QUERY_VIEW;
 
 typedef const ZP_BROWSER_QUERY_VIEW* PCZP_BROWSER_QUERY_VIEW;
@@ -225,6 +226,8 @@ ZpBrowser_EncodeQuery(
     _In_ ZP_BROWSER_KIND Kind,
     _In_reads_(ProfileLength) PCWCH Profile,
     _In_ ULONG ProfileLength,
+    _In_reads_opt_(UserDataLength) PCWCH UserData,
+    _In_ ULONG UserDataLength,
     _In_ ULONGLONG Cursor,
     _In_ ULONG Limit,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
@@ -242,6 +245,8 @@ ZpBrowser_EncodeProfileInspectionRequest(
     _In_ ZP_BROWSER_TYPE Browser,
     _In_reads_(ProfileLength) PCWCH Profile,
     _In_ ULONG ProfileLength,
+    _In_reads_opt_(UserDataLength) PCWCH UserData,
+    _In_ ULONG UserDataLength,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);
@@ -251,7 +256,8 @@ ZpBrowser_DecodeProfileInspectionRequest(
     _In_reads_bytes_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength,
     _Out_ PZP_BROWSER_TYPE Browser,
-    _Out_ PZP_STRING_VIEW Profile);
+    _Out_ PZP_STRING_VIEW Profile,
+    _Out_ PZP_STRING_VIEW UserData);
 
 NTSTATUS
 ZpBrowser_EncodeProfileInspection(

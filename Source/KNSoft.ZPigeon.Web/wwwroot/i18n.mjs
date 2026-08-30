@@ -141,14 +141,10 @@ const zh = {
   "browser.passwordReveal": "显示明文",
   "browserControl.title": "远程浏览器",
   "browserControl.headlessNote": "浏览器始终以 Headless 模式运行，被控端不显示窗口。",
-  "browserControl.profile": "Profile",
   "browserControl.start": "启动远程浏览器",
   "browserControl.starting": "正在启动…",
   "browserControl.existingProfiles": "浏览器现有 Profile",
   "browserControl.createdProfiles": "远程浏览器 Profile",
-  "browserControl.temporaryProfile": "临时 Profile",
-  "browserControl.incognitoProfile": "无痕 Profile",
-  "browserControl.newProfile": "新建 Profile…",
   "browserControl.inspectingProfile": "正在检查 Profile…",
   "browserControl.cloneName": "请输入独立副本的名称",
   "browserControl.cloneWarning":
@@ -160,6 +156,11 @@ const zh = {
   "browserControl.cloningProfile": "正在创建 Profile 副本…",
   "browserControl.newProfileName": "请输入新 Profile 的名称",
   "browserControl.creatingProfile": "正在创建 Profile…",
+  "browserControl.profileCreated": "Profile 已创建",
+  "browserControl.profileCopied": "Profile 副本已创建",
+  "browserControl.profileDeleted": "Profile 已删除",
+  "browserControl.confirmDeleteProfile": "删除远程浏览器 Profile“{profile}”及其全部数据？此操作无法撤销。",
+  "browserControl.inUseSuffix": " · 正在使用",
   "browserControl.control": "控制",
   "browserControl.invalidSession": "远程浏览器会话无效。",
   "browserControl.sessionEnded": "远程浏览器会话已结束。",
@@ -872,14 +873,10 @@ const en = {
   "browser.passwordReveal": "Show plaintext",
   "browserControl.title": "Remote Browser",
   "browserControl.headlessNote": "The browser always runs in Headless mode and displays no window on the Client.",
-  "browserControl.profile": "Profile",
   "browserControl.start": "Start Remote Browser",
   "browserControl.starting": "Starting…",
   "browserControl.existingProfiles": "Existing Browser Profiles",
   "browserControl.createdProfiles": "Remote Browser Profiles",
-  "browserControl.temporaryProfile": "Temporary Profile",
-  "browserControl.incognitoProfile": "Incognito Profile",
-  "browserControl.newProfile": "New Profile…",
   "browserControl.inspectingProfile": "Inspecting Profile…",
   "browserControl.cloneName": "Enter a name for the independent copy",
   "browserControl.cloneWarning":
@@ -892,6 +889,12 @@ const en = {
   "browserControl.cloningProfile": "Creating Profile copy…",
   "browserControl.newProfileName": "Enter a name for the new Profile",
   "browserControl.creatingProfile": "Creating Profile…",
+  "browserControl.profileCreated": "Profile created",
+  "browserControl.profileCopied": "Profile copy created",
+  "browserControl.profileDeleted": "Profile deleted",
+  "browserControl.confirmDeleteProfile":
+    "Delete remote browser Profile “{profile}” and all its data? This cannot be undone.",
+  "browserControl.inUseSuffix": " · In use",
   "browserControl.control": "Control",
   "browserControl.invalidSession": "The remote browser session is invalid.",
   "browserControl.sessionEnded": "The remote browser session has ended.",
@@ -3542,6 +3545,8 @@ const enSource = {
     "Failed to create the browser Profile copy.",
   "浏览器 Profile 创建失败。":
     "Failed to create the browser Profile.",
+  "浏览器 Profile 删除失败。":
+    "Failed to delete the browser Profile.",
   "浏览器无效。":
     "The browser is invalid.",
   "浏览器启动选项无效。":
@@ -3558,6 +3563,8 @@ const enSource = {
     "Unable to determine the remote browser Profile directory on the Client.",
   "远程浏览器进程已退出。":
     "The remote browser process has exited.",
+  "远程浏览器 Profile 正在使用。":
+    "The remote browser Profile is in use.",
   "浏览器没有在 15 秒内创建 CDP 调试端点。":
     "The browser did not create a CDP debugging endpoint within 15 seconds.",
   "浏览器 CDP 调试端点没有在 15 秒内就绪。":

@@ -12,7 +12,8 @@ namespace KNSoft.ZPigeon.Web;
 internal sealed record CdpProfile(
     string Name,
     string Kind,
-    [property: JsonIgnore] string Location);
+    [property: JsonIgnore] string Location,
+    bool InUse);
 internal sealed record CdpBrowser(
     string Id,
     string Name,
@@ -33,8 +34,8 @@ internal sealed record CdpSessionInfo(
     Guid Id,
     string Browser,
     string Profile,
-    string ProfileKind,
     PortForwardInfo Forward);
+internal sealed record CdpDataProfile(string Profile, string? UserData);
 
 internal sealed class CdpSessionManager(
     NativeServer server,
@@ -47,6 +48,7 @@ internal sealed class CdpSessionManager(
     private const uint StatusSharingViolation = 0xC0000043;
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
     private readonly ConcurrentDictionary<Guid, Session> sessions = new();
+    private string? managedRoot;
 
     internal async Task<CdpDiscovery> DiscoverAsync() => (await DiscoverCoreAsync()).Discovery;
 
@@ -61,11 +63,17 @@ internal sealed class CdpSessionManager(
                 var profiles = page.Records
                     .Where(profile => profile.Kind == BrowserKind.Profile &&
                                       profile.Browser == record.Browser)
-                    .Select(profile => new CdpProfile(profile.Identity, "source", profile.Location))
+                    .Select(profile => new CdpProfile(profile.Identity, "source", profile.Location, false))
                     .Concat(managed.Profiles.GetValueOrDefault(id, []).Select(name =>
-                        new CdpProfile(name, "managed", Path.Combine(managed.Root, id, name))))
+                    {
+                        var location = Path.Combine(managed.Root, id, name);
+                        return new CdpProfile(name, "managed", location, IsProfileInUse(location));
+                    }))
                     .ToArray();
-                return new CdpBrowser(id, record.Name, record.Location, profiles);
+                return new CdpBrowser(id,
+                                      record.Browser == BrowserType.Edge ? "Microsoft Edge" : "Google Chrome",
+                                      record.Location,
+                                      profiles);
             })
             .ToArray());
         return (discovery, managed);
@@ -73,31 +81,37 @@ internal sealed class CdpSessionManager(
 
     internal async Task<CdpProfileInspection> InspectProfileAsync(
         string browserId,
+        string profileKind,
         string profileName)
     {
-        var (browser, profile, _) = await ResolveSourceProfileAsync(browserId, profileName);
+        var (browser, profile, _) = await ResolveProfileAsync(browserId, profileKind, profileName);
+        var managed = profile.Kind == "managed";
         var result = await server.InspectBrowserProfileAsync(
             browser.Id == "edge" ? BrowserType.Edge :
             browser.Id == "chrome" ? BrowserType.Chrome : throw new ArgumentException("浏览器无效。"),
-            profile.Name);
+            managed ? "Default" : profile.Name,
+            managed ? profile.Location : null);
         return new(checked((long)result.ProfileSize),
                    checked((long)result.AvailableSpace),
-                   result.BrowserRunning);
+                   managed ? profile.InUse : result.BrowserRunning);
     }
 
     internal async Task<CdpProfile> CloneProfileAsync(
         string browserId,
+        string profileKind,
         string profileName,
         string targetName)
     {
         targetName = ValidateProfileName(targetName);
-        var (browser, profile, managed) = await ResolveSourceProfileAsync(browserId, profileName);
+        var (browser, profile, managed) = await ResolveProfileAsync(browserId, profileKind, profileName);
         EnsureProfileDoesNotExist(browser, targetName);
-        var userData = Directory.GetParent(profile.Location)?.FullName ??
-                       throw new InvalidDataException("浏览器 Profile 路径无效。");
+        var userData = profile.Kind == "managed" ? profile.Location :
+            Directory.GetParent(profile.Location)?.FullName ??
+            throw new InvalidDataException("浏览器 Profile 路径无效。");
+        var source = profile.Kind == "managed" ? Path.Combine(userData, "Default") : profile.Location;
         var destination = Path.Combine(managed.Root, browser.Id, targetName);
         var script = $$"""
-            $source = {{PowerShellLiteral(profile.Location)}}
+            $source = {{PowerShellLiteral(source)}}
             $state = Join-Path {{PowerShellLiteral(userData)}} 'Local State'
             $destination = {{PowerShellLiteral(destination)}}
             $created = $false
@@ -109,8 +123,10 @@ internal sealed class CdpSessionManager(
                 }
                 $profile = Join-Path $destination 'Default'
                 New-Item -ItemType Directory -Path $profile -ErrorAction Stop | Out-Null
-                & robocopy.exe $source $profile /E /COPY:DAT /DCOPY:DAT /R:3 /W:1 /XJ /MT:8 /NFL /NDL /NJH /NJS /NP
-                if ($LASTEXITCODE -ge 8) { throw "Robocopy failed: $LASTEXITCODE" }
+                if (Test-Path -LiteralPath $source -PathType Container) {
+                    & robocopy.exe $source $profile /E /COPY:DAT /DCOPY:DAT /R:3 /W:1 /XJ /MT:8 /NFL /NDL /NJH /NJS /NP
+                    if ($LASTEXITCODE -ge 8) { throw "Robocopy failed: $LASTEXITCODE" }
+                }
                 Write-Output 'ZP-CDP-CLONE:OK'
             } catch {
                 if ($created) {
@@ -125,7 +141,7 @@ internal sealed class CdpSessionManager(
         {
             throw new InvalidDataException("浏览器 Profile 副本创建失败。");
         }
-        return new(targetName, "managed", destination);
+        return new(targetName, "managed", destination, false);
     }
 
     internal async Task<CdpProfile> CreateProfileAsync(string browserId, string profileName)
@@ -138,8 +154,19 @@ internal sealed class CdpSessionManager(
         EnsureProfileDoesNotExist(browser, profileName);
         var location = Path.Combine(managed.Root, browser.Id, profileName);
         var script = $$"""
-            New-Item -ItemType Directory -Path {{PowerShellLiteral(location)}} -ErrorAction Stop | Out-Null
-            Write-Output 'ZP-CDP-CREATE:OK'
+            $destination = {{PowerShellLiteral(location)}}
+            $created = $false
+            try {
+                New-Item -ItemType Directory -Path $destination -ErrorAction Stop | Out-Null
+                $created = $true
+                New-Item -ItemType Directory -Path (Join-Path $destination 'Default') -ErrorAction Stop | Out-Null
+                Write-Output 'ZP-CDP-CREATE:OK'
+            } catch {
+                if ($created) {
+                    Remove-Item -LiteralPath $destination -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                throw
+            }
             """;
         var result = await RunScriptAsync(script);
         if (!result.Status.IsSuccess) throw new NativeException(result.Status);
@@ -147,44 +174,52 @@ internal sealed class CdpSessionManager(
         {
             throw new InvalidDataException("浏览器 Profile 创建失败。");
         }
-        return new(profileName, "managed", location);
+        return new(profileName, "managed", location, false);
+    }
+
+    internal async Task DeleteProfileAsync(string browserId, string profileName)
+    {
+        var (_, profile, _) = await ResolveProfileAsync(browserId, "managed", profileName);
+        if (IsProfileInUse(profile.Location))
+        {
+            throw new ArgumentException("远程浏览器 Profile 正在使用。");
+        }
+        var script = $$"""
+            Remove-Item -LiteralPath {{PowerShellLiteral(profile.Location)}} -Recurse -Force -ErrorAction Stop
+            Write-Output 'ZP-CDP-DELETE:OK'
+            """;
+        var result = await RunScriptAsync(script);
+        if (!result.Status.IsSuccess) throw new NativeException(result.Status);
+        if (!result.Text.Contains("ZP-CDP-DELETE:OK", StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("浏览器 Profile 删除失败。");
+        }
+    }
+
+    internal async Task<CdpDataProfile> ResolveDataProfileAsync(string browserId, string profileName)
+    {
+        if (browserId is not ("edge" or "chrome")) throw new ArgumentException("浏览器无效。");
+        var root = managedRoot ?? (await DiscoverManagedProfilesAsync()).Root;
+        return new("Default", Path.Combine(root, browserId, ValidateProfileName(profileName)));
     }
 
     internal async Task<CdpSessionInfo> StartAsync(
         IPAddress sourceAddress,
         string browserId,
-        string mode,
-        string? profileName)
+        string profileName)
     {
-        var discovery = await DiscoverAsync();
-        var browser = discovery.Browsers.FirstOrDefault(item =>
-            item.Id.Equals(browserId, StringComparison.OrdinalIgnoreCase));
-        if (browser is null || mode is not ("temporary" or "incognito" or "managed"))
+        var (browser, selected, _) = await ResolveProfileAsync(browserId, "managed", profileName);
+        if (IsProfileInUse(selected.Location))
         {
-            throw new ArgumentException("浏览器启动选项无效。");
+            throw new ArgumentException("远程浏览器 Profile 正在使用。");
         }
-        var temporary = mode != "managed";
-        string profilePath;
-        string profile = string.Empty;
-        if (temporary)
-        {
-            profilePath = await server.CreateExecutionStagingAsync("CDP");
-        }
-        else
-        {
-            profile = ValidateProfileName(profileName);
-            profilePath = browser.Profiles.FirstOrDefault(item =>
-                item.Kind == "managed" && item.Name.Equals(profile, StringComparison.OrdinalIgnoreCase))?.Location ??
-                throw new ArgumentException("浏览器 Profile 不存在。");
-        }
-        if (!temporary) await DeleteDevToolsActivePortAsync(profilePath);
+        var profile = selected.Name;
+        var profilePath = selected.Location;
+        await DeleteDevToolsActivePortAsync(profilePath);
         var arguments = $"--headless=new --remote-debugging-port=0 --remote-debugging-address=127.0.0.1 " +
                         $"--user-data-dir=\"{profilePath}\" --profile-directory=Default " +
                         "--window-size=1280,800 --no-first-run --no-default-browser-check " +
                         "--disable-sync --disable-background-networking " +
-                        (temporary ? "--disable-extensions --disable-component-extensions-with-background-pages " +
-                                     "--disable-default-apps " : string.Empty) +
-                        (mode == "incognito" ? "--incognito " : string.Empty) +
                         "about:blank";
         var job = await server.StartExecutionAsync(new(
             ExecutionEngine.CreateProcess,
@@ -212,14 +247,13 @@ internal sealed class CdpSessionManager(
             }
             var forward = forwards.Create(sourceAddress, sourceAddress, "CDP", "127.0.0.1", port);
             var session = new Session(Guid.NewGuid(), browser.Name, profile, profilePath,
-                                      mode, temporary, job.JobId, forward.Id, forward.Port);
+                                      job.JobId, forward.Id, forward.Port);
             sessions[session.Id] = session;
             return session.ToInfo(forward);
         }
         catch
         {
             await StopJobAsync(job.JobId);
-            if (temporary) await RemoveTemporaryProfileAsync(profilePath);
             throw;
         }
     }
@@ -309,7 +343,6 @@ internal sealed class CdpSessionManager(
         if (!sessions.TryRemove(id, out var session)) return false;
         forwards.Close(session.ForwardId);
         await StopJobAsync(session.JobId);
-        if (session.Temporary) await RemoveTemporaryProfileAsync(session.ProfilePath);
         return true;
     }
 
@@ -327,17 +360,21 @@ internal sealed class CdpSessionManager(
     }
 
     private async Task<(CdpBrowser Browser, CdpProfile Profile, ManagedDiscovery Managed)>
-        ResolveSourceProfileAsync(string browserId, string profileName)
+        ResolveProfileAsync(string browserId, string profileKind, string profileName)
     {
         var (discovery, managed) = await DiscoverCoreAsync();
         var browser = discovery.Browsers.FirstOrDefault(item =>
             item.Id.Equals(browserId, StringComparison.OrdinalIgnoreCase)) ??
             throw new ArgumentException("浏览器无效。");
         var profile = browser.Profiles.FirstOrDefault(item =>
-            item.Kind == "source" && item.Name.Equals(profileName, StringComparison.OrdinalIgnoreCase)) ??
+            item.Kind == profileKind && item.Name.Equals(profileName, StringComparison.OrdinalIgnoreCase)) ??
             throw new ArgumentException("浏览器 Profile 不存在。");
         return (browser, profile, managed);
     }
+
+    private bool IsProfileInUse(string location) => sessions.Values.Any(session =>
+        session.ProfilePath.Equals(location, StringComparison.OrdinalIgnoreCase) &&
+        forwards.Get(session.ForwardId) is { State: not ("Closed" or "Expired" or "Failed") });
 
     private static void EnsureProfileDoesNotExist(CdpBrowser browser, string profileName)
     {
@@ -389,6 +426,7 @@ internal sealed class CdpSessionManager(
         {
             throw new InvalidDataException("无法确定被控端远程浏览器 Profile 目录。");
         }
+        managedRoot = root;
         return new(root, profiles);
     }
 
@@ -457,27 +495,6 @@ internal sealed class CdpSessionManager(
         if (current?.State != ExecutionJobState.Running)
         {
             throw new InvalidDataException("远程浏览器进程已退出。");
-        }
-    }
-
-    private async Task RemoveTemporaryProfileAsync(string path)
-    {
-        try
-        {
-            var script = $$"""
-                $path = {{PowerShellLiteral(path)}}
-                for ($attempt = 0; $attempt -lt 50; $attempt++) {
-                    Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
-                    if (-not (Test-Path -LiteralPath $path)) { return }
-                    Start-Sleep -Milliseconds 100
-                }
-                throw 'The temporary browser Profile is still in use.'
-                """;
-            var result = await RunScriptAsync(script);
-            if (!result.Status.IsSuccess) throw new NativeException(result.Status);
-        }
-        catch (NativeException)
-        {
         }
     }
 
@@ -612,7 +629,6 @@ internal sealed class CdpSessionManager(
         {
             forwards.Close(session.ForwardId);
             StopJobAsync(session.JobId).GetAwaiter().GetResult();
-            if (session.Temporary) RemoveTemporaryProfileAsync(session.ProfilePath).GetAwaiter().GetResult();
         }
         sessions.Clear();
     }
@@ -624,8 +640,6 @@ internal sealed class CdpSessionManager(
         string Browser,
         string Profile,
         string ProfilePath,
-        string ProfileKind,
-        bool Temporary,
         string JobId,
         Guid ForwardId,
         int InitialForwardPort)
@@ -635,7 +649,7 @@ internal sealed class CdpSessionManager(
         internal CdpSessionInfo ToInfo(PortForwardInfo forward)
         {
             ForwardPort = forward.Port;
-            return new(Id, Browser, Profile, ProfileKind, forward);
+            return new(Id, Browser, Profile, forward);
         }
     }
 }

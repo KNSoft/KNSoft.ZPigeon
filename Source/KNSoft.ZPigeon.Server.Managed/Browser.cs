@@ -19,6 +19,7 @@ public sealed partial class NativeServer
         BrowserType browser,
         BrowserKind kind,
         string profile,
+        string? userData,
         ulong cursor,
         uint limit = 100) =>
         RunManagementAsync<BrowserPage>(context => NativeMethods.QueryBrowser(ClientId,
@@ -26,28 +27,38 @@ public sealed partial class NativeServer
             kind,
             profile,
             (uint)profile.Length,
+            userData,
+            (uint)(userData?.Length ?? 0),
             cursor,
             limit,
             BrowserCallback,
             context));
 
-    public Task<BrowserProfileInspection> InspectBrowserProfileAsync(BrowserType browser, string profile) =>
+    public Task<BrowserProfileInspection> InspectBrowserProfileAsync(
+        BrowserType browser,
+        string profile,
+        string? userData = null) =>
         RunManagementAsync<BrowserProfileInspection>(context => NativeMethods.InspectBrowserProfile(ClientId,
             browser,
             profile,
             (uint)profile.Length,
+            userData,
+            (uint)(userData?.Length ?? 0),
             BrowserProfileInspectionCallback,
             context));
 
     public Task<BrowserDocumentPage> OpenBrowserDocumentAsync(
         BrowserType browser,
         BrowserKind kind,
-        string profile) =>
+        string profile,
+        string? userData) =>
         RunManagementAsync<BrowserDocumentPage>(context => NativeMethods.OpenBrowserDocument(ClientId,
             browser,
             kind,
             profile,
             (uint)profile.Length,
+            userData,
+            (uint)(userData?.Length ?? 0),
             BrowserDocumentCallback,
             context));
 
@@ -350,6 +361,8 @@ internal static partial class NativeMethods
         BrowserKind kind,
         string profile,
         uint profileLength,
+        string? userData,
+        uint userDataLength,
         ulong cursor,
         uint limit,
         BrowserCallback callback,
@@ -363,6 +376,8 @@ internal static partial class NativeMethods
         BrowserType browser,
         string profile,
         uint profileLength,
+        string? userData,
+        uint userDataLength,
         BrowserProfileInspectionCallback callback,
         nint context);
 
@@ -375,6 +390,8 @@ internal static partial class NativeMethods
         BrowserKind kind,
         string profile,
         uint profileLength,
+        string? userData,
+        uint userDataLength,
         BrowserDocumentCallback callback,
         nint context);
 
