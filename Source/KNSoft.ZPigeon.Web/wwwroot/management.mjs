@@ -3,6 +3,7 @@ import { apiUrl, postBinary, postData } from "./client-context.mjs";
 import { contextMenuItems, fileAssociation } from "./file-associations.mjs";
 import { FilePreview } from "./file-previews.mjs";
 import { t } from "./i18n.mjs";
+import { revealTableRow } from "./table.mjs";
 const DIRECTORY = 0x10;
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 const FILE_ATTRIBUTES = [
@@ -418,9 +419,10 @@ export class FileManager {
       this.notify(`未在目录中找到 ${name}`);
       return;
     }
-    const row = this.body.children[index];
-    this.select(row, this.records[index]);
-    row.scrollIntoView({ block: "center" });
+    const item = this.records[index],
+      row = [...this.body.rows].find((value) => value.cells[1]?.textContent === item.name);
+    this.select(row, item);
+    revealTableRow(row);
   }
   async load(node, refresh, append = false) {
     const request = ++this.request;
@@ -1277,7 +1279,7 @@ export class ProcessManager {
     this.revealFile = revealFile;
     this.revealServices = revealServices;
     this.active = false;
-    this.busy = false;
+    this.refreshing = null;
     this.interval = 3000;
     host.innerHTML = /* HTML */ `<div class="manager-toolbar">
         <input data-role="filter" placeholder="筛选进程" /><span data-role="summary" class="status"></span
@@ -1561,15 +1563,14 @@ export class ProcessManager {
     this.update(true);
   }
   async revealProcess(processId) {
-    this.filter.value = String(processId);
-    if (!this.records?.length) await this.refresh();
+    if (!(await this.loadSystem())) return;
+    if (this.refreshing || !this.records?.length) await this.refresh();
+    const item = this.records?.find((value) => value.processId === processId);
+    this.filter.value = "";
+    this.selected = item || null;
     this.render();
-    const item = this.records?.find((value) => value.processId === processId),
-      row = [...this.body.rows].find((value) => Number(value.cells[1]?.textContent) === processId);
-    if (item && row) {
-      this.select(row, item);
-      row.scrollIntoView({ block: "center" });
-    } else this.notify(`未找到 PID ${processId}`);
+    if (item) revealTableRow(this.body.querySelector(".selected"));
+    else this.notify(`未找到 PID ${processId}`);
   }
   eligible() {
     return this.active && this.isConnected() && document.visibilityState === "visible" && document.hasFocus();
@@ -1578,19 +1579,27 @@ export class ProcessManager {
     clearTimeout(this.timer);
     this.timer = null;
     if (!this.eligible()) return;
-    if (!this.processorCount && !this.loadingSystem) {
-      this.loadingSystem = true;
-      this.call("/api/system")
-        .then((info) => {
-          this.processorCount = info.processorCount;
-          this.update(true);
-        })
-        .catch((error) => this.notify(error))
-        .finally(() => (this.loadingSystem = false));
+    if (!this.processorCount) {
+      if (!this.loadingSystem) this.loadSystem().then((loaded) => loaded && this.update(true));
       return;
     }
     if (immediate) this.refresh();
     else if (this.interval) this.timer = setTimeout(() => this.refresh(), this.interval);
+  }
+  loadSystem() {
+    if (this.processorCount) return Promise.resolve(true);
+    if (!this.loadingSystem)
+      this.loadingSystem = this.call("/api/system")
+        .then((info) => {
+          this.processorCount = info.processorCount;
+          return true;
+        })
+        .catch((error) => {
+          this.notify(error);
+          return false;
+        })
+        .finally(() => (this.loadingSystem = null));
+    return this.loadingSystem;
   }
   clearSelection() {
     this.body.querySelector(".selected")?.classList.remove("selected");
@@ -1608,34 +1617,39 @@ export class ProcessManager {
     this.empty.hidden = false;
     this.empty.textContent = "Client 未连接";
   }
-  async refresh() {
-    if (this.busy || !this.eligible() || !this.processorCount) return;
-    this.busy = true;
-    try {
-      const now = performance.now(),
-        records = await this.call("/api/processes");
-      if (!this.eligible()) return;
-      const elapsed = this.sampleTime ? now - this.sampleTime : 0,
-        previous = new Map((this.records || []).map((item) => [`${item.processId}:${item.createTime}`, item]));
-      for (const item of records) {
-        const old = previous.get(`${item.processId}:${item.createTime}`),
-          delta = old
-            ? Number(BigInt(item.userTime) + BigInt(item.kernelTime) - BigInt(old.userTime) - BigInt(old.kernelTime))
-            : 0;
-        item.cpu = elapsed ? Math.max(0, delta / (elapsed * 10000 * this.processorCount)) * 100 : 0;
+  refresh() {
+    if (this.refreshing) return this.refreshing;
+    if (!this.eligible() || !this.processorCount) return Promise.resolve(false);
+    this.refreshing = (async () => {
+      try {
+        const now = performance.now(),
+          records = await this.call("/api/processes");
+        if (!this.eligible()) return false;
+        const elapsed = this.sampleTime ? now - this.sampleTime : 0,
+          previous = new Map((this.records || []).map((item) => [`${item.processId}:${item.createTime}`, item]));
+        for (const item of records) {
+          const old = previous.get(`${item.processId}:${item.createTime}`),
+            delta = old
+              ? Number(BigInt(item.userTime) + BigInt(item.kernelTime) - BigInt(old.userTime) - BigInt(old.kernelTime))
+              : 0;
+          item.cpu = elapsed ? Math.max(0, delta / (elapsed * 10000 * this.processorCount)) * 100 : 0;
+        }
+        this.sampleTime = now;
+        this.records = records.sort(
+          (a, b) => collator.compare(a.imageName || "", b.imageName || "") || a.processId - b.processId,
+        );
+        this.render();
+        return true;
+      } catch (e) {
+        this.empty.hidden = false;
+        this.empty.textContent = e.message;
+        return false;
+      } finally {
+        this.refreshing = null;
+        this.update();
       }
-      this.sampleTime = now;
-      this.records = records.sort(
-        (a, b) => collator.compare(a.imageName || "", b.imageName || "") || a.processId - b.processId,
-      );
-      this.render();
-    } catch (e) {
-      this.empty.hidden = false;
-      this.empty.textContent = e.message;
-    } finally {
-      this.busy = false;
-      this.update();
-    }
+    })();
+    return this.refreshing;
   }
   render() {
     const filter = this.filter.value.toLocaleLowerCase(),
@@ -2477,10 +2491,7 @@ export class ServiceManager {
         "[data-field=passwordConfirm]",
       ).value = "";
     };
-    this.filter.oninput = () => {
-      this.serviceNames = null;
-      this.render();
-    };
+    this.filter.oninput = () => this.render();
     for (const filter of [this.userServices, this.drivers])
       filter.onchange = () => {
         if (!this.userServices.checked && !this.drivers.checked) filter.checked = true;
@@ -2577,12 +2588,10 @@ export class ServiceManager {
       const driver = (item.serviceType & 0xf) !== 0;
       if (driver ? !this.drivers.checked : !this.userServices.checked) continue;
       if (
-        this.serviceNames
-          ? !this.serviceNames.has(item.serviceName.toLocaleLowerCase())
-          : filter &&
-            !`${item.serviceName} ${item.processId} ${item.displayName} ${item.description} ${item.startName}`
-              .toLocaleLowerCase()
-              .includes(filter)
+        filter &&
+        !`${item.serviceName} ${item.processId} ${item.displayName} ${item.description} ${item.startName}`
+          .toLocaleLowerCase()
+          .includes(filter)
       )
         continue;
       const row = document.createElement("tr"),
@@ -2617,34 +2626,29 @@ export class ServiceManager {
   }
   async revealProcess(processId) {
     if (!this.loaded) await this.load();
-    this.filter.value = String(processId);
     const item = this.records.find((value) => value.processId === processId);
-    this.selected = item || null;
-    this.render();
-    if (item) {
-      const row = this.body.querySelector(".selected");
-      row?.scrollIntoView({ block: "center" });
-    } else this.notify(`未找到 PID ${processId} 对应的服务`);
+    this.reveal(item, `未找到 PID ${processId} 对应的服务`);
   }
   async revealServices(serviceNames) {
     if (!this.loaded) await this.load();
-    this.serviceNames = new Set(serviceNames.map((value) => value.toLocaleLowerCase()));
-    this.filter.value = serviceNames.join("、");
-    this.selected = this.records.find((value) => this.serviceNames.has(value.serviceName.toLocaleLowerCase())) || null;
-    this.render();
-    if (this.selected) this.body.querySelector(".selected")?.scrollIntoView({ block: "center" });
-    else this.notify("未找到关联服务");
+    const names = new Set(serviceNames.map((value) => value.toLocaleLowerCase())),
+      item = this.records.find((value) => names.has(value.serviceName.toLocaleLowerCase()));
+    this.reveal(item, "未找到关联服务");
   }
   async revealService(serviceName) {
     if (!this.loaded) await this.load();
-    this.filter.value = serviceName;
     const item = this.records.find(
       (value) => value.serviceName.toLocaleLowerCase() === serviceName.toLocaleLowerCase(),
     );
+    this.reveal(item, `未找到服务 ${serviceName}`);
+  }
+  reveal(item, missing) {
+    this.filter.value = "";
+    this.userServices.checked = this.drivers.checked = true;
     this.selected = item || null;
     this.render();
-    if (item) this.body.querySelector(".selected")?.scrollIntoView({ block: "center" });
-    else this.notify(`未找到服务 ${serviceName}`);
+    if (item) revealTableRow(this.body.querySelector(".selected"));
+    else this.notify(missing);
   }
   select(row, item) {
     this.body.querySelector(".selected")?.classList.remove("selected");

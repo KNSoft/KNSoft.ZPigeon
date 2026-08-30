@@ -144,3 +144,9 @@ export function enableManagedTables(root = document) {
     ),
   ).observe(root, { childList: true, subtree: true });
 }
+
+export function revealTableRow(row) {
+  requestAnimationFrame(() => {
+    if (row?.isConnected) row.scrollIntoView({ block: "center", inline: "nearest" });
+  });
+}
