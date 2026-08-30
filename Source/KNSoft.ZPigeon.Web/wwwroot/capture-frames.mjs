@@ -1,21 +1,27 @@
 const headerLength = 33,
-  maximumImageLength = 0x1000000;
+  maximumImageLength = 0x1000000,
+  minimumVideoDimension = 128;
 const h264Codec = "avc1.4D0033",
-  h265Codec = "hev1.1.6.L153.B0";
+  h265Codec = "hev1.1.6.L153.B0",
+  h264Flag = 1,
+  h265Flag = 2;
 
 export class CaptureFrameDecoder {
-  constructor(canvas, status, notify, active, acknowledge, requestKeyFrame) {
+  constructor(canvas, status, active, acknowledge, reportVideoCodecs) {
     this.canvas = canvas;
     this.status = status;
-    this.notify = notify;
     this.active = active;
     this.acknowledge = acknowledge;
-    this.requestKeyFrame = requestKeyFrame;
+    this.reportVideoCodecs = reportVideoCodecs;
     this.reset();
   }
 
   reset() {
     this.resetVideo();
+    this.supportedWidth = this.supportedHeight = 0;
+    this.supportedCodecs = 0;
+    this.reportedWidth = this.reportedHeight = 0;
+    this.reportedCodecs = 0;
     this.chunks = [];
     this.available = 0;
     this.pending = null;
@@ -135,6 +141,8 @@ export class CaptureFrameDecoder {
       this.acknowledge(frame.sequence, true, socket);
       return;
     }
+    await this.ensureVideoCodecs(videoDimension(frame.canvasWidth), videoDimension(frame.canvasHeight), socket);
+    if (!this.active(socket)) return;
     this.resetVideo();
     const bitmap = await createImageBitmap(
       new Blob([frame.image], {
@@ -160,9 +168,23 @@ export class CaptureFrameDecoder {
     this.acknowledge(frame.sequence, false, socket);
   }
 
-  drawVideo(frame, socket) {
+  async drawVideo(frame, socket) {
     const key = frame.type === 3 || frame.type === 5,
-      codec = frame.type <= 4 ? h264Codec : h265Codec;
+      codec = frame.type <= 4 ? h264Codec : h265Codec,
+      codecFlag = frame.type <= 4 ? h264Flag : h265Flag,
+      supportedCodecs = await this.ensureVideoCodecs(
+        videoDimension(frame.canvasWidth),
+        videoDimension(frame.canvasHeight),
+        socket,
+      );
+    if (!this.active(socket)) return;
+    if (!(supportedCodecs & codecFlag)) {
+      this.resetVideo();
+      this.sequence = 0;
+      this.status.textContent = "正在重新同步远程画面…";
+      this.acknowledge(frame.sequence, false, socket);
+      return;
+    }
     if (
       !key &&
       (!this.sequence ||
@@ -191,16 +213,16 @@ export class CaptureFrameDecoder {
       this.videoCodec = codec;
       const decoder = new VideoDecoder({
         output: (video) => this.videoOutput(video, decoder),
-        error: (error) => this.videoError(error, socket, decoder),
+        error: (error) => this.videoError(error, socket, decoder, codec),
       });
       this.videoDecoder = decoder;
-      decoder.configure({
-        codec,
-        codedWidth: frame.canvasWidth,
-        codedHeight: frame.canvasHeight,
-        optimizeForLatency: true,
-        hardwareAcceleration: "prefer-hardware",
-      });
+      try {
+        decoder.configure(videoConfig(codec, frame.canvasWidth, frame.canvasHeight));
+      } catch (error) {
+        this.videoError(error, socket, decoder, codec);
+        this.acknowledge(frame.sequence, false, socket);
+        return;
+      }
     }
     const timestamp = frame.sequence * 1000;
     this.videoFrames.set(timestamp, { frame, socket });
@@ -214,7 +236,9 @@ export class CaptureFrameDecoder {
       );
     } catch (error) {
       this.videoFrames.delete(timestamp);
-      throw error;
+      this.videoError(error, socket, this.videoDecoder, codec);
+      this.acknowledge(frame.sequence, false, socket);
+      return;
     }
     this.sequence = frame.sequence;
     this.acknowledge(frame.sequence, false, socket);
@@ -239,13 +263,39 @@ export class CaptureFrameDecoder {
     video.close();
   }
 
-  videoError(error, socket, decoder) {
+  videoError(error, socket, decoder, codec) {
     if (this.videoDecoder !== decoder || !this.active(socket)) return;
     console.warn(error);
     this.resetVideo();
     this.sequence = 0;
     this.status.textContent = "正在重新同步远程画面…";
-    this.requestKeyFrame(socket);
+    this.supportedCodecs &= ~(codec === h264Codec ? h264Flag : h265Flag);
+    this.sendVideoCodecs(socket);
+  }
+
+  async ensureVideoCodecs(width, height, socket) {
+    if (this.supportedWidth !== width || this.supportedHeight !== height) {
+      const codecs = await supportedVideoCodecs(width, height);
+      if (!this.active(socket)) return 0;
+      this.supportedWidth = width;
+      this.supportedHeight = height;
+      this.supportedCodecs = codecs;
+    }
+    this.sendVideoCodecs(socket);
+    return this.supportedCodecs;
+  }
+
+  sendVideoCodecs(socket) {
+    if (
+      this.reportedWidth === this.supportedWidth &&
+      this.reportedHeight === this.supportedHeight &&
+      this.reportedCodecs === this.supportedCodecs
+    )
+      return;
+    this.reportVideoCodecs(this.supportedCodecs, this.supportedWidth, this.supportedHeight, socket);
+    this.reportedWidth = this.supportedWidth;
+    this.reportedHeight = this.supportedHeight;
+    this.reportedCodecs = this.supportedCodecs;
   }
 }
 
@@ -274,24 +324,35 @@ function nextSequence(sequence) {
 }
 
 export async function configureCaptureEncoding(select) {
-  const supported = async (codec) => {
-    try {
-      return (
-        typeof VideoDecoder !== "undefined" &&
-        (await VideoDecoder.isConfigSupported({ codec, codedWidth: 1280, codedHeight: 720, optimizeForLatency: true }))
-          .supported
-      );
-    } catch {
-      return false;
-    }
-  };
-  const h264 = await supported(h264Codec),
-    h265 = await supported(h265Codec);
+  const codecs = await supportedVideoCodecs(1280, 720),
+    h264 = !!(codecs & h264Flag),
+    h265 = !!(codecs & h265Flag);
   select.querySelector("[value=h264]").disabled = !h264;
   select.querySelector("[value=h265]").disabled = !h265;
   select.querySelector("[value=auto]").disabled = !(h264 || h265);
   select.dataset.autoCodec = h265 ? "1" : "0";
   if (!(h264 || h265)) select.value = "image";
+}
+
+function videoConfig(codec, width, height) {
+  return { codec, codedWidth: width, codedHeight: height, optimizeForLatency: true };
+}
+
+function videoDimension(value) {
+  return Math.max(value & ~1, minimumVideoDimension);
+}
+
+async function supportedVideoCodecs(width, height) {
+  if (typeof VideoDecoder === "undefined") return 0;
+  const supported = async (codec) => {
+    try {
+      return (await VideoDecoder.isConfigSupported(videoConfig(codec, width, height))).supported;
+    } catch {
+      return false;
+    }
+  };
+  const [h264, h265] = await Promise.all([supported(h264Codec), supported(h265Codec)]);
+  return (h264 ? h264Flag : 0) | (h265 ? h265Flag : 0);
 }
 
 export function captureEncodingOptions(select) {

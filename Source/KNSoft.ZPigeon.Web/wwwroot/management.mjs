@@ -2967,10 +2967,9 @@ export class WindowManager {
     this.decoder = new CaptureFrameDecoder(
       this.canvas,
       this.imageStatus,
-      notify,
       (socket) => this.socket === socket,
       (sequence, keyframe, socket) => this.acknowledgeFrame(sequence, keyframe, socket),
-      (socket) => this.requestKeyFrame(socket),
+      (codecs, width, height, socket) => this.reportVideoCodecs(codecs, width, height, socket),
     );
     this.filter.oninput = () => this.render();
     this.uiaFilter.oninput = () => this.filterUia();
@@ -3504,8 +3503,15 @@ export class WindowManager {
     view.setUint32(2, sequence, true);
     socket.send(data);
   }
-  requestKeyFrame(socket) {
-    if (socket?.readyState === WebSocket.OPEN) socket.send(Uint8Array.of(6));
+  reportVideoCodecs(codecs, width, height, socket) {
+    if (socket?.readyState !== WebSocket.OPEN) return;
+    const data = new ArrayBuffer(10),
+      view = new DataView(data);
+    view.setUint8(0, 6);
+    view.setUint8(1, codecs);
+    view.setUint32(2, width, true);
+    view.setUint32(6, height, true);
+    socket.send(data);
   }
   async apply() {
     const w = this.info;

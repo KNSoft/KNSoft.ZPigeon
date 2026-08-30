@@ -23,7 +23,6 @@
 #define ZP_WINDOW_CAPTURE_MIN_BUILD 26100
 #define ZP_WINDOW_CAPTURE_BUFFER_COUNT 2
 #define ZP_WINDOW_CAPTURE_DIRTY_THRESHOLD 40
-#define ZP_WINDOW_CAPTURE_MIN_VIDEO_DIMENSION 128
 
 typedef __x_ABI_CWindows_CGraphics_CCapture_CIDirect3D11CaptureFrame WGC_FRAME;
 typedef __x_ABI_CWindows_CGraphics_CCapture_CIDirect3D11CaptureFrame2 WGC_FRAME2;

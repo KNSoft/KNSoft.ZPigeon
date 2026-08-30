@@ -842,10 +842,9 @@ export class RemoteDesktopManager {
     this.decoder = new CaptureFrameDecoder(
       this.canvas,
       this.desktopStatus,
-      notify,
       (socket) => this.socket === socket,
       (sequence, keyframe, socket) => this.acknowledgeFrame(sequence, keyframe, socket),
-      (socket) => this.requestKeyFrame(socket),
+      (codecs, width, height, socket) => this.reportVideoCodecs(codecs, width, height, socket),
     );
     this.create.onclick = () => this.open();
     this.save.onclick = () => this.saveConfiguration();
@@ -1164,8 +1163,14 @@ export class RemoteDesktopManager {
     view.setUint32(2, sequence, true);
     this.send(data, socket);
   }
-  requestKeyFrame(socket) {
-    this.send(Uint8Array.of(6), socket);
+  reportVideoCodecs(codecs, width, height, socket) {
+    const data = new ArrayBuffer(10),
+      view = new DataView(data);
+    view.setUint8(0, 6);
+    view.setUint8(1, codecs);
+    view.setUint32(2, width, true);
+    view.setUint32(6, height, true);
+    this.send(data, socket);
   }
   pointerDown(event) {
     event.preventDefault();

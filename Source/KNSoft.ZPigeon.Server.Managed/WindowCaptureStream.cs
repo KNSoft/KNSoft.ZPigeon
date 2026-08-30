@@ -145,7 +145,7 @@ public sealed class WindowCaptureStream : IAsyncDisposable
         var buffer = OwnedBuffer.Copy(data, (int)dataLength);
         if (output.Writer.TryWrite(buffer)) return true;
         buffer.Dispose();
-        return true;
+        return false;
     }
 
     internal void Complete(ZpStatus status)

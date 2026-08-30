@@ -37,7 +37,10 @@ struct _ZP_CLIENT_WINDOW_CAPTURE_CHANNEL
     ULONG AcknowledgedFrameSequence;
     ULONG FrameSequence;
     BYTE FrameAckFlags;
-    BOOLEAN KeyFrameRequested;
+    BYTE VideoCodecs;
+    ULONG VideoCodecWidth;
+    ULONG VideoCodecHeight;
+    BOOLEAN VideoCodecsChanged;
     BYTE PressedKeys[ZP_WINDOW_PRESSED_KEY_COUNT / 8];
     BYTE PressedMouseButtons;
     ZP_WINDOW_CAPTURE_OPTIONS Options;
@@ -863,14 +866,29 @@ ZpWindowCapture_GetOptions(
     _In_ PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel,
     _Out_ PZP_WINDOW_CAPTURE_OPTIONS Options,
     _Out_ PZP_CONNECTION_POLICY ConnectionPolicy,
-    _Out_ PBOOLEAN KeyFrameRequested)
+    _Out_ PBYTE VideoCodecs,
+    _Out_ PULONG VideoCodecWidth,
+    _Out_ PULONG VideoCodecHeight,
+    _Out_ PBOOLEAN VideoCodecsChanged)
 {
     RtlAcquireSRWLockExclusive(&Channel->Header.Owner->Lock);
     *Options = Channel->Options;
     *ConnectionPolicy = Channel->Header.Owner->ConnectionPolicy;
-    *KeyFrameRequested = Channel->KeyFrameRequested;
-    Channel->KeyFrameRequested = FALSE;
+    *VideoCodecs = Channel->VideoCodecs;
+    *VideoCodecWidth = Channel->VideoCodecWidth;
+    *VideoCodecHeight = Channel->VideoCodecHeight;
+    *VideoCodecsChanged = Channel->VideoCodecsChanged;
+    Channel->VideoCodecsChanged = FALSE;
     RtlReleaseSRWLockExclusive(&Channel->Header.Owner->Lock);
+}
+
+static
+BOOLEAN
+ZpWindowCapture_IsVideoCodecSupported(
+    _In_ BYTE VideoCodecs,
+    _In_ ZP_WINDOW_VIDEO_CODEC Codec)
+{
+    return FlagOn(VideoCodecs, 1U << Codec);
 }
 
 static
@@ -897,6 +915,7 @@ ZpWindowCapture_UpdateAutomaticMode(
     _Inout_ PZP_WINDOW_VIDEO_STATE State,
     _In_ PCZP_WINDOW_CAPTURE_OPTIONS Options,
     _In_ PCZP_CONNECTION_POLICY ConnectionPolicy,
+    _In_ BYTE VideoCodecs,
     _In_ BYTE ChangeRate)
 {
     static const BYTE EnterThresholds[] = { 12, 18, 25, 32, 40 };
@@ -908,7 +927,7 @@ ZpWindowCapture_UpdateAutomaticMode(
     {
         State->HighChangeFrames = ChangeRate >= EnterThresholds[QualityClass] ?
                                       State->HighChangeFrames + 1 : 0;
-        if (State->HighChangeFrames >= EnterFrames && !State->Unavailable)
+        if (State->HighChangeFrames >= EnterFrames && !State->Unavailable && VideoCodecs != 0)
         {
             State->Active = TRUE;
             State->HighChangeFrames = 0;
@@ -964,11 +983,11 @@ ZpWindowCapture_Worker(
     ZP_WINDOW_CAPTURE_OPTIONS Options;
     ZP_CONNECTION_POLICY ConnectionPolicy;
     ZP_WINDOW_CAPTURE_RECORD Record;
-    BYTE AckFlags, ChangeRate;
+    BYTE AckFlags, ChangeRate, VideoCodecs;
     HWND Window;
-    ULONG Width, Height, BitRate;
+    ULONG Width, Height, BitRate, VideoCodecWidth, VideoCodecHeight;
     LOGICAL WasVideo;
-    BOOLEAN KeyFrameRequested;
+    BOOLEAN VideoCodecsChanged, VideoCodecsMatch;
     HRESULT Result;
     NTSTATUS Status = STATUS_SUCCESS;
     ZP_STATUS CompletionStatus;
@@ -987,14 +1006,14 @@ ZpWindowCapture_Worker(
         ZpWindowCapture_GetOptions(Channel,
                                    &Options,
                                    &ConnectionPolicy,
-                                   &KeyFrameRequested);
+                                   &VideoCodecs,
+                                   &VideoCodecWidth,
+                                   &VideoCodecHeight,
+                                   &VideoCodecsChanged);
         CompletionStatus = ZpWindow_ValidateCaptureIdentity(&Options, &Window);
         if (!ZpStatus_IsSuccess(CompletionStatus)) break;
-        if (KeyFrameRequested && Video.Encoder != NULL)
-        {
-            ZpWindowVideoEncoder_Close(Video.Encoder);
-            Video.Encoder = NULL;
-        }
+        ZpWindowShared_GetFormat(Capture, &Width, &Height);
+        VideoCodecsMatch = VideoCodecWidth == Width && VideoCodecHeight == Height;
         if (Video.RequestedCodec != Options.Encoding.Codec)
         {
             Video.Unavailable = FALSE;
@@ -1005,34 +1024,63 @@ ZpWindowCapture_Worker(
                 Video.Encoder = NULL;
             }
         }
+        if (VideoCodecsChanged && VideoCodecsMatch) Video.Unavailable = VideoCodecs == 0;
         if (Options.Encoding.Mode == ZpWindowCaptureModeImage) Video.Active = FALSE;
-        else if (Options.Encoding.Mode == ZpWindowCaptureModeVideo) Video.Active = TRUE;
+        else if (Options.Encoding.Mode == ZpWindowCaptureModeVideo)
+        {
+            if (VideoCodecsMatch &&
+                !ZpWindowCapture_IsVideoCodecSupported(VideoCodecs, Options.Encoding.Codec))
+            {
+                CompletionStatus = ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
+                break;
+            }
+            Video.Active = TRUE;
+        }
+        else if (!VideoCodecsMatch || VideoCodecs == 0) Video.Active = FALSE;
         if (!Video.Active && Video.Encoder != NULL)
         {
             ZpWindowVideoEncoder_Close(Video.Encoder);
             Video.Encoder = NULL;
             ZpWindowShared_RequestKeyFrame(Capture);
         }
+        else if (Video.Encoder != NULL && VideoCodecsMatch &&
+                 !ZpWindowCapture_IsVideoCodecSupported(VideoCodecs, Video.Codec))
+        {
+            ZpWindowVideoEncoder_Close(Video.Encoder);
+            Video.Encoder = NULL;
+        }
         if (Video.Active)
         {
-            ZpWindowShared_GetFormat(Capture, &Width, &Height);
-            BitRate = ZpWindowCapture_GetVideoBitRate(&Options,
-                                                       &ConnectionPolicy,
-                                                       Width,
-                                                       Height,
-                                                       Video.Encoder != NULL ?
-                                                           Video.Codec : Options.Encoding.Codec);
-            if (Video.Encoder != NULL &&
-                (Video.Width != Width || Video.Height != Height ||
-                 Video.BitRate != BitRate || Video.FrameRate != Options.FrameRate))
+            if (Video.Encoder != NULL)
             {
-                ZpWindowVideoEncoder_Close(Video.Encoder);
-                Video.Encoder = NULL;
+                BitRate = ZpWindowCapture_GetVideoBitRate(&Options,
+                                                           &ConnectionPolicy,
+                                                           Width,
+                                                           Height,
+                                                           Video.Codec);
+                if (Video.Width != Width || Video.Height != Height ||
+                    Video.BitRate != BitRate || Video.FrameRate != Options.FrameRate)
+                {
+                    ZpWindowVideoEncoder_Close(Video.Encoder);
+                    Video.Encoder = NULL;
+                }
             }
         }
         if (Video.Active && Video.Encoder == NULL)
         {
+            ZP_WINDOW_VIDEO_CODEC AlternativeCodec;
+
             Video.Codec = Options.Encoding.Codec;
+            if (Options.Encoding.Mode == ZpWindowCaptureModeAuto &&
+                !ZpWindowCapture_IsVideoCodecSupported(VideoCodecs, Video.Codec))
+            {
+                Video.Codec ^= 1;
+            }
+            BitRate = ZpWindowCapture_GetVideoBitRate(&Options,
+                                                       &ConnectionPolicy,
+                                                       Width,
+                                                       Height,
+                                                       Video.Codec);
             Result = ZpWindowVideoEncoder_Create(Video.Codec,
                                                  Width,
                                                  Height,
@@ -1040,10 +1088,11 @@ ZpWindowCapture_Worker(
                                                  BitRate,
                                                  ZpWindowShared_GetDeviceManager(Capture),
                                                  &Video.Encoder);
+            AlternativeCodec = Video.Codec ^ 1;
             if (FAILED(Result) && Options.Encoding.Mode == ZpWindowCaptureModeAuto &&
-                Video.Codec == ZpWindowVideoCodecH265)
+                ZpWindowCapture_IsVideoCodecSupported(VideoCodecs, AlternativeCodec))
             {
-                Video.Codec = ZpWindowVideoCodecH264;
+                Video.Codec = AlternativeCodec;
                 BitRate = ZpWindowCapture_GetVideoBitRate(&Options,
                                                            &ConnectionPolicy,
                                                            Width,
@@ -1158,6 +1207,7 @@ ZpWindowCapture_Worker(
             ZpWindowCapture_UpdateAutomaticMode(&Video,
                                                  &Options,
                                                  &ConnectionPolicy,
+                                                 VideoCodecsMatch ? VideoCodecs : 0,
                                                  ChangeRate);
             if (WasVideo && !Video.Active) ZpWindowShared_RequestKeyFrame(Capture);
         }
@@ -1377,22 +1427,31 @@ ZpWindowCapture_ChannelData(
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return ZpWindowCapture_CompleteInput(Channel, Length, Status);
     }
-    if (Type == ZpWindowInputKeyFrame)
+    if (Type == ZpWindowInputVideoCodecs)
     {
-        if (Length != sizeof(BYTE)) return STATUS_PROTOCOL_UNREACHABLE;
+        ULONG VideoWidth, VideoHeight;
+
+        if (Length != 2 * sizeof(BYTE) + 2 * sizeof(ULONG) ||
+            FlagOn(Data[1], ~ZP_WINDOW_VIDEO_CODECS_MASK))
+        {
+            return STATUS_PROTOCOL_UNREACHABLE;
+        }
+        VideoWidth = ZpWindowCapture_ReadUInt32(Data + 2 * sizeof(BYTE));
+        VideoHeight = ZpWindowCapture_ReadUInt32(Data + 2 * sizeof(BYTE) + sizeof(ULONG));
+        if (VideoWidth < ZP_WINDOW_CAPTURE_MIN_VIDEO_DIMENSION ||
+            VideoWidth > ZP_WINDOW_CAPTURE_MAX_DIMENSION ||
+            VideoHeight < ZP_WINDOW_CAPTURE_MIN_VIDEO_DIMENSION ||
+            VideoHeight > ZP_WINDOW_CAPTURE_MAX_DIMENSION)
+        {
+            return STATUS_PROTOCOL_UNREACHABLE;
+        }
         RtlAcquireSRWLockExclusive(&Object->Lock);
-        if (!Channel->Header.Pending || Channel->Capture == NULL)
-        {
-            Status = STATUS_PROTOCOL_UNREACHABLE;
-        }
-        else
-        {
-            Channel->KeyFrameRequested = TRUE;
-            ZpWindowShared_RequestKeyFrame(Channel->Capture);
-            Status = STATUS_SUCCESS;
-        }
+        Channel->VideoCodecs = Data[1];
+        Channel->VideoCodecWidth = VideoWidth;
+        Channel->VideoCodecHeight = VideoHeight;
+        Channel->VideoCodecsChanged = TRUE;
         RtlReleaseSRWLockExclusive(&Object->Lock);
-        return ZpWindowCapture_CompleteInput(Channel, Length, Status);
+        return ZpWindowCapture_CompleteInput(Channel, Length, STATUS_SUCCESS);
     }
     if (Type == ZpWindowInputOptions)
     {
