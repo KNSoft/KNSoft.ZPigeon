@@ -7,6 +7,7 @@ typedef union _ZP_PROCESS_CALLBACK
     ZP_PROCESS_ENUMERATE_CALLBACK Enumerate;
     ZP_PROCESS_QUERY_CALLBACK Query;
     ZP_PROCESS_MODULES_CALLBACK Modules;
+    ZP_PROCESS_HANDLES_CALLBACK Handles;
     ZP_PROCESS_DUMP_CALLBACK Dump;
     ZP_PROCESS_MEMORY_CALLBACK Memory;
     ZP_PROCESS_MEMORY_ALLOCATIONS_CALLBACK MemoryAllocations;
@@ -95,6 +96,32 @@ ZpProcess_ModulesComplete(
     ProcessContext->Callback.Modules(Request,
                                      Status,
                                      ZpStatus_IsSuccess(Status) ? &Modules : NULL,
+                                     ProcessContext->Context);
+    Mem_Free(ProcessContext);
+}
+
+static
+VOID
+NTAPI
+ZpProcess_HandlesComplete(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    PZP_PROCESS_CONTEXT ProcessContext = Context;
+    ZP_PROCESS_HANDLE_LIST_VIEW Handles;
+
+    if (ZpStatus_IsSuccess(Status))
+    {
+        Status = ZpStatus_FromNtStatus(
+            ZpProcess_DecodeHandleList(Payload->Buffer,
+                                       Payload->Length,
+                                       &Handles));
+    }
+    ProcessContext->Callback.Handles(Request,
+                                     Status,
+                                     ZpStatus_IsSuccess(Status) ? &Handles : NULL,
                                      ProcessContext->Context);
     Mem_Free(ProcessContext);
 }
@@ -350,6 +377,41 @@ ZpServer_EnumerateProcessModules(
                           Payload,
                           PayloadLength,
                           ZpProcess_ModulesComplete,
+                          ProcessCallback,
+                          Context,
+                          Request);
+}
+
+NTSTATUS
+NTAPI
+ZpServer_EnumerateProcessHandles(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PROCESS_HANDLES_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_PROCESS_CALLBACK ProcessCallback;
+    BYTE Payload[sizeof(ProcessId) + sizeof(CreateTime)];
+    ULONG PayloadLength;
+    NTSTATUS Status;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Status = ZpProcess_EncodeQuery(ProcessId,
+                                   CreateTime,
+                                   Payload,
+                                   sizeof(Payload),
+                                   &PayloadLength);
+    if (!NT_SUCCESS(Status)) return Status;
+    ProcessCallback.Handles = Callback;
+    return ZpProcess_Send(Connection,
+                          ZP_PROCESS_OPERATION_ENUMERATE_HANDLES,
+                          TimeoutMilliseconds,
+                          Payload,
+                          PayloadLength,
+                          ZpProcess_HandlesComplete,
                           ProcessCallback,
                           Context,
                           Request);

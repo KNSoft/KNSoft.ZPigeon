@@ -1510,6 +1510,40 @@ ZpNative_EnumerateProcessModules(
                                          &Request));
 }
 
+NTSTATUS
+NTAPI
+ZpNative_EnumerateProcessHandles(
+    _In_ ULONGLONG ClientId,
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ZP_NATIVE_PROCESS_HANDLES_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection(ClientId);
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.ProcessHandles = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_EnumerateProcessHandles(Connection,
+                                         ProcessId,
+                                         CreateTime,
+                                         ZP_NATIVE_TIMEOUT_MILLISECONDS,
+                                         ZpNative_ProcessHandlesCallback,
+                                         CallbackContext,
+                                         &Request));
+}
+
 static
 NTSTATUS
 ZpNative_CompleteRequestStart(

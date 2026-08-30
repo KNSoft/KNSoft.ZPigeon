@@ -126,6 +126,7 @@ public sealed record ProcessModule(
     uint LoadReason,
     DateTime? LoadTime,
     string Path);
+public sealed record ProcessHandle(string HandleValue, string TypeName, string ObjectName);
 public sealed record ProcessMemoryMap(uint SnapshotId, ProcessMemoryAllocation[] Allocations);
 public sealed record ProcessMemoryAllocation(
     string AllocationBase,

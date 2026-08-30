@@ -18,6 +18,7 @@ public sealed partial class NativeServer
     private static readonly NativeMethods.ProcessListCallback ProcessListCallback = CompleteProcessList;
     private static readonly NativeMethods.ProcessInfoCallback ProcessInfoCallback = CompleteProcessInfo;
     private static readonly NativeMethods.ProcessModulesCallback ProcessModulesCallback = CompleteProcessModules;
+    private static readonly NativeMethods.ProcessHandlesCallback ProcessHandlesCallback = CompleteProcessHandles;
     private static readonly NativeMethods.ProcessDumpCallback ProcessDumpCallback = CompleteProcessDump;
     private static readonly NativeMethods.ProcessMemoryCallback ProcessMemoryCallback = CompleteProcessMemory;
     private static readonly NativeMethods.ProcessMemoryAllocationsCallback ProcessMemoryAllocationsCallback =
@@ -260,6 +261,13 @@ public sealed partial class NativeServer
             processId,
             createTime,
             ProcessModulesCallback,
+            context));
+
+    public Task<ProcessHandle[]> EnumerateProcessHandlesAsync(uint processId, ulong createTime) =>
+        RunManagementAsync<ProcessHandle[]>(context => NativeMethods.EnumerateProcessHandles(ClientId,
+            processId,
+            createTime,
+            ProcessHandlesCallback,
             context));
 
     public Task ControlProcessAsync(uint processId, ulong createTime, ProcessControl control, uint value = 0) =>
@@ -764,6 +772,26 @@ public sealed partial class NativeServer
                                 ReadString(module.Path, module.PathLength));
         }
         completion.SetResult(new(machineType, machineBits, result));
+    }
+
+    private static void CompleteProcessHandles(ZpStatus status, nint handles, uint handleCount, nint context)
+    {
+        var completion = GetCompletion<ProcessHandle[]>(context);
+        if (!status.IsSuccess)
+        {
+            completion.SetException(new NativeException(status));
+            return;
+        }
+        var result = new ProcessHandle[handleCount];
+        var size = Marshal.SizeOf<NativeMethods.ProcessHandle>();
+        for (var index = 0; index < result.Length; index++)
+        {
+            var handle = Marshal.PtrToStructure<NativeMethods.ProcessHandle>(handles + index * size);
+            result[index] = new(handle.HandleValue.ToString(CultureInfo.InvariantCulture),
+                                ReadString(handle.TypeName, handle.TypeNameLength),
+                                ReadString(handle.ObjectName, handle.ObjectNameLength));
+        }
+        completion.SetResult(result);
     }
 
     private static void CompleteProcessDump(ZpStatus status, nint path, uint pathLength, nint context)

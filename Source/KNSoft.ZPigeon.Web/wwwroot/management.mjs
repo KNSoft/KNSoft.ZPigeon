@@ -1329,6 +1329,7 @@ export class ProcessManager {
         <button data-action="virtualization">UAC 虚拟化</button>
         <hr />
         <button data-action="dump">创建内存转储文件</button><button data-action="modules">DLL 列表</button
+        ><button data-action="handles">${t("process.handleTable")}</button
         ><button data-action="memory">编辑内存</button><button data-action="file">转到文件</button
         ><button data-action="service">转到服务</button>
         <hr />
@@ -1520,6 +1521,34 @@ export class ProcessManager {
     this.moduleDialog.onpointerdown = (event) => {
       if (!this.moduleMenu.contains(event.target)) this.moduleMenu.hidden = true;
     };
+    this.handleDialog = document.createElement("dialog");
+    this.handleDialog.className = "vmmap-dialog";
+    this.handleDialog.innerHTML = /* HTML */ `<h2 data-role="handle-title">${t("process.handleTable")}</h2>
+      <div class="manager-toolbar">
+        <input data-role="handle-filter" placeholder="${t("process.filterHandles")}" /><span
+          data-role="handle-summary"
+          class="status"></span
+        ><span class="spacer"></span><button data-action="handle-refresh">${t("common.refresh")}</button>
+      </div>
+      <div class="manager-table">
+        <table>
+          <thead>
+            <tr>
+              <th>${t("process.handleValue")}</th>
+              <th>${t("process.handleType")}</th>
+              <th>${t("process.objectName")}</th>
+            </tr>
+          </thead>
+          <tbody data-role="handle-body"></tbody>
+        </table>
+        <div class="manager-empty" data-role="handle-empty"></div>
+      </div>
+      <div class="dialog-actions"><button data-action="handle-close">${t("common.close")}</button></div>`;
+    host.append(this.handleDialog);
+    this.handleBody = this.handleDialog.querySelector("[data-role=handle-body]");
+    this.handleDialog.querySelector("[data-role=handle-filter]").oninput = () => this.renderHandles();
+    this.action("handle-refresh", this.handleDialog).onclick = () => this.loadHandles();
+    this.action("handle-close", this.handleDialog).onclick = () => this.handleDialog.close();
   }
   action(name, root = this.host) {
     return root.querySelector(`[data-action="${name}"]`);
@@ -1678,6 +1707,7 @@ export class ProcessManager {
         system || (wsl && !["terminate", "suspend", "resume", "details"].includes(action));
     this.vmmapButton.disabled = system || wsl;
     this.action("modules", this.menu).disabled = wsl || item.processId === 0 || item.processId === 4;
+    this.action("handles", this.menu).disabled = wsl || item.processId === 0;
     this.action("suspend", this.menu).disabled ||= suspended;
     this.action("resume", this.menu).disabled ||= !suspended;
     this.action("efficiency", this.menu).textContent = `${efficiency ? "✓ " : ""}效能模式`;
@@ -1715,6 +1745,7 @@ export class ProcessManager {
     else if (action === "virtualization") this.control(7, item.flags & 8 ? 0 : 1);
     else if (action === "dump") this.openDump();
     else if (action === "modules") this.openModules();
+    else if (action === "handles") this.openHandles();
     else if (action === "memory") this.openMemory();
     else if (action === "file") this.revealFile?.(item.imagePath);
     else if (action === "service") this.revealServices?.(item.serviceNames);
@@ -2107,6 +2138,66 @@ export class ProcessManager {
     const rect = this.moduleMenu.getBoundingClientRect();
     this.moduleMenu.style.left = `${Math.max(6, Math.min(event.clientX, innerWidth - rect.width - 6))}px`;
     this.moduleMenu.style.top = `${Math.max(6, Math.min(event.clientY, innerHeight - rect.height - 6))}px`;
+  }
+  openHandles() {
+    const item = this.selected;
+    if (!item || item.processId === 0) return;
+    this.handleProcess = item;
+    this.handleDialog.querySelector("[data-role=handle-title]").textContent = t("process.handleTableTitle", {
+      name: item.imageName,
+      pid: item.processId,
+    });
+    this.handleDialog.showModal();
+    this.loadHandles();
+  }
+  async loadHandles() {
+    const item = this.handleProcess;
+    if (!item) return;
+    const empty = this.handleDialog.querySelector("[data-role=handle-empty]"),
+      summary = this.handleDialog.querySelector("[data-role=handle-summary]");
+    this.handles = null;
+    this.handleBody.replaceChildren();
+    empty.hidden = false;
+    empty.textContent = t("process.loadingHandles");
+    summary.textContent = "";
+    try {
+      this.handles = await this.call("/api/process/handles", this.identity(item));
+      this.renderHandles();
+    } catch (error) {
+      empty.textContent = error.message;
+      this.notify(error);
+    }
+  }
+  renderHandles() {
+    if (!this.handles) return;
+    const query = this.handleDialog.querySelector("[data-role=handle-filter]").value.toLocaleLowerCase(),
+      records = this.handles.filter((handle) => {
+        const value = `0x${BigInt(handle.handleValue).toString(16).toUpperCase()}`;
+        return !query || `${value} ${handle.typeName} ${handle.objectName}`.toLocaleLowerCase().includes(query);
+      }),
+      empty = this.handleDialog.querySelector("[data-role=handle-empty]");
+    this.handleBody.replaceChildren(
+      ...records.map((handle) => {
+        const row = document.createElement("tr"),
+          values = [
+            `0x${BigInt(handle.handleValue).toString(16).toUpperCase()}`,
+            handle.typeName || "—",
+            handle.objectName || "—",
+          ];
+        for (const value of values) {
+          const cell = document.createElement("td");
+          cell.textContent = value;
+          cell.title = value;
+          row.append(cell);
+        }
+        return row;
+      }),
+    );
+    empty.hidden = records.length !== 0;
+    empty.textContent = t("process.noMatchingHandles");
+    this.handleDialog.querySelector("[data-role=handle-summary]").textContent = t("process.handleCount", {
+      value: this.handles.length,
+    });
   }
   async openMemory() {
     const item = this.selected;

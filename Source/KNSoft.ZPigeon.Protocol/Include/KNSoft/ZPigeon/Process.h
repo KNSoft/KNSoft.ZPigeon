@@ -15,6 +15,7 @@ EXTERN_C_START
 #define ZP_PROCESS_OPERATION_QUERY_MEMORY_REGIONS 8
 #define ZP_PROCESS_OPERATION_CLOSE_MEMORY_MAP 9
 #define ZP_PROCESS_OPERATION_ENUMERATE_MODULES 10
+#define ZP_PROCESS_OPERATION_ENUMERATE_HANDLES 11
 #define ZP_PROCESS_MEMORY_MAX_LENGTH 0x00010000UL
 
 typedef struct _ZP_PROCESS_MEMORY_VIEW
@@ -290,6 +291,33 @@ typedef struct _ZP_PROCESS_MODULE_LIST_VIEW
 
 typedef const ZP_PROCESS_MODULE_LIST_VIEW* PCZP_PROCESS_MODULE_LIST_VIEW;
 
+typedef struct _ZP_PROCESS_HANDLE_RECORD
+{
+    ULONGLONG HandleValue;
+    PCWCH TypeName;
+    ULONG TypeNameLength;
+    PCWCH ObjectName;
+    ULONG ObjectNameLength;
+} ZP_PROCESS_HANDLE_RECORD, *PZP_PROCESS_HANDLE_RECORD;
+
+typedef const ZP_PROCESS_HANDLE_RECORD* PCZP_PROCESS_HANDLE_RECORD;
+
+typedef struct _ZP_PROCESS_HANDLE_RECORD_VIEW
+{
+    ULONGLONG HandleValue;
+    ZP_STRING_VIEW TypeName;
+    ZP_STRING_VIEW ObjectName;
+} ZP_PROCESS_HANDLE_RECORD_VIEW, *PZP_PROCESS_HANDLE_RECORD_VIEW;
+
+typedef struct _ZP_PROCESS_HANDLE_LIST_VIEW
+{
+    const BYTE* Buffer;
+    ULONG Length;
+    ULONG Count;
+} ZP_PROCESS_HANDLE_LIST_VIEW, *PZP_PROCESS_HANDLE_LIST_VIEW;
+
+typedef const ZP_PROCESS_HANDLE_LIST_VIEW* PCZP_PROCESS_HANDLE_LIST_VIEW;
+
 NTSTATUS
 ZpProcess_EncodeList(
     _In_reads_opt_(ProcessCount) PCZP_PROCESS_RECORD Processes,
@@ -359,6 +387,26 @@ ZpProcess_GetNextModule(
     _In_ PCZP_PROCESS_MODULE_LIST_VIEW List,
     _Inout_ PULONG Offset,
     _Out_ PZP_PROCESS_MODULE_RECORD_VIEW Module);
+
+NTSTATUS
+ZpProcess_EncodeHandleList(
+    _In_reads_opt_(HandleCount) PCZP_PROCESS_HANDLE_RECORD Handles,
+    _In_ ULONG HandleCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten);
+
+NTSTATUS
+ZpProcess_DecodeHandleList(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_PROCESS_HANDLE_LIST_VIEW View);
+
+NTSTATUS
+ZpProcess_GetNextHandle(
+    _In_ PCZP_PROCESS_HANDLE_LIST_VIEW List,
+    _Inout_ PULONG Offset,
+    _Out_ PZP_PROCESS_HANDLE_RECORD_VIEW Handle);
 
 NTSTATUS
 ZpProcess_EncodeControl(

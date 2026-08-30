@@ -489,6 +489,11 @@ internal static partial class ManagementWebApi
             if (!ulong.TryParse(request.CreateTime, out var createTime)) return Results.BadRequest();
             return Results.Ok(await server.EnumerateProcessModulesAsync(request.ProcessId, createTime));
         });
+        app.MapPost("/api/process/handles", async (ProcessIdentityRequest request) =>
+        {
+            if (!ulong.TryParse(request.CreateTime, out var createTime)) return Results.BadRequest();
+            return Results.Ok(await server.EnumerateProcessHandlesAsync(request.ProcessId, createTime));
+        });
         app.MapPost("/api/process/control", async (ProcessControlRequest request) =>
         {
             if (!Enum.IsDefined(request.Control)) return Results.BadRequest();

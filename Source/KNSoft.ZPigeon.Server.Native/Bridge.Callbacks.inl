@@ -706,6 +706,50 @@ ZpNative_ProcessModulesCallback(
 static
 VOID
 NTAPI
+ZpNative_ProcessHandlesCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_PROCESS_HANDLE_LIST_VIEW Handles,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext = Context;
+    PZP_NATIVE_PROCESS_HANDLE_RECORD Records = NULL;
+    ZP_PROCESS_HANDLE_RECORD_VIEW Handle;
+    ULONG Index, Offset = 0;
+    NTSTATUS DecodeStatus;
+
+    if (ZpStatus_IsSuccess(Status) && Handles->Count != 0)
+    {
+        Records = Mem_Alloc((SIZE_T)Handles->Count * sizeof(*Records));
+        if (Records == NULL) Status = ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    }
+    for (Index = 0; ZpStatus_IsSuccess(Status) && Index < Handles->Count; Index++)
+    {
+        DecodeStatus = ZpProcess_GetNextHandle(Handles, &Offset, &Handle);
+        if (!NT_SUCCESS(DecodeStatus))
+        {
+            Status = ZpStatus_FromNtStatus(DecodeStatus);
+            break;
+        }
+        Records[Index].HandleValue = Handle.HandleValue;
+        Records[Index].TypeName = (PCWCH)Handle.TypeName.Buffer;
+        Records[Index].TypeNameLength = Handle.TypeName.Length;
+        Records[Index].ObjectName = (PCWCH)Handle.ObjectName.Buffer;
+        Records[Index].ObjectNameLength = Handle.ObjectName.Length;
+    }
+    CallbackContext->Callback.ProcessHandles(
+        Status,
+        ZpStatus_IsSuccess(Status) ? Records : NULL,
+        ZpStatus_IsSuccess(Status) ? Handles->Count : 0,
+        CallbackContext->Context);
+    Mem_Free(Records);
+    ZpRequest_Close(Request);
+    ZpNative_FreeCallbackContext(CallbackContext);
+}
+
+static
+VOID
+NTAPI
 ZpNative_ProcessDumpCallback(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,

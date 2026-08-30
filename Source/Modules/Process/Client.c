@@ -9,6 +9,8 @@
 #include <Winsvc.h>
 
 #define ZP_PROCESS_WORKING_SET_BUFFER_SIZE 0x00010000UL
+#define ZP_PROCESS_OBJECT_NAME_BUFFER_SIZE 0x00001000UL
+#define ZP_PROCESS_OBJECT_NAME_TIMEOUT (-10000000LL)
 
 typedef struct _ZP_PROCESS_ALLOCATION
 {
@@ -37,6 +39,19 @@ typedef struct _ZP_PROCESS_MODULE_CONTEXT
     ULONG Capacity;
     NTSTATUS Status;
 } ZP_PROCESS_MODULE_CONTEXT, *PZP_PROCESS_MODULE_CONTEXT;
+
+typedef struct _ZP_PROCESS_OBJECT_QUERY
+{
+    HANDLE StartEvent;
+    HANDLE CompleteEvent;
+    HANDLE Thread;
+    HANDLE Object;
+    PVOID Buffer;
+    ULONG BufferLength;
+    ULONG ReturnLength;
+    NTSTATUS Status;
+    LOGICAL Stop;
+} ZP_PROCESS_OBJECT_QUERY, *PZP_PROCESS_OBJECT_QUERY;
 
 static
 LOGICAL
@@ -1188,6 +1203,352 @@ ZpProcess_EnumerateModules(
 
 static
 NTSTATUS
+NTAPI
+ZpProcess_ObjectQueryWorker(
+    _In_ PVOID Parameter)
+{
+    PZP_PROCESS_OBJECT_QUERY Query = Parameter;
+
+    for (;;)
+    {
+        if (NtWaitForSingleObject(Query->StartEvent, FALSE, NULL) != STATUS_WAIT_0) continue;
+        if (Query->Stop) return STATUS_SUCCESS;
+        Query->Status = NtQueryObject(Query->Object,
+                                      ObjectNameInformation,
+                                      Query->Buffer,
+                                      Query->BufferLength,
+                                      &Query->ReturnLength);
+        NtSetEvent(Query->CompleteEvent, NULL);
+    }
+}
+
+static
+NTSTATUS
+ZpProcess_QueryObjectWithTimeout(
+    _Inout_ PZP_PROCESS_OBJECT_QUERY Query,
+    _In_ HANDLE Object,
+    _Out_writes_bytes_(BufferLength) PVOID Buffer,
+    _In_ ULONG BufferLength,
+    _Out_ PULONG ReturnLength)
+{
+    LARGE_INTEGER Timeout;
+    NTSTATUS Status;
+
+    if (Query->StartEvent == NULL)
+    {
+        Status = NtCreateEvent(&Query->StartEvent,
+                               EVENT_MODIFY_STATE | SYNCHRONIZE,
+                               NULL,
+                               SynchronizationEvent,
+                               FALSE);
+        if (NT_SUCCESS(Status))
+        {
+            Status = NtCreateEvent(&Query->CompleteEvent,
+                                   EVENT_MODIFY_STATE | SYNCHRONIZE,
+                                   NULL,
+                                   SynchronizationEvent,
+                                   FALSE);
+        }
+        if (!NT_SUCCESS(Status)) return Status;
+    }
+    if (Query->Thread == NULL)
+    {
+        Query->Stop = FALSE;
+        NtClearEvent(Query->StartEvent);
+        NtClearEvent(Query->CompleteEvent);
+        Status = PS_CreateThread(NtCurrentProcess(),
+                                 FALSE,
+                                 ZpProcess_ObjectQueryWorker,
+                                 Query,
+                                 &Query->Thread,
+                                 NULL);
+        if (!NT_SUCCESS(Status)) return Status;
+    }
+    Query->Object = Object;
+    Query->Buffer = Buffer;
+    Query->BufferLength = BufferLength;
+    Query->ReturnLength = 0;
+    NtClearEvent(Query->CompleteEvent);
+    NtSetEvent(Query->StartEvent, NULL);
+    Timeout.QuadPart = ZP_PROCESS_OBJECT_NAME_TIMEOUT;
+    Status = NtWaitForSingleObject(Query->CompleteEvent, FALSE, &Timeout);
+    if (Status == STATUS_TIMEOUT)
+    {
+        NtTerminateThread(Query->Thread, STATUS_IO_TIMEOUT);
+        NtWaitForSingleObject(Query->Thread, FALSE, NULL);
+        NtClose(Query->Thread);
+        Query->Thread = NULL;
+        return STATUS_IO_TIMEOUT;
+    }
+    if (Status != STATUS_WAIT_0) return Status;
+    *ReturnLength = Query->ReturnLength;
+    return Query->Status;
+}
+
+static
+VOID
+ZpProcess_CloseObjectQuery(
+    _Inout_ PZP_PROCESS_OBJECT_QUERY Query)
+{
+    if (Query->Thread != NULL)
+    {
+        Query->Stop = TRUE;
+        NtSetEvent(Query->StartEvent, NULL);
+        NtWaitForSingleObject(Query->Thread, FALSE, NULL);
+        NtClose(Query->Thread);
+    }
+    if (Query->CompleteEvent != NULL) NtClose(Query->CompleteEvent);
+    if (Query->StartEvent != NULL) NtClose(Query->StartEvent);
+}
+
+static
+NTSTATUS
+ZpProcess_QueryObjectName(
+    _Inout_ PZP_PROCESS_OBJECT_QUERY Query,
+    _In_ HANDLE Object,
+    _In_ LOGICAL Timeout,
+    _Outptr_ POBJECT_NAME_INFORMATION* Name)
+{
+    POBJECT_NAME_INFORMATION Buffer;
+    ULONG BufferLength = ZP_PROCESS_OBJECT_NAME_BUFFER_SIZE;
+    ULONG ReturnLength, Attempts = 8;
+    NTSTATUS Status;
+
+    do
+    {
+        Buffer = Mem_Alloc(BufferLength);
+        if (Buffer == NULL) return STATUS_NO_MEMORY;
+        Status = Timeout ?
+                     ZpProcess_QueryObjectWithTimeout(Query,
+                                                      Object,
+                                                      Buffer,
+                                                      BufferLength,
+                                                      &ReturnLength) :
+                     NtQueryObject(Object,
+                                   ObjectNameInformation,
+                                   Buffer,
+                                   BufferLength,
+                                   &ReturnLength);
+        if (Status != STATUS_BUFFER_OVERFLOW && Status != STATUS_INFO_LENGTH_MISMATCH &&
+            Status != STATUS_BUFFER_TOO_SMALL)
+        {
+            break;
+        }
+        Mem_Free(Buffer);
+        Buffer = NULL;
+        if (ReturnLength <= BufferLength) ReturnLength = BufferLength * 2;
+        BufferLength = ReturnLength;
+    } while (--Attempts != 0);
+    if (!NT_SUCCESS(Status) || Buffer->Name.Buffer == NULL || Buffer->Name.Length == 0)
+    {
+        Mem_Free(Buffer);
+        return NT_SUCCESS(Status) ? STATUS_OBJECT_NAME_INVALID : Status;
+    }
+    *Name = Buffer;
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpProcess_QueryObjectTypes(
+    _Outptr_ POBJECT_TYPES_INFORMATION* Types)
+{
+    POBJECT_TYPES_INFORMATION Buffer;
+    ULONG BufferLength = 0x4000, ReturnLength;
+    NTSTATUS Status;
+
+    for (;;)
+    {
+        Buffer = Mem_Alloc(BufferLength);
+        if (Buffer == NULL) return STATUS_NO_MEMORY;
+        Status = NtQueryObject(NULL,
+                               ObjectTypesInformation,
+                               Buffer,
+                               BufferLength,
+                               &ReturnLength);
+        if (Status != STATUS_INFO_LENGTH_MISMATCH && Status != STATUS_BUFFER_TOO_SMALL) break;
+        Mem_Free(Buffer);
+        if (ReturnLength <= BufferLength) ReturnLength = BufferLength * 2;
+        BufferLength = ReturnLength;
+    }
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Buffer);
+        return Status;
+    }
+    *Types = Buffer;
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+ZpProcess_QueryHandles(
+    _In_ HANDLE Process,
+    _Outptr_ PPROCESS_HANDLE_SNAPSHOT_INFORMATION* Handles)
+{
+    const ULONG MaximumLength = (ULONG)(FIELD_OFFSET(PROCESS_HANDLE_SNAPSHOT_INFORMATION, Handles) +
+                                        (SIZE_T)ZP_CODEC_MAX_ELEMENT_COUNT *
+                                            sizeof(PROCESS_HANDLE_TABLE_ENTRY_INFO));
+    ULONG Length = 64 * 1024, Required;
+    NTSTATUS Status;
+
+    for (;;)
+    {
+        *Handles = Mem_Alloc(Length);
+        if (*Handles == NULL) return STATUS_NO_MEMORY;
+        Status = NtQueryInformationProcess(Process, ProcessHandleInformation, *Handles, Length, &Required);
+        if (Status != STATUS_INFO_LENGTH_MISMATCH) break;
+        Mem_Free(*Handles);
+        if (Required > MaximumLength || Length >= MaximumLength) return STATUS_QUOTA_EXCEEDED;
+        Length = min(max(Length * 2, Required), MaximumLength);
+    }
+    if (!NT_SUCCESS(Status)) Mem_Free(*Handles);
+    return Status;
+}
+
+static
+VOID
+ZpProcess_MapObjectTypes(
+    _In_ POBJECT_TYPES_INFORMATION Types,
+    _Out_writes_(256) PUNICODE_STRING TypeNames)
+{
+    POBJECT_TYPE_INFORMATION Type;
+    ULONG Index;
+
+    RtlZeroMemory(TypeNames, 256 * sizeof(*TypeNames));
+    Type = ALIGN_UP_POINTER(Add2Ptr(Types, sizeof(*Types)), PVOID);
+    for (Index = 0; Index < Types->NumberOfTypes; Index++)
+    {
+        TypeNames[Type->TypeIndex] = Type->TypeName;
+        Type = ALIGN_UP_POINTER(Add2Ptr(Type->TypeName.Buffer, Type->TypeName.MaximumLength), PVOID);
+    }
+}
+
+static
+NTSTATUS
+ZpProcess_EnumerateHandles(
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    static UNICODE_STRING FileType = RTL_CONSTANT_STRING(L"File");
+    PPROCESS_HANDLE_SNAPSHOT_INFORMATION ProcessHandles = NULL;
+    POBJECT_TYPES_INFORMATION ObjectTypes = NULL;
+    PZP_PROCESS_HANDLE_RECORD Handles = NULL;
+    POBJECT_NAME_INFORMATION* Names = NULL;
+    UNICODE_STRING TypeNames[256];
+    ZP_PROCESS_OBJECT_QUERY Query;
+    HANDLE Process = NULL, Object;
+    PBYTE Buffer = NULL;
+    ULONG_PTR Index;
+    ULONG Count, HandleIndex = 0, EncodedLength;
+    LOGICAL QueryFileNames = TRUE;
+    NTSTATUS Status;
+
+    RtlZeroMemory(&Query, sizeof(Query));
+    Status = ZpProcess_OpenVerified(&Process,
+                                    PROCESS_DUP_HANDLE | PROCESS_QUERY_INFORMATION,
+                                    ProcessId,
+                                    CreateTime);
+    if (NT_SUCCESS(Status)) Status = ZpProcess_QueryHandles(Process, &ProcessHandles);
+    if (NT_SUCCESS(Status)) Status = ZpProcess_QueryObjectTypes(&ObjectTypes);
+    if (!NT_SUCCESS(Status)) goto Cleanup;
+    if (ProcessHandles->NumberOfHandles > ZP_CODEC_MAX_ELEMENT_COUNT)
+    {
+        Status = STATUS_QUOTA_EXCEEDED;
+        goto Cleanup;
+    }
+    Count = (ULONG)ProcessHandles->NumberOfHandles;
+    if (Count != 0)
+    {
+        Handles = Mem_Alloc((SIZE_T)Count * sizeof(*Handles));
+        Names = Mem_Alloc((SIZE_T)Count * sizeof(*Names));
+        if (Handles == NULL || Names == NULL)
+        {
+            Status = STATUS_NO_MEMORY;
+            goto Cleanup;
+        }
+        RtlZeroMemory(Names, (SIZE_T)Count * sizeof(*Names));
+    }
+    ZpProcess_MapObjectTypes(ObjectTypes, TypeNames);
+    for (Index = 0; Index < Count; Index++)
+    {
+        PPROCESS_HANDLE_TABLE_ENTRY_INFO Entry = &ProcessHandles->Handles[Index];
+        PZP_PROCESS_HANDLE_RECORD Record;
+        PUNICODE_STRING TypeName;
+        LOGICAL FileObject;
+
+        Record = &Handles[HandleIndex];
+        TypeName = Entry->ObjectTypeIndex < ARRAYSIZE(TypeNames) ? &TypeNames[Entry->ObjectTypeIndex] : NULL;
+        Record->HandleValue = (ULONGLONG)(ULONG_PTR)Entry->HandleValue;
+        Record->TypeName = TypeName != NULL ? TypeName->Buffer : NULL;
+        Record->TypeNameLength = TypeName != NULL ? TypeName->Length / sizeof(WCHAR) : 0;
+        Record->ObjectName = NULL;
+        Record->ObjectNameLength = 0;
+        FileObject = TypeName != NULL && RtlEqualUnicodeString(TypeName, &FileType, TRUE);
+        Status = NtDuplicateObject(Process,
+                                   Entry->HandleValue,
+                                   NtCurrentProcess(),
+                                   &Object,
+                                   0,
+                                   0,
+                                   DUPLICATE_SAME_ACCESS);
+        if (NT_SUCCESS(Status))
+        {
+            Status = FileObject && !QueryFileNames ?
+                         STATUS_IO_TIMEOUT :
+                         ZpProcess_QueryObjectName(&Query,
+                                                   Object,
+                                                   FileObject,
+                                                   &Names[HandleIndex]);
+            NtClose(Object);
+            if (FileObject && Status == STATUS_IO_TIMEOUT) QueryFileNames = FALSE;
+            if (NT_SUCCESS(Status))
+            {
+                Record->ObjectName = Names[HandleIndex]->Name.Buffer;
+                Record->ObjectNameLength = Names[HandleIndex]->Name.Length / sizeof(WCHAR);
+            }
+            else if (Status == STATUS_NO_MEMORY)
+            {
+                goto Cleanup;
+            }
+        }
+        HandleIndex++;
+    }
+    Status = ZpProcess_EncodeHandleList(Handles, Count, NULL, 0, &EncodedLength);
+    if (NT_SUCCESS(Status))
+    {
+        Buffer = Mem_Alloc(EncodedLength);
+        if (Buffer == NULL) Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpProcess_EncodeHandleList(Handles,
+                                           Count,
+                                           Buffer,
+                                           EncodedLength,
+                                           ResponseLength);
+    }
+Cleanup:
+    ZpProcess_CloseObjectQuery(&Query);
+    for (Index = 0; Index < HandleIndex; Index++) Mem_Free(Names != NULL ? Names[Index] : NULL);
+    Mem_Free(Names);
+    Mem_Free(Handles);
+    Mem_Free(ObjectTypes);
+    Mem_Free(ProcessHandles);
+    if (Process != NULL) NtClose(Process);
+    if (!NT_SUCCESS(Status))
+    {
+        Mem_Free(Buffer);
+        return Status;
+    }
+    *Response = Buffer;
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
 ZpProcess_TerminateTree(
     _In_ ULONG ProcessId,
     _In_ ULONGLONG CreateTime)
@@ -1550,6 +1911,17 @@ ZpProcess_Execute(
         if (NT_SUCCESS(Status))
         {
             Status = ZpProcess_EnumerateModules(ProcessId,
+                                                CreateTime,
+                                                Response,
+                                                ResponseLength);
+        }
+    }
+    else if (OperationId == ZP_PROCESS_OPERATION_ENUMERATE_HANDLES)
+    {
+        Status = ZpProcess_DecodeQuery(Request, RequestLength, &ProcessId, &CreateTime);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpProcess_EnumerateHandles(ProcessId,
                                                 CreateTime,
                                                 Response,
                                                 ResponseLength);

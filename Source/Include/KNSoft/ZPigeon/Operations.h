@@ -25,7 +25,7 @@ EXTERN_C_START
 
 static const ZP_MODULE_VERSION ZpBuiltinModules[] = {
     { ZP_SYSTEM_MODULE_ID, 1 },
-    { ZP_PROCESS_MODULE_ID, 1 },
+    { ZP_PROCESS_MODULE_ID, 2 },
     { ZP_SERVICE_MODULE_ID, 1 },
     { ZP_FILE_MODULE_ID, 1 },
     { ZP_TERMINAL_MODULE_ID, 1 },
@@ -440,6 +440,14 @@ VOID
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
     _In_opt_ PCZP_PROCESS_MODULE_LIST_VIEW Modules,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_PROCESS_HANDLES_CALLBACK)(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_PROCESS_HANDLE_LIST_VIEW Handles,
     _In_opt_ PVOID Context);
 
 typedef

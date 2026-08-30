@@ -819,6 +819,17 @@ ZpServer_EnumerateProcessModules(
 
 NTSTATUS
 NTAPI
+ZpServer_EnumerateProcessHandles(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_PROCESS_HANDLES_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_ControlProcess(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ULONG ProcessId,

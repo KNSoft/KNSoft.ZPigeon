@@ -1243,7 +1243,7 @@ SDKIntegration_Run(
     static SDK_INTEGRATION_CONTEXT TestContext;
     const ZP_MODULE_VERSION Modules[] = {
         { ZP_SYSTEM_MODULE_ID, 1 },
-        { ZP_PROCESS_MODULE_ID, 1 },
+        { ZP_PROCESS_MODULE_ID, 2 },
         { ZP_SERVICE_MODULE_ID, 1 },
         { ZP_FILE_MODULE_ID, 1 },
         { ZP_TERMINAL_MODULE_ID, 1 },

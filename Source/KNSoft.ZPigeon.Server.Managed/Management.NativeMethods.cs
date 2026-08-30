@@ -80,6 +80,9 @@ internal static partial class NativeMethods
         nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void ProcessHandlesCallback(ZpStatus status, nint handles, uint handleCount, nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void ProcessDumpCallback(ZpStatus status, nint path, uint pathLength, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
@@ -242,6 +245,16 @@ internal static partial class NativeMethods
         internal readonly uint LoadReason;
         internal readonly nint Path;
         internal readonly uint PathLength;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct ProcessHandle
+    {
+        internal readonly ulong HandleValue;
+        internal readonly nint TypeName;
+        internal readonly uint TypeNameLength;
+        internal readonly nint ObjectName;
+        internal readonly uint ObjectNameLength;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -677,6 +690,14 @@ internal static partial class NativeMethods
         uint processId,
         ulong createTime,
         ProcessModulesCallback callback,
+        nint context);
+
+    [LibraryImport(Library, EntryPoint = "ZpNative_EnumerateProcessHandles")]
+    internal static partial int EnumerateProcessHandles(
+        ulong clientId,
+        uint processId,
+        ulong createTime,
+        ProcessHandlesCallback callback,
         nint context);
 
     [LibraryImport(Library, EntryPoint = "ZpNative_ControlProcess")]

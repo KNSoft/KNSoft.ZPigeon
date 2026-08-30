@@ -110,6 +110,8 @@ typedef struct _SDK_SYSTEM_LOOPBACK
     USHORT ProcessMachineType;
     BYTE ProcessMachineBits;
     LOGICAL FoundCurrentProcessImage;
+    ULONG ProcessHandleCount;
+    LOGICAL FoundProcessHandleType;
     ULONG ServiceCount;
     ULONG RegistryCallbackCount;
     ZP_STATUS RegistryStatus;
@@ -627,6 +629,37 @@ SDKTest_ProcessModulesCallback(
                 Module.Path.Length != 0)
             {
                 Loopback->FoundCurrentProcessImage = TRUE;
+                break;
+            }
+        }
+    }
+    ZpRequest_Close(Request);
+}
+
+static
+VOID
+NTAPI
+SDKTest_ProcessHandlesCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_PROCESS_HANDLE_LIST_VIEW Handles,
+    _In_opt_ PVOID Context)
+{
+    PSDK_SYSTEM_LOOPBACK Loopback = Context;
+    ZP_PROCESS_HANDLE_RECORD_VIEW Handle;
+    ULONG Index, Offset = 0;
+
+    Loopback->CallbackCount++;
+    Loopback->Status = Status;
+    if (Handles != NULL)
+    {
+        Loopback->ProcessHandleCount = Handles->Count;
+        for (Index = 0; Index < Handles->Count; Index++)
+        {
+            if (NT_SUCCESS(ZpProcess_GetNextHandle(Handles, &Offset, &Handle)) &&
+                Handle.TypeName.Length != 0)
+            {
+                Loopback->FoundProcessHandleType = TRUE;
                 break;
             }
         }
@@ -1502,14 +1535,27 @@ TEST_FUNC(SDKContract)
             (SystemLoopback.ProcessMachineBits == 32 ||
              SystemLoopback.ProcessMachineBits == 64) &&
             SystemLoopback.FoundCurrentProcessImage);
+    TEST_OK(NT_SUCCESS(ZpServer_EnumerateProcessHandles(
+                (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
+                GetCurrentProcessId(),
+                SystemLoopback.CurrentProcessCreateTime,
+                0,
+                SDKTest_ProcessHandlesCallback,
+                &SystemLoopback,
+                &Request)) &&
+            SystemLoopback.SendCount == 4 &&
+            SystemLoopback.CallbackCount == 4 &&
+            ZpStatus_IsSuccess(SystemLoopback.Status) &&
+            SystemLoopback.ProcessHandleCount != 0 &&
+            SystemLoopback.FoundProcessHandleType);
     TEST_OK(NT_SUCCESS(ZpServer_EnumerateServices(
                 (ZP_CONNECTION_HANDLE)&SystemLoopback.Connection,
                 0,
                 SDKTest_ServiceListCallback,
                 &SystemLoopback,
                 &Request)) &&
-            SystemLoopback.SendCount == 4 &&
-            SystemLoopback.CallbackCount == 4 &&
+            SystemLoopback.SendCount == 5 &&
+            SystemLoopback.CallbackCount == 5 &&
             ZpStatus_IsSuccess(SystemLoopback.Status) &&
             SystemLoopback.ServiceCount != 0);
     TEST_OK(NT_SUCCESS(ZpServer_EnumerateRegistryKeysPage(

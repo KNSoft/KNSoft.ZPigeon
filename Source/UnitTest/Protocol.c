@@ -91,12 +91,18 @@ TEST_FUNC(ProtocolProcess)
         { 0x7FF800000000, 0x7FF800001000, 0x01DC000000000100, 0x10000,
           4, L"C:\\test.dll", 11 }
     };
+    const ZP_PROCESS_HANDLE_RECORD Handles[] = {
+        { 0x40, L"File", 4, L"\\Device\\Test", 12 },
+        { 0x108, L"Event", 5, NULL, 0 }
+    };
     ZP_PROCESS_MEMORY_ALLOCATION_MAP_VIEW AllocationMap;
     ZP_PROCESS_MEMORY_ALLOCATION_VIEW Allocation;
     ZP_PROCESS_MEMORY_MAP_VIEW Map;
     ZP_PROCESS_MEMORY_REGION_VIEW Region;
     ZP_PROCESS_MODULE_LIST_VIEW ModuleList;
     ZP_PROCESS_MODULE_RECORD_VIEW Module;
+    ZP_PROCESS_HANDLE_LIST_VIEW HandleList;
+    ZP_PROCESS_HANDLE_RECORD_VIEW Handle;
     BYTE Buffer[512];
     ULONG Length, Offset = 0;
 
@@ -137,7 +143,19 @@ TEST_FUNC(ProtocolProcess)
             (Offset = 0, NT_SUCCESS(ZpProcess_GetNextModule(&ModuleList, &Offset, &Module))) &&
             Module.BaseAddress == Modules[0].BaseAddress && Module.Path.Length == 11 &&
             NT_SUCCESS(ZpProcess_GetNextModule(&ModuleList, &Offset, &Module)) &&
-            Module.LoadReason == 4 && Offset == ModuleList.Length);
+            Module.LoadReason == 4 && Offset == ModuleList.Length &&
+            NT_SUCCESS(ZpProcess_EncodeHandleList(Handles,
+                                                  ARRAYSIZE(Handles),
+                                                  Buffer,
+                                                  sizeof(Buffer),
+                                                  &Length)) &&
+            NT_SUCCESS(ZpProcess_DecodeHandleList(Buffer, Length, &HandleList)) &&
+            HandleList.Count == ARRAYSIZE(Handles) &&
+            (Offset = 0, NT_SUCCESS(ZpProcess_GetNextHandle(&HandleList, &Offset, &Handle))) &&
+            Handle.HandleValue == 0x40 && Handle.TypeName.Length == 4 && Handle.ObjectName.Length == 12 &&
+            NT_SUCCESS(ZpProcess_GetNextHandle(&HandleList, &Offset, &Handle)) &&
+            Handle.HandleValue == 0x108 && Handle.TypeName.Length == 5 && Handle.ObjectName.Length == 0 &&
+            Offset == HandleList.Length);
 }
 
 TEST_FUNC(ProtocolWindow)

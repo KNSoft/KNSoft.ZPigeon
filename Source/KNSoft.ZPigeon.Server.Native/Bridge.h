@@ -304,6 +304,25 @@ VOID
     _In_ ULONG ModuleCount,
     _In_opt_ PVOID Context);
 
+typedef struct _ZP_NATIVE_PROCESS_HANDLE_RECORD
+{
+    ULONGLONG HandleValue;
+    PCWCH TypeName;
+    ULONG TypeNameLength;
+    PCWCH ObjectName;
+    ULONG ObjectNameLength;
+} ZP_NATIVE_PROCESS_HANDLE_RECORD, *PZP_NATIVE_PROCESS_HANDLE_RECORD;
+
+typedef const ZP_NATIVE_PROCESS_HANDLE_RECORD* PCZP_NATIVE_PROCESS_HANDLE_RECORD;
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_PROCESS_HANDLES_CALLBACK)(
+    _In_ ZP_STATUS Status,
+    _In_reads_opt_(HandleCount) PCZP_NATIVE_PROCESS_HANDLE_RECORD Handles,
+    _In_ ULONG HandleCount,
+    _In_opt_ PVOID Context);
+
 typedef struct _ZP_NATIVE_PROCESS_MEMORY_ALLOCATION
 {
     ULONGLONG AllocationBase;
@@ -1375,6 +1394,16 @@ ZpNative_EnumerateProcessModules(
     _In_ ULONG ProcessId,
     _In_ ULONGLONG CreateTime,
     _In_ ZP_NATIVE_PROCESS_MODULES_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
+ZpNative_EnumerateProcessHandles(
+    _In_ ULONGLONG ClientId,
+    _In_ ULONG ProcessId,
+    _In_ ULONGLONG CreateTime,
+    _In_ ZP_NATIVE_PROCESS_HANDLES_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
 __declspec(dllexport)

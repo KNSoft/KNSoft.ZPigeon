@@ -388,6 +388,104 @@ ZpProcess_GetNextModule(
     return Status;
 }
 
+static
+NTSTATUS
+ZpProcess_ReadHandle(
+    _Inout_ PZP_CODEC_READER Reader,
+    _Out_opt_ PZP_PROCESS_HANDLE_RECORD_VIEW Handle)
+{
+    ZP_PROCESS_HANDLE_RECORD_VIEW Local;
+    NTSTATUS Status;
+
+    Status = ZpCodec_ReadUInt64(Reader, &Local.HandleValue);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.TypeName);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.ObjectName);
+    if (NT_SUCCESS(Status) && Handle != NULL) *Handle = Local;
+    return Status;
+}
+
+NTSTATUS
+ZpProcess_EncodeHandleList(
+    _In_reads_opt_(HandleCount) PCZP_PROCESS_HANDLE_RECORD Handles,
+    _In_ ULONG HandleCount,
+    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
+    _In_ ULONG BufferSize,
+    _Out_ PULONG BytesWritten)
+{
+    PBYTE Cursor;
+    ULONGLONG RequiredSize = sizeof(ULONG);
+    ULONG Index;
+
+    if (HandleCount > ZP_CODEC_MAX_ELEMENT_COUNT || (HandleCount != 0 && Handles == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    for (Index = 0; Index < HandleCount; Index++)
+    {
+        if (Handles[Index].TypeNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+            Handles[Index].ObjectNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+            (Handles[Index].TypeNameLength != 0 && Handles[Index].TypeName == NULL) ||
+            (Handles[Index].ObjectNameLength != 0 && Handles[Index].ObjectName == NULL))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+        RequiredSize += sizeof(ULONGLONG) + 2 * sizeof(ULONG) +
+                        ((ULONGLONG)Handles[Index].TypeNameLength + Handles[Index].ObjectNameLength) * sizeof(WCHAR);
+        if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
+    }
+    *BytesWritten = (ULONG)RequiredSize;
+    if (Buffer == NULL) return STATUS_SUCCESS;
+    if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
+    Cursor = Buffer;
+    ZpWire_WriteUInt32(&Cursor, HandleCount);
+    for (Index = 0; Index < HandleCount; Index++)
+    {
+        ZpWire_WriteUInt64(&Cursor, Handles[Index].HandleValue);
+        ZpWire_WriteString(&Cursor, Handles[Index].TypeName, Handles[Index].TypeNameLength);
+        ZpWire_WriteString(&Cursor, Handles[Index].ObjectName, Handles[Index].ObjectNameLength);
+    }
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpProcess_DecodeHandleList(
+    _In_reads_bytes_(PayloadLength) const VOID* Payload,
+    _In_ ULONG PayloadLength,
+    _Out_ PZP_PROCESS_HANDLE_LIST_VIEW View)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+    ULONG Count, Index;
+
+    ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+    View->Buffer = Add2Ptr(Payload, Reader.Offset);
+    View->Length = PayloadLength - Reader.Offset;
+    for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++) Status = ZpProcess_ReadHandle(&Reader, NULL);
+    if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength)
+    {
+        return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    }
+    View->Count = Count;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+ZpProcess_GetNextHandle(
+    _In_ PCZP_PROCESS_HANDLE_LIST_VIEW List,
+    _Inout_ PULONG Offset,
+    _Out_ PZP_PROCESS_HANDLE_RECORD_VIEW Handle)
+{
+    ZP_CODEC_READER Reader;
+    NTSTATUS Status;
+
+    if (*Offset >= List->Length) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeReader(&Reader, Add2Ptr(List->Buffer, *Offset), List->Length - *Offset);
+    Status = ZpProcess_ReadHandle(&Reader, Handle);
+    if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
+    return Status;
+}
+
 NTSTATUS
 ZpProcess_EncodeControl(
     _In_ ULONG ProcessId,
