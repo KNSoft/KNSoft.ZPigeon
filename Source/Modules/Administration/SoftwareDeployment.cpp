@@ -478,13 +478,19 @@ namespace
 
     WinGet::PackageCatalog ConnectInstalledPackages(
         const WinGet::PackageManager& manager,
-        bool refresh)
+        bool refresh,
+        bool trackingOnly)
     {
         auto winget = manager.GetPredefinedPackageCatalog(WinGet::PredefinedPackageCatalog::OpenWindowsCatalog);
         auto store = manager.GetPredefinedPackageCatalog(WinGet::PredefinedPackageCatalog::MicrosoftStore);
         auto options = CreateWinGetObject<WinGet::CreateCompositePackageCatalogOptions>(WinGetCompositeOptions);
         ConfigureCatalog(winget);
         ConfigureCatalog(store);
+        if (trackingOnly)
+        {
+            winget.InstalledPackageInformationOnly(true);
+            store.InstalledPackageInformationOnly(true);
+        }
         if (!refresh)
         {
             winget.PackageCatalogBackgroundUpdateInterval(winrt::Windows::Foundation::TimeSpan::zero());
@@ -569,7 +575,7 @@ namespace
         UpdateJob(job, ZP_SOFTWARE_DEPLOYMENT_STATE_RESOLVING, 0);
         if ((job->Flags & ZP_SOFTWARE_FLAG_ALL) != 0)
         {
-            auto catalog = ConnectInstalledPackages(manager, true);
+            auto catalog = ConnectInstalledPackages(manager, true, false);
             auto packages = FindPackages(catalog);
             packages.erase(std::remove_if(packages.begin(), packages.end(), [](auto const& package)
             {
@@ -593,7 +599,7 @@ namespace
 
         if (job->Action == ZpAdministrationActionUninstall)
         {
-            auto catalog = ConnectInstalledPackages(manager, false);
+            auto catalog = ConnectInstalledPackages(manager, false, false);
             auto package = FindPackage(catalog, job->Payload[0]);
             auto options = CreateWinGetObject<WinGet::UninstallOptions>(WinGetUninstallOptions);
             options.PackageUninstallMode(WinGet::PackageUninstallMode::Silent);
@@ -1160,7 +1166,7 @@ ZpSoftware_EnumeratePackages(
         Microsoft::WRL::Wrappers::RoInitializeWrapper apartment(RO_INIT_MULTITHREADED);
         winrt::check_hresult(static_cast<HRESULT>(apartment));
         auto manager = CreateWinGetObject<WinGet::PackageManager>(WinGetPackageManager);
-        auto catalog = ConnectInstalledPackages(manager, false);
+        auto catalog = ConnectInstalledPackages(manager, false, true);
         for (auto const& package : FindPackages(catalog))
         {
             WinGet::PackageVersionInfo installed = package.InstalledVersion();

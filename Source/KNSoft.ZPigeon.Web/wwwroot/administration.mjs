@@ -935,7 +935,7 @@ export class PackageManager extends AdministrationManager {
     this.upgradeAllButton = document.createElement("button");
     this.upgradeAllButton.textContent = t("packages.upgradeAll");
     refresh.before(this.uploadButton, this.installButton, this.upgradeAllButton);
-    refresh.onclick = () => this.loadProviders(true);
+    refresh.onclick = () => (this.provider ? this.load(true) : this.loadProviders(true));
     this.menu.insertAdjacentHTML(
       "beforebegin",
       `<section class="software-jobs">
@@ -1037,8 +1037,10 @@ export class PackageManager extends AdministrationManager {
       return;
     }
     this.updateJobTimer();
-    if (this.providersLoaded) this.load();
-    else this.loadProviders();
+    if (this.providersLoaded) {
+      this.renderProviders();
+      this.render();
+    } else this.loadProviders();
   }
   deactivate() {
     clearInterval(this.jobTimer);
@@ -1088,15 +1090,10 @@ export class PackageManager extends AdministrationManager {
       this.providers = providers;
       this.context = context;
       this.providersLoaded = true;
-      this.provider =
-        providers.find((provider) => provider.identity === this.provider?.identity) || providers[0] || null;
+      this.provider = providers.find((provider) => provider.identity === this.provider?.identity) || null;
       this.renderProviders(context);
-      if (this.provider) await this.load();
-      else {
-        this.records = [];
-        super.render();
-        this.empty.textContent = t("packages.noProviders");
-      }
+      this.records = this.provider ? this.datasets.get(this.provider.identity) || [] : [];
+      this.render();
     } catch (error) {
       if (request !== this.providerRequest) return;
       this.empty.textContent = error.message;
@@ -1135,7 +1132,10 @@ export class PackageManager extends AdministrationManager {
     this.upgradeAllButton.disabled = !this.connected;
   }
   selectProvider(provider) {
-    if (provider === this.provider) return;
+    if (provider === this.provider) {
+      if (!this.datasets.has(provider.identity)) this.load();
+      return;
+    }
     this.provider = provider;
     this.loaded = this.datasets.has(provider.identity);
     this.records = this.datasets.get(provider.identity) || [];
@@ -1172,8 +1172,10 @@ export class PackageManager extends AdministrationManager {
   render() {
     this.records = this.provider ? this.datasets.get(this.provider.identity) || [] : [];
     super.render();
-    if (this.connected && this.provider && this.datasets.has(this.provider.identity) && !this.empty.hidden)
-      this.empty.textContent = t("packages.noPackages");
+    if (!this.connected || this.empty.hidden) return;
+    if (!this.provider && this.providersLoaded)
+      this.empty.textContent = this.providers.length ? t("packages.chooseProvider") : t("packages.noProviders");
+    else if (this.provider && this.datasets.has(this.provider.identity)) this.empty.textContent = t("packages.noPackages");
   }
   providerName(identity) {
     return t(`packages.provider.${identity}`);
