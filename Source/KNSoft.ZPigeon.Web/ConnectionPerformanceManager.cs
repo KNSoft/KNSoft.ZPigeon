@@ -53,8 +53,10 @@ internal sealed class ConnectionPerformanceManager
                 lastSentBytes = statistics.SentBytes;
                 lastReceivedBytes = statistics.ReceivedBytes;
 
-                var sentMbps = Mbps(statistics.SentBitsPerSecond);
-                var receivedMbps = Mbps(statistics.ReceivedBitsPerSecond);
+                var sentMbps = Mbps(statistics.SentBitsPerSecond,
+                                     statistics.SentSampleTickCount);
+                var receivedMbps = Mbps(statistics.ReceivedBitsPerSecond,
+                                         statistics.ReceivedSampleTickCount);
                 var speedMbps = sentMbps is null ? receivedMbps :
                                 receivedMbps is null ? sentMbps :
                                 Math.Min(sentMbps.Value, receivedMbps.Value);
@@ -93,8 +95,8 @@ internal sealed class ConnectionPerformanceManager
                 }
                 lastSentSampleTickCount = statistics.SentSampleTickCount;
                 lastReceivedSampleTickCount = statistics.ReceivedSampleTickCount;
-                var lastSample = Math.Max(statistics.SentSampleTickCount,
-                                          statistics.ReceivedSampleTickCount);
+                var lastSample = Math.Max(sentMbps is null ? 0 : statistics.SentSampleTickCount,
+                                          receivedMbps is null ? 0 : statistics.ReceivedSampleTickCount);
                 return new(true,
                            automatic,
                            manualSpeedClass,
@@ -321,8 +323,12 @@ internal sealed class ConnectionPerformanceManager
         _ => 0
     };
 
-    private static double? Mbps(ulong bitsPerSecond) =>
-        bitsPerSecond == 0 ? null : Math.Round(bitsPerSecond / 1_000_000d, 1);
+    private static double? Mbps(ulong bitsPerSecond, ulong sampleTickCount)
+    {
+        if (sampleTickCount == 0) return null;
+        var value = Math.Round(bitsPerSecond / 1_000_000d, 1);
+        return value == 0 ? null : value;
+    }
 
     private static ulong? SampleAge(ulong tickCount)
     {
