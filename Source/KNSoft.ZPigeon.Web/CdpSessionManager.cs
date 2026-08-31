@@ -46,6 +46,21 @@ internal sealed class CdpSessionManager(
     private const uint StatusObjectNameNotFound = 0xC0000034;
     private const uint StatusObjectPathNotFound = 0xC000003A;
     private const uint StatusSharingViolation = 0xC0000043;
+    private const string RemoveEmptyManagedParentsScript = """
+        function Remove-EmptyDirectory($directory) {
+            if ((Test-Path -LiteralPath $directory -PathType Container) -and
+                $null -eq (Get-ChildItem -LiteralPath $directory -Force -ErrorAction SilentlyContinue |
+                    Select-Object -First 1)) {
+                Remove-Item -LiteralPath $directory -Force -ErrorAction SilentlyContinue
+            }
+        }
+        function Remove-EmptyManagedParents($profile) {
+            $browser = Split-Path -LiteralPath $profile -Parent
+            $root = Split-Path -LiteralPath $browser -Parent
+            Remove-EmptyDirectory $browser
+            Remove-EmptyDirectory $root
+        }
+        """;
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
     private readonly ConcurrentDictionary<Guid, Session> sessions = new();
     private string? managedRoot;
@@ -111,6 +126,7 @@ internal sealed class CdpSessionManager(
         var source = profile.Kind == "managed" ? Path.Combine(userData, "Default") : profile.Location;
         var destination = Path.Combine(managed.Root, browser.Id, targetName);
         var script = $$"""
+            {{RemoveEmptyManagedParentsScript}}
             $source = {{PowerShellLiteral(source)}}
             $state = Join-Path {{PowerShellLiteral(userData)}} 'Local State'
             $destination = {{PowerShellLiteral(destination)}}
@@ -131,6 +147,7 @@ internal sealed class CdpSessionManager(
             } catch {
                 if ($created) {
                     Remove-Item -LiteralPath $destination -Recurse -Force -ErrorAction SilentlyContinue
+                    Remove-EmptyManagedParents $destination
                 }
                 throw
             }
@@ -154,6 +171,7 @@ internal sealed class CdpSessionManager(
         EnsureProfileDoesNotExist(browser, profileName);
         var location = Path.Combine(managed.Root, browser.Id, profileName);
         var script = $$"""
+            {{RemoveEmptyManagedParentsScript}}
             $destination = {{PowerShellLiteral(location)}}
             $created = $false
             try {
@@ -164,6 +182,7 @@ internal sealed class CdpSessionManager(
             } catch {
                 if ($created) {
                     Remove-Item -LiteralPath $destination -Recurse -Force -ErrorAction SilentlyContinue
+                    Remove-EmptyManagedParents $destination
                 }
                 throw
             }
@@ -185,7 +204,9 @@ internal sealed class CdpSessionManager(
             throw new ArgumentException("远程浏览器 Profile 正在使用。");
         }
         var script = $$"""
+            {{RemoveEmptyManagedParentsScript}}
             Remove-Item -LiteralPath {{PowerShellLiteral(profile.Location)}} -Recurse -Force -ErrorAction Stop
+            Remove-EmptyManagedParents {{PowerShellLiteral(profile.Location)}}
             Write-Output 'ZP-CDP-DELETE:OK'
             """;
         var result = await RunScriptAsync(script);
@@ -388,7 +409,8 @@ internal sealed class CdpSessionManager(
 
     private async Task<ManagedDiscovery> DiscoverManagedProfilesAsync()
     {
-        const string script = """
+        var script = $$"""
+            {{RemoveEmptyManagedParentsScript}}
             $root = Join-Path $env:LOCALAPPDATA 'KNSoft\ZPigeon\CDP'
             function Emit($prefix, $value) {
                 $bytes = [Text.Encoding]::UTF8.GetBytes($value)
@@ -400,7 +422,9 @@ internal sealed class CdpSessionManager(
                 Get-ChildItem -LiteralPath $_.FullName -Directory -ErrorAction SilentlyContinue | ForEach-Object {
                     Emit 'ZP-CDP-PROFILE:' ($browser + '|' + $_.Name)
                 }
+                Remove-EmptyDirectory $_.FullName
             }
+            Remove-EmptyDirectory $root
             """;
         var result = await RunScriptAsync(script);
         if (!result.Status.IsSuccess) throw new NativeException(result.Status);
