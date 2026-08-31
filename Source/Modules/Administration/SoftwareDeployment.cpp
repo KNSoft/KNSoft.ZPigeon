@@ -130,6 +130,11 @@ namespace
     template<typename T>
     T CreateWinGetObject(REFCLSID classId)
     {
+        DWORD sessionId;
+
+        // WinGet manual activation is user-scoped and can fail-fast in session 0.
+        if (!ProcessIdToSessionId(GetCurrentProcessId(), &sessionId)) winrt::throw_last_error();
+        if (sessionId == 0) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED));
         winrt::com_ptr<IClassFactory> factory;
         winrt::check_hresult(GetWinGetClassObject()(classId, IID_PPV_ARGS(factory.put())));
         void* instance;
