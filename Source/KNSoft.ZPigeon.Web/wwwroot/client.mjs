@@ -53,8 +53,17 @@ import { ShadowCopyManager } from "./shadow-copy.mjs";
 import { BitLockerManager } from "./bitlocker.mjs";
 import { WinObjManager } from "./winobj.mjs";
 import { ClientStatusManager, ZPigeonConnectionManager } from "./zpigeon.mjs";
+import { AgentManager } from "./agent.mjs";
 import { language, localize, observeLocalization, t, translateSource } from "./i18n.mjs";
-import { apiUrl, clientId, postJson } from "./client-context.mjs";
+import {
+  apiUrl,
+  clientId,
+  deleteRequest,
+  downloadRequest,
+  getJson,
+  postJson,
+  putJson,
+} from "./client-context.mjs";
 
 // Browser-native dialogs are outside the DOM localization observer.
 const nativeAlert = window.alert.bind(window),
@@ -151,6 +160,7 @@ const categories = {
       ["execution", "module.execution"],
       ["remoteDesktop", "module.remoteDesktop"],
     ],
+    agent: [["agent", "module.agent"]],
   },
   views = Object.values(categories).flat(),
   viewCategory = new Map(
@@ -380,6 +390,14 @@ const remoteDesktop = new RemoteDesktopManager($("remoteDesktopManager"), { call
 const forwards = new PortForwardManager($("portForwardManager"), { call, notify });
 const connection = new ZPigeonConnectionManager($("connectionManager"), { call, notify });
 const clientStatus = new ClientStatusManager($("clientStatusManager"), { call, notify });
+const agentManager = new AgentManager($("agentManager"), {
+  get: getJson,
+  post: postJson,
+  put: putJson,
+  remove: deleteRequest,
+  download: downloadRequest,
+  notify,
+});
 files.disconnect();
 portableDevices.disconnect();
 clipboard.disconnect();
@@ -393,6 +411,7 @@ forwards.disconnect();
 remoteDesktop.disconnect();
 execution.disconnect();
 clientStatus.disconnect();
+agentManager.disconnect();
 for (const manager of administration) manager.disconnect();
 localize(document);
 observeLocalization();
@@ -436,6 +455,7 @@ function applyStatus(state) {
     remoteDesktop.disconnect();
     execution.disconnect();
     clientStatus.disconnect();
+    agentManager.disconnect();
     for (const manager of administration) manager.disconnect();
   }
   shellSelect.disabled = newShell.disabled = emptyNew.disabled = !connected || selectedShell === null;
@@ -837,7 +857,8 @@ function closeActive() {
 
 function showView(name, historyMode = "replace") {
   if (!viewCategory.has(name)) name = "terminal";
-  if (name !== currentView) ({ execution, forwards, packages, updates, clientStatus })[currentView]?.deactivate?.();
+  if (name !== currentView)
+    ({ execution, forwards, packages, updates, clientStatus, agent: agentManager })[currentView]?.deactivate?.();
   currentView = name;
   const category = viewCategory.get(name),
     moduleNav = $("moduleNav");
@@ -858,6 +879,7 @@ function showView(name, historyMode = "replace") {
   processes.setActive(name === "processes");
   connection[name === "connection" ? "activate" : "deactivate"]();
   if (name === "clientStatus") clientStatus.activate(clientConnected);
+  if (name === "agent") agentManager.activate(clientConnected);
   if (name === "terminal") {
     scheduleFit();
     loadShells();

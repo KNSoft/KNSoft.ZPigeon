@@ -1,9 +1,9 @@
-# KNSoft.ZPigeon SDK 设计
+# KNSoft.ZPigeon 设计
 
 状态：总体设计基线  
-更新时间：2026-08-30
+更新时间：2026-09-01
 
-本文档是 KNSoft.ZPigeon SDK 的设计基线，记录系统边界、架构、协议、身份与安全模型以及待细化的技术问题。待办见 `TODO.md`，发布门禁见 `Release.md`。
+本文档是 KNSoft.ZPigeon SDK 与应用层的设计基线，记录系统边界、架构、协议、身份与安全模型以及待细化的技术问题。待办见 `TODO.md`，发布门禁见 `Release.md`。
 
 ## 1. 目标与边界
 
@@ -56,7 +56,7 @@ Transport -> Connection -> Protocol Dispatcher
 
 ## 3. 项目与代码组织
 
-解决方案包含三个静态库和四个可运行/互操作项目：
+解决方案的生产代码包含三个原生静态库、两个运行/互操作项目和五个托管项目：
 
 ```text
 KNSoft.ZPigeon.Protocol
@@ -65,6 +65,9 @@ KNSoft.ZPigeon.Server.SDK
 KNSoft.ZPigeon.Client
 KNSoft.ZPigeon.Server.Native
 KNSoft.ZPigeon.Server.Managed
+KNSoft.ZPigeon.Application
+KNSoft.ZPigeon.Tools
+KNSoft.ZPigeon.Agent
 KNSoft.ZPigeon.Web
 ```
 
@@ -76,7 +79,10 @@ Server SDK ----> Protocol
 Client EXE ----> Client SDK + Protocol
 Server Native DLL ----> Server SDK + Protocol
 Managed SDK ----> Server Native DLL
-Web ----> Managed SDK
+Application ----> Managed SDK
+Tools ----> Application
+Agent ----> Tools
+Web ----> Agent + Tools + Application + Managed SDK
 ```
 
 - Protocol 项目由 C/S 共用，且只使用纯 C；
@@ -112,6 +118,9 @@ Source/
 |-- KNSoft.ZPigeon.Client/
 |-- KNSoft.ZPigeon.Server.Native/
 |-- KNSoft.ZPigeon.Server.Managed/
+|-- KNSoft.ZPigeon.Application/
+|-- KNSoft.ZPigeon.Tools/
+|-- KNSoft.ZPigeon.Agent/
 |-- KNSoft.ZPigeon.Web/
 `-- SDK/
 ```
@@ -119,6 +128,32 @@ Source/
 各项目通过工程文件选择属于自己的源文件：Protocol 编译模块目录内的 `Protocol.c`，Client SDK 编译 `Client.c`、Client Core 和 Client Transport，Server SDK 编译 `Server.c`、Server Core 和 Server Transport。`Network` 只保留双方共用的网络基础，不出现业务模块；SDK 内不再建立第二套 `Network` 目录。
 
 模块通过最小静态描述符表接入 Core Dispatcher。Dispatcher 只完成模块和操作查找、通用状态校验及生命周期转交，不包含模块 Payload 解码或 Windows 业务 API。Module 不得包含 `HQUIC` 或直接调用 Transport；Transport 不得按 ModuleId 分发或执行业务。
+
+### 3.1 Server 应用层与 AI 入口
+
+Server 上层保持单向依赖：
+
+```text
+MCP -----------------> Tools -> Application -> Server.Managed
+Web 对话 -> Agent ---> Tools -> Application
+REST / UI 适配器 -----------> Application | Server.Managed
+```
+
+- `Server.Managed` 是可复用的 .NET SDK，忠实封装 Native 能力、原始状态和流式对象；
+- `Application` 组合适合自动化的管理用例，显式接收 `ClientId` 和取消令牌，并统一参数与结果边界；它不依赖 ASP.NET、MCP SDK、模型 Provider 或 UI；
+- `Tools` 以 `AIFunction` 定义唯一的模型工具目录、参数 Schema、只读/破坏性语义和敏感性；同一函数分别用于外部 MCP 与内置智能体；
+- `Agent` 负责模型、Agent 与会话持久化、模型协议、上下文和函数调用循环，不经 HTTP 回调本机 REST，也不复制工具执行逻辑；
+- `Web` 是组合根，显式映射 REST，托管 MCP，并提供模型配置和对话 UI。REST 在语义完全相同时复用 Application；UI 专用分页、二进制传输、WebSocket 和长生命周期会话等适配器可直接使用 Managed SDK，不强行改写成模型工具。
+
+REST、MCP 和内置智能体是三种入口，不是三套业务实现。REST 路由按 UI 和传输需求显式映射；`ToolAudience.ExternalMcp` 与 `ToolAudience.BuiltInAgent` 只决定一个工具面向哪类智能体。模型 Provider 与暴露范围正交，不能以 Provider 类型决定工具权限或目标。
+
+外部 MCP 使用无状态 Streamable HTTP，直接支持 2026-07-28 无握手请求，并由官方 SDK 兼容较早的 initialize 客户端。除 `list_clients` 外，工具都要求显式传入字符串形式的瞬时 `ClientId`，不得依赖服务器端“当前 Client”。内置智能体在创建工具 Schema 时绑定当前页面 Client，并从 Schema 中移除 `clientId`；模型无法选择其他目标。需要由调用方回传的 64 位身份、游标和进程创建时间以十进制字符串跨 JSON 边界传递，避免 JavaScript 数字精度损失。
+
+新增 SDK API 或枚举值不自动成为 REST 或 AI 能力。先按产品语义决定是否增加 Application 用例；需要 AI 调用时只在 Tools 中增加一次定义，MCP 与内置智能体自动同步；需要 Web UI 时再显式增加 REST、流或页面适配。Administration 等聚合入口使用显式操作白名单、固定控制操作与动作组合并限制结果数；需要 Flags、二进制或专用结构载荷的操作不进入通用字符串工具。这样不会把底层面过度暴露，也不会维护两套 MCP/Agent 映射。
+
+模型目录使用仓库内 `Source/3rdParty/models.dev/api.json` 的静态快照，保留上游 Provider ID，并在进程启动时解析一次。`Update.cmd` 只供维护者手动覆盖快照；运行时不联网更新、不引入 npm 包或第二套缓存。模型配置显式保存 Provider、接口协议、Base URL、认证、模型 ID、上下文窗口、最大输出、Reasoning、超时和高级 JSON；高级 JSON 原样合并，但不能覆盖消息、工具等结构字段。
+
+模型、Agent、会话及按序事件保存在 Server 的 SQLite 数据库。Agent 只包含名称、模型、System Prompt、工具白名单、`AGENTS.md`、`TOOLS.md`、`MEMORY.md` 和自定义 Markdown。会话绑定 Client 公钥指纹，保存用户、助手、Tool Call、Tool Result、压缩摘要、错误及归一化和原始 Usage；支持历史搜索、分支和 JSON 导出。每个会话最多一个运行循环；新消息默认排队，Steer 取消当前请求并优先执行，Stop 取消当前请求和未运行队列。上下文达到阈值时自动压缩，也可手动触发；执行顺序独立于消息提交顺序，终止的 Tool Call 会写入错误结果，保证后续协议历史完整。
 
 ## 4. Deployment、S 与 C 身份
 
@@ -570,7 +605,12 @@ CDP `Page.startScreencast` 按 Chromium 协议产生 JSON 内 Base64 JPEG。Tunn
 - Kestrel 只监听 `127.0.0.1`，HTTP 请求必须使用规范 `127.0.0.1:<port>` Host；
 - 浏览器请求的 `Origin` 必须与规范本机 Origin 完全相同，`Sec-Fetch-Site: cross-site` 直接拒绝，WebSocket 也只接受该 Origin；
 - 没有 `Origin` 和 Fetch Metadata 的本机原生程序仍被视为可信；当前边界只解决恶意网页跨站访问和 DNS rebinding，不试图隔离任意本机进程；
+- `/mcp` 与 REST 共用相同的规范 Host 边界；MCP 调用方属于上述受信任本机原生程序，当前不额外建立认证会话；
 - `/api/clients` 返回当前连接及公钥 SHA-256 指纹；其余 API 必须显式携带瞬时 `ClientId`，长生命周期 Web 状态按该 ID 隔离；Native 在连接增删时触发事件，Managed/Web 据此立即释放离线 Client 的状态，不依赖后续 HTTP 流量；
+- MCP 不保存目标状态，每次工具调用都验证显式 `ClientId`；内置智能体的目标由 Web 当前 Client 上下文绑定，模型工具参数中不存在目标字段；
+- 模型凭据使用 ASP.NET Core Data Protection 和当前 Windows 账户 DPAPI 加密后写入 `%LOCALAPPDATA%\KNSoft\ZPigeon`。批量列表不返回凭据；具备当前 Web 管理权限的详情接口可按项返回解密值，以支持显示和复制，但响应禁止缓存且不得写入日志；
+- 对话、工具参数和工具结果会发送给所选模型 Provider。OpenAI Responses 请求显式设置 `store: false`，并保存加密推理内容以支持无状态工具续传；Chat Completions 不发送非通用存储参数，Anthropic 保存带签名的 Thinking 内容。实际数据处理与保留仍由 Provider 决定，页面必须明确提示；
+- 模型输出和工具结果均视为不可信数据；管理端按纯文本显示模型回复，Agent 提示模型不得把工具结果当作指令，只有用户明确要求时才能读取 Cookie、密码等敏感数据，并限制消息、输出和工具结果大小、顺序执行工具、限制工具循环和连续工具错误；
 - Native 同时维护 ClientId 和 Connection 哈希索引；Client 列表在一次快照中返回地址、指纹和连接统计。首页连接变化与管理页状态使用 SSE，浏览器不创建固定周期 HTTP 轮询；
 - HTTP 请求取消会沿 Managed/Native Context 定位到精确 SDK Request 并调用 `ZpRequest_Cancel`，浏览器断开后不继续占用远端请求名额；
 - Web 文案使用共享的稳定 I18N Key，中文和英文目录必须键集合一致；不受支持的浏览器语言回退英文，代码分析同时校验显式 Key、既有页面源文案、动态模板及 Native/Managed 生成文案；
@@ -584,6 +624,7 @@ CDP `Page.startScreencast` 按 Chromium 协议产生 JSON 内 Base64 JPEG。Tunn
 - 优先复用 KNSoft.MakeLifeEasier 的通用函数；
 - 最低系统为 Windows 10，允许直接采用 Windows 10 及以上能力，不增加旧系统兼容或回退路径；
 - QUIC 基础由 KNSoft.Quic 提供；
+- MCP 使用官方 Model Context Protocol C# SDK 的无状态 Streamable HTTP 实现；工具 Schema 使用 Microsoft.Extensions.AI，模型协议以直接 HTTP/JSON 实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages；
 - ZPigeon 自己负责连接状态、Frame、Protocol Dispatcher 和业务模块；
 - 如果实现所需辅助函数具有独立的 common library 价值，应先由 Owner 决定是否抽到 KNSoft.MakeLifeEasier，再进行编码和依赖同步。
 

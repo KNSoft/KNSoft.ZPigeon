@@ -1,6 +1,8 @@
 ﻿#include <wincodec.h>
+#include <shellapi.h>
 
 #pragma comment(lib, "Windowscodecs.lib")
+#pragma comment(lib, "Shell32.lib")
 
 #define ZP_CLIPBOARD_IMAGE_MAX_DIMENSION 1280
 #define ZP_CLIPBOARD_IMAGE_MAX_SIZE 0x00400000
@@ -350,6 +352,44 @@ ZpAdministration_QueryClipboardImage(
 }
 
 static
+VOID
+ZpAdministration_AddClipboardFiles(
+    _Inout_ PZP_ADMINISTRATION_BUILDER Builder,
+    _In_ HDROP Drop,
+    _In_ UINT Count)
+{
+    PWSTR Path;
+    UINT Index, Length;
+    NTSTATUS Status;
+
+    for (Index = 0; Index < Count; Index++)
+    {
+        Length = DragQueryFileW(Drop, Index, NULL, 0);
+        if (Length == 0 || Length > ZP_CODEC_MAX_ELEMENT_COUNT) continue;
+        Path = Mem_Alloc(((SIZE_T)Length + 1) * sizeof(WCHAR));
+        if (Path == NULL) return;
+        if (DragQueryFileW(Drop, Index, Path, Length + 1) == Length)
+        {
+            Status = ZpAdministration_AddRecord(Builder,
+                                                ZpAdministrationKindClipboardFile,
+                                                Index,
+                                                0,
+                                                0,
+                                                Path,
+                                                NULL,
+                                                NULL,
+                                                NULL);
+            Mem_Free(Path);
+            if (!NT_SUCCESS(Status)) return;
+        }
+        else
+        {
+            Mem_Free(Path);
+        }
+    }
+}
+
+static
 ZP_STATUS
 ZpAdministration_EnumerateClipboard(
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
@@ -359,9 +399,10 @@ ZpAdministration_EnumerateClipboard(
     WCHAR Identity[16], Name[256];
     PCWSTR Text = NULL;
     HGLOBAL TextHandle = NULL;
+    HDROP Drop = NULL;
     SIZE_T TextLength = 0;
     DWORD SessionId, Error = ERROR_SUCCESS;
-    UINT Format = 0;
+    UINT FileCount = 0, Format = 0;
     NTSTATUS Status = STATUS_SUCCESS;
 
     if (!ProcessIdToSessionId(GetCurrentProcessId(), &SessionId))
@@ -377,33 +418,48 @@ ZpAdministration_EnumerateClipboard(
         SIZE_T CharacterCount = GlobalSize(TextHandle) / sizeof(WCHAR);
 
         Text = GlobalLock(TextHandle);
-        if (Text == NULL)
-        {
-            Error = GetLastError();
-        }
-        else
+        if (Text != NULL)
         {
             while (TextLength < CharacterCount && Text[TextLength] != UNICODE_NULL) TextLength++;
-            Status = TextLength == CharacterCount ? STATUS_DATA_ERROR : STATUS_SUCCESS;
-            if (TextLength > ZP_CODEC_MAX_ELEMENT_COUNT) Status = STATUS_QUOTA_EXCEEDED;
+            if (TextLength == CharacterCount || TextLength > ZP_CODEC_MAX_ELEMENT_COUNT)
+            {
+                GlobalUnlock(TextHandle);
+                Text = NULL;
+                TextLength = 0;
+            }
         }
     }
-    SetLastError(ERROR_SUCCESS);
-    while (Error == ERROR_SUCCESS && NT_SUCCESS(Status) && (Format = EnumClipboardFormats(Format)) != 0)
+    while (Error == ERROR_SUCCESS && NT_SUCCESS(Status))
     {
+        SetLastError(ERROR_SUCCESS);
+        Format = EnumClipboardFormats(Format);
+        if (Format == 0)
+        {
+            Error = GetLastError();
+            break;
+        }
+        if (Format == CF_HDROP)
+        {
+            Drop = GetClipboardData(CF_HDROP);
+            FileCount = Drop == NULL ? 0 : DragQueryFileW(Drop, UINT_MAX, NULL, 0);
+        }
         _ultow_s(Format, Identity, ARRAYSIZE(Identity), 10);
         Status = ZpAdministration_AddRecord(
             &Builder,
             ZpAdministrationKindClipboardFormat,
             Format,
             Format == CF_UNICODETEXT ? 1 : 0,
-            Format == CF_UNICODETEXT ? TextLength * sizeof(WCHAR) : 0,
+            Format == CF_UNICODETEXT ? TextLength * sizeof(WCHAR) :
+            Format == CF_HDROP ? FileCount : 0,
             Identity,
             ZpAdministration_GetClipboardFormatName(Format, Name, ARRAYSIZE(Name)),
             NULL,
             Format == CF_UNICODETEXT ? Text : NULL);
     }
-    if (Error == ERROR_SUCCESS && NT_SUCCESS(Status)) Error = GetLastError();
+    if (Error == ERROR_SUCCESS && NT_SUCCESS(Status) && Drop != NULL)
+    {
+        ZpAdministration_AddClipboardFiles(&Builder, Drop, FileCount);
+    }
     if (Text != NULL) GlobalUnlock(TextHandle);
     if (!CloseClipboard() && Error == ERROR_SUCCESS) Error = GetLastError();
     if (Error == ERROR_SUCCESS && NT_SUCCESS(Status))

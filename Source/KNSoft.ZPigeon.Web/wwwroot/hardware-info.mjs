@@ -129,20 +129,26 @@ export class HardwareInformationManager {
     }
     if (id === "storage") {
       const page = await this.call("/api/files", { path: "", enumerationId: null }),
-        volumes = await Promise.all(
-          page.records.map(async (record) => [record, await this.call("/api/file/volume", { path: record.name })]),
+        volumes = await Promise.allSettled(
+          page.records.map((record) => this.call("/api/file/volume", { path: record.name })),
         );
-      return volumes.map(([record, volume]) => ({
-        title: record.name,
-        fields: [
-          ["卷标", volume.label || "—"],
-          ["文件系统", volume.fileSystem],
-          ["容量", formatBytes(volume.totalBytes)],
-          ["可用空间", formatBytes(volume.freeBytes)],
-          ["已用空间", formatBytes(volume.totalBytes - volume.freeBytes)],
-          ["卷序列号", Number(volume.serialNumber).toString(16).padStart(8, "0").toUpperCase()],
-        ],
-      }));
+      return volumes.map((result, index) => {
+        const record = page.records[index];
+        if (result.status === "rejected")
+          return { title: record.name, fields: [["状态", result.reason?.message || result.reason]] };
+        const volume = result.value;
+        return {
+          title: record.name,
+          fields: [
+            ["卷标", volume.label || "—"],
+            ["文件系统", volume.fileSystem],
+            ["容量", formatBytes(volume.totalBytes)],
+            ["可用空间", formatBytes(volume.freeBytes)],
+            ["已用空间", formatBytes(volume.totalBytes - volume.freeBytes)],
+            ["卷序列号", Number(volume.serialNumber).toString(16).padStart(8, "0").toUpperCase()],
+          ],
+        };
+      });
     }
     if (id === "network") {
       const records = await this.call("/api/network-adapters");

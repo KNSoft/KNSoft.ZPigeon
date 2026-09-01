@@ -1,22 +1,47 @@
+using KNSoft.ZPigeon.Agent;
+using KNSoft.ZPigeon.Application;
 using KNSoft.ZPigeon.Server.Managed;
+using KNSoft.ZPigeon.Tools;
 using KNSoft.ZPigeon.Web;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
+using ModelContextProtocol.AspNetCore;
+using ModelContextProtocol.Protocol;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
 
 const uint StatusDeviceNotConnected = 0xC000009D;
 var builder = WebApplication.CreateBuilder(args);
-var webPort = builder.Configuration.GetValue("Web:Port", 9972);
+var webPort = builder.Configuration.GetValue("Web:Port", 9983);
 var localOrigin = new UriBuilder(Uri.UriSchemeHttp, "127.0.0.1", webPort).Uri.GetLeftPart(UriPartial.Authority);
 builder.WebHost.UseUrls(localOrigin);
 builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+builder.Logging.AddFilter("ModelContextProtocol", LogLevel.Warning);
 var server = new NativeServer(AppContext.BaseDirectory);
+var zpigeonApplication = new ZPigeonApplication(server);
+var toolCatalog = new ZPigeonToolCatalog(zpigeonApplication);
 var clientServices = new ClientServicesRegistry(server);
 var clientConnectionAvailable = new object();
 var proxyUserHeader = builder.Configuration["ReverseProxy:UserHeader"] ?? "X-Forwarded-User";
 var iceServers = builder.Configuration.GetSection("P2p:IceServers").Get<string[]>() ?? [];
 var stun = new StunServer(builder.Configuration.GetValue("P2p:StunPort", (ushort)3478));
+var applicationData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                                   "KNSoft",
+                                   "ZPigeon");
+builder.Services.AddDataProtection()
+                .SetApplicationName("KNSoft.ZPigeon")
+                .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(applicationData, "DataProtection")))
+                .ProtectKeysWithDpapi();
+builder.Services.AddMcpServer()
+                .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
+                .WithTools(McpToolFactory.Create(toolCatalog.CreateExternalTools()))
+                .WithListToolsHandler((_, _) => ValueTask.FromResult(new ListToolsResult
+                {
+                    Tools = [],
+                    TimeToLive = TimeSpan.FromHours(1),
+                    CacheScope = CacheScope.Private
+                }));
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -27,6 +52,14 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownProxies.Add(IPAddress.IPv6Loopback);
 });
 var app = builder.Build();
+var secretProtector = new DataProtectionSecretProtector(
+    app.Services.GetRequiredService<IDataProtectionProvider>());
+var agentStore = new AgentStore(Path.Combine(applicationData, "agent.db"), secretProtector);
+var agent = new ZPigeonAgent(zpigeonApplication, toolCatalog, agentStore);
+var modelsDevCatalog = new ModelsDevCatalog(Path.Combine(AppContext.BaseDirectory,
+                                                         "3rdParty",
+                                                         "models.dev",
+                                                         "api.json"));
 
 app.UseForwardedHeaders();
 
@@ -63,7 +96,9 @@ app.Use(async (context, next) =>
 // browser data (cookies, passwords, history) must never be cached anywhere
 app.Use(async (context, next) =>
 {
-    if (context.Request.Path.StartsWithSegments("/api/browser"))
+    if (context.Request.Path.StartsWithSegments("/api/browser") ||
+        context.Request.Path.StartsWithSegments("/api/agent") ||
+        context.Request.Path.StartsWithSegments("/mcp"))
     {
         context.Response.OnStarting(() =>
         {
@@ -93,6 +128,21 @@ app.Use(async (context, next) =>
             exception.Status.Code
         });
     }
+    catch (ArgumentException exception) when (!context.Response.HasStarted)
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await context.Response.WriteAsJsonAsync(new { exception.Message });
+    }
+    catch (KeyNotFoundException exception) when (!context.Response.HasStarted)
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        await context.Response.WriteAsJsonAsync(new { exception.Message });
+    }
+    catch (InvalidOperationException exception) when (!context.Response.HasStarted)
+    {
+        context.Response.StatusCode = StatusCodes.Status409Conflict;
+        await context.Response.WriteAsJsonAsync(new { exception.Message });
+    }
 });
 var webSocketOptions = new WebSocketOptions();
 webSocketOptions.AllowedOrigins.Add(localOrigin);
@@ -107,7 +157,8 @@ app.Use(async (context, next) =>
 app.Use(async (context, next) =>
 {
     if (!context.Request.Path.StartsWithSegments("/api") ||
-        context.Request.Path.StartsWithSegments("/api/clients"))
+        context.Request.Path.StartsWithSegments("/api/clients") ||
+        context.Request.Path.StartsWithSegments("/api/agent"))
     {
         await next();
         return;
@@ -146,6 +197,7 @@ app.Use(async (context, next) =>
 });
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapMcp("/mcp");
 app.MapGet("/api/clients", () => GetConnectedClientViews(server));
 app.MapGet("/api/clients/events", (HttpContext context) =>
     StreamClientChangesAsync(server, context));
@@ -159,13 +211,17 @@ app.MapPost("/api/zpigeon/connection", (ConnectionPerformanceRequest request) =>
     request.SpeedClass < 5 && request.LatencyClass < 5 ?
         Results.Ok(clientServices.Current.ConnectionPerformance.Configure(request)) :
         Results.BadRequest());
-app.MapPost("/api/system", () => server.GetSystemInfoAsync());
-app.MapPost("/api/eventlog/query", (EventLogQueryRequest request) =>
-    server.QueryEventLogPageAsync(request.ChannelPath,
-                                  request.Query,
-                                  request.Bookmark,
-                                  request.MaxEvents));
-app.MapPost("/api/eventlog/channels", () => server.EnumerateEventLogChannelsAsync());
+app.MapPost("/api/system", (CancellationToken cancellationToken) =>
+    zpigeonApplication.GetSystemInfoAsync(server.ClientId, cancellationToken));
+app.MapPost("/api/eventlog/query", (EventLogQueryRequest request, HttpContext context) =>
+    zpigeonApplication.QueryEventLogAsync(server.ClientId,
+                                         request.ChannelPath,
+                                         request.Query,
+                                         request.Bookmark,
+                                         request.MaxEvents,
+                                         context.RequestAborted));
+app.MapPost("/api/eventlog/channels", (CancellationToken cancellationToken) =>
+    zpigeonApplication.GetEventLogChannelsAsync(server.ClientId, cancellationToken));
 app.MapPost("/api/eventlog/channel/info", (EventLogRequest request) =>
     server.QueryEventLogChannelInfoAsync(request.ChannelPath));
 app.MapPost("/api/eventlog/channel", (EventLogChannelRequest request) =>
@@ -237,6 +293,7 @@ app.Map("/api/rtc", context => RtcWebSocket.RunAsync(context,
                                                       proxyUserHeader));
 app.MapPost("/api/serial/ports", () => server.EnumerateSerialPortsAsync());
 app.Map("/api/serial", context => SerialWebSocket.RunAsync(context, server));
+app.MapAgentApi(agent, agentStore, modelsDevCatalog, toolCatalog, server);
 app.MapRegistryApi(clientServices);
 app.MapManagementApi(clientServices);
 app.MapSoftwareApi(clientServices);
@@ -247,6 +304,7 @@ app.MapRemoteAccessApi(clientServices,
 app.Lifetime.ApplicationStopping.Register(server.Dispose);
 app.Lifetime.ApplicationStopping.Register(clientServices.Dispose);
 app.Lifetime.ApplicationStopping.Register(stun.Dispose);
+app.Lifetime.ApplicationStopping.Register(agent.Dispose);
 server.Start();
 stun.Start();
 app.Run();

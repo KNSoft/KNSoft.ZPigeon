@@ -44,6 +44,12 @@ export class ClipboardManager {
           </div>
         </section>
         <section class="card">
+          <h2>文件 <span data-role="files-summary" class="status"></span></h2>
+          <textarea
+            data-role="files"
+            class="clipboard-files"
+            readonly
+            placeholder="剪贴板中没有文件"></textarea>
           <h2>现有格式</h2>
           <div data-role="formats" class="clipboard-formats"></div>
         </section>
@@ -52,6 +58,8 @@ export class ClipboardManager {
     this.text = root.querySelector("[data-role=text]");
     this.image = root.querySelector("[data-role=image]");
     this.imageEmpty = root.querySelector("[data-role=image-empty]");
+    this.files = root.querySelector("[data-role=files]");
+    this.filesSummary = root.querySelector("[data-role=files-summary]");
     this.formats = root.querySelector("[data-role=formats]");
     this.summary = root.querySelector("[data-role=summary]");
     this.empty = root.querySelector(".manager-empty");
@@ -78,6 +86,8 @@ export class ClipboardManager {
     this.image.removeAttribute("src");
     this.image.hidden = true;
     this.imageEmpty.hidden = false;
+    this.files.value = "";
+    this.filesSummary.textContent = "";
     this.formats.replaceChildren();
     this.summary.textContent = "";
     this.empty.hidden = false;
@@ -85,7 +95,8 @@ export class ClipboardManager {
     this.sync();
   }
   sync() {
-    this.refresh.disabled = this.clear.disabled = this.save.disabled = this.text.disabled = !this.connected;
+    this.refresh.disabled = this.clear.disabled = this.save.disabled = this.text.disabled = this.files.disabled =
+      !this.connected;
   }
   async load() {
     if (!this.connected || this.loading) return;
@@ -95,11 +106,16 @@ export class ClipboardManager {
     try {
       const records = await this.call("/api/clipboard"),
         formats = records.filter((record) => record.kind === 24),
+        files = records.filter((record) => record.kind === 75).sort((left, right) => left.state - right.state),
         text = formats.find((record) => record.state === 13),
+        fileFormat = formats.find((record) => record.state === 15),
         state = records.find((record) => record.kind === 25);
       this.sequence = state?.value || "0";
       this.loaded = true;
       this.text.value = text?.detail || "";
+      this.files.value = files.map((record) => record.identity).join("\n");
+      this.files.placeholder = fileFormat ? "文件列表不可用" : "剪贴板中没有文件";
+      this.filesSummary.textContent = fileFormat ? `（${files.length}/${fileFormat.value}）` : "";
       await this.loadImage(formats.some((record) => record.state === 2));
       this.formats.replaceChildren(
         ...formats.map((record) => {
@@ -107,7 +123,9 @@ export class ClipboardManager {
             name = document.createElement("strong"),
             detail = document.createElement("span");
           name.textContent = record.name || clipboardFormatNames[record.state] || "未知格式";
-          detail.textContent = `格式 ${record.state}${record.flags & 1 ? ` · ${record.value} 字节 · 可编辑` : ""}`;
+          detail.textContent = `格式 ${record.state}${
+            record.state === 15 ? ` · ${record.value} 个文件` : record.flags & 1 ? ` · ${record.value} 字节 · 可编辑` : ""
+          }`;
           row.append(name, detail);
           return row;
         }),

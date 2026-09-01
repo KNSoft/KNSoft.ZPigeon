@@ -474,7 +474,8 @@ public enum AdministrationKind : byte
     RestorePoint,
     ShadowCopy,
     BitLockerVolume,
-    BitLockerProtector
+    BitLockerProtector,
+    ClipboardFile
 }
 #pragma warning restore CA1720
 

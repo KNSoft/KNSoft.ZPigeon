@@ -220,6 +220,7 @@ typedef BYTE ZP_ADMINISTRATION_KIND, *PZP_ADMINISTRATION_KIND;
 #define ZpAdministrationKindShadowCopy ((ZP_ADMINISTRATION_KIND)72)
 #define ZpAdministrationKindBitLockerVolume ((ZP_ADMINISTRATION_KIND)73)
 #define ZpAdministrationKindBitLockerProtector ((ZP_ADMINISTRATION_KIND)74)
+#define ZpAdministrationKindClipboardFile ((ZP_ADMINISTRATION_KIND)75)
 // Package uses State for its provider engine. PackageProvider uses State for the engine and Flags for capabilities.
 // PackageContext uses Name for the current account user name.
 // InputMethodContext uses State for the session ID and Name for the current user name.

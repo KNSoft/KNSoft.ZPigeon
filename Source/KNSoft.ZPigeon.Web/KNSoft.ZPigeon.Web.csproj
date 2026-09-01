@@ -9,15 +9,23 @@
     <PlatformTarget>$(Platform)</PlatformTarget>
     <OutputPath>..\OutDir\$(Platform)\$(Configuration)\</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath Condition="'$(RuntimeIdentifier)' == ''">false</AppendRuntimeIdentifierToOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
     <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\3rdParty\models.dev\api.json" Link="3rdParty\models.dev\api.json"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\3rdParty\models.dev\LICENSE" Link="3rdParty\models.dev\LICENSE"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="KNSoft.FirmwareSpec" Version="1.0.1-beta" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+    <ProjectReference Include="..\KNSoft.ZPigeon.Agent\KNSoft.ZPigeon.Agent.csproj" />
+    <ProjectReference Include="..\KNSoft.ZPigeon.Application\KNSoft.ZPigeon.Application.csproj" />
     <ProjectReference Include="..\KNSoft.ZPigeon.Server.Managed\KNSoft.ZPigeon.Server.Managed.csproj" />
+    <ProjectReference Include="..\KNSoft.ZPigeon.Tools\KNSoft.ZPigeon.Tools.csproj" />
   </ItemGroup>
 </Project>

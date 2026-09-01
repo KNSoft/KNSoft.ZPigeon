@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="RunCodeAnalysis">
+  <PropertyGroup>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>$(Platform)</PlatformTarget>
+    <OutputPath>..\OutDir\$(Platform)\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\KNSoft.ZPigeon.Server.Managed\KNSoft.ZPigeon.Server.Managed.csproj" />
+  </ItemGroup>
+</Project>

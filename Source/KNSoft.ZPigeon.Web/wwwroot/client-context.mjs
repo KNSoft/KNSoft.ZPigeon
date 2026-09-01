@@ -49,6 +49,39 @@ export async function postJson(input, body) {
     headers: { "content-type": "application/json" },
     body: body == null ? null : JSON.stringify(body),
   });
+  return readJson(response);
+}
+
+export async function getJson(input) {
+  return readJson(await request(input));
+}
+
+export async function putJson(input, body) {
+  return readJson(
+    await request(input, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function deleteRequest(input) {
+  await request(input, { method: "DELETE" });
+}
+
+export async function downloadRequest(input) {
+  const response = await request(input),
+    disposition = response.headers.get("content-disposition"),
+    encoded = disposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1],
+    quoted = disposition?.match(/filename="([^"]+)"/i)?.[1];
+  return {
+    blob: await response.blob(),
+    name: encoded ? decodeURIComponent(encoded) : quoted ?? "download",
+  };
+}
+
+async function readJson(response) {
   let text;
   try {
     text = await response.text();

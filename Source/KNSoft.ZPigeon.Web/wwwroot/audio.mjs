@@ -272,17 +272,25 @@ export class AudioManager {
     const summary = this.host.querySelector("[data-role=summary]");
     summary.textContent = "正在读取音频设备和会话…";
     try {
-      const [devices, sessions] = await Promise.all([
+      const [devicesResult, sessionsResult] = await Promise.allSettled([
         this.call("/api/audio/devices", {}),
         this.call("/api/audio/sessions", {}),
-      ]);
+      ]),
+        devices = devicesResult.status === "fulfilled" ? devicesResult.value : [],
+        sessions = sessionsResult.status === "fulfilled" ? sessionsResult.value : [];
+      if (devicesResult.status === "rejected" && sessionsResult.status === "rejected") throw devicesResult.reason;
+      if (devicesResult.status === "rejected") this.notify(devicesResult.reason);
+      if (sessionsResult.status === "rejected") this.notify(sessionsResult.reason);
       this.devices = devices;
       this.sessions = sessions;
       this.renderDevices();
       this.renderSessions();
       this.renderSelectors();
       this.loaded = true;
-      summary.textContent = `${devices.length} 个设备 · ${sessions.length} 个音频会话`;
+      const deviceSummary = devicesResult.status === "fulfilled" ? `${devices.length} 个设备` : "设备不可用",
+        sessionSummary =
+          sessionsResult.status === "fulfilled" ? `${sessions.length} 个音频会话` : "音频会话不可用";
+      summary.replaceChildren(deviceSummary, " · ", sessionSummary);
     } catch (error) {
       summary.textContent = error.message;
       this.notify(error);

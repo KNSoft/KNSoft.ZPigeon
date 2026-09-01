@@ -11,7 +11,7 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
 - 安全部署：严格验证 Server 身份，Client 使用持久化 CNG 实例密钥
 - 极简高效：核心使用纯 C，并优先调用 NT 层接口。不仅功能更多更强，运行效率也更佳。不背负旧系统和历史兼容路径，直接使用 Windows 10 及以上系统能力，带来当下最佳体验
 - 功能全面：系统管理能力覆盖广泛，包含 文件数据、系统软硬件、网络及端口转发、远程桌面/终端 等功能，详见 [功能模块](#功能模块)
-- AI 赋能：开发上探索当今时代 AI-Driven 与 Human-Driven 之间的最佳实践；工程上将接入 MCP 等入口，实现局域网内 AI 辅助的终端管理支持
+- AI 赋能：同一工具目录同时提供标准 MCP 入口和管理端内置智能体，支持 OpenAI Responses、OpenAI-compatible Chat Completions 和 Anthropic Messages
 
 ## 功能模块
 
@@ -73,6 +73,12 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
     - 支持自定义 Token 执行（NtCreateToken），支持 SYSTEM、TrustedInstaller 等预设以及 AppContainer Profile
   - 远程桌面：通过受控端口转发建立到被控端的 RDP 连接，或由用户明确点击开始后使用 Web 交互式远控
 
+- 智能体
+  - MCP：通过 Streamable HTTP 向外部智能体提供有界、结构化的管理工具；目标由瞬时 `ClientId` 显式指定
+  - 模型：从仓库内的 models.dev 快照选择 Provider 和模型，或手动配置接口协议、Base URL、认证、上下文、输出、Reasoning、超时及高级 JSON；凭据使用当前 Windows 账户加密后保存在本机
+  - Agent：绑定模型、System Prompt、工具以及 `AGENTS.md`、`TOOLS.md`、`MEMORY.md` 和自定义 Markdown
+  - 会话：历史保存在 Server，支持搜索、分支和导出；运行时支持 Tool Call 时间线、Token 用量、上下文压缩、终止、消息排队和插队
+
 ## 架构与本地运行
 
 项目整体解决方案文件为 [KNSoft.ZPigeon.slnx](Source/KNSoft.ZPigeon.slnx)：
@@ -81,15 +87,22 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
 - Server SDK：并发维护已认证 Client 连接并针对指定连接发起管理请求
 - Server Native：向托管程序提供稳定的 C ABI
 - Server Managed：封装可复用的 .NET 管理能力
-- Web：提供本地回环管理 API、已连接 Client 首页和按 Client 隔离的可视化控制界面
+- Application：把 Server Managed 能力组合为显式目标、受边界约束的管理用例
+- Tools：定义 MCP 与内置智能体共用的唯一工具目录及读写语义
+- Agent：持久化模型、Agent 与会话，并通过 OpenAI Responses、Chat Completions 或 Anthropic Messages 执行工具循环
+- Web：承载本地回环 REST、MCP、模型与 Agent 配置、会话界面、已连接 Client 首页和按 Client 隔离的可视化控制界面
 - Transport：支持 QUIC、TLS/TCP 和 DTLS/UDP，默认使用 QUIC
 
 本地运行：
 1. 启动 `KNSoft.ZPigeon.Web.exe`
 2. 启动一个或多个 `KNSoft.ZPigeon.Client.exe`
-3. 打开 `http://127.0.0.1:9972`，再从首页选择 Client
+3. 打开 `http://127.0.0.1:9983`，再从首页选择 Client
 
-当前 Web 是本机闭环原型，仅接受 `127.0.0.1` 的规范 Host 和同源浏览器请求；HTTP 与 WebSocket 都会拒绝恶意网页发起的跨站访问。没有浏览器来源信息的本机原生程序仍视为可信，本阶段不把任意本机进程纳入安全边界。对外访问应通过本机反向代理，并重新设计 HTTPS、身份验证和可信代理边界。多个 Client 可同时主动连接一个 Server，并接受 Server 的统一管理。首页按客户端公钥指纹列出当前连接，选择后进入该 Client 的独立管理上下文。
+MCP Streamable HTTP 端点为 `http://127.0.0.1:9983/mcp`。外部调用方先使用 `list_clients` 获取本次 Server 进程内有效的 `ClientId`，再把该值传给其他工具。MCP 无会话目标状态，不会隐式沿用上一次选择的 Client。管理端“智能体”页面则把当前页面的 Client 固定绑定到工具调用，模型无法改选目标。
+
+AI 工具按用途显式列入目录，不会因底层 SDK 新增 API 或枚举值而自动暴露。Cookie、密码等敏感浏览器数据使用独立工具和敏感性标记，并提示模型仅在用户明确要求时调用。OpenAI 请求显式关闭 Provider 端存储；所有模型服务的实际数据处理和保留策略仍由所选 Provider 决定。
+
+当前 Web 是本机闭环原型，仅接受 `127.0.0.1` 的规范 Host 和同源浏览器请求；HTTP、WebSocket 与 MCP 都会经过同一 Host 边界，浏览器请求还会拒绝跨站来源。没有浏览器来源信息的本机原生程序仍视为可信，本阶段不把任意本机进程纳入安全边界。对外访问应通过本机反向代理，并重新设计 HTTPS、身份验证和可信代理边界。多个 Client 可同时主动连接一个 Server，并接受 Server 的统一管理。首页按客户端公钥指纹列出当前连接，选择后进入该 Client 的独立管理上下文。
 
 ## 文档
 

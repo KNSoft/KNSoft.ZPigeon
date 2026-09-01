@@ -19,7 +19,8 @@
         ><button data-category="tasks" data-i18n="nav.tasks">任务管理</button
         ><button data-category="hardware" data-i18n="nav.hardware">硬件管理</button
         ><button data-category="software" data-i18n="nav.software">软件管理</button
-        ><button class="active" data-category="remote" data-i18n="nav.remote">远程访问</button>
+        ><button class="active" data-category="remote" data-i18n="nav.remote">远程访问</button
+        ><button data-category="agent" data-i18n="nav.agent">智能体</button>
       </nav>
       <div class="status">
         <span id="serverDot" class="dot"></span>Server
@@ -221,6 +222,59 @@
     <main id="clientStatusView" class="manager-view" hidden>
       <section id="clientStatusManager" class="manager"></section>
     </main>
+    <main id="agentView" class="manager-view" hidden>
+      <section id="agentManager" class="agent-workspace">
+        <aside class="agent-sessions">
+          <div class="agent-sidebar-title">
+            <strong data-i18n="agent.sessions">会话</strong
+            ><button data-action="new-session" data-i18n="common.create">新建</button>
+          </div>
+          <input
+            type="search"
+            data-role="session-search"
+            data-i18n-placeholder="agent.searchSessions"
+            placeholder="搜索会话历史"
+          />
+          <div class="agent-session-list" data-role="sessions"></div>
+          <div class="agent-sidebar-settings">
+            <button data-action="models" data-i18n="agent.models">模型</button
+            ><button data-action="agents" data-i18n="agent.agents">Agent</button>
+          </div>
+        </aside>
+        <section class="agent-chat">
+          <header class="agent-chat-header">
+            <div>
+              <button class="agent-session-title" data-action="rename-session"></button>
+              <small class="muted" data-role="session-subtitle"></small>
+            </div>
+            <span class="spacer"></span>
+            <button data-action="compact" data-i18n="agent.compact">压缩上下文</button
+            ><button data-action="fork-session" data-i18n="agent.fork">分支</button
+            ><button data-action="export" data-i18n="common.export">导出</button
+            ><button data-action="delete-session" class="danger" data-i18n="common.delete">删除</button>
+          </header>
+          <div class="agent-usage" data-role="usage" hidden>
+            <div><span data-role="context-label"></span><span data-role="token-label"></span></div>
+            <progress data-role="context" max="100" value="0"></progress>
+          </div>
+          <div class="agent-messages" data-role="messages" aria-live="polite"></div>
+          <form class="agent-composer">
+            <div class="agent-run-state muted" data-role="run-state"></div>
+            <textarea data-role="input" rows="3" maxlength="65536"></textarea>
+            <div class="agent-composer-actions">
+              <button data-action="send" data-i18n="common.send">发送</button
+              ><button type="button" data-action="steer" data-i18n="agent.steer">插队</button
+              ><button type="button" data-action="stop" class="danger" data-i18n="agent.terminate"
+                >终止</button
+              >
+            </div>
+            <small class="agent-data-notice muted" data-i18n="agent.dataNotice"
+              >会话保存在本机；对话、工具参数和结果会发送给所选模型服务，处理与保留策略由 Provider 决定。</small
+            >
+          </form>
+        </section>
+      </section>
+    </main>
 
     <dialog id="scriptDialog">
       <form method="dialog">
@@ -233,6 +287,174 @@
         <div class="dialog-actions">
           <button value="run" data-i18n="terminal.run">运行</button
           ><button value="cancel" data-i18n="common.cancel">取消</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="agentModelDialog" class="agent-settings-dialog">
+      <form method="dialog" class="agent-settings-form">
+        <header>
+          <h2 data-i18n="agent.models">模型</h2>
+          <select data-role="model-list" data-i18n-aria-label="agent.models" aria-label="模型"></select>
+          <button type="button" data-action="new-model" data-i18n="common.create">新建</button
+          ><button type="button" data-action="delete-model" class="danger" data-i18n="common.delete"
+            >删除</button
+          >
+        </header>
+        <div class="agent-settings-body">
+          <label><span data-i18n="common.name">名称</span><input name="name" maxlength="128" required /></label>
+          <label
+            ><span data-i18n="agent.provider">Provider</span
+            ><select name="provider" required></select>
+            <input name="customProvider" maxlength="128" hidden />
+          </label>
+          <label
+            ><span data-i18n="agent.protocol">接口协议</span
+            ><select name="protocol">
+              <option value="1">OpenAI Responses</option>
+              <option value="2">OpenAI Chat Completions</option>
+              <option value="3">Anthropic Messages</option>
+            </select></label
+          >
+          <label
+            ><span data-i18n="agent.baseUrl">Base URL</span
+            ><input name="baseUrl" type="url" maxlength="2048" required /></label
+          >
+          <label
+            ><span data-i18n="agent.authentication">认证</span
+            ><select name="authentication">
+              <option value="1" data-i18n="agent.auth.apiKey">API Key</option>
+              <option value="2" data-i18n="agent.auth.bearer">Bearer Token</option>
+              <option value="3" data-i18n="agent.auth.none">无认证</option>
+              <option value="4" data-i18n="agent.auth.oauth">OAuth Access Token</option>
+            </select></label
+          >
+          <label data-role="credential-row">
+            <span data-role="credential-label">API Key</span>
+            <span class="agent-secret-input"
+              ><input name="credential" type="password" maxlength="32768" autocomplete="off" />
+              <button type="button" data-action="reveal-credential" data-i18n="agent.reveal">显示</button
+              ><button type="button" data-action="copy-credential" data-i18n="common.copy">复制</button></span
+            >
+          </label>
+          <label
+            ><span data-i18n="agent.modelId">模型 ID</span
+            ><input name="modelId" list="agentCatalogModels" maxlength="256" required />
+            <datalist id="agentCatalogModels"></datalist>
+          </label>
+          <label
+            ><span data-i18n="agent.contextWindow">上下文窗口</span
+            ><input name="contextWindow" type="number" min="1" max="100000000" required /></label
+          >
+          <label
+            ><span data-i18n="agent.maximumOutput">最大输出 Token</span
+            ><input name="maximumOutputTokens" type="number" min="1" max="10000000" required /></label
+          >
+          <label
+            ><span data-i18n="agent.reasoning">Thinking / Reasoning</span
+            ><select name="reasoning">
+              <option value="0" data-i18n="common.none">无</option>
+              <option value="1">minimal</option>
+              <option value="2">low</option>
+              <option value="3">medium</option>
+              <option value="4">high</option>
+              <option value="5">xhigh</option>
+              <option value="6">max</option>
+            </select></label
+          >
+          <label
+            ><span data-i18n="agent.requestTimeout">请求超时（秒）</span
+            ><input name="requestTimeoutSeconds" type="number" min="1" max="600" value="60" required /></label
+          >
+          <label class="agent-settings-wide"
+            ><span data-i18n="agent.advancedJson">高级参数 JSON</span
+            ><textarea name="advancedJson" rows="6" maxlength="65536">{}</textarea></label
+          >
+          <p class="agent-model-description muted" data-role="model-description"></p>
+          <p class="muted" data-i18n="agent.secretStorage">凭据使用当前 Windows 账户加密后保存在本机。</p>
+          <p data-role="test-result" class="agent-test-result" hidden></p>
+        </div>
+        <div class="dialog-actions">
+          <span
+            ><button type="button" data-action="test-model" data-i18n="agent.testConnection"
+              >测试连接</button
+            ></span
+          >
+          <span class="spacer"></span>
+          <button value="cancel" formnovalidate data-i18n="common.cancel">取消</button
+          ><button value="save" data-i18n="common.save">保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="agentConfigurationDialog" class="agent-settings-dialog">
+      <form method="dialog" class="agent-settings-form agent-editor-form">
+        <header>
+          <h2 data-i18n="agent.agents">Agent</h2>
+          <select data-role="agent-list" data-i18n-aria-label="agent.agents" aria-label="Agent"></select>
+          <button type="button" data-action="new-agent" data-i18n="common.create">新建</button
+          ><button type="button" data-action="delete-agent" class="danger" data-i18n="common.delete"
+            >删除</button
+          >
+        </header>
+        <div class="agent-settings-body">
+          <label><span data-i18n="common.name">名称</span><input name="name" maxlength="128" required /></label>
+          <label
+            ><span data-i18n="agent.model">模型</span><select name="modelId" required></select></label
+          >
+          <label class="agent-settings-wide"
+            ><span data-i18n="agent.systemPrompt">System Prompt</span
+            ><textarea name="systemPrompt" rows="5" maxlength="65536"></textarea></label
+          >
+          <fieldset class="agent-settings-wide">
+            <legend data-i18n="agent.tools">工具</legend>
+            <div class="agent-tool-list" data-role="tools"></div>
+          </fieldset>
+          <label class="agent-settings-wide"
+            ><span>AGENTS.md</span><textarea name="agentsMd" rows="5" maxlength="262144"></textarea></label
+          >
+          <label class="agent-settings-wide"
+            ><span>TOOLS.md</span><textarea name="toolsMd" rows="5" maxlength="262144"></textarea></label
+          >
+          <label class="agent-settings-wide"
+            ><span>MEMORY.md</span><textarea name="memoryMd" rows="5" maxlength="262144"></textarea></label
+          >
+          <fieldset class="agent-settings-wide">
+            <legend data-i18n="agent.customDocuments">自定义 Markdown</legend>
+            <div data-role="documents"></div>
+            <button type="button" data-action="add-document" data-i18n="common.create">新建</button>
+          </fieldset>
+        </div>
+        <div class="dialog-actions">
+          <button value="cancel" formnovalidate data-i18n="common.cancel">取消</button
+          ><button value="save" data-i18n="common.save">保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="agentNewSessionDialog">
+      <form method="dialog">
+        <h2 data-i18n="agent.newSession">新建会话</h2>
+        <label
+          ><span data-i18n="agent.agent">Agent</span><select name="agentId" required></select></label
+        >
+        <label
+          ><span data-i18n="common.name">名称</span><input name="title" maxlength="128" required /></label
+        >
+        <div class="dialog-actions">
+          <button value="cancel" formnovalidate data-i18n="common.cancel">取消</button
+          ><button value="create" data-i18n="common.create">新建</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="agentRenameSessionDialog">
+      <form method="dialog">
+        <h2 data-i18n="agent.renameSession">重命名会话</h2>
+        <label><span data-i18n="common.name">名称</span><input name="title" maxlength="128" required /></label>
+        <div class="dialog-actions">
+          <button value="cancel" formnovalidate data-i18n="common.cancel">取消</button
+          ><button value="save" data-i18n="common.save">保存</button>
         </div>
       </form>
     </dialog>

@@ -6,6 +6,9 @@ import { t } from "./i18n.mjs";
 import { revealTableRow } from "./table.mjs";
 const DIRECTORY = 0x10;
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+const compareFileRecords = (left, right) =>
+  Number(!!(right.attributes & DIRECTORY)) - Number(!!(left.attributes & DIRECTORY)) ||
+  collator.compare(left.name, right.name);
 const FILE_ATTRIBUTES = [
   [0x1, "只读"],
   [0x2, "隐藏"],
@@ -337,10 +340,13 @@ export class FileManager {
   }
   disconnect() {
     this.loaded = false;
+    this.path = "";
+    this.input.value = "";
     this.records = [];
     this.enumerationId = null;
     this.request++;
     this.clearSelection();
+    this.currentNode = null;
     this.nodes.clear();
     this.tree.replaceChildren();
     this.body.replaceChildren();
@@ -366,19 +372,14 @@ export class FileManager {
         this.nodes.clear();
         this.tree.replaceChildren();
         for (const item of page.records) {
-          const node = { name: item.name, path: item.name, hasChildren: true, loaded: false, expanded: false };
+          const node = { name: item.name, path: item.name, item, hasChildren: true, loaded: false, expanded: false };
           node.element = this.renderNode(node);
           this.tree.append(node.element);
           this.nodes.set(item.name.toLocaleLowerCase(), node);
         }
         this.loaded = true;
-        const node =
-          this.nodes.get(this.path.toLocaleLowerCase()) || this.nodes.get("c:\\") || this.nodes.values().next().value;
-        if (node) await this.open(node.path, node);
-        else {
-          this.body.replaceChildren();
-          this.empty.textContent = "未找到驱动器";
-        }
+        this.body.replaceChildren();
+        this.empty.textContent = page.records.length ? "选择驱动器以查看内容" : "未找到驱动器";
       } catch (error) {
         if (request === this.request) this.empty.textContent = error.message;
       }
@@ -436,7 +437,7 @@ export class FileManager {
         enumerationId: append ? this.enumerationId : null,
       });
       if (request !== this.request) return;
-      this.records = append ? this.records.concat(page.records) : page.records;
+      this.records = (append ? this.records.concat(page.records) : page.records).sort(compareFileRecords);
       this.enumerationId = page.enumerationId;
       this.render();
       const directories = page.records.filter((item) => item.attributes & DIRECTORY);
@@ -524,7 +525,7 @@ export class FileManager {
     node.children.replaceChildren();
     for (const item of records) {
       const path = join(node.path, item.name),
-        child = { name: item.name, path, hasChildren: item.hasChildren, loaded: false, expanded: false };
+        child = { name: item.name, path, item, hasChildren: item.hasChildren, loaded: false, expanded: false };
       child.element = this.renderNode(child);
       child.element.dataset.path = path.toLocaleLowerCase();
       node.children.append(child.element);
@@ -542,7 +543,7 @@ export class FileManager {
       const path = join(node.path, item.name),
         key = path.toLocaleLowerCase();
       if (this.nodes.has(key)) continue;
-      const child = { name: item.name, path, hasChildren: item.hasChildren, loaded: false, expanded: false };
+      const child = { name: item.name, path, item, hasChildren: item.hasChildren, loaded: false, expanded: false };
       child.element = this.renderNode(child);
       child.element.dataset.path = key;
       node.children.append(child.element);
@@ -603,7 +604,7 @@ export class FileManager {
     event.preventDefault();
     event.stopPropagation();
     this.selectNode(node);
-    this.folderContext(event, { path: node.path, name: node.name, node });
+    this.folderContext(event, { path: node.path, name: node.name, item: node.item, node });
   }
   folderContext(event, target) {
     const request = ++this.menuRequest,
@@ -729,7 +730,7 @@ export class FileManager {
     else if (action === "rename") this.showRename(target.node);
     else if (action === "delete") this.delete(target);
     else if (action === "security") this.security(target.path, true);
-    else if (action === "info") this.info(target.path, target.name);
+    else if (action === "info") this.info(target.path, target.name, target.item);
   }
   openFolderShell(shell) {
     this.menu.hidden = true;
@@ -739,7 +740,11 @@ export class FileManager {
     const value = parent(this.path);
     if (value) this.open(value);
   }
-  async info(path = this.selected && join(this.path, this.selected.name), title = this.selected?.name) {
+  async info(
+    path = this.selected && join(this.path, this.selected.name),
+    title = this.selected?.name,
+    value = this.selected,
+  ) {
     if (!path) return;
     try {
       const root = /^[A-Za-z]:\\$/.test(path),
@@ -764,8 +769,8 @@ export class FileManager {
         attributesBox.hidden = true;
         volumeBox.hidden = false;
       } else {
-        const value = await this.call("/api/file/info", { path }),
-          directory = !!(value.attributes & DIRECTORY),
+        value ||= await this.call("/api/file/info", { path });
+        const directory = !!(value.attributes & DIRECTORY),
           fields = [
             ["路径", path],
             ["类型", directory ? "文件夹" : "文件"],
@@ -1416,8 +1421,6 @@ export class ProcessManager {
       this.dumpDialog.close();
     };
     this.tick = () => this.update();
-    addEventListener("focus", this.tick);
-    addEventListener("blur", this.tick);
     document.addEventListener("visibilitychange", this.tick);
     addEventListener("pointerdown", (event) => {
       if (!this.menu.contains(event.target)) this.hideMenu();
@@ -1563,7 +1566,7 @@ export class ProcessManager {
     this.update(true);
   }
   async revealProcess(processId) {
-    if (!(await this.loadSystem())) return;
+    this.loadSystem();
     if (this.refreshing || !this.records?.length) await this.refresh();
     const item = this.records?.find((value) => value.processId === processId);
     this.filter.value = "";
@@ -1573,21 +1576,18 @@ export class ProcessManager {
     else this.notify(`未找到 PID ${processId}`);
   }
   eligible() {
-    return this.active && this.isConnected() && document.visibilityState === "visible" && document.hasFocus();
+    return this.active && this.isConnected() && document.visibilityState === "visible";
   }
   update(immediate = false) {
     clearTimeout(this.timer);
     this.timer = null;
     if (!this.eligible()) return;
-    if (!this.processorCount) {
-      if (!this.loadingSystem) this.loadSystem().then((loaded) => loaded && this.update(true));
-      return;
-    }
+    if (this.processorCount === undefined && !this.loadingSystem) this.loadSystem();
     if (immediate) this.refresh();
     else if (this.interval) this.timer = setTimeout(() => this.refresh(), this.interval);
   }
   loadSystem() {
-    if (this.processorCount) return Promise.resolve(true);
+    if (this.processorCount !== undefined) return Promise.resolve(this.processorCount !== null);
     if (!this.loadingSystem)
       this.loadingSystem = this.call("/api/system")
         .then((info) => {
@@ -1595,6 +1595,7 @@ export class ProcessManager {
           return true;
         })
         .catch((error) => {
+          this.processorCount = null;
           this.notify(error);
           return false;
         })
@@ -1611,7 +1612,7 @@ export class ProcessManager {
     this.records = [];
     this.clearSelection();
     this.sampleTime = 0;
-    this.processorCount = 0;
+    this.processorCount = undefined;
     this.hideMenu();
     this.body.replaceChildren();
     this.empty.hidden = false;
@@ -1619,7 +1620,7 @@ export class ProcessManager {
   }
   refresh() {
     if (this.refreshing) return this.refreshing;
-    if (!this.eligible() || !this.processorCount) return Promise.resolve(false);
+    if (!this.eligible()) return Promise.resolve(false);
     this.refreshing = (async () => {
       try {
         const now = performance.now(),
@@ -1632,7 +1633,9 @@ export class ProcessManager {
             delta = old
               ? Number(BigInt(item.userTime) + BigInt(item.kernelTime) - BigInt(old.userTime) - BigInt(old.kernelTime))
               : 0;
-          item.cpu = elapsed ? Math.max(0, delta / (elapsed * 10000 * this.processorCount)) * 100 : 0;
+          item.cpu = elapsed && this.processorCount ?
+            Math.max(0, delta / (elapsed * 10000 * this.processorCount)) * 100 :
+            null;
         }
         this.sampleTime = now;
         this.records = records.sort(
@@ -1668,7 +1671,7 @@ export class ProcessManager {
           item.processId,
           processState(item),
           item.userName || "—",
-          item.wslIdentity ? "—" : `${item.cpu.toFixed(1)}%`,
+          item.wslIdentity || item.cpu === null ? "—" : `${item.cpu.toFixed(1)}%`,
           item.wslIdentity ? "—" : `${bytes(item.workingSetBytes)} / ${bytes(item.privateBytes)}`,
           item.imagePath || "—",
           item.wslIdentity ? `WSL · ${item.wslDistribution}` : processPlatform(item.machineType),

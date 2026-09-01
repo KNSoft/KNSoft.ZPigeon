@@ -3390,23 +3390,35 @@ export class SystemInformationManager {
     this.empty.hidden = false;
     this.empty.textContent = "正在读取系统信息…";
     try {
-      const [base, records] = await Promise.all([this.call("/api/system"), this.call("/api/system-details")]),
-        architecture = { 1: "x86", 2: "x64", 3: "ARM64" }[base.architecture] || base.architecture,
+      const [baseResult, recordsResult] = await Promise.allSettled([
+          this.call("/api/system"),
+          this.call("/api/system-details"),
+        ]),
+        base = baseResult.status === "fulfilled" ? baseResult.value : null,
+        records = recordsResult.status === "fulfilled" ? recordsResult.value : [];
+      if (baseResult.status === "rejected" && recordsResult.status === "rejected") throw baseResult.reason;
+      if (baseResult.status === "rejected") this.notify(baseResult.reason);
+      if (recordsResult.status === "rejected") this.notify(recordsResult.reason);
+      const architecture = base && ({ 1: "x86", 2: "x64", 3: "ARM64" }[base.architecture] || base.architecture),
         computer = records.find((record) => record.identity === "computerName") || {
           identity: "computerName",
         };
       let display = 0;
       this.records = [
-        { ...computer, detail: base.computerName },
-        {
-          name: "Windows 版本",
-          description: "Windows",
-          detail: `${base.majorVersion}.${base.minorVersion}.${base.buildNumber}`,
-        },
-        { name: "平台", description: "系统", detail: architecture },
-        { name: "逻辑处理器", description: "硬件", detail: String(base.processorCount) },
-        { name: "物理内存", description: "硬件", detail: formatBytes(base.physicalMemoryBytes) },
-        ...records.filter((record) => record.identity !== "computerName"),
+        ...(base
+          ? [
+              { ...computer, detail: base.computerName },
+              {
+                name: "Windows 版本",
+                description: "Windows",
+                detail: `${base.majorVersion}.${base.minorVersion}.${base.buildNumber}`,
+              },
+              { name: "平台", description: "系统", detail: architecture },
+              { name: "逻辑处理器", description: "硬件", detail: String(base.processorCount) },
+              { name: "物理内存", description: "硬件", detail: formatBytes(base.physicalMemoryBytes) },
+            ]
+          : []),
+        ...records.filter((record) => !base || record.identity !== "computerName"),
       ].map((record) => {
         if (record.kind === 19)
           return {

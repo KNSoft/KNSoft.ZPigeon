@@ -908,6 +908,79 @@ ZpFile_SetInfo(
 
 static
 NTSTATUS
+ZpFile_QueryDirectoryEntry(
+    _In_ PCZP_STRING_VIEW Path,
+    _Out_ PZP_FILE_INFO Info)
+{
+    FILE_FIND Find;
+    PFILE_DIRECTORY_INFORMATION Data;
+    PUNICODE_STRING String;
+    UNICODE_STRING NativePath, DirectoryPath, Name, Candidate;
+    HANDLE Directory;
+    ULONG CharacterCount, Index;
+    NTSTATUS Status;
+
+    String = ZpFile_CopyPath(Path);
+    if (String == NULL) return STATUS_NO_MEMORY;
+    Status = NT_Win32PathToNtPath(String->Buffer, NULL, &NativePath);
+    NT_FreeStringW(String);
+    if (!NT_SUCCESS(Status)) return Status;
+    CharacterCount = NativePath.Length / sizeof(WCHAR);
+    for (Index = CharacterCount; Index != 0 && NativePath.Buffer[Index - 1] != L'\\'; Index--)
+    {
+    }
+    if (Index <= 1 || Index == CharacterCount)
+    {
+        NT_FreeNtPath(&NativePath);
+        return STATUS_OBJECT_NAME_INVALID;
+    }
+    DirectoryPath.Buffer = NativePath.Buffer;
+    DirectoryPath.Length = (USHORT)(Index * sizeof(WCHAR));
+    DirectoryPath.MaximumLength = DirectoryPath.Length;
+    Name.Buffer = NativePath.Buffer + Index;
+    Name.Length = (USHORT)(NativePath.Length - Index * sizeof(WCHAR));
+    Name.MaximumLength = Name.Length;
+    Status = IO_OpenDirectory(&Directory,
+                              &DirectoryPath,
+                              FILE_LIST_DIRECTORY | SYNCHRONIZE,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+    if (NT_SUCCESS(Status))
+    {
+        Status = IO_BeginFindFile(&Find,
+                                  Directory,
+                                  &Name,
+                                  FileDirectoryInformation);
+        if (NT_SUCCESS(Status))
+        {
+            if (Find.HasData)
+            {
+                Data = Find.Buffer;
+                Candidate.Buffer = Data->FileName;
+                Candidate.Length = (USHORT)Data->FileNameLength;
+                Candidate.MaximumLength = Candidate.Length;
+                if (RtlEqualUnicodeString(&Name, &Candidate, TRUE))
+                {
+                    ZpFile_SetInfo(Directory, Data, FALSE, Info);
+                }
+                else
+                {
+                    Status = STATUS_OBJECT_NAME_NOT_FOUND;
+                }
+            }
+            else
+            {
+                Status = STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+            IO_EndFindFile(&Find);
+        }
+        NtClose(Directory);
+    }
+    NT_FreeNtPath(&NativePath);
+    return Status;
+}
+
+static
+NTSTATUS
 ZpFile_Query(
     _In_ PCZP_STRING_VIEW Path,
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
@@ -925,16 +998,20 @@ ZpFile_Query(
     }
     Status = IO_GetWin32FileAttributes(String->Buffer, NULL, &Data);
     NT_FreeStringW(String);
-    if (!NT_SUCCESS(Status))
+    if (NT_SUCCESS(Status))
     {
-        return Status;
+        Info.Attributes = Data.FileAttributes;
+        Info.Size = Data.EndOfFile.QuadPart;
+        Info.CreationTime = Data.CreationTime.QuadPart;
+        Info.LastAccessTime = Data.LastAccessTime.QuadPart;
+        Info.LastWriteTime = Data.LastWriteTime.QuadPart;
+        Info.HasChildren = FALSE;
     }
-    Info.Attributes = Data.FileAttributes;
-    Info.Size = Data.EndOfFile.QuadPart;
-    Info.CreationTime = Data.CreationTime.QuadPart;
-    Info.LastAccessTime = Data.LastAccessTime.QuadPart;
-    Info.LastWriteTime = Data.LastWriteTime.QuadPart;
-    Info.HasChildren = FALSE;
+    else
+    {
+        Status = ZpFile_QueryDirectoryEntry(Path, &Info);
+    }
+    if (!NT_SUCCESS(Status)) return Status;
     Status = ZpFile_EncodeInfo(&Info, NULL, 0, ResponseLength);
     if (NT_SUCCESS(Status))
     {
