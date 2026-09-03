@@ -554,8 +554,7 @@ ZpNative_FileDownloadsCallback(
         Records[Index].Result = Download.Result;
         Records[Index].TransferredBytes = Download.TransferredBytes;
         Records[Index].TotalBytes = Download.TotalBytes;
-        Records[Index].Id = (PCWCH)Download.Id.Buffer;
-        Records[Index].IdLength = Download.Id.Length;
+        Records[Index].Id = Download.Id;
         Records[Index].Url = (PCWCH)Download.Url.Buffer;
         Records[Index].UrlLength = Download.Url.Length;
         Records[Index].Path = (PCWCH)Download.Path.Buffer;

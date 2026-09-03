@@ -36,7 +36,7 @@ EXTERN_C_START
 #define ZP_FILE_SHA1_SIZE 20
 #define ZP_FILE_SHA256_SIZE 32
 #define ZP_FILE_PAGE_COUNT 100
-#define ZP_FILE_DOWNLOAD_ID_LENGTH 36
+#define ZP_FILE_DOWNLOAD_ID_SIZE ZP_GUID_WIRE_SIZE
 #define ZP_FILE_DOWNLOAD_URL_MAX_LENGTH 2048
 #define ZP_FILE_DOWNLOAD_PATH_MAX_LENGTH 32767
 #define ZP_FILE_DOWNLOAD_MAX_COUNT 64
@@ -246,8 +246,7 @@ typedef struct _ZP_FILE_DOWNLOAD_REQUEST
 {
     ZP_FILE_DOWNLOAD_ENGINE Engine;
     BYTE Flags;
-    PCWCH Id;
-    ULONG IdLength;
+    GUID Id;
     PCWCH Url;
     ULONG UrlLength;
     PCWCH Path;
@@ -260,7 +259,7 @@ typedef struct _ZP_FILE_DOWNLOAD_REQUEST_VIEW
 {
     ZP_FILE_DOWNLOAD_ENGINE Engine;
     BYTE Flags;
-    ZP_STRING_VIEW Id;
+    GUID Id;
     ZP_STRING_VIEW Url;
     ZP_STRING_VIEW Path;
 } ZP_FILE_DOWNLOAD_REQUEST_VIEW, *PZP_FILE_DOWNLOAD_REQUEST_VIEW;
@@ -274,8 +273,7 @@ typedef struct _ZP_FILE_DOWNLOAD_RECORD
     ULONG Result;
     ULONGLONG TransferredBytes;
     ULONGLONG TotalBytes;
-    PCWCH Id;
-    ULONG IdLength;
+    GUID Id;
     PCWCH Url;
     ULONG UrlLength;
     PCWCH Path;
@@ -293,7 +291,7 @@ typedef struct _ZP_FILE_DOWNLOAD_RECORD_VIEW
     ULONG Result;
     ULONGLONG TransferredBytes;
     ULONGLONG TotalBytes;
-    ZP_STRING_VIEW Id;
+    GUID Id;
     ZP_STRING_VIEW Url;
     ZP_STRING_VIEW Path;
     ZP_STRING_VIEW ErrorText;

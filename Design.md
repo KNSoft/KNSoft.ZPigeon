@@ -382,6 +382,8 @@ Client Version 1 使用以下固定 Codec：
 
 - `BYTE`、`UINT16`、`UINT32`、`UINT64` 和 `INT32` 分别占 1、2、4、8 和 4 字节；
 - `BOOLEAN` 占 1 字节，只允许 0 和 1；
+- `GUID` 固定占 16 字节，依次编码小端 `Data1`、`Data2`、`Data3` 和 8 字节 `Data4`；
+- Payload 结构已确定长度的字段不重复编码长度；
 - 字节串编码为 `UINT32 ByteLength` 后跟原始字节；
 - UTF-16LE 字符串编码为 `UINT32 CodeUnitCount` 后跟对应数量的 16 位代码单元，不包含结尾 NUL；
 - 无专用上限的数组编码为 `UINT32 ElementCount` 后跟逐项固定编码；具有模块上限的数组使用能覆盖该上限的最小固定宽度；

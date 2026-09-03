@@ -201,6 +201,18 @@ ZpAdministration_CopyView(
 }
 
 static
+NTSTATUS
+ZpAdministration_GetDataControlIdentityString(
+    _In_ PCZP_ADMINISTRATION_DATA_CONTROL_VIEW Control,
+    _Out_ PZP_STRING_VIEW Identity)
+{
+    if (Control->Identity.Length % sizeof(WCHAR) != 0) return STATUS_INVALID_PARAMETER;
+    Identity->Buffer = (PCWCH)Control->Identity.Buffer;
+    Identity->Length = Control->Identity.Length / sizeof(WCHAR);
+    return STATUS_SUCCESS;
+}
+
+static
 ULONGLONG
 ZpAdministration_DateToFileTime(
     _In_ DATE Date)

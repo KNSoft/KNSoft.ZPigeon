@@ -266,7 +266,7 @@ internal sealed class SoftwareDeploymentManager : IDisposable
             await server.ControlAdministrationStringDataAsync(AdministrationOperation.ControlSoftware,
                                                                nativeAction,
                                                                flags,
-                                                               id.ToString("D"),
+                                                               id,
                                                                PackStrings(payload));
             lock (stagingPaths)
             {

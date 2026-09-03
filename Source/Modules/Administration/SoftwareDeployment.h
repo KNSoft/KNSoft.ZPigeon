@@ -29,7 +29,7 @@ typedef const ZP_SOFTWARE_PACKAGE_PROVIDER_INFO* PCZP_SOFTWARE_PACKAGE_PROVIDER_
 
 typedef struct _ZP_SOFTWARE_DEPLOYMENT_INFO
 {
-    PCWSTR Id;
+    GUID Id;
     PCWSTR Name;
     PCWSTR Identity;
     PCWSTR ErrorText;
@@ -67,7 +67,7 @@ HRESULT
 ZpSoftware_StartDeployment(
     _In_ ZP_ADMINISTRATION_ACTION Action,
     _In_ ULONG Flags,
-    _In_ PCWSTR Id,
+    _In_ const GUID* Id,
     _In_reads_(PayloadLength) PCWCH Payload,
     _In_ ULONG PayloadLength);
 

@@ -1,7 +1,9 @@
 ﻿#include <lm.h>
+#include <aclapi.h>
 #include <sddl.h>
 #include <winnetwk.h>
 
+#pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Netapi32.lib")
 #pragma comment(lib, "Mpr.lib")
 
@@ -9,18 +11,17 @@ static
 NTSTATUS
 ZpNetworkShare_AddPublished(
     _Inout_ PZP_ADMINISTRATION_BUILDER Builder,
-    _In_ const SHARE_INFO_502* Share,
-    _In_opt_ PCWSTR Sddl)
+    _In_ const SHARE_INFO_2* Share)
 {
     return ZpAdministration_AddRecord(Builder,
                                       ZpAdministrationKindPublishedShare,
-                                      Share->shi502_current_uses,
-                                      Share->shi502_type,
-                                      Share->shi502_max_uses,
-                                      Share->shi502_netname,
-                                      Share->shi502_path,
-                                      Share->shi502_remark,
-                                      Sddl);
+                                      Share->shi2_current_uses,
+                                      Share->shi2_type,
+                                      Share->shi2_max_uses,
+                                      Share->shi2_netname,
+                                      Share->shi2_path,
+                                      Share->shi2_remark,
+                                      NULL);
 }
 
 static
@@ -63,7 +64,7 @@ ZpAdministration_EnumeratePublishedShares(
     _Out_ PULONG ResponseLength)
 {
     ZP_ADMINISTRATION_BUILDER Builder = { 0 };
-    PSHARE_INFO_502 Shares;
+    PSHARE_INFO_2 Shares;
     DWORD EntriesRead, TotalEntries, Resume = 0, Result;
     NTSTATUS Status = STATUS_SUCCESS;
     ULONG Index;
@@ -71,7 +72,7 @@ ZpAdministration_EnumeratePublishedShares(
     do
     {
         Result = NetShareEnum(NULL,
-                              502,
+                              2,
                               (PBYTE*)&Shares,
                               MAX_PREFERRED_LENGTH,
                               &EntriesRead,
@@ -80,7 +81,7 @@ ZpAdministration_EnumeratePublishedShares(
         if (Result != NERR_Success && Result != ERROR_MORE_DATA) break;
         for (Index = 0; NT_SUCCESS(Status) && Index < EntriesRead; Index++)
         {
-            Status = ZpNetworkShare_AddPublished(&Builder, &Shares[Index], NULL);
+            Status = ZpNetworkShare_AddPublished(&Builder, &Shares[Index]);
         }
         NetApiBufferFree(Shares);
         if (!NT_SUCCESS(Status)) break;
@@ -105,7 +106,7 @@ ZpAdministration_QueryPublishedShare(
     _Out_ PULONG ResponseLength)
 {
     ZP_ADMINISTRATION_BUILDER Builder = { 0 };
-    PSHARE_INFO_502 Share = NULL;
+    PSECURITY_DESCRIPTOR SecurityDescriptor = NULL;
     PWSTR Name = ZpAdministration_CopyView(Identity), Sddl = NULL;
     SECURITY_DESCRIPTOR_CONTROL Control;
     DWORD Revision;
@@ -113,14 +114,19 @@ ZpAdministration_QueryPublishedShare(
     NTSTATUS Status;
 
     if (Name == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
-    Result = NetShareGetInfo(NULL, Name, 502, (PBYTE*)&Share);
-    if (Result == NERR_Success && Share->shi502_security_descriptor == NULL)
-    {
-        Result = ERROR_INVALID_SECURITY_DESCR;
-    }
+    Result = GetNamedSecurityInfoW(Name,
+                                   SE_LMSHARE,
+                                   OWNER_SECURITY_INFORMATION |
+                                       GROUP_SECURITY_INFORMATION |
+                                       DACL_SECURITY_INFORMATION,
+                                   NULL,
+                                   NULL,
+                                   NULL,
+                                   NULL,
+                                   &SecurityDescriptor);
     if (Result == NERR_Success &&
-        (!GetSecurityDescriptorControl(Share->shi502_security_descriptor, &Control, &Revision) ||
-         !ConvertSecurityDescriptorToStringSecurityDescriptorW(Share->shi502_security_descriptor,
+        (!GetSecurityDescriptorControl(SecurityDescriptor, &Control, &Revision) ||
+         !ConvertSecurityDescriptorToStringSecurityDescriptorW(SecurityDescriptor,
                                                                 SDDL_REVISION_1,
                                                                 OWNER_SECURITY_INFORMATION |
                                                                     GROUP_SECURITY_INFORMATION |
@@ -150,7 +156,7 @@ ZpAdministration_QueryPublishedShare(
         Status = STATUS_SUCCESS;
     }
     LocalFree(Sddl);
-    if (Share != NULL) NetApiBufferFree(Share);
+    LocalFree(SecurityDescriptor);
     Mem_Free(Name);
     ZpAdministration_FreeBuilder(&Builder);
     return Result == NERR_Success ?
@@ -269,8 +275,10 @@ ZP_STATUS
 ZpAdministration_ControlPublishedShareSecurity(
     _In_ PCZP_ADMINISTRATION_DATA_CONTROL_VIEW Control)
 {
+    ZP_STRING_VIEW Identity;
     PWSTR Name, Sddl;
     DWORD Result;
+    NTSTATUS Status;
 
     if (Control->Action != ZpAdministrationActionSetPermissions ||
         Control->Flags > ZP_ADMINISTRATION_SECURITY_DESCRIPTOR_FLAG_DACL_PROTECTED ||
@@ -280,7 +288,9 @@ ZpAdministration_ControlPublishedShareSecurity(
     {
         return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
-    Name = ZpAdministration_CopyView(&Control->Identity);
+    Status = ZpAdministration_GetDataControlIdentityString(Control, &Identity);
+    if (!NT_SUCCESS(Status)) return ZpStatus_FromNtStatus(Status);
+    Name = ZpAdministration_CopyView(&Identity);
     Sddl = Mem_Alloc((SIZE_T)Control->Data.Length + sizeof(WCHAR));
     if (Name == NULL || Sddl == NULL)
     {

@@ -173,8 +173,7 @@ internal static partial class NativeMethods
         internal readonly uint Result;
         internal readonly ulong TransferredBytes;
         internal readonly ulong TotalBytes;
-        internal readonly nint Id;
-        internal readonly uint IdLength;
+        internal readonly Guid Id;
         internal readonly nint Url;
         internal readonly uint UrlLength;
         internal readonly nint Path;
@@ -391,24 +390,24 @@ internal static partial class NativeMethods
     [StructLayout(LayoutKind.Sequential)]
     internal readonly struct ServiceInfo
     {
-        internal readonly uint ServiceType;
-        internal readonly uint CurrentState;
-        internal readonly uint ControlsAccepted;
+        internal readonly ushort ServiceType;
+        internal readonly byte CurrentState;
+        internal readonly ushort ControlsAccepted;
         internal readonly uint ProcessId;
-        internal readonly uint StartType;
-        internal readonly uint ErrorControl;
-        internal readonly uint DelayedAutoStart;
+        internal readonly byte StartType;
+        internal readonly byte ErrorControl;
+        internal readonly byte DelayedAutoStart;
         internal readonly uint ServiceFlags;
-        internal readonly uint RecoverySupported;
-        internal readonly uint FailureActionsOnNonCrashFailures;
+        internal readonly byte RecoverySupported;
+        internal readonly byte FailureActionsOnNonCrashFailures;
         internal readonly uint RecoveryActionCount;
         internal readonly uint ResetPeriodSeconds;
         internal readonly uint RestartDelayMilliseconds;
         internal readonly uint RebootDelayMilliseconds;
-        internal readonly uint FirstFailureAction;
-        internal readonly uint SecondFailureAction;
-        internal readonly uint ThirdFailureAction;
-        internal readonly uint SubsequentFailureAction;
+        internal readonly byte FirstFailureAction;
+        internal readonly byte SecondFailureAction;
+        internal readonly byte ThirdFailureAction;
+        internal readonly byte SubsequentFailureAction;
         internal readonly StringView ServiceName;
         internal readonly StringView DisplayName;
         internal readonly StringView Description;
@@ -635,8 +634,7 @@ internal static partial class NativeMethods
         ulong clientId,
         FileDownloadEngine engine,
         byte flags,
-        string id,
-        uint idLength,
+        nint id,
         string url,
         uint urlLength,
         string path,
@@ -650,13 +648,10 @@ internal static partial class NativeMethods
         FileDownloadsCallback callback,
         nint context);
 
-    [LibraryImport(Library,
-        EntryPoint = "ZpNative_CancelFileDownload",
-        StringMarshalling = StringMarshalling.Utf16)]
+    [LibraryImport(Library, EntryPoint = "ZpNative_CancelFileDownload")]
     internal static partial int CancelFileDownload(
         ulong clientId,
-        string id,
-        uint idLength,
+        nint id,
         StatusCallback callback,
         nint context);
 

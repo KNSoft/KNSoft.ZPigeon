@@ -226,7 +226,7 @@ ZpNative_ControlAdministrationData(
     _In_ BYTE OperationId,
     _In_ BYTE Action,
     _In_ ULONG Flags,
-    _In_reads_(IdentityLength) PCWCH Identity,
+    _In_reads_bytes_(IdentityLength) const VOID* Identity,
     _In_ ULONG IdentityLength,
     _In_reads_bytes_opt_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,

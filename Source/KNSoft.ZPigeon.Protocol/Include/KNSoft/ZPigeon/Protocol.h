@@ -24,6 +24,7 @@ EXTERN_C_START
 #define ZP_SERVER_CHALLENGE_SIZE 32
 #define ZP_CLIENT_SIGNATURE_SIZE 64
 #define ZP_CLIENT_HELLO_WIRE_SIZE (sizeof(BYTE) + ZP_CLIENT_PUBLIC_KEY_SIZE)
+#define ZP_GUID_WIRE_SIZE (sizeof(ULONG) + 2 * sizeof(USHORT) + 8 * sizeof(BYTE))
 
 typedef BYTE ZP_STATUS_TYPE, *PZP_STATUS_TYPE;
 
@@ -331,6 +332,11 @@ ZpCodec_WriteUInt64(
     _In_ ULONGLONG Value);
 
 NTSTATUS
+ZpCodec_WriteGuid(
+    _Inout_ PZP_CODEC_WRITER Writer,
+    _In_ const GUID* Value);
+
+NTSTATUS
 ZpCodec_WriteData(
     _Inout_ PZP_CODEC_WRITER Writer,
     _In_reads_bytes_opt_(Length) const VOID* Data,
@@ -377,6 +383,11 @@ NTSTATUS
 ZpCodec_ReadUInt64(
     _Inout_ PZP_CODEC_READER Reader,
     _Out_ PULONGLONG Value);
+
+NTSTATUS
+ZpCodec_ReadGuid(
+    _Inout_ PZP_CODEC_READER Reader,
+    _Out_ GUID* Value);
 
 NTSTATUS
 ZpCodec_ReadData(

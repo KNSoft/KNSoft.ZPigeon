@@ -2,6 +2,12 @@
 
 #include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
 
+#define ZP_FILE_DOWNLOAD_RECORD_RESULT 0x01
+#define ZP_FILE_DOWNLOAD_RECORD_TRANSFERRED_BYTES 0x02
+#define ZP_FILE_DOWNLOAD_RECORD_TOTAL_BYTES 0x04
+#define ZP_FILE_DOWNLOAD_RECORD_ERROR_TEXT 0x08
+#define ZP_FILE_DOWNLOAD_RECORD_VALID_MASK 0x0F
+
 NTSTATUS
 ZpFile_EncodePath(
     _In_reads_(PathLength) PCWCH Path,
@@ -1604,7 +1610,6 @@ ZpFile_EncodeDownloadRequest(
     if (Request == NULL ||
         (Request->Engine != ZpFileDownloadBits && Request->Engine != ZpFileDownloadWinHttp) ||
         (Request->Flags & ~ZP_FILE_DOWNLOAD_FLAG_OVERWRITE) != 0 ||
-        Request->Id == NULL || Request->IdLength != ZP_FILE_DOWNLOAD_ID_LENGTH ||
         Request->Url == NULL || Request->UrlLength == 0 ||
         Request->UrlLength > ZP_FILE_DOWNLOAD_URL_MAX_LENGTH ||
         Request->Path == NULL || Request->PathLength == 0 ||
@@ -1612,8 +1617,8 @@ ZpFile_EncodeDownloadRequest(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 2 * sizeof(BYTE) + sizeof(ULONG) +
-                   ((ULONGLONG)Request->IdLength + Request->UrlLength + Request->PathLength) * sizeof(WCHAR);
+    RequiredSize = 2 * sizeof(BYTE) + ZP_FILE_DOWNLOAD_ID_SIZE + sizeof(ULONG) +
+                   ((ULONGLONG)Request->UrlLength + Request->PathLength) * sizeof(WCHAR);
     if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
@@ -1623,9 +1628,7 @@ ZpFile_EncodeDownloadRequest(
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, Request->Flags);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteData(&Writer,
-                                   Request->Id,
-                                   ZP_FILE_DOWNLOAD_ID_LENGTH * sizeof(WCHAR));
+        Status = ZpCodec_WriteGuid(&Writer, &Request->Id);
     }
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Request->Url, Request->UrlLength);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, Request->Path, Request->PathLength);
@@ -1639,29 +1642,17 @@ ZpFile_DecodeDownloadRequest(
     _Out_ PZP_FILE_DOWNLOAD_REQUEST_VIEW Request)
 {
     ZP_CODEC_READER Reader;
-    ZP_BUFFER_VIEW Id;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadByte(&Reader, &Request->Engine);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &Request->Flags);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_ReadData(&Reader,
-                                  ZP_FILE_DOWNLOAD_ID_LENGTH * sizeof(WCHAR),
-                                  &Id);
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Request->Id.Buffer = (PCWCH)Id.Buffer;
-        Request->Id.Length = ZP_FILE_DOWNLOAD_ID_LENGTH;
-    }
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadGuid(&Reader, &Request->Id);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Url);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Request->Path);
     if (!NT_SUCCESS(Status)) return Status;
     if ((Request->Engine != ZpFileDownloadBits && Request->Engine != ZpFileDownloadWinHttp) ||
         (Request->Flags & ~ZP_FILE_DOWNLOAD_FLAG_OVERWRITE) != 0 ||
-        Request->Id.Length != ZP_FILE_DOWNLOAD_ID_LENGTH ||
         Request->Url.Length == 0 || Request->Url.Length > ZP_FILE_DOWNLOAD_URL_MAX_LENGTH ||
         Request->Path.Length == 0 || Request->Path.Length > ZP_FILE_DOWNLOAD_PATH_MAX_LENGTH ||
         Reader.Offset != PayloadLength)
@@ -1677,17 +1668,26 @@ ZpFile_WriteDownloadRecord(
     _Inout_ PBYTE* Cursor,
     _In_ PCZP_FILE_DOWNLOAD_RECORD Record)
 {
+    BYTE Fields = (Record->Result != 0 ? ZP_FILE_DOWNLOAD_RECORD_RESULT : 0) |
+                  (Record->TransferredBytes != 0 ? ZP_FILE_DOWNLOAD_RECORD_TRANSFERRED_BYTES : 0) |
+                  (Record->TotalBytes != MAXULONGLONG ? ZP_FILE_DOWNLOAD_RECORD_TOTAL_BYTES : 0) |
+                  (Record->ErrorTextLength != 0 ? ZP_FILE_DOWNLOAD_RECORD_ERROR_TEXT : 0);
+
     ZpWire_WriteByte(Cursor, Record->Engine);
     ZpWire_WriteByte(Cursor, Record->State);
-    ZpWire_WriteUInt32(Cursor, Record->Result);
-    ZpWire_WriteUInt64(Cursor, Record->TransferredBytes);
-    ZpWire_WriteUInt64(Cursor, Record->TotalBytes);
-    ZpWire_WriteData(Cursor,
-                    Record->Id,
-                    ZP_FILE_DOWNLOAD_ID_LENGTH * sizeof(WCHAR));
+    ZpWire_WriteByte(Cursor, Fields);
+    if (FlagOn(Fields, ZP_FILE_DOWNLOAD_RECORD_RESULT)) ZpWire_WriteUInt32(Cursor, Record->Result);
+    if (FlagOn(Fields, ZP_FILE_DOWNLOAD_RECORD_TRANSFERRED_BYTES))
+        ZpWire_WriteUInt64(Cursor, Record->TransferredBytes);
+    if (FlagOn(Fields, ZP_FILE_DOWNLOAD_RECORD_TOTAL_BYTES)) ZpWire_WriteUInt64(Cursor, Record->TotalBytes);
+    ZpWire_WriteUInt32(Cursor, Record->Id.Data1);
+    ZpWire_WriteUInt16(Cursor, Record->Id.Data2);
+    ZpWire_WriteUInt16(Cursor, Record->Id.Data3);
+    ZpWire_WriteData(Cursor, Record->Id.Data4, sizeof(Record->Id.Data4));
     ZpWire_WriteString(Cursor, Record->Url, Record->UrlLength);
     ZpWire_WriteString(Cursor, Record->Path, Record->PathLength);
-    ZpWire_WriteString(Cursor, Record->ErrorText, Record->ErrorTextLength);
+    if (FlagOn(Fields, ZP_FILE_DOWNLOAD_RECORD_ERROR_TEXT))
+        ZpWire_WriteString(Cursor, Record->ErrorText, Record->ErrorTextLength);
 }
 
 static
@@ -1696,33 +1696,29 @@ ZpFile_ReadDownloadRecord(
     _Inout_ PZP_CODEC_READER Reader,
     _Out_opt_ PZP_FILE_DOWNLOAD_RECORD_VIEW Record)
 {
-    ZP_FILE_DOWNLOAD_RECORD_VIEW Local;
-    ZP_BUFFER_VIEW Id;
+    ZP_FILE_DOWNLOAD_RECORD_VIEW Local = { 0 };
+    BYTE Fields;
     NTSTATUS Status;
 
+    Local.TotalBytes = MAXULONGLONG;
     Status = ZpCodec_ReadByte(Reader, &Local.Engine);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(Reader, &Local.State);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.Result);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.TransferredBytes);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(Reader, &Local.TotalBytes);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpCodec_ReadData(Reader,
-                                  ZP_FILE_DOWNLOAD_ID_LENGTH * sizeof(WCHAR),
-                                  &Id);
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Local.Id.Buffer = (PCWCH)Id.Buffer;
-        Local.Id.Length = ZP_FILE_DOWNLOAD_ID_LENGTH;
-    }
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(Reader, &Fields);
+    if (NT_SUCCESS(Status) && (Fields & ~ZP_FILE_DOWNLOAD_RECORD_VALID_MASK) != 0) Status = STATUS_DATA_ERROR;
+    if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_FILE_DOWNLOAD_RECORD_RESULT))
+        Status = ZpCodec_ReadUInt32(Reader, &Local.Result);
+    if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_FILE_DOWNLOAD_RECORD_TRANSFERRED_BYTES))
+        Status = ZpCodec_ReadUInt64(Reader, &Local.TransferredBytes);
+    if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_FILE_DOWNLOAD_RECORD_TOTAL_BYTES))
+        Status = ZpCodec_ReadUInt64(Reader, &Local.TotalBytes);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadGuid(Reader, &Local.Id);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.Url);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.Path);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.ErrorText);
+    if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_FILE_DOWNLOAD_RECORD_ERROR_TEXT))
+        Status = ZpCodec_ReadString(Reader, &Local.ErrorText);
     if (NT_SUCCESS(Status) &&
         ((Local.Engine != ZpFileDownloadBits && Local.Engine != ZpFileDownloadWinHttp) ||
          Local.State < ZpFileDownloadQueued || Local.State > ZpFileDownloadCanceled ||
-         Local.Id.Length != ZP_FILE_DOWNLOAD_ID_LENGTH ||
          Local.Url.Length == 0 || Local.Url.Length > ZP_FILE_DOWNLOAD_URL_MAX_LENGTH ||
          Local.Path.Length == 0 || Local.Path.Length > ZP_FILE_DOWNLOAD_PATH_MAX_LENGTH))
     {
@@ -1751,7 +1747,6 @@ ZpFile_EncodeDownloadRecords(
 
         if ((Record->Engine != ZpFileDownloadBits && Record->Engine != ZpFileDownloadWinHttp) ||
             Record->State < ZpFileDownloadQueued || Record->State > ZpFileDownloadCanceled ||
-            Record->Id == NULL || Record->IdLength != ZP_FILE_DOWNLOAD_ID_LENGTH ||
             Record->Url == NULL || Record->UrlLength == 0 ||
             Record->UrlLength > ZP_FILE_DOWNLOAD_URL_MAX_LENGTH ||
             Record->Path == NULL || Record->PathLength == 0 ||
@@ -1761,9 +1756,14 @@ ZpFile_EncodeDownloadRecords(
         {
             return STATUS_INVALID_PARAMETER;
         }
-        RequiredSize += 2 * sizeof(BYTE) + sizeof(ULONG) + 2 * sizeof(ULONGLONG) + 3 * sizeof(ULONG) +
-                        ((ULONGLONG)Record->IdLength + Record->UrlLength + Record->PathLength +
-                         Record->ErrorTextLength) * sizeof(WCHAR);
+        RequiredSize += 3 * sizeof(BYTE) + ZP_FILE_DOWNLOAD_ID_SIZE + 2 * sizeof(ULONG) +
+                        ((ULONGLONG)Record->UrlLength + Record->PathLength) * sizeof(WCHAR) +
+                        (Record->Result != 0 ? sizeof(ULONG) : 0) +
+                        (Record->TransferredBytes != 0 ? sizeof(ULONGLONG) : 0) +
+                        (Record->TotalBytes != MAXULONGLONG ? sizeof(ULONGLONG) : 0) +
+                        (Record->ErrorTextLength != 0 ?
+                             sizeof(ULONG) + (ULONGLONG)Record->ErrorTextLength * sizeof(WCHAR) :
+                             0);
     }
     if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
     *BytesWritten = (ULONG)RequiredSize;

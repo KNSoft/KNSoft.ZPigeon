@@ -1452,8 +1452,7 @@ ZpServer_StartFileDownload(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_FILE_DOWNLOAD_ENGINE Engine,
     _In_ BYTE Flags,
-    _In_reads_(IdLength) PCWCH Id,
-    _In_ ULONG IdLength,
+    _In_ const GUID* Id,
     _In_reads_(UrlLength) PCWCH Url,
     _In_ ULONG UrlLength,
     _In_reads_(PathLength) PCWCH Path,
@@ -1463,13 +1462,20 @@ ZpServer_StartFileDownload(
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
-    ZP_FILE_DOWNLOAD_REQUEST Download = { Engine, Flags, Id, IdLength, Url, UrlLength, Path, PathLength };
+    ZP_FILE_DOWNLOAD_REQUEST Download;
     PZP_SERVER_FILE_CONTEXT FileContext;
     PBYTE Payload = NULL;
     ULONG PayloadLength;
     NTSTATUS Status;
 
-    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    if (Callback == NULL || Id == NULL) return STATUS_INVALID_PARAMETER;
+    Download.Engine = Engine;
+    Download.Flags = Flags;
+    Download.Id = *Id;
+    Download.Url = Url;
+    Download.UrlLength = UrlLength;
+    Download.Path = Path;
+    Download.PathLength = PathLength;
     Status = ZpFile_EncodeDownloadRequest(&Download, NULL, 0, &PayloadLength);
     Payload = NT_SUCCESS(Status) ? Mem_Alloc(PayloadLength) : NULL;
     if (NT_SUCCESS(Status) && Payload == NULL) Status = STATUS_NO_MEMORY;
@@ -1529,20 +1535,20 @@ NTSTATUS
 NTAPI
 ZpServer_CancelFileDownload(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_reads_(IdLength) PCWCH Id,
-    _In_ ULONG IdLength,
+    _In_ const GUID* Id,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
+    BYTE Payload[ZP_FILE_DOWNLOAD_ID_SIZE];
     PZP_SERVER_FILE_CONTEXT FileContext;
-    PBYTE Payload;
-    ULONG PayloadLength;
+    ZP_CODEC_WRITER Writer;
     NTSTATUS Status;
 
-    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
-    Status = ZpServerFile_EncodePath(Id, IdLength, &Payload, &PayloadLength);
+    if (Callback == NULL || Id == NULL) return STATUS_INVALID_PARAMETER;
+    ZpCodec_InitializeWriter(&Writer, Payload, sizeof(Payload));
+    Status = ZpCodec_WriteGuid(&Writer, Id);
     FileContext = NT_SUCCESS(Status) ? Mem_Alloc(sizeof(*FileContext)) : NULL;
     if (NT_SUCCESS(Status) && FileContext == NULL) Status = STATUS_NO_MEMORY;
     if (NT_SUCCESS(Status))
@@ -1553,12 +1559,11 @@ ZpServer_CancelFileDownload(
                                    ZP_FILE_OPERATION_CANCEL_DOWNLOAD,
                                    TimeoutMilliseconds,
                                    Payload,
-                                   PayloadLength,
+                                   sizeof(Payload),
                                    ZpServerFile_StatusComplete,
                                    FileContext,
                                    Request);
     }
-    Mem_Free(Payload);
     return Status;
 }
 

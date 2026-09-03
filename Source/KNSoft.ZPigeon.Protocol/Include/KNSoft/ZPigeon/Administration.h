@@ -229,6 +229,7 @@ typedef BYTE ZP_ADMINISTRATION_KIND, *PZP_ADMINISTRATION_KIND;
 // WindowsFeature Data encodes applicability, selectability, current state, intended state, and requested state
 // as five signed bytes. CBS_INSTALL_STATE_INVALID is encoded as INT8_MAX.
 // WindowsFeatureParent uses Identity for the child, Name for the parent, and Detail for the optional parent set.
+// SoftwareDeployment uses Data for its 16-byte GUID.
 // BitLockerVolume uses State for conversion status, Flags for volume status, and Value for converted percent.
 // BitLockerProtector uses State for protector type, Value for creation FILETIME, and Description for its label.
 #define ZP_ADMINISTRATION_WSL_FLAG_DEFAULT 0x80000000
@@ -430,11 +431,12 @@ typedef struct _ZP_ADMINISTRATION_CONTROL_VIEW
 
 typedef const ZP_ADMINISTRATION_CONTROL_VIEW* PCZP_ADMINISTRATION_CONTROL_VIEW;
 
+// The operation defines the opaque Identity byte-string format.
 typedef struct _ZP_ADMINISTRATION_DATA_CONTROL_VIEW
 {
     ZP_ADMINISTRATION_ACTION Action;
     ULONG Flags;
-    ZP_STRING_VIEW Identity;
+    ZP_BUFFER_VIEW Identity;
     ZP_BUFFER_VIEW Data;
 } ZP_ADMINISTRATION_DATA_CONTROL_VIEW, *PZP_ADMINISTRATION_DATA_CONTROL_VIEW;
 
@@ -490,7 +492,7 @@ NTSTATUS
 ZpAdministration_EncodeDataControl(
     _In_ ZP_ADMINISTRATION_ACTION Action,
     _In_ ULONG Flags,
-    _In_reads_(IdentityLength) PCWCH Identity,
+    _In_reads_bytes_(IdentityLength) const VOID* Identity,
     _In_ ULONG IdentityLength,
     _In_reads_bytes_opt_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,

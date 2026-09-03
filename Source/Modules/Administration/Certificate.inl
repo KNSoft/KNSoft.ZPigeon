@@ -810,6 +810,7 @@ ZP_STATUS
 ZpAdministration_ControlCertificateData(
     _In_ PCZP_ADMINISTRATION_DATA_CONTROL_VIEW Control)
 {
+    ZP_STRING_VIEW IdentityView;
     PWSTR Identity, StoreName, Thumbprint;
     PWSTR Password = NULL, Path = NULL;
     const BYTE* Source = NULL;
@@ -834,7 +835,9 @@ ZpAdministration_ControlCertificateData(
     {
         return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
     }
-    NtStatus = ZpCertificate_ParseIdentity(&Control->Identity,
+    NtStatus = ZpAdministration_GetDataControlIdentityString(Control, &IdentityView);
+    if (!NT_SUCCESS(NtStatus)) return ZpStatus_FromNtStatus(NtStatus);
+    NtStatus = ZpCertificate_ParseIdentity(&IdentityView,
                                            Control->Action == ZpAdministrationActionDelete,
                                            &Identity,
                                            &Location,

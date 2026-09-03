@@ -24,15 +24,15 @@ namespace
 
     struct DownloadJob
     {
-        DownloadJob(std::wstring id, std::wstring url, std::wstring path, std::wstring temporaryPath,
+        DownloadJob(GUID id, std::wstring url, std::wstring path, std::wstring temporaryPath,
                     ZP_FILE_DOWNLOAD_ENGINE engine, BYTE flags)
-            : Id(std::move(id)), Url(std::move(url)), Path(std::move(path)), TemporaryPath(std::move(temporaryPath)),
+            : Id(id), Url(std::move(url)), Path(std::move(path)), TemporaryPath(std::move(temporaryPath)),
               Engine(engine), State(ZpFileDownloadQueued), Flags(flags), Result(S_OK), TransferredBytes(0),
               TotalBytes(MAXULONGLONG), CancelRequested(false)
         {
         }
 
-        std::wstring Id;
+        GUID Id;
         std::wstring Url;
         std::wstring Path;
         std::wstring TemporaryPath;
@@ -128,6 +128,14 @@ namespace
     {
         if (FAILED(result))
             Throw(result);
+    }
+
+    std::wstring GuidString(REFGUID id)
+    {
+        WCHAR value[39];
+
+        if (StringFromGUID2(id, value, ARRAYSIZE(value)) == 0) Throw(E_FAIL);
+        return { value + 1, 36 };
     }
 
     std::wstring ErrorMessage(HRESULT result)
@@ -282,7 +290,7 @@ namespace
         std::call_once(BitsCleanupFlag, [&]() { CleanupStaleBitsJobs(manager.Get()); });
         Microsoft::WRL::ComPtr<IBackgroundCopyJob> job;
         GUID bitsId;
-        std::wstring displayName = BitsDisplayNamePrefix + download->Id;
+        std::wstring displayName = BitsDisplayNamePrefix + GuidString(download->Id);
         Check(manager->CreateJob(displayName.c_str(), BG_JOB_TYPE_DOWNLOAD, &bitsId, &job));
         bool finalized = false;
         try
@@ -444,12 +452,12 @@ namespace
         DeleteFileW(job->TemporaryPath.c_str());
     }
 
-    std::wstring TemporaryPath(const std::wstring& path, const std::wstring& id)
+    std::wstring TemporaryPath(const std::wstring& path, REFGUID id)
     {
         size_t separator = path.find_last_of(L"\\/");
         if (separator == std::wstring::npos)
             Throw(E_INVALIDARG);
-        return path.substr(0, separator + 1) + L".zpigeon-" + id + L".tmp";
+        return path.substr(0, separator + 1) + L".zpigeon-" + GuidString(id) + L".tmp";
     }
 
     bool IsAbsolutePath(const std::wstring& path)
@@ -496,7 +504,7 @@ struct _ZP_FILE_DOWNLOAD_SNAPSHOT
 {
     struct Value
     {
-        std::wstring Id;
+        GUID Id;
         std::wstring Url;
         std::wstring Path;
         std::wstring ErrorText;
@@ -512,8 +520,8 @@ struct _ZP_FILE_DOWNLOAD_SNAPSHOT
 };
 
 NTSTATUS
-ZpFileDownload_Start(_In_ ZP_FILE_DOWNLOAD_ENGINE Engine, _In_ BYTE Flags, _In_reads_(IdLength) PCWCH Id,
-                     _In_ ULONG IdLength, _In_reads_(UrlLength) PCWCH Url, _In_ ULONG UrlLength,
+ZpFileDownload_Start(_In_ ZP_FILE_DOWNLOAD_ENGINE Engine, _In_ BYTE Flags, _In_ const GUID* Id,
+                     _In_reads_(UrlLength) PCWCH Url, _In_ ULONG UrlLength,
                      _In_reads_(PathLength) PCWCH Path, _In_ ULONG PathLength)
 {
     return Invoke(
@@ -521,25 +529,22 @@ ZpFileDownload_Start(_In_ ZP_FILE_DOWNLOAD_ENGINE Engine, _In_ BYTE Flags, _In_r
         {
             if ((Engine != ZpFileDownloadBits && Engine != ZpFileDownloadWinHttp) ||
                 (Flags & ~ZP_FILE_DOWNLOAD_FLAG_OVERWRITE) != 0 || Id == nullptr ||
-                IdLength != ZP_FILE_DOWNLOAD_ID_LENGTH || Url == nullptr || UrlLength == 0 ||
-                UrlLength > ZP_FILE_DOWNLOAD_URL_MAX_LENGTH || Path == nullptr || PathLength == 0 ||
+                Url == nullptr || UrlLength == 0 || UrlLength > ZP_FILE_DOWNLOAD_URL_MAX_LENGTH ||
+                Path == nullptr || PathLength == 0 ||
                 PathLength > ZP_FILE_DOWNLOAD_PATH_MAX_LENGTH)
             {
                 Throw(E_INVALIDARG);
             }
-            std::wstring id(Id, IdLength);
             std::wstring url(Url, UrlLength);
             std::wstring path(Path, PathLength);
-            GUID parsedId;
-            if (id.find(UNICODE_NULL) != std::wstring::npos || url.find(UNICODE_NULL) != std::wstring::npos ||
-                path.find(UNICODE_NULL) != std::wstring::npos || FAILED(CLSIDFromString(id.c_str(), &parsedId)))
+            if (url.find(UNICODE_NULL) != std::wstring::npos || path.find(UNICODE_NULL) != std::wstring::npos)
             {
                 Throw(E_INVALIDARG);
             }
             ParseUrl(url);
             if (!IsAbsolutePath(path) || path.back() == L'\\' || path.back() == L'/')
                 Throw(E_INVALIDARG);
-            std::wstring temporaryPath = TemporaryPath(path, id);
+            std::wstring temporaryPath = TemporaryPath(path, *Id);
             if (temporaryPath.size() > ZP_FILE_DOWNLOAD_PATH_MAX_LENGTH)
                 Throw(E_INVALIDARG);
             DWORD attributes = GetFileAttributesW(path.c_str());
@@ -559,14 +564,14 @@ ZpFileDownload_Start(_In_ ZP_FILE_DOWNLOAD_ENGINE Engine, _In_ BYTE Flags, _In_r
                     Throw(HRESULT_FROM_WIN32(error));
                 }
             }
-            auto job = std::make_shared<DownloadJob>(std::move(id), std::move(url), std::move(path),
+            auto job = std::make_shared<DownloadJob>(*Id, std::move(url), std::move(path),
                                                      std::move(temporaryPath), Engine, Flags);
             {
                 std::scoped_lock lock(JobsLock);
                 if (std::any_of(Jobs.begin(), Jobs.end(),
                                 [&job](const auto& existing)
                                 {
-                                    return _wcsicmp(existing->Id.c_str(), job->Id.c_str()) == 0 ||
+                                    return InlineIsEqualGUID(existing->Id, job->Id) ||
                                            (existing->State < ZpFileDownloadCompleted &&
                                             _wcsicmp(existing->Path.c_str(), job->Path.c_str()) == 0);
                                 }))
@@ -602,17 +607,15 @@ ZpFileDownload_Start(_In_ ZP_FILE_DOWNLOAD_ENGINE Engine, _In_ BYTE Flags, _In_r
 }
 
 NTSTATUS
-ZpFileDownload_Cancel(_In_reads_(IdLength) PCWCH Id, _In_ ULONG IdLength)
+ZpFileDownload_Cancel(_In_ const GUID* Id)
 {
     return Invoke(
         [&]()
         {
-            if (Id == nullptr || IdLength != ZP_FILE_DOWNLOAD_ID_LENGTH)
-                Throw(E_INVALIDARG);
-            std::wstring id(Id, IdLength);
+            if (Id == nullptr) Throw(E_INVALIDARG);
             std::scoped_lock lock(JobsLock);
             auto job = std::find_if(Jobs.begin(), Jobs.end(),
-                                    [&id](const auto& value) { return _wcsicmp(value->Id.c_str(), id.c_str()) == 0; });
+                                    [Id](const auto& value) { return InlineIsEqualGUID(value->Id, *Id); });
             if (job == Jobs.end())
                 Throw(HRESULT_FROM_WIN32(ERROR_NOT_FOUND));
             if ((*job)->State >= ZpFileDownloadCompleted)
@@ -643,8 +646,8 @@ ZpFileDownload_CreateSnapshot(_Outptr_ PZP_FILE_DOWNLOAD_SNAPSHOT* Snapshot,
             for (const auto& value : snapshot->Values)
             {
                 snapshot->Records.push_back({value.Engine, value.State, value.Result, value.TransferredBytes,
-                                             value.TotalBytes, value.Id.c_str(), static_cast<ULONG>(value.Id.size()),
-                                             value.Url.c_str(), static_cast<ULONG>(value.Url.size()),
+                                             value.TotalBytes, value.Id, value.Url.c_str(),
+                                             static_cast<ULONG>(value.Url.size()),
                                              value.Path.c_str(), static_cast<ULONG>(value.Path.size()),
                                              value.ErrorText.c_str(), static_cast<ULONG>(value.ErrorText.size())});
             }

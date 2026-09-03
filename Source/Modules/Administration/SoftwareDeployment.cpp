@@ -61,11 +61,11 @@ namespace
     struct DeploymentJob
     {
         DeploymentJob(
-            std::wstring id,
+            GUID id,
             std::vector<std::wstring> payload,
             ZP_ADMINISTRATION_ACTION action,
             ULONG flags) :
-            Id(std::move(id)),
+            Id(id),
             Payload(std::move(payload)),
             Action(action),
             State(ZP_SOFTWARE_DEPLOYMENT_STATE_QUEUED),
@@ -77,7 +77,7 @@ namespace
         {
         }
 
-        std::wstring Id;
+        GUID Id;
         std::wstring ErrorText;
         std::vector<std::wstring> Payload;
         ZP_ADMINISTRATION_ACTION Action;
@@ -1198,21 +1198,19 @@ HRESULT
 ZpSoftware_StartDeployment(
     _In_ ZP_ADMINISTRATION_ACTION Action,
     _In_ ULONG Flags,
-    _In_ PCWSTR Id,
+    _In_ const GUID* Id,
     _In_reads_(PayloadLength) PCWCH Payload,
     _In_ ULONG PayloadLength)
 {
     return Invoke([&]() -> HRESULT
     {
-        GUID parsedId;
-        if (Id == nullptr || wcslen(Id) != 36 || FAILED(CLSIDFromString(Id, &parsedId)) || Payload == nullptr ||
-            PayloadLength == 0)
+        if (Id == nullptr || Payload == nullptr || PayloadLength == 0)
         {
             return E_INVALIDARG;
         }
         auto values = DecodePayload(Payload, PayloadLength);
         ValidateDeployment(Action, Flags, values);
-        auto job = std::make_shared<DeploymentJob>(Id, std::move(values), Action, Flags);
+        auto job = std::make_shared<DeploymentJob>(*Id, std::move(values), Action, Flags);
 
         {
             std::scoped_lock lock(JobsLock);
@@ -1225,7 +1223,7 @@ ZpSoftware_StartDeployment(
             }
             if (std::any_of(Jobs.begin(), Jobs.end(), [&job](auto const& existing)
             {
-                return _wcsicmp(existing->Id.c_str(), job->Id.c_str()) == 0;
+                return InlineIsEqualGUID(existing->Id, job->Id);
             }))
             {
                 return HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
@@ -1275,7 +1273,7 @@ ZpSoftware_EnumerateDeployments(
         for (auto const& job : Jobs)
         {
             ZP_SOFTWARE_DEPLOYMENT_INFO info = {
-                job->Id.c_str(),
+                job->Id,
                 job->Payload[1].c_str(),
                 job->Payload[0].c_str(),
                 job->ErrorText.c_str(),

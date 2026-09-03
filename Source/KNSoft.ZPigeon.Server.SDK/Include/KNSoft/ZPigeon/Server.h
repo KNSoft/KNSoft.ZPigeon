@@ -602,8 +602,7 @@ ZpServer_StartFileDownload(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ZP_FILE_DOWNLOAD_ENGINE Engine,
     _In_ BYTE Flags,
-    _In_reads_(IdLength) PCWCH Id,
-    _In_ ULONG IdLength,
+    _In_ const GUID* Id,
     _In_reads_(UrlLength) PCWCH Url,
     _In_ ULONG UrlLength,
     _In_reads_(PathLength) PCWCH Path,
@@ -626,8 +625,7 @@ NTSTATUS
 NTAPI
 ZpServer_CancelFileDownload(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _In_reads_(IdLength) PCWCH Id,
-    _In_ ULONG IdLength,
+    _In_ const GUID* Id,
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context,
@@ -1173,7 +1171,7 @@ ZpServer_ControlAdministrationData(
     _In_ BYTE OperationId,
     _In_ ZP_ADMINISTRATION_ACTION Action,
     _In_ ULONG Flags,
-    _In_reads_(IdentityLength) PCWCH Identity,
+    _In_reads_bytes_(IdentityLength) const VOID* Identity,
     _In_ ULONG IdentityLength,
     _In_reads_bytes_opt_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,

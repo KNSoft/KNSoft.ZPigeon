@@ -330,6 +330,7 @@ ZpProcess_Enumerate(
         Entry = Entry->NextEntryOffset != 0 ? Add2Ptr(Entry, Entry->NextEntryOffset) : NULL;
     }
     Status = ZpProcess_QueryServices(Processes, Allocations, Count);
+    if (Status == NTSTATUS_FROM_WIN32(ERROR_ACCESS_DENIED)) Status = STATUS_SUCCESS;
     if (NT_SUCCESS(Status)) Status = ZpProcess_EncodeList(Processes, Count, NULL, 0, &Length);
     Buffer = NT_SUCCESS(Status) ? Mem_Alloc(Length) : NULL;
     if (NT_SUCCESS(Status) && Buffer == NULL) Status = STATUS_NO_MEMORY;

@@ -213,19 +213,18 @@ public sealed partial class NativeServer
             callback,
             context));
 
-    public Task StartFileDownloadAsync(
+    public unsafe Task StartFileDownloadAsync(
         Guid id,
         string url,
         string path,
         FileDownloadEngine engine,
         bool overwrite)
     {
-        var value = id.ToString("D");
+        var identifier = (nint)(&id);
         return RunStatusAsync((callback, context) => NativeMethods.StartFileDownload(ClientId,
             engine,
             overwrite ? (byte)1 : (byte)0,
-            value,
-            (uint)value.Length,
+            identifier,
             url,
             (uint)url.Length,
             path,
@@ -238,12 +237,11 @@ public sealed partial class NativeServer
         RunManagementAsync<FileDownloadRecord[]>(context =>
             NativeMethods.EnumerateFileDownloads(ClientId, FileDownloadsCallback, context));
 
-    public Task CancelFileDownloadAsync(Guid id)
+    public unsafe Task CancelFileDownloadAsync(Guid id)
     {
-        var value = id.ToString("D");
+        var identifier = (nint)(&id);
         return RunStatusAsync((callback, context) => NativeMethods.CancelFileDownload(ClientId,
-            value,
-            (uint)value.Length,
+            identifier,
             callback,
             context));
     }
@@ -658,7 +656,7 @@ public sealed partial class NativeServer
         {
             var record = Marshal.PtrToStructure<NativeMethods.FileDownloadRecord>(records + index * size);
             values[index] = new FileDownloadRecord(
-                ReadString(record.Id, record.IdLength),
+                record.Id,
                 ReadString(record.Url, record.UrlLength),
                 ReadString(record.Path, record.PathLength),
                 ReadString(record.ErrorText, record.ErrorTextLength),

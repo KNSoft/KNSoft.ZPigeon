@@ -132,6 +132,20 @@ ZpCodec_WriteUInt64(
 }
 
 NTSTATUS
+ZpCodec_WriteGuid(
+    _Inout_ PZP_CODEC_WRITER Writer,
+    _In_ const GUID* Value)
+{
+    NTSTATUS Status;
+
+    Status = ZpCodec_WriteUInt32(Writer, Value->Data1);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(Writer, Value->Data2);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(Writer, Value->Data3);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteData(Writer, Value->Data4, sizeof(Value->Data4));
+    return Status;
+}
+
+NTSTATUS
 ZpCodec_WriteData(
     _Inout_ PZP_CODEC_WRITER Writer,
     _In_reads_bytes_opt_(Length) const VOID* Data,
@@ -289,6 +303,22 @@ ZpCodec_ReadUInt64(
     {
         *Value = ZpReadUInt64(Data);
     }
+    return Status;
+}
+
+NTSTATUS
+ZpCodec_ReadGuid(
+    _Inout_ PZP_CODEC_READER Reader,
+    _Out_ GUID* Value)
+{
+    ZP_BUFFER_VIEW Data;
+    NTSTATUS Status;
+
+    Status = ZpCodec_ReadUInt32(Reader, &Value->Data1);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(Reader, &Value->Data2);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(Reader, &Value->Data3);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadData(Reader, sizeof(Value->Data4), &Data);
+    if (NT_SUCCESS(Status)) RtlCopyMemory(Value->Data4, Data.Buffer, sizeof(Value->Data4));
     return Status;
 }
 

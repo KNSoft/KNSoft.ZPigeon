@@ -2655,6 +2655,7 @@ ZpFile_Execute(
     ZP_FILE_HASH_ALGORITHM Algorithm;
     ZP_FILE_OWNER_CONTROL_REQUEST_VIEW OwnerControl;
     ZP_FILE_DOWNLOAD_REQUEST_VIEW Download;
+    GUID DownloadId;
     PZP_CLIENT_FILE_CHANNEL FileChannel;
     ULONGLONG FileSize, Offset;
     ULONG Attributes, EnumerationId;
@@ -2753,8 +2754,7 @@ ZpFile_Execute(
         return NT_SUCCESS(Status) ?
                    ZpFileDownload_Start(Download.Engine,
                                         Download.Flags,
-                                        Download.Id.Buffer,
-                                        Download.Id.Length,
+                                        &Download.Id,
                                         Download.Url.Buffer,
                                         Download.Url.Length,
                                         Download.Path.Buffer,
@@ -2767,8 +2767,12 @@ ZpFile_Execute(
     }
     else if (OperationId == ZP_FILE_OPERATION_CANCEL_DOWNLOAD)
     {
-        Status = ZpFile_DecodePath(Request, RequestLength, &Path);
-        return NT_SUCCESS(Status) ? ZpFileDownload_Cancel(Path.Buffer, Path.Length) : Status;
+        ZP_CODEC_READER Reader;
+
+        if (RequestLength != ZP_FILE_DOWNLOAD_ID_SIZE) return STATUS_DATA_ERROR;
+        ZpCodec_InitializeReader(&Reader, Request, RequestLength);
+        Status = ZpCodec_ReadGuid(&Reader, &DownloadId);
+        return NT_SUCCESS(Status) ? ZpFileDownload_Cancel(&DownloadId) : Status;
     }
     else if (OperationId == ZP_FILE_OPERATION_ENUMERATE_ARCHIVE_PAGE)
     {

@@ -54,7 +54,7 @@ public enum FileHashAlgorithm : byte
     Sha256 = 4
 }
 public sealed record FileDownloadRecord(
-    string Id,
+    Guid Id,
     string Url,
     string Path,
     string ErrorText,

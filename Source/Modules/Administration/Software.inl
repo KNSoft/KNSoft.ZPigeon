@@ -423,16 +423,25 @@ ZpAdministration_EnumerateSoftwareDeploymentCallback(
     _In_ PVOID Context)
 {
     PZP_SOFTWARE_ENUMERATION_CONTEXT Enumeration = Context;
+    BYTE Id[ZP_GUID_WIRE_SIZE];
+    ZP_CODEC_WRITER Writer;
 
-    Enumeration->Status = ZpAdministration_AddRecord(Enumeration->Builder,
-                                                      ZpAdministrationKindSoftwareDeployment,
-                                                      Deployment->State,
-                                                      Deployment->Flags,
-                                                      Deployment->Result,
-                                                      Deployment->Id,
-                                                      Deployment->Name,
-                                                      Deployment->Identity,
-                                                      Deployment->ErrorText);
+    ZpCodec_InitializeWriter(&Writer, Id, sizeof(Id));
+    Enumeration->Status = ZpCodec_WriteGuid(&Writer, &Deployment->Id);
+    if (NT_SUCCESS(Enumeration->Status))
+    {
+        Enumeration->Status = ZpAdministration_AddRecordData(Enumeration->Builder,
+                                                              ZpAdministrationKindSoftwareDeployment,
+                                                              Deployment->State,
+                                                              Deployment->Flags,
+                                                              Deployment->Result,
+                                                              L"",
+                                                              Deployment->Name,
+                                                              Deployment->Identity,
+                                                              Deployment->ErrorText,
+                                                              Id,
+                                                              sizeof(Id));
+    }
     return NT_SUCCESS(Enumeration->Status);
 }
 
@@ -467,20 +476,22 @@ ZP_STATUS
 ZpAdministration_ControlSoftware(
     _In_ PCZP_ADMINISTRATION_DATA_CONTROL_VIEW Control)
 {
-    PWSTR Id;
+    GUID Id;
+    ZP_CODEC_READER Reader;
     HRESULT Result;
+    NTSTATUS Status;
 
-    if (Control->Data.Length % sizeof(WCHAR) != 0)
+    if (Control->Identity.Length != ZP_GUID_WIRE_SIZE || Control->Data.Length % sizeof(WCHAR) != 0)
     {
         return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
-    Id = ZpAdministration_CopyView(&Control->Identity);
-    if (Id == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    ZpCodec_InitializeReader(&Reader, Control->Identity.Buffer, Control->Identity.Length);
+    Status = ZpCodec_ReadGuid(&Reader, &Id);
+    if (!NT_SUCCESS(Status)) return ZpStatus_FromNtStatus(Status);
     Result = ZpSoftware_StartDeployment(Control->Action,
                                         Control->Flags,
-                                        Id,
+                                        &Id,
                                         (PCWCH)Control->Data.Buffer,
                                         Control->Data.Length / sizeof(WCHAR));
-    Mem_Free(Id);
     return ZpStatus_FromCode(ZpStatusHResult, Result);
 }

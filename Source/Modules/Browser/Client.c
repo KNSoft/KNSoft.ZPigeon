@@ -1578,6 +1578,16 @@ ZpBrowser_ReadDocument(
     return STATUS_SUCCESS;
 }
 
+static
+LOGICAL
+ZpBrowser_IsDocumentMissing(
+    _In_ NTSTATUS Status)
+{
+    return Status == STATUS_NO_SUCH_FILE ||
+           Status == STATUS_OBJECT_NAME_NOT_FOUND ||
+           Status == STATUS_OBJECT_PATH_NOT_FOUND;
+}
+
 typedef struct _ZP_BROWSER_JSON_NODE
 {
     ULONG FirstChild;
@@ -1995,6 +2005,7 @@ ZP_STATUS
 ZpBrowser_OpenDocument(
     _Inout_ PZP_CLIENT_OBJECT Client,
     _In_ PCWSTR Path,
+    _In_ LOGICAL MissingAllowed,
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
 {
@@ -2007,6 +2018,16 @@ ZpBrowser_OpenDocument(
     if (Snapshot == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
     RtlZeroMemory(Snapshot, sizeof(*Snapshot));
     Status = ZpBrowser_ReadDocument(Path, &Snapshot->Text);
+    if (MissingAllowed && ZpBrowser_IsDocumentMissing(Status))
+    {
+        Snapshot->Text = Mem_Alloc(sizeof(L"{}"));
+        if (Snapshot->Text == NULL) Status = STATUS_NO_MEMORY;
+        else
+        {
+            RtlCopyMemory(Snapshot->Text, L"{}", sizeof(L"{}"));
+            Status = STATUS_SUCCESS;
+        }
+    }
     if (NT_SUCCESS(Status))
     {
         Snapshot->TextLength = (ULONG)wcslen(Snapshot->Text);
@@ -2080,7 +2101,8 @@ ZpBrowser_QueryDocument(
     NTSTATUS Status;
 
     Status = ZpBrowser_ReadDocument(Path, &Text);
-    if (NT_SUCCESS(Status))
+    if (Query->Kind == ZpBrowserKindBookmark && ZpBrowser_IsDocumentMissing(Status)) Status = STATUS_SUCCESS;
+    else if (NT_SUCCESS(Status))
     {
         Status = ZpBrowser_AddRecord(&Builder,
                                      Query->Kind,
@@ -2216,7 +2238,11 @@ ZpBrowser_OpenDocumentQuery(
                                   Profile);
     }
     return NT_SUCCESS(Status) ?
-               ZpBrowser_OpenDocument(Client, Path, Response, ResponseLength) :
+               ZpBrowser_OpenDocument(Client,
+                                      Path,
+                                      Query->Kind == ZpBrowserKindBookmark,
+                                      Response,
+                                      ResponseLength) :
                ZpStatus_FromNtStatus(Status);
 }
 

@@ -1028,6 +1028,7 @@ ZpAdministration_ControlFirmwareData(
 {
     GUID VendorGuid;
     UNICODE_STRING Name;
+    ZP_STRING_VIEW Identity;
     PWSTR VariableBuffer;
     PBYTE Existing = NULL;
     ULONG ExistingLength;
@@ -1040,7 +1041,9 @@ ZpAdministration_ControlFirmwareData(
     {
         return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
-    Status = ZpFirmware_ParseVariableIdentity(&Control->Identity, &VendorGuid, &Name, &VariableBuffer);
+    Status = ZpAdministration_GetDataControlIdentityString(Control, &Identity);
+    if (!NT_SUCCESS(Status)) return ZpStatus_FromNtStatus(Status);
+    Status = ZpFirmware_ParseVariableIdentity(&Identity, &VendorGuid, &Name, &VariableBuffer);
     if (!NT_SUCCESS(Status)) return ZpStatus_FromNtStatus(Status);
     if (Control->Data.Length > ZP_FIRMWARE_MAX_DATA_SIZE)
     {

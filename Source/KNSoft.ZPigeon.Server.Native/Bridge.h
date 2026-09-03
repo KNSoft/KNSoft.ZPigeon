@@ -129,8 +129,7 @@ typedef struct _ZP_NATIVE_FILE_DOWNLOAD_RECORD
     ULONG Result;
     ULONGLONG TransferredBytes;
     ULONGLONG TotalBytes;
-    PCWCH Id;
-    ULONG IdLength;
+    GUID Id;
     PCWCH Url;
     ULONG UrlLength;
     PCWCH Path;
@@ -1279,8 +1278,7 @@ ZpNative_StartFileDownload(
     _In_ ULONGLONG ClientId,
     _In_ ZP_FILE_DOWNLOAD_ENGINE Engine,
     _In_ BYTE Flags,
-    _In_reads_(IdLength) PCWCH Id,
-    _In_ ULONG IdLength,
+    _In_ const GUID* Id,
     _In_reads_(UrlLength) PCWCH Url,
     _In_ ULONG UrlLength,
     _In_reads_(PathLength) PCWCH Path,
@@ -1301,8 +1299,7 @@ NTSTATUS
 NTAPI
 ZpNative_CancelFileDownload(
     _In_ ULONGLONG ClientId,
-    _In_reads_(IdLength) PCWCH Id,
-    _In_ ULONG IdLength,
+    _In_ const GUID* Id,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context);
 
@@ -2009,7 +2006,7 @@ ZpNative_ControlAdministrationData(
     _In_ BYTE OperationId,
     _In_ BYTE Action,
     _In_ ULONG Flags,
-    _In_reads_(IdentityLength) PCWCH Identity,
+    _In_reads_bytes_(IdentityLength) const VOID* Identity,
     _In_ ULONG IdentityLength,
     _In_reads_bytes_opt_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,

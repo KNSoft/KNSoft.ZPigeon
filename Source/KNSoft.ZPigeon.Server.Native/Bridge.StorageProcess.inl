@@ -794,8 +794,7 @@ ZpNative_StartFileDownload(
     _In_ ULONGLONG ClientId,
     _In_ ZP_FILE_DOWNLOAD_ENGINE Engine,
     _In_ BYTE Flags,
-    _In_reads_(IdLength) PCWCH Id,
-    _In_ ULONG IdLength,
+    _In_ const GUID* Id,
     _In_reads_(UrlLength) PCWCH Url,
     _In_ ULONG UrlLength,
     _In_reads_(PathLength) PCWCH Path,
@@ -823,7 +822,6 @@ ZpNative_StartFileDownload(
                                    Engine,
                                    Flags,
                                    Id,
-                                   IdLength,
                                    Url,
                                    UrlLength,
                                    Path,
@@ -868,8 +866,7 @@ NTSTATUS
 NTAPI
 ZpNative_CancelFileDownload(
     _In_ ULONGLONG ClientId,
-    _In_reads_(IdLength) PCWCH Id,
-    _In_ ULONG IdLength,
+    _In_ const GUID* Id,
     _In_ ZP_NATIVE_STATUS_CALLBACK Callback,
     _In_opt_ PVOID Context)
 {
@@ -891,7 +888,6 @@ ZpNative_CancelFileDownload(
         CallbackContext,
         ZpServer_CancelFileDownload(Connection,
                                     Id,
-                                    IdLength,
                                     ZP_NATIVE_TIMEOUT_MILLISECONDS,
                                     ZpNative_StatusCallback,
                                     CallbackContext,

@@ -32,6 +32,31 @@ ZpAdministration_IsActionValid(
 }
 
 static
+ULONG
+ZpAdministration_GetFixedDataSize(
+    _In_ ZP_ADMINISTRATION_KIND Kind)
+{
+    switch (Kind)
+    {
+        case ZpAdministrationKindWindowsFeature:
+            return ZP_WINDOWS_FEATURE_DATA_WIRE_SIZE;
+        case ZpAdministrationKindBluetoothRadio:
+            return 2 * sizeof(USHORT);
+        case ZpAdministrationKindLocation:
+            return 5 * sizeof(ULONGLONG);
+        case ZpAdministrationKindBattery:
+        case ZpAdministrationKindUps:
+            return sizeof(ULONG);
+        case ZpAdministrationKindSystemInformation:
+            return 3 * sizeof(ULONG);
+        case ZpAdministrationKindSoftwareDeployment:
+            return ZP_GUID_WIRE_SIZE;
+        default:
+            return 0;
+    }
+}
+
+static
 LOGICAL
 ZpAdministration_IsStringValid(
     _In_reads_opt_(Length) PCWCH String,
@@ -46,15 +71,18 @@ ZpAdministration_GetRecordSize(
     _In_ PCZP_ADMINISTRATION_RECORD Record,
     _Out_ PULONG Size)
 {
+    ULONG FixedDataSize;
     ULONG StringCount;
     ULONGLONG RequiredSize;
 
+    FixedDataSize = ZpAdministration_GetFixedDataSize(Record->Kind);
     if (!ZpAdministration_IsKindValid(Record->Kind) ||
         !ZpAdministration_IsStringValid(Record->Identity, Record->IdentityLength) ||
         !ZpAdministration_IsStringValid(Record->Name, Record->NameLength) ||
         !ZpAdministration_IsStringValid(Record->Description, Record->DescriptionLength) ||
         !ZpAdministration_IsStringValid(Record->Detail, Record->DetailLength) ||
         Record->DataLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        (Record->DataLength != 0 && FixedDataSize != 0 && Record->DataLength != FixedDataSize) ||
         (Record->DataLength != 0 && Record->Data == NULL))
     {
         return STATUS_INVALID_PARAMETER;
@@ -67,7 +95,9 @@ ZpAdministration_GetRecordSize(
                    (ULONGLONG)StringCount * sizeof(ULONG) +
                    ((ULONGLONG)Record->IdentityLength + Record->NameLength +
                     Record->DescriptionLength + Record->DetailLength) * sizeof(WCHAR) +
-                   (Record->DataLength != 0 ? sizeof(ULONG) + Record->DataLength : 0);
+                   (Record->DataLength != 0 ?
+                        (FixedDataSize == 0 ? sizeof(ULONG) : 0) + Record->DataLength :
+                        0);
     if (RequiredSize > MAXULONG)
     {
         return STATUS_BUFFER_OVERFLOW;
@@ -105,7 +135,12 @@ ZpAdministration_WriteRecord(
     if (FlagOn(Fields, ZP_ADMINISTRATION_RECORD_DETAIL))
         ZpWire_WriteString(Cursor, Record->Detail, Record->DetailLength);
     if (FlagOn(Fields, ZP_ADMINISTRATION_RECORD_DATA))
-        ZpWire_WriteByteString(Cursor, Record->Data, Record->DataLength);
+    {
+        if (ZpAdministration_GetFixedDataSize(Record->Kind) != 0)
+            ZpWire_WriteData(Cursor, Record->Data, Record->DataLength);
+        else
+            ZpWire_WriteByteString(Cursor, Record->Data, Record->DataLength);
+    }
 }
 
 static
@@ -139,7 +174,13 @@ ZpAdministration_ReadRecord(
     if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_ADMINISTRATION_RECORD_DETAIL))
         Status = ZpCodec_ReadString(Reader, &Local.Detail);
     if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_ADMINISTRATION_RECORD_DATA))
-        Status = ZpCodec_ReadByteString(Reader, &Local.Data);
+    {
+        ULONG FixedDataSize = ZpAdministration_GetFixedDataSize(Local.Kind);
+
+        Status = FixedDataSize != 0 ?
+                     ZpCodec_ReadData(Reader, FixedDataSize, &Local.Data) :
+                     ZpCodec_ReadByteString(Reader, &Local.Data);
+    }
     if (NT_SUCCESS(Status) && !ZpAdministration_IsKindValid(Local.Kind)) return STATUS_DATA_ERROR;
     if (NT_SUCCESS(Status) && Record != NULL) *Record = Local;
     return Status;
@@ -351,7 +392,7 @@ NTSTATUS
 ZpAdministration_EncodeDataControl(
     _In_ ZP_ADMINISTRATION_ACTION Action,
     _In_ ULONG Flags,
-    _In_reads_(IdentityLength) PCWCH Identity,
+    _In_reads_bytes_(IdentityLength) const VOID* Identity,
     _In_ ULONG IdentityLength,
     _In_reads_bytes_opt_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,
@@ -362,8 +403,8 @@ ZpAdministration_EncodeDataControl(
     ZP_CODEC_WRITER Writer;
     NTSTATUS Status;
 
-    if (!ZpAdministration_IsActionValid(Action) || IdentityLength == 0 ||
-        !ZpAdministration_IsStringValid(Identity, IdentityLength) ||
+    if (!ZpAdministration_IsActionValid(Action) || Identity == NULL || IdentityLength == 0 ||
+        IdentityLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
         DataLength > ZP_CODEC_MAX_ELEMENT_COUNT || (DataLength != 0 && Data == NULL))
     {
         return STATUS_INVALID_PARAMETER;
@@ -371,7 +412,7 @@ ZpAdministration_EncodeDataControl(
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpCodec_WriteByte(&Writer, (BYTE)Action);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Flags);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Identity, IdentityLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByteString(&Writer, Identity, IdentityLength);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteData(&Writer, Data, DataLength);
     *BytesWritten = Writer.Offset;
     return Status;
@@ -391,7 +432,7 @@ ZpAdministration_DecodeDataControl(
     Status = ZpCodec_ReadByte(&Reader, &Action);
     if (NT_SUCCESS(Status)) Control->Action = Action;
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Control->Flags);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Control->Identity);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByteString(&Reader, &Control->Identity);
     if (NT_SUCCESS(Status) && Reader.Size - Reader.Offset > ZP_CODEC_MAX_ELEMENT_COUNT)
     {
         Status = STATUS_DATA_ERROR;

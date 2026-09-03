@@ -214,11 +214,14 @@ TEST_FUNC(ProtocolMessage)
     ZP_EVENT_LOG_RETENTION_MODE EventLogRetentionMode;
     ULONGLONG EventLogMaximumSize;
     BYTE AdministrationData[] = { 1, 2, 3 };
+    BYTE AdministrationFixedData[] = { 1, 2, 3, 4 };
     ZP_ADMINISTRATION_RECORD AdministrationRecords[] = {
         { ZpAdministrationKindSecurityDescriptor, 1, 2, 3, L"ID", 2, L"Device", 6, NULL, 0, L"Class", 5,
           AdministrationData, sizeof(AdministrationData) },
         { ZpAdministrationKindWindowsFeatureParent, 0, 0, 0, L"Child", 5, L"Parent", 6, NULL, 0, NULL, 0,
-          NULL, 0 }
+          NULL, 0 },
+        { ZpAdministrationKindBluetoothRadio, 0, 0, 0, L"Radio", 5, NULL, 0, NULL, 0, NULL, 0,
+          AdministrationFixedData, sizeof(AdministrationFixedData) }
     };
     ZP_ADMINISTRATION_LIST_VIEW AdministrationList;
     ZP_ADMINISTRATION_RECORD_VIEW AdministrationRecord;
@@ -1272,6 +1275,15 @@ TEST_FUNC(ProtocolMessage)
             AdministrationRecord.Kind == ZpAdministrationKindWindowsFeatureParent &&
             AdministrationRecord.Identity.Length == 5 &&
             AdministrationRecord.Name.Length == 6);
+    TEST_OK(NT_SUCCESS(ZpAdministration_GetNextRecord(&AdministrationList,
+                                                       &AdministrationOffset,
+                                                       &AdministrationRecord)) &&
+            AdministrationRecord.Kind == ZpAdministrationKindBluetoothRadio &&
+            AdministrationRecord.Data.Length == sizeof(AdministrationFixedData) &&
+            RtlEqualMemory(AdministrationRecord.Data.Buffer,
+                           AdministrationFixedData,
+                           sizeof(AdministrationFixedData)) &&
+            AdministrationOffset == AdministrationList.Length);
     TEST_OK(NT_SUCCESS(ZpAdministration_EncodeControl(
                            ZpAdministrationActionSetPassword,
                            L"User",
@@ -1322,7 +1334,7 @@ TEST_FUNC(ProtocolMessage)
     TEST_OK(NT_SUCCESS(ZpAdministration_EncodeDataControl(ZpAdministrationActionConfigure,
                                                            7,
                                                            L"ID",
-                                                           2,
+                                                           2 * sizeof(WCHAR),
                                                            AdministrationData,
                                                            sizeof(AdministrationData),
                                                            Buffer,
@@ -1333,7 +1345,9 @@ TEST_FUNC(ProtocolMessage)
                                                            Length,
                                                            &AdministrationDataControl)) &&
             AdministrationDataControl.Action == ZpAdministrationActionConfigure &&
-            AdministrationDataControl.Flags == 7 && AdministrationDataControl.Identity.Length == 2 &&
+            AdministrationDataControl.Flags == 7 &&
+            AdministrationDataControl.Identity.Length == 2 * sizeof(WCHAR) &&
+            RtlEqualMemory(AdministrationDataControl.Identity.Buffer, L"ID", 2 * sizeof(WCHAR)) &&
             AdministrationDataControl.Data.Length == sizeof(AdministrationData) &&
             RtlEqualMemory(AdministrationDataControl.Data.Buffer,
                            AdministrationData,

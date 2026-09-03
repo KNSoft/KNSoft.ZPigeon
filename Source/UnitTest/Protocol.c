@@ -294,15 +294,63 @@ TEST_FUNC(ProtocolFileOwners)
             Result.Status == STATUS_SUCCESS && Result.AffectedHandleCount == 2);
 }
 
+TEST_FUNC(ProtocolFileDownload)
+{
+    static const GUID Id = { 0x00112233, 0x4455, 0x6677, { 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF } };
+    static const WCHAR Url[] = L"https://example.com/file";
+    static const WCHAR Path[] = L"C:\\file.bin";
+    const ZP_FILE_DOWNLOAD_REQUEST Request = {
+        ZpFileDownloadWinHttp, ZP_FILE_DOWNLOAD_FLAG_OVERWRITE, Id,
+        Url, ARRAYSIZE(Url) - 1, Path, ARRAYSIZE(Path) - 1
+    };
+    const ZP_FILE_DOWNLOAD_RECORD Records[] = {
+        {
+            ZpFileDownloadWinHttp, ZpFileDownloadTransferring, ERROR_SUCCESS, 42, 100, Id,
+            Url, ARRAYSIZE(Url) - 1, Path, ARRAYSIZE(Path) - 1, NULL, 0
+        }
+    };
+    ZP_FILE_DOWNLOAD_REQUEST_VIEW RequestView;
+    ZP_FILE_DOWNLOAD_LIST_VIEW List;
+    ZP_FILE_DOWNLOAD_RECORD_VIEW Record;
+    BYTE Buffer[512];
+    ULONG Length, Offset = 0;
+
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeDownloadRequest(&Request, Buffer, sizeof(Buffer), &Length)) &&
+            Length == 2 * sizeof(BYTE) + ZP_GUID_WIRE_SIZE + sizeof(ULONG) +
+                          (ARRAYSIZE(Url) + ARRAYSIZE(Path) - 2) * sizeof(WCHAR) &&
+            NT_SUCCESS(ZpFile_DecodeDownloadRequest(Buffer, Length, &RequestView)) &&
+            RequestView.Engine == Request.Engine && RequestView.Flags == Request.Flags &&
+            RtlEqualMemory(&RequestView.Id, &Id, sizeof(Id)) && RequestView.Url.Length == ARRAYSIZE(Url) - 1 &&
+            RequestView.Path.Length == ARRAYSIZE(Path) - 1);
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeDownloadRecords(Records,
+                                                    ARRAYSIZE(Records),
+                                                    Buffer,
+                                                    sizeof(Buffer),
+                                                    &Length)) &&
+            Length == sizeof(BYTE) + 3 * sizeof(BYTE) + 2 * sizeof(ULONGLONG) +
+                          ZP_GUID_WIRE_SIZE + 2 * sizeof(ULONG) +
+                          (ARRAYSIZE(Url) + ARRAYSIZE(Path) - 2) * sizeof(WCHAR) &&
+            NT_SUCCESS(ZpFile_DecodeDownloadRecords(Buffer, Length, &List)) && List.Count == 1 &&
+            NT_SUCCESS(ZpFile_GetNextDownloadRecord(&List, &Offset, &Record)) &&
+            RtlEqualMemory(&Record.Id, &Id, sizeof(Id)) && Record.TransferredBytes == 42 &&
+            Record.TotalBytes == 100 && Offset == List.Length);
+}
+
 TEST_FUNC(ProtocolCodec)
 {
     static const BYTE ByteString[] = { 1, 2, 3 };
+    static const BYTE GuidBytes[] = {
+        0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66,
+        0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF
+    };
+    static const GUID Guid = { 0x00112233, 0x4455, 0x6677, { 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF } };
     BYTE Buffer[64], InvalidBoolean = 2, TruncatedByteString[] = { 3, 0, 0, 0, 1, 2 };
     BYTE ByteValue;
     USHORT UInt16Value;
     ULONG UInt32Value;
     ULONGLONG UInt64Value;
     BOOLEAN BooleanValue;
+    GUID GuidValue;
     ZP_BUFFER_VIEW BufferView;
     ZP_STRING_VIEW StringView;
     ZP_CODEC_WRITER Writer;
@@ -314,27 +362,34 @@ TEST_FUNC(ProtocolCodec)
     TEST_OK(NT_SUCCESS(ZpCodec_WriteUInt16(&Writer, 0x1234)));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteUInt32(&Writer, 0x89ABCDEF)));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteUInt64(&Writer, 0x0123456789ABCDEFULL)));
+    TEST_OK(NT_SUCCESS(ZpCodec_WriteGuid(&Writer, &Guid)));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteBoolean(&Writer, TRUE)));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteString(&Writer, L"AZ", 2)));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteByteString(&Writer, ByteString, sizeof(ByteString))));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteArrayCount(&Writer, 4)));
-    TEST_OK(Writer.Offset == 35);
+    TEST_OK(Writer.Offset == 35 + ZP_GUID_WIRE_SIZE);
 
     ZpCodec_InitializeWriter(&Writer, Buffer, sizeof(Buffer));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteByte(&Writer, 0x5A)));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteUInt16(&Writer, 0x1234)));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteUInt32(&Writer, 0x89ABCDEF)));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteUInt64(&Writer, 0x0123456789ABCDEFULL)));
+    TEST_OK(NT_SUCCESS(ZpCodec_WriteGuid(&Writer, &Guid)));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteBoolean(&Writer, TRUE)));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteString(&Writer, L"AZ", 2)));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteByteString(&Writer, ByteString, sizeof(ByteString))));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteArrayCount(&Writer, 4)));
+    TEST_OK(RtlEqualMemory(Buffer + sizeof(BYTE) + sizeof(USHORT) + sizeof(ULONG) + sizeof(ULONGLONG),
+                           GuidBytes,
+                           sizeof(GuidBytes)));
 
     ZpCodec_InitializeReader(&Reader, Buffer, Writer.Offset);
     TEST_OK(NT_SUCCESS(ZpCodec_ReadByte(&Reader, &ByteValue)) && ByteValue == 0x5A);
     TEST_OK(NT_SUCCESS(ZpCodec_ReadUInt16(&Reader, &UInt16Value)) && UInt16Value == 0x1234);
     TEST_OK(NT_SUCCESS(ZpCodec_ReadUInt32(&Reader, &UInt32Value)) && UInt32Value == 0x89ABCDEF);
     TEST_OK(NT_SUCCESS(ZpCodec_ReadUInt64(&Reader, &UInt64Value)) && UInt64Value == 0x0123456789ABCDEFULL);
+    TEST_OK(NT_SUCCESS(ZpCodec_ReadGuid(&Reader, &GuidValue)) &&
+            RtlEqualMemory(&Guid, &GuidValue, sizeof(Guid)));
     TEST_OK(NT_SUCCESS(ZpCodec_ReadBoolean(&Reader, &BooleanValue)) && BooleanValue == TRUE);
     TEST_OK(NT_SUCCESS(ZpCodec_ReadString(&Reader, &StringView)) && StringView.Length == 2 &&
             StringView.Buffer[0] == L'A' && StringView.Buffer[1] == L'Z');

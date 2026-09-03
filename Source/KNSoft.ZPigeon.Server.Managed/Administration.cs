@@ -11,6 +11,7 @@ public sealed partial class NativeServer
     private const uint CertificateInstallSourcePath = 0x00000001;
     private const uint CertificateInstallExportable = 0x00000002;
     private const int CertificateInstallMaxLength = 0x000C0000;
+    private const uint GuidWireSize = 16;
     private static readonly NativeMethods.AdministrationCallback AdministrationCallback = CompleteAdministration;
     private static readonly NativeMethods.DataCallback BinaryDataCallback = CompleteBinaryData;
 
@@ -96,9 +97,16 @@ public sealed partial class NativeServer
         string identity,
         byte[] data)
     {
-        fixed (byte* pointer = data)
+        fixed (char* identityPointer = identity)
+        fixed (byte* dataPointer = data)
         {
-            return ControlAdministrationDataAsync(operation, action, flags, identity, (nint)pointer, (uint)data.Length);
+            return ControlAdministrationDataAsync(operation,
+                                                   action,
+                                                   flags,
+                                                   (nint)identityPointer,
+                                                   checked((uint)identity.Length * sizeof(char)),
+                                                   (nint)dataPointer,
+                                                   (uint)data.Length);
         }
     }
 
@@ -109,13 +117,34 @@ public sealed partial class NativeServer
         string identity,
         string data)
     {
-        fixed (char* pointer = data)
+        fixed (char* identityPointer = identity)
+        fixed (char* dataPointer = data)
         {
             return ControlAdministrationDataAsync(operation,
                                                    action,
                                                    flags,
-                                                   identity,
-                                                   (nint)pointer,
+                                                   (nint)identityPointer,
+                                                   checked((uint)identity.Length * sizeof(char)),
+                                                   (nint)dataPointer,
+                                                   checked((uint)data.Length * sizeof(char)));
+        }
+    }
+
+    public unsafe Task ControlAdministrationStringDataAsync(
+        AdministrationOperation operation,
+        AdministrationAction action,
+        uint flags,
+        Guid identity,
+        string data)
+    {
+        fixed (char* dataPointer = data)
+        {
+            return ControlAdministrationDataAsync(operation,
+                                                   action,
+                                                   flags,
+                                                   (nint)(&identity),
+                                                   GuidWireSize,
+                                                   (nint)dataPointer,
                                                    checked((uint)data.Length * sizeof(char)));
         }
     }
@@ -186,7 +215,8 @@ public sealed partial class NativeServer
         AdministrationOperation operation,
         AdministrationAction action,
         uint flags,
-        string identity,
+        nint identity,
+        uint identityLength,
         nint data,
         uint dataLength) =>
         RunStatusAsync((callback, context) => NativeMethods.ControlAdministrationData(ClientId,
@@ -195,7 +225,7 @@ public sealed partial class NativeServer
             action,
             flags,
             identity,
-            (uint)identity.Length,
+            identityLength,
             data,
             dataLength,
             callback,
@@ -216,16 +246,21 @@ public sealed partial class NativeServer
             for (var index = 0; index < result.Length; index++)
             {
                 var record = Marshal.PtrToStructure<NativeMethods.AdministrationRecord>(records + index * size);
+                var kind = (AdministrationKind)record.Kind;
+                var deployment = kind == AdministrationKind.SoftwareDeployment;
+                if (deployment && record.DataLength != GuidWireSize)
+                    throw new InvalidDataException("The client returned an invalid software deployment identifier.");
                 result[index] = new AdministrationRecord(
-                    (AdministrationKind)record.Kind,
+                    kind,
                     record.State,
                     record.Flags,
                     record.Value.ToString(CultureInfo.InvariantCulture),
-                    ReadString(record.Identity, record.IdentityLength),
+                    deployment ? Marshal.PtrToStructure<Guid>(record.Data).ToString("D") :
+                        ReadString(record.Identity, record.IdentityLength),
                     ReadString(record.Name, record.NameLength),
                     ReadString(record.Description, record.DescriptionLength),
                     ReadString(record.Detail, record.DetailLength),
-                    ReadAdministrationData((AdministrationKind)record.Kind, record.Data, record.DataLength));
+                    deployment ? null : ReadAdministrationData(kind, record.Data, record.DataLength));
             }
             completion.SetResult(result);
         }
@@ -695,16 +730,14 @@ internal static partial class NativeMethods
         DataCallback callback,
         nint context);
 
-    [LibraryImport(Library,
-        EntryPoint = "ZpNative_ControlAdministrationData",
-        StringMarshalling = StringMarshalling.Utf16)]
+    [LibraryImport(Library, EntryPoint = "ZpNative_ControlAdministrationData")]
     internal static partial int ControlAdministrationData(
         ulong clientId,
         byte moduleId,
         byte operationId,
         AdministrationAction action,
         uint flags,
-        string identity,
+        nint identity,
         uint identityLength,
         nint data,
         uint dataLength,
