@@ -106,7 +106,9 @@ ZpAdministration_QueryPublishedShare(
     _Out_ PULONG ResponseLength)
 {
     ZP_ADMINISTRATION_BUILDER Builder = { 0 };
+    SECURITY_DESCRIPTOR NullSecurityDescriptor;
     PSECURITY_DESCRIPTOR SecurityDescriptor = NULL;
+    PSECURITY_DESCRIPTOR Descriptor;
     PWSTR Name = ZpAdministration_CopyView(Identity), Sddl = NULL;
     SECURITY_DESCRIPTOR_CONTROL Control;
     DWORD Revision;
@@ -124,9 +126,22 @@ ZpAdministration_QueryPublishedShare(
                                    NULL,
                                    NULL,
                                    &SecurityDescriptor);
+    Descriptor = SecurityDescriptor;
+    if (Result == NERR_Success && Descriptor == NULL)
+    {
+        if (!InitializeSecurityDescriptor(&NullSecurityDescriptor, SECURITY_DESCRIPTOR_REVISION) ||
+            !SetSecurityDescriptorDacl(&NullSecurityDescriptor, TRUE, NULL, FALSE))
+        {
+            Result = GetLastError();
+        }
+        else
+        {
+            Descriptor = &NullSecurityDescriptor;
+        }
+    }
     if (Result == NERR_Success &&
-        (!GetSecurityDescriptorControl(SecurityDescriptor, &Control, &Revision) ||
-         !ConvertSecurityDescriptorToStringSecurityDescriptorW(SecurityDescriptor,
+        (!GetSecurityDescriptorControl(Descriptor, &Control, &Revision) ||
+         !ConvertSecurityDescriptorToStringSecurityDescriptorW(Descriptor,
                                                                 SDDL_REVISION_1,
                                                                 OWNER_SECURITY_INFORMATION |
                                                                     GROUP_SECURITY_INFORMATION |

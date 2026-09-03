@@ -1427,33 +1427,23 @@ ZpFile_SetVolumeLabel(
     _In_ PCZP_STRING_VIEW Path,
     _In_ PCZP_STRING_VIEW Label)
 {
-    PFILE_FS_LABEL_INFORMATION Information;
-    IO_STATUS_BLOCK IoStatusBlock;
-    SIZE_T Size;
-    HANDLE File;
+    PUNICODE_STRING PathString, LabelString;
     NTSTATUS Status;
 
     if (Path->Length != 3 || Path->Buffer[1] != L':' || Path->Buffer[2] != L'\\') return STATUS_INVALID_PARAMETER;
     if (Label->Length > MAXUSHORT / sizeof(WCHAR)) return STATUS_NAME_TOO_LONG;
-    Size = FIELD_OFFSET(FILE_FS_LABEL_INFORMATION, VolumeLabel) +
-           (SIZE_T)Label->Length * sizeof(WCHAR);
-    Information = Mem_Alloc(Size);
-    if (Information == NULL) return STATUS_NO_MEMORY;
-    Information->VolumeLabelLength = Label->Length * sizeof(WCHAR);
-    RtlCopyMemory(Information->VolumeLabel,
-                  Label->Buffer,
-                  Information->VolumeLabelLength);
-    Status = ZpFile_OpenForControl(Path, FILE_WRITE_DATA, &File);
-    if (NT_SUCCESS(Status))
+    PathString = ZpFile_CopyPath(Path);
+    if (PathString == NULL) return STATUS_NO_MEMORY;
+    LabelString = ZpFile_CopyPath(Label);
+    if (LabelString == NULL)
     {
-        Status = NtSetVolumeInformationFile(File,
-                                            &IoStatusBlock,
-                                            Information,
-                                            (ULONG)Size,
-                                            FileFsLabelInformation);
-        NtClose(File);
+        NT_FreeStringW(PathString);
+        return STATUS_NO_MEMORY;
     }
-    Mem_Free(Information);
+    Status = SetVolumeLabelW(PathString->Buffer, LabelString->Buffer) ?
+                 STATUS_SUCCESS : NTSTATUS_FROM_WIN32(GetLastError());
+    NT_FreeStringW(LabelString);
+    NT_FreeStringW(PathString);
     return Status;
 }
 

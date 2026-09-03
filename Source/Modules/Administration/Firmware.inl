@@ -1077,7 +1077,7 @@ ZpAdministration_ControlFirmwareData(
                                                (PVOID)Control->Data.Buffer,
                                                Control->Action == ZpAdministrationActionDelete ?
                                                    0 : Control->Data.Length,
-                                               Control->Action == ZpAdministrationActionDelete ? 0 : Control->Flags);
+                                               Control->Flags);
         RtlAdjustPrivilege(SE_SYSTEM_ENVIRONMENT_PRIVILEGE, Previous, FALSE, &Previous);
     }
     Mem_Free(VariableBuffer);
