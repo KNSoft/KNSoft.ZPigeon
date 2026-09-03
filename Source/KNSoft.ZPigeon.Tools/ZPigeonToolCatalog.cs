@@ -116,3 +116,4 @@ internal sealed class ZPigeonToolAttribute(
 }
 
 public sealed record ToolOperationResult(bool Success);
+public sealed record ToolAdministrationControlResult(bool Success, AdministrationControlResult Result);

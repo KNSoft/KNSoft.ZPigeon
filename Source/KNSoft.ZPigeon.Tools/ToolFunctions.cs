@@ -339,7 +339,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                  "Apply a Control* administration operation. Obtain exact operation and action names first.",
                  false,
                  destructive: true)]
-    public async Task<ToolOperationResult> ControlAdministration(
+    public async Task<ToolAdministrationControlResult> ControlAdministration(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Exact control name returned by list_administration_operations.")] string operation,
         [Description("Exact action name returned by list_administration_operations.")] string action,
@@ -348,14 +348,14 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
         [Description("Optional secret such as a password; never place it in another argument.")] string? secret = null,
         CancellationToken cancellationToken = default)
     {
-        await application.ControlAdministrationAsync(ParseClientId(clientId),
-                                                     ParseEnum<AdministrationOperation>(operation),
-                                                     ParseEnum<AdministrationAction>(action),
-                                                     identity,
-                                                     argument,
-                                                     secret,
-                                                     cancellationToken);
-        return new(true);
+        var result = await application.ControlAdministrationAsync(ParseClientId(clientId),
+                                                                  ParseEnum<AdministrationOperation>(operation),
+                                                                  ParseEnum<AdministrationAction>(action),
+                                                                  identity,
+                                                                  argument,
+                                                                  secret,
+                                                                  cancellationToken);
+        return new(true, result);
     }
 
     [ZPigeonTool("start_process",

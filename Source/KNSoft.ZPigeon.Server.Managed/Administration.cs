@@ -49,6 +49,35 @@ public sealed partial class NativeServer
             callback,
             context));
 
+    public async Task<WindowsFeatureRequiredAction> ControlWindowsFeatureAsync(
+        AdministrationAction action,
+        string identity)
+    {
+        if (action is not (AdministrationAction.Enable or AdministrationAction.Disable))
+            throw new ArgumentOutOfRangeException(nameof(action));
+        ArgumentException.ThrowIfNullOrEmpty(identity);
+        var operation = AdministrationOperation.ControlFeature;
+        var data = await RunManagementAsync<byte[]>(context => NativeMethods.ControlAdministrationResult(
+            ClientId,
+            operation.ModuleId(),
+            operation.OperationId(),
+            (byte)action,
+            identity,
+            (uint)identity.Length,
+            null,
+            0,
+            null,
+            0,
+            BinaryDataCallback,
+            context)).ConfigureAwait(false);
+        if (data.Length != sizeof(uint))
+            throw new InvalidDataException("The client returned an invalid Windows feature result.");
+        var requiredAction = (WindowsFeatureRequiredAction)BinaryPrimitives.ReadUInt32LittleEndian(data);
+        if (requiredAction is not (WindowsFeatureRequiredAction.None or WindowsFeatureRequiredAction.Reboot))
+            throw new InvalidDataException("The client returned an invalid Windows feature action.");
+        return requiredAction;
+    }
+
     public Task<byte[]> QueryAdministrationDataAsync(
         AdministrationOperation operation,
         string? identity = null) =>
@@ -211,12 +240,19 @@ public sealed partial class NativeServer
         nint pointer,
         uint length)
     {
-        if (length == 0) return null;
+        if (length == 0 && kind != AdministrationKind.WindowsFeature) return null;
         var data = GC.AllocateUninitializedArray<byte>(checked((int)length));
         Marshal.Copy(pointer, data, 0, data.Length);
         var span = data.AsSpan();
         switch (kind)
         {
+            case AdministrationKind.WindowsFeature when span.Length == 5 * sizeof(int):
+                return new WindowsFeatureData(
+                    (WindowsFeatureApplicability)BinaryPrimitives.ReadInt32LittleEndian(span),
+                    (WindowsFeatureSelectability)BinaryPrimitives.ReadInt32LittleEndian(span[4..]),
+                    (WindowsFeatureInstallState)BinaryPrimitives.ReadInt32LittleEndian(span[8..]),
+                    (WindowsFeatureInstallState)BinaryPrimitives.ReadInt32LittleEndian(span[12..]),
+                    (WindowsFeatureInstallState)BinaryPrimitives.ReadInt32LittleEndian(span[16..]));
             case AdministrationKind.BluetoothRadio when span.Length == 8:
                 return new BluetoothRadioData(
                     BinaryPrimitives.ReadUInt32LittleEndian(span),
@@ -475,7 +511,8 @@ public enum AdministrationKind : byte
     ShadowCopy,
     BitLockerVolume,
     BitLockerProtector,
-    ClipboardFile
+    ClipboardFile,
+    WindowsFeatureParent
 }
 #pragma warning restore CA1720
 
@@ -523,6 +560,52 @@ public enum AdministrationAction : byte
     Unlock
 }
 
+public enum WindowsFeatureApplicability
+{
+    Invalid = -1,
+    All = 0,
+    NotApplicable = 1,
+    NeedsParent = 2,
+    Applicable = 4
+}
+
+public enum WindowsFeatureSelectability
+{
+    Invalid = -1,
+    All = 0,
+    Son = 1,
+    Root = 2
+}
+
+public enum WindowsFeatureInstallState
+{
+    PartiallyInstalled = -19,
+    Cancel = -18,
+    Superseded = -17,
+    Default = -16,
+    InvalidPermanent = -8,
+    InvalidInstalled = -7,
+    InvalidStaged = -4,
+    InvalidResolved = -2,
+    Unknown = -1,
+    Absent = 0,
+    Resolving = 1,
+    Resolved = 2,
+    Staging = 3,
+    Staged = 4,
+    UninstallRequested = 5,
+    InstallRequested = 6,
+    Installed = 7,
+    Permanent = 8,
+    Invalid = int.MaxValue
+}
+
+public enum WindowsFeatureRequiredAction : uint
+{
+    None = 0,
+    Reboot = 1
+}
+
 public sealed record AdministrationRecord(
     AdministrationKind Kind,
     uint State,
@@ -534,6 +617,12 @@ public sealed record AdministrationRecord(
     string Detail,
     object? Data);
 
+public sealed record WindowsFeatureData(
+    WindowsFeatureApplicability Applicability,
+    WindowsFeatureSelectability Selectability,
+    WindowsFeatureInstallState CurrentState,
+    WindowsFeatureInstallState IntendedState,
+    WindowsFeatureInstallState RequestedState);
 public sealed record BluetoothRadioData(uint Manufacturer, uint LmpSubversion);
 public sealed record LocationData(
     double Latitude,
@@ -638,5 +727,22 @@ internal static partial class NativeMethods
         string? secret,
         uint secretLength,
         StatusCallback callback,
+        nint context);
+
+    [LibraryImport(Library,
+        EntryPoint = "ZpNative_ControlAdministrationResult",
+        StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int ControlAdministrationResult(
+        ulong clientId,
+        byte moduleId,
+        byte operationId,
+        byte action,
+        string? identity,
+        uint identityLength,
+        string? argument,
+        uint argumentLength,
+        string? secret,
+        uint secretLength,
+        DataCallback callback,
         nint context);
 }

@@ -17,7 +17,7 @@ LOGICAL
 ZpAdministration_IsKindValid(
     _In_ ZP_ADMINISTRATION_KIND Kind)
 {
-    return Kind >= ZpAdministrationKindUser && Kind <= ZpAdministrationKindClipboardFile;
+    return Kind >= ZpAdministrationKindUser && Kind <= ZpAdministrationKindWindowsFeatureParent;
 }
 
 static

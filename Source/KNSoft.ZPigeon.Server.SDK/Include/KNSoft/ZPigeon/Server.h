@@ -1198,6 +1198,24 @@ ZpServer_ControlAdministration(
 
 NTSTATUS
 NTAPI
+ZpServer_ControlAdministrationResult(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ BYTE ModuleId,
+    _In_ BYTE OperationId,
+    _In_ ZP_ADMINISTRATION_ACTION Action,
+    _In_reads_opt_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
+    _In_reads_opt_(ArgumentLength) PCWCH Argument,
+    _In_ ULONG ArgumentLength,
+    _In_reads_opt_(SecretLength) PCWCH Secret,
+    _In_ ULONG SecretLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_ADMINISTRATION_DATA_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request);
+
+NTSTATUS
+NTAPI
 ZpServer_EnumerateServices(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ ULONG TimeoutMilliseconds,

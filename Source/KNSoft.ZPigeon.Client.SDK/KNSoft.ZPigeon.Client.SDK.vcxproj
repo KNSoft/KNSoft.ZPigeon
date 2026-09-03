@@ -227,10 +227,9 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
-    <Import Project="..\packages\KNSoft.CBS.1.0.0-beta\build\KNSoft.CBS.targets" Condition="Exists('..\packages\KNSoft.CBS.1.0.0-beta\build\KNSoft.CBS.targets')" />
     <Import Project="..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets" Condition="Exists('..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets')" />
-    <Import Project="..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets" Condition="Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" />
-    <Import Project="..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets" Condition="Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" />
+    <Import Project="..\packages\KNSoft.NDK.1.2.69-beta\build\KNSoft.NDK.targets" Condition="Exists('..\packages\KNSoft.NDK.1.2.69-beta\build\KNSoft.NDK.targets')" />
+    <Import Project="..\packages\KNSoft.MakeLifeEasier.1.0.10-beta\build\KNSoft.MakeLifeEasier.targets" Condition="Exists('..\packages\KNSoft.MakeLifeEasier.1.0.10-beta\build\KNSoft.MakeLifeEasier.targets')" />
     <Import Project="..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets" Condition="Exists('..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets')" />
     <Import Project="..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets" Condition="Exists('..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets')" />
   </ImportGroup>
@@ -245,10 +244,9 @@
     <PropertyGroup>
       <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
     </PropertyGroup>
-    <Error Condition="!Exists('..\packages\KNSoft.CBS.1.0.0-beta\build\KNSoft.CBS.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.CBS.1.0.0-beta\build\KNSoft.CBS.targets'))" />
     <Error Condition="!Exists('..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.FirmwareSpec.1.0.1-beta\build\KNSoft.FirmwareSpec.targets'))" />
-    <Error Condition="!Exists('..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets'))" />
-    <Error Condition="!Exists('..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets'))" />
+    <Error Condition="!Exists('..\packages\KNSoft.NDK.1.2.69-beta\build\KNSoft.NDK.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.NDK.1.2.69-beta\build\KNSoft.NDK.targets'))" />
+    <Error Condition="!Exists('..\packages\KNSoft.MakeLifeEasier.1.0.10-beta\build\KNSoft.MakeLifeEasier.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.MakeLifeEasier.1.0.10-beta\build\KNSoft.MakeLifeEasier.targets'))" />
     <Error Condition="!Exists('..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets'))" />
     <Error Condition="!Exists('..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\Microsoft.Web.WebView2.targets'))" />
     <Error Condition="!Exists('$(WinGetWinMD)')" Text="$([System.String]::Format('$(ErrorText)', '$(WinGetWinMD)'))" />

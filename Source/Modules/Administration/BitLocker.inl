@@ -1,453 +1,400 @@
-#define ZP_BITLOCKER_NAMESPACE L"ROOT\\CIMV2\\Security\\MicrosoftVolumeEncryption"
-#define ZP_BITLOCKER_CLASS L"Win32_EncryptableVolume"
+typedef struct _ZP_BITLOCKER_ENUMERATION_CONTEXT
+{
+    PZP_ADMINISTRATION_BUILDER Builder;
+    LOGICAL Protectors;
+} ZP_BITLOCKER_ENUMERATION_CONTEXT, *PZP_BITLOCKER_ENUMERATION_CONTEXT;
 
 static
-HRESULT
-ZpBitLocker_GetUInt32(
-    _In_ IWbemClassObject* Object,
-    _In_ PCWSTR Name,
-    _Out_ PULONG Value)
+LOGICAL
+ZpBitLocker_IsValidText(
+    _In_ PCZP_STRING_VIEW View,
+    _In_ ULONG MinimumLength,
+    _In_ ULONG MaximumLength)
 {
-    VARIANT Variant;
-    HRESULT Result;
+    PCWCH Buffer = (PCWCH)View->Buffer;
+    ULONG Index;
 
-    VariantInit(&Variant);
-    Result = IWbemClassObject_Get(Object, Name, 0, &Variant, NULL, NULL);
-    if (SUCCEEDED(Result))
+    if (View->Length < MinimumLength || View->Length > MaximumLength)
     {
-        if (V_VT(&Variant) == VT_UI4) *Value = V_UI4(&Variant);
-        else if (V_VT(&Variant) == VT_I4) *Value = (ULONG)V_I4(&Variant);
-        else if (V_VT(&Variant) == VT_BOOL) *Value = V_BOOL(&Variant) != VARIANT_FALSE;
-        else Result = WBEM_E_TYPE_MISMATCH;
+        return FALSE;
     }
-    VariantClear(&Variant);
-    return Result;
-}
-
-static
-HRESULT
-ZpBitLocker_Connect(
-    _Outptr_ IWbemServices** Services)
-{
-    IWbemLocator* Locator;
-    BSTR Namespace;
-    HRESULT Result;
-
-    Result = CoCreateInstance(&CLSID_WbemLocator,
-                              NULL,
-                              CLSCTX_INPROC_SERVER,
-                              &IID_IWbemLocator,
-                              (PVOID*)&Locator);
-    if (FAILED(Result)) return Result;
-    Namespace = SysAllocString(ZP_BITLOCKER_NAMESPACE);
-    if (Namespace == NULL)
+    for (Index = 0; Index < View->Length; Index++)
     {
-        IWbemLocator_Release(Locator);
-        return E_OUTOFMEMORY;
-    }
-    Result = IWbemLocator_ConnectServer(Locator, Namespace, NULL, NULL, NULL, 0, NULL, NULL, Services);
-    SysFreeString(Namespace);
-    IWbemLocator_Release(Locator);
-    if (SUCCEEDED(Result))
-    {
-        Result = CoSetProxyBlanket((IUnknown*)*Services,
-                                   RPC_C_AUTHN_WINNT,
-                                   RPC_C_AUTHZ_NONE,
-                                   NULL,
-                                   RPC_C_AUTHN_LEVEL_CALL,
-                                   RPC_C_IMP_LEVEL_IMPERSONATE,
-                                   NULL,
-                                   EOAC_NONE);
-        if (FAILED(Result)) IWbemServices_Release(*Services);
-    }
-    return Result;
-}
-
-static
-HRESULT
-ZpBitLocker_CreateEnumerator(
-    _In_ IWbemServices* Services,
-    _Outptr_ IEnumWbemClassObject** Enumerator)
-{
-    BSTR Language = SysAllocString(L"WQL");
-    BSTR Query = SysAllocString(L"SELECT * FROM " ZP_BITLOCKER_CLASS);
-    HRESULT Result;
-
-    if (Language == NULL || Query == NULL)
-    {
-        SysFreeString(Query);
-        SysFreeString(Language);
-        return E_OUTOFMEMORY;
-    }
-    Result = IWbemServices_ExecQuery(Services,
-                                     Language,
-                                     Query,
-                                     WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
-                                     NULL,
-                                     Enumerator);
-    SysFreeString(Query);
-    SysFreeString(Language);
-    return Result;
-}
-
-static
-HRESULT
-ZpBitLocker_CreateMethodInput(
-    _In_ IWbemServices* Services,
-    _In_ PCWSTR Method,
-    _Outptr_ IWbemClassObject** Input)
-{
-    IWbemClassObject* Class = NULL;
-    IWbemClassObject* Definition = NULL;
-    BSTR ClassName = SysAllocString(ZP_BITLOCKER_CLASS);
-    BSTR MethodName = SysAllocString(Method);
-    HRESULT Result;
-
-    if (ClassName == NULL || MethodName == NULL) Result = E_OUTOFMEMORY;
-    else Result = IWbemServices_GetObject(Services, ClassName, 0, NULL, &Class, NULL);
-    if (SUCCEEDED(Result)) Result = IWbemClassObject_GetMethod(Class, MethodName, 0, &Definition, NULL);
-    if (SUCCEEDED(Result)) Result = IWbemClassObject_SpawnInstance(Definition, 0, Input);
-    if (Definition != NULL) IWbemClassObject_Release(Definition);
-    if (Class != NULL) IWbemClassObject_Release(Class);
-    SysFreeString(MethodName);
-    SysFreeString(ClassName);
-    return Result;
-}
-
-static
-HRESULT
-ZpBitLocker_PutUInt32(
-    _In_ IWbemClassObject* Input,
-    _In_ PCWSTR Name,
-    _In_ ULONG Value)
-{
-    VARIANT Variant;
-
-    VariantInit(&Variant);
-    V_VT(&Variant) = VT_I4;
-    V_I4(&Variant) = (LONG)Value;
-    return IWbemClassObject_Put(Input, Name, 0, &Variant, CIM_UINT32);
-}
-
-static
-HRESULT
-ZpBitLocker_PutBoolean(
-    _In_ IWbemClassObject* Input,
-    _In_ PCWSTR Name,
-    _In_ LOGICAL Value)
-{
-    VARIANT Variant;
-
-    VariantInit(&Variant);
-    V_VT(&Variant) = VT_BOOL;
-    V_BOOL(&Variant) = Value ? VARIANT_TRUE : VARIANT_FALSE;
-    return IWbemClassObject_Put(Input, Name, 0, &Variant, CIM_BOOLEAN);
-}
-
-static
-HRESULT
-ZpBitLocker_PutString(
-    _In_ IWbemClassObject* Input,
-    _In_ PCWSTR Name,
-    _In_reads_(Length) PCWCH Value,
-    _In_ ULONG Length)
-{
-    VARIANT Variant;
-    HRESULT Result;
-
-    VariantInit(&Variant);
-    V_VT(&Variant) = VT_BSTR;
-    V_BSTR(&Variant) = SysAllocStringLen(Value, Length);
-    if (V_BSTR(&Variant) == NULL) return E_OUTOFMEMORY;
-    Result = IWbemClassObject_Put(Input, Name, 0, &Variant, CIM_STRING);
-    VariantClear(&Variant);
-    return Result;
-}
-
-static
-HRESULT
-ZpBitLocker_ExecuteMethod(
-    _In_ IWbemServices* Services,
-    _In_ BSTR ObjectPath,
-    _In_ PCWSTR Method,
-    _In_opt_ IWbemClassObject* Input,
-    _Outptr_opt_result_maybenull_ IWbemClassObject** Output)
-{
-    IWbemClassObject* LocalOutput = NULL;
-    BSTR MethodName = SysAllocString(Method);
-    HRESULT Result;
-    ULONG Code;
-
-    if (MethodName == NULL) return E_OUTOFMEMORY;
-    Result = IWbemServices_ExecMethod(Services,
-                                      ObjectPath,
-                                      MethodName,
-                                      0,
-                                      NULL,
-                                      Input,
-                                      &LocalOutput,
-                                      NULL);
-    SysFreeString(MethodName);
-    if (SUCCEEDED(Result))
-    {
-        Result = ZpBitLocker_GetUInt32(LocalOutput, L"ReturnValue", &Code);
-        if (SUCCEEDED(Result) && Code != ERROR_SUCCESS)
+        if (Buffer[Index] == UNICODE_NULL)
         {
-            Result = (Code & 0x80000000) != 0 ? (HRESULT)Code : HRESULT_FROM_WIN32(Code);
+            return FALSE;
         }
     }
-    if (SUCCEEDED(Result) && Output != NULL)
-    {
-        *Output = LocalOutput;
-        LocalOutput = NULL;
-    }
-    if (LocalOutput != NULL) IWbemClassObject_Release(LocalOutput);
-    return Result;
+    return TRUE;
 }
 
 static
-HRESULT
-ZpBitLocker_QueryStatus(
-    _In_ IWbemServices* Services,
-    _In_ BSTR ObjectPath,
-    _Out_ PULONG ConversionStatus,
-    _Out_ PULONG Percentage,
-    _Out_ PULONG EncryptionFlags)
+VOID
+ZpBitLocker_GetDriveLetter(
+    _In_ PCWSTR VolumeName,
+    _Out_writes_(3) PWSTR DriveLetter)
 {
-    IWbemClassObject* Input = NULL;
-    IWbemClassObject* Output = NULL;
-    HRESULT Result;
+    PWSTR Paths, Path;
+    SIZE_T PathLength;
+    DWORD PathCch;
 
-    Result = ZpBitLocker_CreateMethodInput(Services, L"GetConversionStatus", &Input);
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_PutUInt32(Input, L"PrecisionFactor", 0);
-    if (SUCCEEDED(Result))
+    DriveLetter[0] = UNICODE_NULL;
+    if (GetVolumePathNamesForVolumeNameW(VolumeName, NULL, 0, &PathCch) ||
+        GetLastError() != ERROR_MORE_DATA || PathCch == 0 ||
+        (SIZE_T)PathCch > MAXSIZE_T / sizeof(WCHAR))
     {
-        Result = ZpBitLocker_ExecuteMethod(Services, ObjectPath, L"GetConversionStatus", Input, &Output);
+        return;
     }
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_GetUInt32(Output, L"ConversionStatus", ConversionStatus);
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_GetUInt32(Output, L"EncryptionPercentage", Percentage);
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_GetUInt32(Output, L"EncryptionFlags", EncryptionFlags);
-    if (Output != NULL) IWbemClassObject_Release(Output);
-    if (Input != NULL) IWbemClassObject_Release(Input);
-    return Result;
+    Paths = Mem_Alloc((SIZE_T)PathCch * sizeof(WCHAR));
+    if (Paths == NULL)
+    {
+        return;
+    }
+    if (GetVolumePathNamesForVolumeNameW(VolumeName, Paths, PathCch, &PathCch))
+    {
+        for (Path = Paths; *Path != UNICODE_NULL; Path += PathLength + 1)
+        {
+            PathLength = wcslen(Path);
+            if (PathLength == 3 && Path[1] == L':' && Path[2] == L'\\')
+            {
+                DriveLetter[0] = Path[0];
+                DriveLetter[1] = L':';
+                DriveLetter[2] = UNICODE_NULL;
+                break;
+            }
+        }
+    }
+    Mem_Free(Paths);
 }
 
 static
-HRESULT
-ZpBitLocker_QueryMethodUInt32(
-    _In_ IWbemServices* Services,
-    _In_ BSTR ObjectPath,
-    _In_ PCWSTR Method,
-    _In_ PCWSTR Property,
-    _Out_ PULONG Value)
+ULONG
+ZpBitLocker_GetConversionStatus(
+    _In_ ULONG Flags)
 {
-    IWbemClassObject* Output = NULL;
-    HRESULT Result = ZpBitLocker_ExecuteMethod(Services, ObjectPath, Method, NULL, &Output);
+    if ((Flags & FVE_STATUS_FLAG_FULLY_DECRYPTED) != 0)
+    {
+        return ZP_ADMINISTRATION_BITLOCKER_CONVERSION_DECRYPTED;
+    }
+    if ((Flags & FVE_STATUS_FLAG_FULLY_ENCRYPTED) != 0)
+    {
+        return ZP_ADMINISTRATION_BITLOCKER_CONVERSION_ENCRYPTED;
+    }
+    if ((Flags & FVE_STATUS_FLAG_ENCRYPTION_IN_PROGRESS) != 0)
+    {
+        return (Flags & FVE_STATUS_FLAG_CONVERSION_PAUSED_MASK) != 0 ?
+                   ZP_ADMINISTRATION_BITLOCKER_CONVERSION_ENCRYPTION_PAUSED :
+                   ZP_ADMINISTRATION_BITLOCKER_CONVERSION_ENCRYPTING;
+    }
+    if ((Flags & FVE_STATUS_FLAG_DECRYPTION_IN_PROGRESS) != 0)
+    {
+        return (Flags & FVE_STATUS_FLAG_CONVERSION_PAUSED_MASK) != 0 ?
+                   ZP_ADMINISTRATION_BITLOCKER_CONVERSION_DECRYPTION_PAUSED :
+                   ZP_ADMINISTRATION_BITLOCKER_CONVERSION_DECRYPTING;
+    }
+    return ZP_ADMINISTRATION_BITLOCKER_CONVERSION_UNKNOWN;
+}
 
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_GetUInt32(Output, Property, Value);
-    if (Output != NULL) IWbemClassObject_Release(Output);
-    return Result;
+static
+ULONG
+ZpBitLocker_GetProtectionStatus(
+    _In_ ULONG Flags)
+{
+    if ((Flags & FVE_STATUS_FLAG_LOCKED) != 0)
+    {
+        return ZP_ADMINISTRATION_BITLOCKER_PROTECTION_UNKNOWN;
+    }
+    return (Flags & (FVE_STATUS_FLAG_PROTECTION_ACTIVE |
+                     FVE_STATUS_FLAG_FULLY_ENCRYPTED |
+                     FVE_STATUS_FLAG_CLEAR_KEY)) ==
+               (FVE_STATUS_FLAG_PROTECTION_ACTIVE | FVE_STATUS_FLAG_FULLY_ENCRYPTED) ?
+               ZP_ADMINISTRATION_BITLOCKER_PROTECTION_ON :
+               ZP_ADMINISTRATION_BITLOCKER_PROTECTION_OFF;
+}
+
+static
+ULONG
+ZpBitLocker_GetVolumeType(
+    _In_ ULONG Flags)
+{
+    if ((Flags & FVE_STATUS_FLAG_OS_VOLUME) != 0)
+    {
+        return ZP_ADMINISTRATION_BITLOCKER_VOLUME_TYPE_OS;
+    }
+    return (Flags & FVE_STATUS_FLAG_REMOVABLE_DATA_VOLUME) != 0 ?
+               ZP_ADMINISTRATION_BITLOCKER_VOLUME_TYPE_REMOVABLE :
+               ZP_ADMINISTRATION_BITLOCKER_VOLUME_TYPE_FIXED;
+}
+
+static
+ULONG
+ZpBitLocker_GetEncryptionMethod(
+    _In_ HANDLE VolumeHandle,
+    _In_ ULONG StatusFlags)
+{
+    FVE_LEGACY_METHOD Method;
+
+    if ((StatusFlags & FVE_STATUS_FLAG_INITIALIZED) == 0)
+    {
+        return FveLegacyMethodNone;
+    }
+    if (FAILED(FveGetFveMethod(VolumeHandle, &Method)) ||
+        Method < FveLegacyMethodNone || Method > FveLegacyMethodXtsAes256)
+    {
+        return ZP_ADMINISTRATION_BITLOCKER_ENCRYPTION_METHOD_UNKNOWN;
+    }
+    return (ULONG)Method;
+}
+
+static
+ULONG
+ZpBitLocker_GetProtectorType(
+    _In_ ULONG AuthFlags)
+{
+    switch (AuthFlags & (FVE_AUTH_INFORMATION_FLAG_CLEAR_KEY |
+                         FVE_AUTH_INFORMATION_PROTECTOR_MASK))
+    {
+        case FVE_AUTH_INFORMATION_FLAG_CLEAR_KEY:
+            return ZP_ADMINISTRATION_BITLOCKER_PROTECTOR_CLEAR_KEY;
+        case FVE_AUTH_INFORMATION_FLAG_TPM:
+            return ZP_ADMINISTRATION_BITLOCKER_PROTECTOR_TPM;
+        case FVE_AUTH_INFORMATION_FLAG_EXTERNAL_KEY:
+            return ZP_ADMINISTRATION_BITLOCKER_PROTECTOR_EXTERNAL_KEY;
+        case FVE_AUTH_INFORMATION_FLAG_RECOVERY_PASSWORD:
+            return ZP_ADMINISTRATION_BITLOCKER_PROTECTOR_RECOVERY_PASSWORD;
+        case FVE_AUTH_INFORMATION_FLAG_TPM_AND_PIN:
+            return ZP_ADMINISTRATION_BITLOCKER_PROTECTOR_TPM_PIN;
+        case FVE_AUTH_INFORMATION_FLAG_TPM_AND_STARTUP_KEY:
+            return ZP_ADMINISTRATION_BITLOCKER_PROTECTOR_TPM_STARTUP_KEY;
+        case FVE_AUTH_INFORMATION_FLAG_TPM_PIN_AND_STARTUP_KEY:
+            return ZP_ADMINISTRATION_BITLOCKER_PROTECTOR_TPM_PIN_STARTUP_KEY;
+        case FVE_AUTH_INFORMATION_FLAG_CERTIFICATE:
+            return ZP_ADMINISTRATION_BITLOCKER_PROTECTOR_PUBLIC_KEY;
+        case FVE_AUTH_INFORMATION_FLAG_PASSPHRASE:
+            return ZP_ADMINISTRATION_BITLOCKER_PROTECTOR_PASSPHRASE;
+        case FVE_AUTH_INFORMATION_FLAG_TPM_AND_CERTIFICATE:
+            return ZP_ADMINISTRATION_BITLOCKER_PROTECTOR_TPM_CERTIFICATE;
+        case FVE_AUTH_INFORMATION_FLAG_DPAPI_NG:
+            return ZP_ADMINISTRATION_BITLOCKER_PROTECTOR_DPAPI_NG;
+        default:
+            return ZP_ADMINISTRATION_BITLOCKER_PROTECTOR_UNKNOWN;
+    }
 }
 
 static
 HRESULT
 ZpBitLocker_AddVolume(
-    _In_ IWbemServices* Services,
-    _In_ IWbemClassObject* Object,
+    _In_ PCWSTR VolumeName,
+    _In_ HANDLE VolumeHandle,
     _Inout_ PZP_ADMINISTRATION_BUILDER Builder)
 {
-    VARIANT DeviceId, DriveLetter, PersistentId, ObjectPath, Initialized;
-    ULONG ConversionStatus, Percentage = 0, EncryptionFlags = 0;
-    ULONG ProtectionStatus, LockStatus = 2, EncryptionMethod, VolumeType;
-    ULONG AutoUnlock = 0, Flags;
-    HRESULT Result;
+    FVE_STATUS_V9 FveStatus;
+    WCHAR DriveLetter[3];
+    GUID AutoUnlockGuid;
+    BOOL AutoUnlockEnabled;
+    ULONG Flags, Percentage, ProtectionStatus;
     NTSTATUS Status;
+    HRESULT Hr;
 
-    VariantInit(&DeviceId);
-    VariantInit(&DriveLetter);
-    VariantInit(&PersistentId);
-    VariantInit(&ObjectPath);
-    VariantInit(&Initialized);
-    Result = IWbemClassObject_Get(Object, L"DeviceID", 0, &DeviceId, NULL, NULL);
-    if (SUCCEEDED(Result)) Result = IWbemClassObject_Get(Object, L"DriveLetter", 0, &DriveLetter, NULL, NULL);
-    if (SUCCEEDED(Result)) Result = IWbemClassObject_Get(Object, L"PersistentVolumeID", 0, &PersistentId, NULL, NULL);
-    if (SUCCEEDED(Result)) Result = IWbemClassObject_Get(Object, L"__PATH", 0, &ObjectPath, NULL, NULL);
-    if (SUCCEEDED(Result)) Result = IWbemClassObject_Get(Object, L"IsVolumeInitializedForProtection", 0, &Initialized, NULL, NULL);
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_GetUInt32(Object, L"ConversionStatus", &ConversionStatus);
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_GetUInt32(Object, L"ProtectionStatus", &ProtectionStatus);
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_GetUInt32(Object, L"EncryptionMethod", &EncryptionMethod);
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_GetUInt32(Object, L"VolumeType", &VolumeType);
-    if (SUCCEEDED(Result) &&
-        (V_VT(&DeviceId) != VT_BSTR || V_VT(&ObjectPath) != VT_BSTR ||
-         (V_VT(&Initialized) != VT_BOOL && V_VT(&Initialized) != VT_I4 && V_VT(&Initialized) != VT_UI4)))
+    Hr = Sys_FveGetStatus(VolumeHandle, &FveStatus);
+    if (FAILED(Hr))
     {
-        Result = WBEM_E_TYPE_MISMATCH;
+        return Hr;
     }
-    if (SUCCEEDED(Result))
+    Flags = ZpBitLocker_GetVolumeType(FveStatus.Flags);
+    ProtectionStatus = ZpBitLocker_GetProtectionStatus(FveStatus.Flags);
+    Flags |= (ProtectionStatus << ZP_ADMINISTRATION_BITLOCKER_PROTECTION_SHIFT) &
+             ZP_ADMINISTRATION_BITLOCKER_PROTECTION_MASK;
+    Flags |= (((FveStatus.Flags & FVE_STATUS_FLAG_LOCKED) != 0 ?
+                   ZP_ADMINISTRATION_BITLOCKER_LOCK_LOCKED :
+                   ZP_ADMINISTRATION_BITLOCKER_LOCK_UNLOCKED) <<
+              ZP_ADMINISTRATION_BITLOCKER_LOCK_SHIFT) &
+             ZP_ADMINISTRATION_BITLOCKER_LOCK_MASK;
+    Flags |= (ZpBitLocker_GetEncryptionMethod(VolumeHandle, FveStatus.Flags) <<
+              ZP_ADMINISTRATION_BITLOCKER_ENCRYPTION_METHOD_SHIFT) &
+             ZP_ADMINISTRATION_BITLOCKER_ENCRYPTION_METHOD_MASK;
+    if ((FveStatus.Flags & FVE_STATUS_FLAG_INITIALIZED) != 0)
     {
-        ULONG LiveStatus, LivePercentage, LiveFlags;
-
-        if (SUCCEEDED(ZpBitLocker_QueryStatus(Services,
-                                              V_BSTR(&ObjectPath),
-                                              &LiveStatus,
-                                              &LivePercentage,
-                                              &LiveFlags)))
-        {
-            ConversionStatus = LiveStatus;
-            Percentage = LivePercentage;
-            EncryptionFlags = LiveFlags;
-        }
-        ZpBitLocker_QueryMethodUInt32(Services, V_BSTR(&ObjectPath), L"GetLockStatus", L"LockStatus", &LockStatus);
-        ZpBitLocker_QueryMethodUInt32(Services,
-                                     V_BSTR(&ObjectPath),
-                                     L"IsAutoUnlockEnabled",
-                                     L"IsAutoUnlockEnabled",
-                                     &AutoUnlock);
-        Flags = VolumeType & ZP_ADMINISTRATION_BITLOCKER_VOLUME_TYPE_MASK;
-        Flags |= (ProtectionStatus << ZP_ADMINISTRATION_BITLOCKER_PROTECTION_SHIFT) &
-                 ZP_ADMINISTRATION_BITLOCKER_PROTECTION_MASK;
-        Flags |= (LockStatus << ZP_ADMINISTRATION_BITLOCKER_LOCK_SHIFT) &
-                 ZP_ADMINISTRATION_BITLOCKER_LOCK_MASK;
-        Flags |= (EncryptionMethod << ZP_ADMINISTRATION_BITLOCKER_ENCRYPTION_METHOD_SHIFT) &
-                 ZP_ADMINISTRATION_BITLOCKER_ENCRYPTION_METHOD_MASK;
-        if ((V_VT(&Initialized) == VT_BOOL && V_BOOL(&Initialized) != VARIANT_FALSE) ||
-            (V_VT(&Initialized) == VT_I4 && V_I4(&Initialized) != 0) ||
-            (V_VT(&Initialized) == VT_UI4 && V_UI4(&Initialized) != 0))
-        {
-            Flags |= ZP_ADMINISTRATION_BITLOCKER_FLAG_INITIALIZED;
-        }
-        if (AutoUnlock != 0) Flags |= ZP_ADMINISTRATION_BITLOCKER_FLAG_AUTO_UNLOCK;
-        if ((EncryptionFlags & 1) != 0) Flags |= ZP_ADMINISTRATION_BITLOCKER_FLAG_DATA_ONLY;
-        Status = ZpAdministration_AddRecord(
-            Builder,
-            ZpAdministrationKindBitLockerVolume,
-            ConversionStatus,
-            Flags,
-            Percentage,
-            V_BSTR(&DeviceId),
-            V_VT(&DriveLetter) == VT_BSTR && SysStringLen(V_BSTR(&DriveLetter)) != 0 ?
-                V_BSTR(&DriveLetter) : V_BSTR(&DeviceId),
-            V_VT(&PersistentId) == VT_BSTR ? V_BSTR(&PersistentId) : NULL,
-            NULL);
-        if (!NT_SUCCESS(Status)) Result = HRESULT_FROM_NT(Status);
+        Flags |= ZP_ADMINISTRATION_BITLOCKER_FLAG_INITIALIZED;
     }
-    VariantClear(&Initialized);
-    VariantClear(&ObjectPath);
-    VariantClear(&PersistentId);
-    VariantClear(&DriveLetter);
-    VariantClear(&DeviceId);
-    return Result;
+    if (FveIsBoundDataVolume(VolumeHandle, &AutoUnlockEnabled, &AutoUnlockGuid) == S_OK &&
+        AutoUnlockEnabled)
+    {
+        Flags |= ZP_ADMINISTRATION_BITLOCKER_FLAG_AUTO_UNLOCK;
+    }
+    if ((FveStatus.Flags & FVE_STATUS_FLAG_DATA_ONLY_ENCRYPTION) != 0)
+    {
+        Flags |= ZP_ADMINISTRATION_BITLOCKER_FLAG_DATA_ONLY;
+    }
+    if (FveStatus.ConvertedPercent <= 0)
+    {
+        Percentage = 0;
+    }
+    else if (FveStatus.ConvertedPercent >= 100)
+    {
+        Percentage = 100;
+    }
+    else
+    {
+        Percentage = (ULONG)FveStatus.ConvertedPercent;
+    }
+    ZpBitLocker_GetDriveLetter(VolumeName, DriveLetter);
+    Status = ZpAdministration_AddRecord(
+        Builder,
+        ZpAdministrationKindBitLockerVolume,
+        ZpBitLocker_GetConversionStatus(FveStatus.Flags),
+        Flags,
+        Percentage,
+        VolumeName,
+        DriveLetter[0] == UNICODE_NULL ? VolumeName : DriveLetter,
+        NULL,
+        NULL);
+    return NT_SUCCESS(Status) ? S_OK : HRESULT_FROM_NT(Status);
 }
 
 static
 HRESULT
-ZpBitLocker_QueryProtectorType(
-    _In_ IWbemServices* Services,
-    _In_ BSTR ObjectPath,
-    _In_ BSTR ProtectorId,
-    _Out_ PULONG Type)
+ZpBitLocker_AddProtector(
+    _In_ PCWSTR VolumeName,
+    _In_reads_(3) PCWSTR DriveLetter,
+    _In_ PCFVE_AUTH_INFORMATION Information,
+    _Inout_ PZP_ADMINISTRATION_BUILDER Builder)
 {
-    IWbemClassObject* Input = NULL;
-    IWbemClassObject* Output = NULL;
-    HRESULT Result;
+    UNICODE_STRING ProtectorId;
+    ULONGLONG CreationTime;
+    ULONG ProtectorFlags, ProtectorType;
+    NTSTATUS Status;
 
-    Result = ZpBitLocker_CreateMethodInput(Services, L"GetKeyProtectorType", &Input);
-    if (SUCCEEDED(Result))
+    ProtectorFlags = Information->AuthFlags & (FVE_AUTH_INFORMATION_FLAG_CLEAR_KEY |
+                                                FVE_AUTH_INFORMATION_PROTECTOR_MASK);
+    if (ProtectorFlags == 0)
     {
-        Result = ZpBitLocker_PutString(Input,
-                                       L"VolumeKeyProtectorID",
-                                       ProtectorId,
-                                       SysStringLen(ProtectorId));
+        return S_OK;
     }
-    if (SUCCEEDED(Result))
+    ProtectorType = ZpBitLocker_GetProtectorType(ProtectorFlags);
+    CreationTime = ((ULONGLONG)Information->CreationTime.dwHighDateTime << 32) |
+                   Information->CreationTime.dwLowDateTime;
+    Status = RtlStringFromGUID(&Information->Identifier, &ProtectorId);
+    if (!NT_SUCCESS(Status))
     {
-        Result = ZpBitLocker_ExecuteMethod(Services, ObjectPath, L"GetKeyProtectorType", Input, &Output);
+        return HRESULT_FROM_NT(Status);
     }
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_GetUInt32(Output, L"KeyProtectorType", Type);
-    if (Output != NULL) IWbemClassObject_Release(Output);
-    if (Input != NULL) IWbemClassObject_Release(Input);
-    return Result;
+    Status = ZpAdministration_AddRecord(
+        Builder,
+        ZpAdministrationKindBitLockerProtector,
+        ProtectorType,
+        0,
+        CreationTime,
+        ProtectorId.Buffer,
+        DriveLetter[0] == UNICODE_NULL ? VolumeName : DriveLetter,
+        Information->Description,
+        VolumeName);
+    RtlFreeUnicodeString(&ProtectorId);
+    return NT_SUCCESS(Status) ? S_OK : HRESULT_FROM_NT(Status);
 }
 
 static
 HRESULT
 ZpBitLocker_AddProtectors(
-    _In_ IWbemServices* Services,
-    _In_ IWbemClassObject* Object,
+    _In_ PCWSTR VolumeName,
+    _In_ HANDLE VolumeHandle,
     _Inout_ PZP_ADMINISTRATION_BUILDER Builder)
 {
-    IWbemClassObject* Input = NULL;
-    IWbemClassObject* Output = NULL;
-    VARIANT DeviceId, DriveLetter, ObjectPath, Protectors;
-    LONG Lower, Upper, Index;
-    HRESULT Result;
+    FVE_STATUS_V9 FveStatus;
+    PFVE_AUTH_INFORMATION Information;
+    PGUID ProtectorGuids;
+    GUID ClearKeyGuid;
+    WCHAR DriveLetter[3];
+    SIZE_T InformationSize;
+    UINT ProtectorCount, Index;
+    LOGICAL ClearKeyAdded = FALSE;
+    HRESULT Hr;
 
-    VariantInit(&DeviceId);
-    VariantInit(&DriveLetter);
-    VariantInit(&ObjectPath);
-    VariantInit(&Protectors);
-    Result = IWbemClassObject_Get(Object, L"DeviceID", 0, &DeviceId, NULL, NULL);
-    if (SUCCEEDED(Result)) Result = IWbemClassObject_Get(Object, L"DriveLetter", 0, &DriveLetter, NULL, NULL);
-    if (SUCCEEDED(Result)) Result = IWbemClassObject_Get(Object, L"__PATH", 0, &ObjectPath, NULL, NULL);
-    if (SUCCEEDED(Result) && (V_VT(&DeviceId) != VT_BSTR || V_VT(&ObjectPath) != VT_BSTR))
+    Hr = Sys_FveGetStatus(VolumeHandle, &FveStatus);
+    if (FAILED(Hr))
     {
-        Result = WBEM_E_TYPE_MISMATCH;
+        return Hr;
     }
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_CreateMethodInput(Services, L"GetKeyProtectors", &Input);
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_PutUInt32(Input, L"KeyProtectorType", 0);
-    if (SUCCEEDED(Result))
+    if ((FveStatus.Flags & FVE_STATUS_FLAG_INITIALIZED) == 0)
     {
-        Result = ZpBitLocker_ExecuteMethod(Services, V_BSTR(&ObjectPath), L"GetKeyProtectors", Input, &Output);
+        return S_OK;
     }
-    if (Result == FVE_E_NOT_ACTIVATED) Result = S_FALSE;
-    if (SUCCEEDED(Result) && Result != S_FALSE)
+    Hr = Sys_FveGetAuthMethodGuids(VolumeHandle, &ProtectorGuids, &ProtectorCount);
+    if (FAILED(Hr))
     {
-        Result = IWbemClassObject_Get(Output, L"VolumeKeyProtectorID", 0, &Protectors, NULL, NULL);
+        return Hr;
     }
-    if (SUCCEEDED(Result) && Result != S_FALSE && V_VT(&Protectors) != (VT_ARRAY | VT_BSTR))
+    ZpBitLocker_GetDriveLetter(VolumeName, DriveLetter);
+    if ((FveStatus.Flags & FVE_STATUS_FLAG_CLEAR_KEY) != 0)
     {
-        Result = WBEM_E_TYPE_MISMATCH;
-    }
-    if (SUCCEEDED(Result) && Result != S_FALSE)
-    {
-        Result = SafeArrayGetLBound(V_ARRAY(&Protectors), 1, &Lower);
-        if (SUCCEEDED(Result)) Result = SafeArrayGetUBound(V_ARRAY(&Protectors), 1, &Upper);
-        for (Index = Lower; SUCCEEDED(Result) && Index <= Upper; Index++)
+        Hr = Sys_FveGetAuthMethodInformation(VolumeHandle,
+                                             NULL,
+                                             FVE_AUTH_INFORMATION_FLAG_CLEAR_KEY |
+                                                 FVE_AUTH_INFORMATION_QUERY_UNKNOWN2,
+                                             &Information,
+                                             &InformationSize);
+        if (SUCCEEDED(Hr))
         {
-            BSTR ProtectorId = NULL;
-            ULONG Type = 0;
-            NTSTATUS Status;
-
-            Result = SafeArrayGetElement(V_ARRAY(&Protectors), &Index, &ProtectorId);
-            if (SUCCEEDED(Result))
-            {
-                Result = ZpBitLocker_QueryProtectorType(Services, V_BSTR(&ObjectPath), ProtectorId, &Type);
-            }
-            if (SUCCEEDED(Result))
-            {
-                Status = ZpAdministration_AddRecord(
-                    Builder,
-                    ZpAdministrationKindBitLockerProtector,
-                    Type,
-                    0,
-                    0,
-                    ProtectorId,
-                    V_VT(&DriveLetter) == VT_BSTR && SysStringLen(V_BSTR(&DriveLetter)) != 0 ?
-                        V_BSTR(&DriveLetter) : V_BSTR(&DeviceId),
-                    NULL,
-                    V_BSTR(&DeviceId));
-                if (!NT_SUCCESS(Status)) Result = HRESULT_FROM_NT(Status);
-            }
-            SysFreeString(ProtectorId);
+            Hr = ZpBitLocker_AddProtector(VolumeName, DriveLetter, Information, Builder);
+            ClearKeyGuid = Information->Identifier;
+            ClearKeyAdded = SUCCEEDED(Hr);
+            Sys_FveFreeAuthMethodInformation(Information, InformationSize);
         }
     }
-    VariantClear(&Protectors);
-    if (Output != NULL) IWbemClassObject_Release(Output);
-    if (Input != NULL) IWbemClassObject_Release(Input);
-    VariantClear(&ObjectPath);
-    VariantClear(&DriveLetter);
-    VariantClear(&DeviceId);
-    return Result == S_FALSE ? S_OK : Result;
+    if (FAILED(Hr))
+    {
+        Mem_Free(ProtectorGuids);
+        return Hr;
+    }
+    for (Index = 0; Index < ProtectorCount; Index++)
+    {
+        if (ClearKeyAdded && RtlEqualMemory(&ProtectorGuids[Index], &ClearKeyGuid, sizeof(GUID)))
+        {
+            continue;
+        }
+        Hr = Sys_FveGetAuthMethodInformation(VolumeHandle,
+                                             &ProtectorGuids[Index],
+                                             FVE_AUTH_INFORMATION_QUERY_UNKNOWN1,
+                                             &Information,
+                                             &InformationSize);
+        if (FAILED(Hr))
+        {
+            break;
+        }
+        Hr = ZpBitLocker_AddProtector(VolumeName, DriveLetter, Information, Builder);
+        Sys_FveFreeAuthMethodInformation(Information, InformationSize);
+        if (FAILED(Hr))
+        {
+            break;
+        }
+    }
+    Mem_Free(ProtectorGuids);
+    return Hr;
+}
+
+static
+HRESULT
+CALLBACK
+ZpBitLocker_EnumerateVolume(
+    _In_ PCWSTR VolumeName,
+    _In_ FVE_DEVICE_TYPE DeviceType,
+    _In_opt_ PVOID Context)
+{
+    PZP_BITLOCKER_ENUMERATION_CONTEXT Enumeration = Context;
+    HANDLE VolumeHandle;
+    HRESULT CloseHr, Hr;
+
+    UNREFERENCED_PARAMETER(DeviceType);
+    Hr = FveOpenVolumeW(VolumeName, FALSE, &VolumeHandle);
+    if (FAILED(Hr))
+    {
+        return Hr;
+    }
+    Hr = Enumeration->Protectors ?
+             ZpBitLocker_AddProtectors(VolumeName, VolumeHandle, Enumeration->Builder) :
+             ZpBitLocker_AddVolume(VolumeName, VolumeHandle, Enumeration->Builder);
+    CloseHr = FveCloseVolume(VolumeHandle);
+    return SUCCEEDED(Hr) && FAILED(CloseHr) ? CloseHr : Hr;
 }
 
 static
@@ -458,39 +405,15 @@ ZpBitLocker_Enumerate(
     _Out_ PULONG ResponseLength)
 {
     ZP_ADMINISTRATION_BUILDER Builder = { 0 };
-    IWbemServices* Services = NULL;
-    IEnumWbemClassObject* Enumerator = NULL;
-    IWbemClassObject* Object = NULL;
-    HRESULT Result, InitializeResult;
-    NTSTATUS Status = STATUS_SUCCESS;
-    ULONG Returned;
+    ZP_BITLOCKER_ENUMERATION_CONTEXT Context = { &Builder, Protectors };
+    NTSTATUS Status;
+    HRESULT Hr;
 
-    InitializeResult = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    Result = InitializeResult == RPC_E_CHANGED_MODE ? S_OK : InitializeResult;
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_Connect(&Services);
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_CreateEnumerator(Services, &Enumerator);
-    while (SUCCEEDED(Result))
-    {
-        Result = IEnumWbemClassObject_Next(Enumerator, WBEM_INFINITE, 1, &Object, &Returned);
-        if (Result == WBEM_S_FALSE || Returned == 0)
-        {
-            Result = S_OK;
-            break;
-        }
-        if (FAILED(Result)) break;
-        Result = Protectors ? ZpBitLocker_AddProtectors(Services, Object, &Builder) :
-                              ZpBitLocker_AddVolume(Services, Object, &Builder);
-        IWbemClassObject_Release(Object);
-        Object = NULL;
-    }
-    if (Object != NULL) IWbemClassObject_Release(Object);
-    if (Enumerator != NULL) IEnumWbemClassObject_Release(Enumerator);
-    if (Services != NULL) IWbemServices_Release(Services);
-    if (SUCCEEDED(InitializeResult)) CoUninitialize();
-    if (FAILED(Result))
+    Hr = Sys_FveEnumerateVolumes(ZpBitLocker_EnumerateVolume, &Context);
+    if (FAILED(Hr))
     {
         ZpAdministration_FreeBuilder(&Builder);
-        return ZpStatus_FromCode(ZpStatusHResult, Result);
+        return ZpStatus_FromCode(ZpStatusHResult, Hr);
     }
     Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
     ZpAdministration_FreeBuilder(&Builder);
@@ -517,160 +440,72 @@ ZpAdministration_EnumerateBitLockerProtectors(
 
 static
 HRESULT
-ZpBitLocker_FindObjectPath(
-    _In_ IWbemServices* Services,
-    _In_ PCZP_STRING_VIEW Identity,
-    _Out_ BSTR* ObjectPath)
-{
-    IEnumWbemClassObject* Enumerator = NULL;
-    IWbemClassObject* Object = NULL;
-    VARIANT DeviceId, Path;
-    HRESULT Result;
-    ULONG Returned;
-
-    Result = ZpBitLocker_CreateEnumerator(Services, &Enumerator);
-    while (SUCCEEDED(Result))
-    {
-        Result = IEnumWbemClassObject_Next(Enumerator, WBEM_INFINITE, 1, &Object, &Returned);
-        if (Result == WBEM_S_FALSE || Returned == 0)
-        {
-            Result = WBEM_E_NOT_FOUND;
-            break;
-        }
-        if (FAILED(Result)) break;
-        VariantInit(&DeviceId);
-        VariantInit(&Path);
-        Result = IWbemClassObject_Get(Object, L"DeviceID", 0, &DeviceId, NULL, NULL);
-        if (SUCCEEDED(Result) && V_VT(&DeviceId) == VT_BSTR &&
-            SysStringLen(V_BSTR(&DeviceId)) == Identity->Length &&
-            _wcsnicmp(V_BSTR(&DeviceId), (PCWCH)Identity->Buffer, Identity->Length) == 0)
-        {
-            Result = IWbemClassObject_Get(Object, L"__PATH", 0, &Path, NULL, NULL);
-            if (SUCCEEDED(Result) && V_VT(&Path) == VT_BSTR)
-            {
-                *ObjectPath = SysAllocString(V_BSTR(&Path));
-                if (*ObjectPath == NULL) Result = E_OUTOFMEMORY;
-            }
-            else if (SUCCEEDED(Result)) Result = WBEM_E_TYPE_MISMATCH;
-            VariantClear(&Path);
-            VariantClear(&DeviceId);
-            IWbemClassObject_Release(Object);
-            Object = NULL;
-            break;
-        }
-        if (SUCCEEDED(Result) && V_VT(&DeviceId) != VT_BSTR) Result = WBEM_E_TYPE_MISMATCH;
-        VariantClear(&Path);
-        VariantClear(&DeviceId);
-        IWbemClassObject_Release(Object);
-        Object = NULL;
-    }
-    if (Object != NULL) IWbemClassObject_Release(Object);
-    if (Enumerator != NULL) IEnumWbemClassObject_Release(Enumerator);
-    return Result;
-}
-
-static
-HRESULT
 ZpBitLocker_ParseUInt32(
     _In_ PCZP_STRING_VIEW View,
     _In_ ULONG Maximum,
     _Out_ PULONG Value)
 {
-    PWSTR Text, End;
-    ULONGLONG Parsed;
+    PCWCH Buffer = (PCWCH)View->Buffer;
+    ULONG Parsed = 0, Digit, Index;
 
-    if (View->Length == 0) return E_INVALIDARG;
-    Text = ZpAdministration_CopyView(View);
-    if (Text == NULL) return E_OUTOFMEMORY;
-    Parsed = wcstoull(Text, &End, 10);
-    if (End != Text + View->Length || Parsed > Maximum)
+    if (View->Length == 0)
     {
-        Mem_Free(Text);
         return E_INVALIDARG;
     }
-    *Value = (ULONG)Parsed;
-    Mem_Free(Text);
+    for (Index = 0; Index < View->Length; Index++)
+    {
+        if (Buffer[Index] < L'0' || Buffer[Index] > L'9')
+        {
+            return E_INVALIDARG;
+        }
+        Digit = Buffer[Index] - L'0';
+        if (Digit > Maximum || Parsed > (Maximum - Digit) / 10)
+        {
+            return E_INVALIDARG;
+        }
+        Parsed = Parsed * 10 + Digit;
+    }
+    *Value = Parsed;
     return S_OK;
 }
 
 static
 HRESULT
-ZpBitLocker_ControlVolumeMethod(
-    _In_ IWbemServices* Services,
-    _In_ BSTR ObjectPath,
-    _In_ PCZP_ADMINISTRATION_CONTROL_VIEW Control)
+ZpBitLocker_OpenVolume(
+    _In_ PCZP_STRING_VIEW Identity,
+    _In_ BOOL NeedWriteAccess,
+    _Out_ PHANDLE VolumeHandle)
 {
-    IWbemClassObject* Input = NULL;
-    PCWSTR Method = NULL;
-    HRESULT Result = S_OK;
+    PWSTR VolumeName;
+    HRESULT Hr;
 
-    switch (Control->Action)
+    if (!ZpBitLocker_IsValidText(Identity, 1, MAX_PATH))
     {
-        case ZpAdministrationActionEncrypt:
-        {
-            ULONG EncryptionMethod;
-
-            Result = ZpBitLocker_ParseUInt32(&Control->Argument, 7, &EncryptionMethod);
-            if (SUCCEEDED(Result) && EncryptionMethod != 3 && EncryptionMethod != 4 &&
-                EncryptionMethod != 6 && EncryptionMethod != 7)
-            {
-                Result = E_INVALIDARG;
-            }
-            if (SUCCEEDED(Result)) Result = ZpBitLocker_CreateMethodInput(Services, L"Encrypt", &Input);
-            if (SUCCEEDED(Result)) Result = ZpBitLocker_PutUInt32(Input, L"EncryptionMethod", EncryptionMethod);
-            if (SUCCEEDED(Result)) Result = ZpBitLocker_PutUInt32(Input, L"EncryptionFlags", 1);
-            Method = L"Encrypt";
-            break;
-        }
-        case ZpAdministrationActionDecrypt:
-            Method = L"Decrypt";
-            break;
-        case ZpAdministrationActionPause:
-            Method = L"PauseConversion";
-            break;
-        case ZpAdministrationActionResume:
-            Method = L"ResumeConversion";
-            break;
-        case ZpAdministrationActionEnable:
-            Method = L"EnableKeyProtectors";
-            break;
-        case ZpAdministrationActionDisable:
-            Method = L"DisableKeyProtectors";
-            if (Control->Argument.Length != 0)
-            {
-                ULONG DisableCount;
-
-                Result = ZpBitLocker_ParseUInt32(&Control->Argument, 15, &DisableCount);
-                if (SUCCEEDED(Result))
-                {
-                    Result = ZpBitLocker_CreateMethodInput(Services, Method, &Input);
-                }
-                if (SUCCEEDED(Result)) Result = ZpBitLocker_PutUInt32(Input, L"DisableCount", DisableCount);
-            }
-            break;
-        case ZpAdministrationActionLock:
-            Method = L"Lock";
-            Result = ZpBitLocker_CreateMethodInput(Services, Method, &Input);
-            if (SUCCEEDED(Result)) Result = ZpBitLocker_PutBoolean(Input, L"ForceDismount", FALSE);
-            break;
-        case ZpAdministrationActionUnlock:
-            Method = L"UnlockWithNumericalPassword";
-            if (Control->Secret.Length == 0 || Control->Secret.Length > 64) Result = E_INVALIDARG;
-            if (SUCCEEDED(Result)) Result = ZpBitLocker_CreateMethodInput(Services, Method, &Input);
-            if (SUCCEEDED(Result))
-            {
-                Result = ZpBitLocker_PutString(Input,
-                                               L"NumericalPassword",
-                                               (PCWCH)Control->Secret.Buffer,
-                                               Control->Secret.Length);
-            }
-            break;
-        default:
-            return E_INVALIDARG;
+        return E_INVALIDARG;
     }
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_ExecuteMethod(Services, ObjectPath, Method, Input, NULL);
-    if (Input != NULL) IWbemClassObject_Release(Input);
-    return Result;
+    VolumeName = ZpAdministration_CopyView(Identity);
+    if (VolumeName == NULL)
+    {
+        return E_OUTOFMEMORY;
+    }
+    Hr = FveOpenVolumeW(VolumeName, NeedWriteAccess, VolumeHandle);
+    Mem_Free(VolumeName);
+    return Hr;
+}
+
+static
+HRESULT
+ZpBitLocker_CopySecret(
+    _In_ PCZP_STRING_VIEW View,
+    _In_ ULONG MaximumLength,
+    _Outptr_ PWSTR* Secret)
+{
+    if (!ZpBitLocker_IsValidText(View, 1, MaximumLength))
+    {
+        return E_INVALIDARG;
+    }
+    *Secret = ZpAdministration_CopyView(View);
+    return *Secret == NULL ? E_OUTOFMEMORY : S_OK;
 }
 
 static
@@ -678,23 +513,102 @@ ZP_STATUS
 ZpAdministration_ControlBitLockerVolume(
     _In_ PCZP_ADMINISTRATION_CONTROL_VIEW Control)
 {
-    IWbemServices* Services = NULL;
-    BSTR ObjectPath = NULL;
-    HRESULT Result, InitializeResult;
+    HANDLE VolumeHandle;
+    HRESULT CloseHr, Hr;
 
-    if (Control->Identity.Length == 0 || Control->Identity.Length > MAX_PATH)
+    Hr = ZpBitLocker_OpenVolume(&Control->Identity, TRUE, &VolumeHandle);
+    if (FAILED(Hr))
     {
-        return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+        return ZpStatus_FromCode(ZpStatusHResult, Hr);
     }
-    InitializeResult = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    Result = InitializeResult == RPC_E_CHANGED_MODE ? S_OK : InitializeResult;
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_Connect(&Services);
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_FindObjectPath(Services, &Control->Identity, &ObjectPath);
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_ControlVolumeMethod(Services, ObjectPath, Control);
-    SysFreeString(ObjectPath);
-    if (Services != NULL) IWbemServices_Release(Services);
-    if (SUCCEEDED(InitializeResult)) CoUninitialize();
-    return ZpStatus_FromCode(ZpStatusHResult, Result);
+    switch (Control->Action)
+    {
+        case ZpAdministrationActionEncrypt:
+        {
+            ULONG EncryptionArgument, EncryptionMethod;
+
+            Hr = ZpBitLocker_ParseUInt32(
+                &Control->Argument,
+                ZP_ADMINISTRATION_BITLOCKER_ENCRYPT_ARGUMENT_METHOD_MASK |
+                    ZP_ADMINISTRATION_BITLOCKER_ENCRYPT_ARGUMENT_DATA_ONLY,
+                &EncryptionArgument);
+            if (SUCCEEDED(Hr))
+            {
+                EncryptionMethod = EncryptionArgument &
+                                   ZP_ADMINISTRATION_BITLOCKER_ENCRYPT_ARGUMENT_METHOD_MASK;
+                if ((EncryptionArgument &
+                     ~(ZP_ADMINISTRATION_BITLOCKER_ENCRYPT_ARGUMENT_METHOD_MASK |
+                       ZP_ADMINISTRATION_BITLOCKER_ENCRYPT_ARGUMENT_DATA_ONLY)) != 0 ||
+                    (EncryptionMethod != FveLegacyMethodAes128 &&
+                     EncryptionMethod != FveLegacyMethodAes256 &&
+                     EncryptionMethod != FveLegacyMethodXtsAes128 &&
+                     EncryptionMethod != FveLegacyMethodXtsAes256))
+                {
+                    Hr = E_INVALIDARG;
+                }
+            }
+            if (SUCCEEDED(Hr))
+            {
+                Hr = Sys_FveEncrypt(
+                    VolumeHandle,
+                    (FVE_LEGACY_METHOD)EncryptionMethod,
+                    (EncryptionArgument & ZP_ADMINISTRATION_BITLOCKER_ENCRYPT_ARGUMENT_DATA_ONLY) != 0);
+            }
+            break;
+        }
+        case ZpAdministrationActionDecrypt:
+            Hr = Sys_FveDecrypt(VolumeHandle);
+            break;
+        case ZpAdministrationActionPause:
+            Hr = FveConversionStop(VolumeHandle);
+            break;
+        case ZpAdministrationActionResume:
+            Hr = FveConversionResume(VolumeHandle);
+            break;
+        case ZpAdministrationActionEnable:
+            Hr = Sys_FveEnableProtectors(VolumeHandle);
+            break;
+        case ZpAdministrationActionDisable:
+        {
+            ULONG DisableCount = SYS_FVE_DISABLE_COUNT_DEFAULT;
+
+            if (Control->Argument.Length != 0)
+            {
+                Hr = ZpBitLocker_ParseUInt32(&Control->Argument, 15, &DisableCount);
+            }
+            if (SUCCEEDED(Hr))
+            {
+                Hr = Sys_FveDisableProtectors(VolumeHandle, DisableCount);
+            }
+            break;
+        }
+        case ZpAdministrationActionLock:
+            Hr = FveLockVolume(VolumeHandle, FALSE);
+            break;
+        case ZpAdministrationActionUnlock:
+        {
+            PWSTR RecoveryPassword;
+
+            Hr = ZpBitLocker_CopySecret(&Control->Secret, 64, &RecoveryPassword);
+            if (SUCCEEDED(Hr))
+            {
+                Hr = Sys_FveUnlockWithRecoveryPassword(VolumeHandle, RecoveryPassword);
+                RtlSecureZeroMemory(RecoveryPassword,
+                                    ((SIZE_T)Control->Secret.Length + 1) * sizeof(WCHAR));
+                Mem_Free(RecoveryPassword);
+            }
+            break;
+        }
+        default:
+            Hr = E_INVALIDARG;
+            break;
+    }
+    CloseHr = FveCloseVolume(VolumeHandle);
+    if (SUCCEEDED(Hr) && FAILED(CloseHr))
+    {
+        Hr = CloseHr;
+    }
+    return ZpStatus_FromCode(ZpStatusHResult, Hr);
 }
 
 static
@@ -702,64 +616,80 @@ ZP_STATUS
 ZpAdministration_ControlBitLockerProtector(
     _In_ PCZP_ADMINISTRATION_CONTROL_VIEW Control)
 {
-    IWbemServices* Services = NULL;
-    IWbemClassObject* Input = NULL;
-    BSTR ObjectPath = NULL;
-    PCWSTR Method = NULL;
-    HRESULT Result, InitializeResult;
+    HANDLE VolumeHandle;
+    HRESULT CloseHr, Hr;
 
-    if (Control->Identity.Length == 0 || Control->Identity.Length > MAX_PATH)
+    if (Control->Action != ZpAdministrationActionCreate &&
+        Control->Action != ZpAdministrationActionDelete)
     {
-        return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+        return ZpStatus_FromCode(ZpStatusHResult, E_INVALIDARG);
     }
-    InitializeResult = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    Result = InitializeResult == RPC_E_CHANGED_MODE ? S_OK : InitializeResult;
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_Connect(&Services);
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_FindObjectPath(Services, &Control->Identity, &ObjectPath);
-    if (SUCCEEDED(Result) && Control->Action == ZpAdministrationActionCreate)
+    Hr = ZpBitLocker_OpenVolume(&Control->Identity, TRUE, &VolumeHandle);
+    if (FAILED(Hr))
     {
-        Method = L"ProtectKeyWithNumericalPassword";
-        if (Control->Argument.Length > 256 || Control->Secret.Length == 0 || Control->Secret.Length > 64)
-        {
-            Result = E_INVALIDARG;
-        }
-        if (SUCCEEDED(Result)) Result = ZpBitLocker_CreateMethodInput(Services, Method, &Input);
-        if (SUCCEEDED(Result) && Control->Argument.Length != 0)
-        {
-            Result = ZpBitLocker_PutString(Input,
-                                           L"FriendlyName",
-                                           (PCWCH)Control->Argument.Buffer,
-                                           Control->Argument.Length);
-        }
-        if (SUCCEEDED(Result))
-        {
-            Result = ZpBitLocker_PutString(Input,
-                                           L"NumericalPassword",
-                                           (PCWCH)Control->Secret.Buffer,
-                                           Control->Secret.Length);
-        }
+        return ZpStatus_FromCode(ZpStatusHResult, Hr);
     }
-    else if (SUCCEEDED(Result) && Control->Action == ZpAdministrationActionDelete)
+    if (Control->Action == ZpAdministrationActionCreate)
     {
-        Method = L"DeleteKeyProtector";
-        if (Control->Argument.Length == 0 || Control->Argument.Length > 128) Result = E_INVALIDARG;
-        if (SUCCEEDED(Result)) Result = ZpBitLocker_CreateMethodInput(Services, Method, &Input);
-        if (SUCCEEDED(Result))
+        PWSTR RecoveryPassword = NULL, Description = NULL;
+        GUID ProtectorGuid;
+
+        if (!ZpBitLocker_IsValidText(&Control->Argument, 0, 256))
         {
-            Result = ZpBitLocker_PutString(Input,
-                                           L"VolumeKeyProtectorID",
-                                           (PCWCH)Control->Argument.Buffer,
-                                           Control->Argument.Length);
+            Hr = E_INVALIDARG;
+        }
+        else if (Control->Argument.Length != 0)
+        {
+            Description = ZpAdministration_CopyView(&Control->Argument);
+            if (Description == NULL)
+            {
+                Hr = E_OUTOFMEMORY;
+            }
+        }
+        if (SUCCEEDED(Hr))
+        {
+            Hr = ZpBitLocker_CopySecret(&Control->Secret, 64, &RecoveryPassword);
+        }
+        if (SUCCEEDED(Hr))
+        {
+            Hr = Sys_FveAddRecoveryPasswordProtector(VolumeHandle,
+                                                      RecoveryPassword,
+                                                      Description,
+                                                      &ProtectorGuid);
+        }
+        if (RecoveryPassword != NULL)
+        {
+            RtlSecureZeroMemory(RecoveryPassword,
+                                ((SIZE_T)Control->Secret.Length + 1) * sizeof(WCHAR));
+            Mem_Free(RecoveryPassword);
+        }
+        Mem_Free(Description);
+    }
+    else
+    {
+        UNICODE_STRING ProtectorId;
+        GUID ProtectorGuid;
+        NTSTATUS Status;
+
+        if (!ZpBitLocker_IsValidText(&Control->Argument, 1, 128))
+        {
+            Hr = E_INVALIDARG;
+        }
+        else
+        {
+            ProtectorId.Buffer = (PWSTR)Control->Argument.Buffer;
+            ProtectorId.Length = (USHORT)(Control->Argument.Length * sizeof(WCHAR));
+            ProtectorId.MaximumLength = ProtectorId.Length;
+            Status = RtlGUIDFromString(&ProtectorId, &ProtectorGuid);
+            Hr = NT_SUCCESS(Status) ?
+                     Sys_FveDeleteProtector(VolumeHandle, &ProtectorGuid) :
+                     HRESULT_FROM_NT(Status);
         }
     }
-    else if (SUCCEEDED(Result))
+    CloseHr = FveCloseVolume(VolumeHandle);
+    if (SUCCEEDED(Hr) && FAILED(CloseHr))
     {
-        Result = E_INVALIDARG;
+        Hr = CloseHr;
     }
-    if (SUCCEEDED(Result)) Result = ZpBitLocker_ExecuteMethod(Services, ObjectPath, Method, Input, NULL);
-    if (Input != NULL) IWbemClassObject_Release(Input);
-    SysFreeString(ObjectPath);
-    if (Services != NULL) IWbemServices_Release(Services);
-    if (SUCCEEDED(InitializeResult)) CoUninitialize();
-    return ZpStatus_FromCode(ZpStatusHResult, Result);
+    return ZpStatus_FromCode(ZpStatusHResult, Hr);
 }

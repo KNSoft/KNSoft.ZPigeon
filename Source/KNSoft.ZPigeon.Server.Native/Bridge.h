@@ -2036,6 +2036,23 @@ ZpNative_ControlAdministration(
 __declspec(dllexport)
 NTSTATUS
 NTAPI
+ZpNative_ControlAdministrationResult(
+    _In_ ULONGLONG ClientId,
+    _In_ BYTE ModuleId,
+    _In_ BYTE OperationId,
+    _In_ BYTE Action,
+    _In_reads_opt_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
+    _In_reads_opt_(ArgumentLength) PCWCH Argument,
+    _In_ ULONG ArgumentLength,
+    _In_reads_opt_(SecretLength) PCWCH Secret,
+    _In_ ULONG SecretLength,
+    _In_ ZP_NATIVE_ADMINISTRATION_DATA_CALLBACK Callback,
+    _In_opt_ PVOID Context);
+
+__declspec(dllexport)
+NTSTATUS
+NTAPI
 ZpNative_EnumerateBrowsers(
     _In_ ULONGLONG ClientId,
     _In_ ZP_NATIVE_BROWSER_CALLBACK Callback,

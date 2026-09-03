@@ -6,7 +6,12 @@ const paths = { volumes: "bitlocker/volumes", protectors: "bitlocker/protectors"
 const conversionKeys = ["decrypted", "encrypted", "encrypting", "decrypting", "encryptionPaused", "decryptionPaused"];
 const encryptionKeys = ["none", "aes128Diffuser", "aes256Diffuser", "aes128", "aes256", "hardware", "xts128", "xts256"];
 const protectorKeys = ["unknown", "tpm", "externalKey", "recoveryPassword", "tpmPin", "tpmStartupKey",
-  "tpmPinStartupKey", "publicKey", "passphrase", "tpmCertificate", "cng"];
+  "tpmPinStartupKey", "publicKey", "passphrase", "tpmCertificate", "cng", "clearKey"];
+
+const fileTime = (value) => {
+  const ticks = BigInt(value);
+  return ticks ? new Date(Number((ticks - 116444736000000000n) / 10000n)).toLocaleString() : "—";
+};
 
 const recoveryPassword = () => {
   const values = crypto.getRandomValues(new Uint32Array(8));
@@ -33,7 +38,8 @@ export class BitLockerManager {
         <div class="manager-table"><table><thead><tr>
           <th>${t("bitlocker.volume")}</th><th>${t("common.type")}</th><th>${t("bitlocker.conversion")}</th
           ><th>${t("bitlocker.progress")}</th><th>${t("bitlocker.protection")}</th
-          ><th>${t("bitlocker.lock")}</th><th>${t("bitlocker.method")}</th><th>${t("common.actions")}</th>
+          ><th>${t("bitlocker.lock")}</th><th>${t("bitlocker.method")}</th
+          ><th>${t("bitlocker.scope")}</th><th>${t("bitlocker.autoUnlock")}</th><th>${t("common.actions")}</th>
         </tr></thead><tbody></tbody></table><div class="manager-empty"></div></div>
       </section>
       <section data-panel="protectors" hidden>
@@ -41,7 +47,8 @@ export class BitLockerManager {
           ><button data-action="add">${t("bitlocker.addRecoveryPassword")}</button
           ><button data-action="refresh">${t("common.refresh")}</button></div>
         <div class="manager-table"><table><thead><tr>
-          <th>${t("bitlocker.volume")}</th><th>${t("common.type")}</th><th>ID</th><th>${t("common.actions")}</th>
+          <th>${t("bitlocker.volume")}</th><th>${t("common.type")}</th><th>${t("common.description")}</th
+          ><th>${t("bitlocker.created")}</th><th>ID</th><th>${t("common.actions")}</th>
         </tr></thead><tbody></tbody></table><div class="manager-empty"></div></div>
       </section>
       <dialog data-role="encrypt"><form>
@@ -49,6 +56,9 @@ export class BitLockerManager {
         <label>${t("bitlocker.method")}<select data-field="method">
           <option value="6">XTS-AES 128</option><option value="7">XTS-AES 256</option
           ><option value="3">AES 128</option><option value="4">AES 256</option>
+        </select></label><label>${t("bitlocker.scope")}<select data-field="scope">
+          <option value="256">${t("bitlocker.scope.used")}</option
+          ><option value="0">${t("bitlocker.scope.full")}</option>
         </select></label><p class="muted">${t("bitlocker.encryptHint")}</p>
         <div class="dialog-actions"><button type="button" data-action="cancel">${t("common.cancel")}</button
           ><button>${t("bitlocker.encrypt")}</button></div>
@@ -139,6 +149,7 @@ export class BitLockerManager {
       protection = (record.flags & 0xc) >> 2,
       lock = (record.flags & 0x30) >> 4,
       method = (record.flags & 0xf00) >> 8,
+      initialized = Boolean(record.flags & 0x1000),
       values = [
         record.name,
         t(`bitlocker.volumeType.${["system", "fixed", "removable"][volumeType] || "unknown"}`),
@@ -147,6 +158,8 @@ export class BitLockerManager {
         t(`bitlocker.protectionState.${["off", "on", "unknown"][protection] || "unknown"}`),
         t(`bitlocker.lockState.${["unlocked", "locked", "unknown"][lock] || "unknown"}`),
         t(`bitlocker.encryptionMethod.${encryptionKeys[method] || "unknown"}`),
+        initialized ? t(`bitlocker.scope.${record.flags & 0x4000 ? "used" : "full"}`) : "—",
+        volumeType ? t(record.flags & 0x2000 ? "common.enabled" : "common.disabled") : "—",
       ];
     for (const value of values) {
       const cell = row.insertCell();
@@ -184,16 +197,19 @@ export class BitLockerManager {
   protectorRow(record) {
     const row = document.createElement("tr");
     for (const value of [record.name, t(`bitlocker.protectorType.${protectorKeys[record.state] || "unknown"}`),
-      record.identity]) {
+      record.description, fileTime(record.value), record.identity]) {
       const cell = row.insertCell();
       cell.textContent = value;
       cell.title = value;
     }
-    const actionCell = row.insertCell(), button = document.createElement("button");
-    button.textContent = t("common.delete");
-    button.className = "danger";
-    button.onclick = () => this.deleteProtector(record);
-    actionCell.append(button);
+    const actionCell = row.insertCell();
+    if (record.state !== 11) {
+      const button = document.createElement("button");
+      button.textContent = t("common.delete");
+      button.className = "danger";
+      button.onclick = () => this.deleteProtector(record);
+      actionCell.append(button);
+    }
     return row;
   }
 
@@ -211,10 +227,11 @@ export class BitLockerManager {
 
   async encrypt(event) {
     event.preventDefault();
-    const method = this.encryptDialog.querySelector("[data-field=method]").value;
+    const method = Number(this.encryptDialog.querySelector("[data-field=method]").value),
+      scope = Number(this.encryptDialog.querySelector("[data-field=scope]").value);
     try {
       await this.call("/api/bitlocker/volumes/control", {
-        action: actions.encrypt, identity: this.encryptTarget.identity, argument: method,
+        action: actions.encrypt, identity: this.encryptTarget.identity, argument: String(method | scope),
       });
       this.encryptDialog.close();
       this.notify(t("bitlocker.encryptionStarted"));

@@ -1,6 +1,6 @@
 ﻿#include <KNSoft/MakeLifeEasier/System/Registry.h>
 
-#include <KNSoft/CBS/CBS.h>
+#include <KNSoft/MakeLifeEasier/System/CBS.h>
 
 #include "SoftwareDeployment.h"
 
@@ -183,28 +183,75 @@ typedef struct _ZP_FEATURE_ENUMERATION_CONTEXT
 } ZP_FEATURE_ENUMERATION_CONTEXT, *PZP_FEATURE_ENUMERATION_CONTEXT;
 
 static
-BOOL
+HRESULT
 CALLBACK
 ZpAdministration_EnumerateFeatureCallback(
-    _In_ PCKCBS_FEATURE Feature,
-    _In_ PVOID Context)
+    _In_ PCSYS_CBS_FEATURE Feature,
+    _In_opt_ PVOID Context)
 {
     PZP_FEATURE_ENUMERATION_CONTEXT Enumeration = Context;
-    ULONG State = Feature->CurrentState == KcbsInstallStateInstalled ||
-                  Feature->CurrentState == KcbsInstallStatePermanent ? 4 :
-                  Feature->CurrentState == KcbsInstallStateAbsent ? 2 : 0;
+    ZP_CODEC_WRITER Writer;
+    BYTE Data[ZP_WINDOWS_FEATURE_DATA_WIRE_SIZE];
+
+    ZpCodec_InitializeWriter(&Writer, Data, sizeof(Data));
+    Enumeration->Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Feature->State.Applicability);
+    if (NT_SUCCESS(Enumeration->Status))
+    {
+        Enumeration->Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Feature->State.Selectability);
+    }
+    if (NT_SUCCESS(Enumeration->Status))
+    {
+        Enumeration->Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Feature->State.Current);
+    }
+    if (NT_SUCCESS(Enumeration->Status))
+    {
+        Enumeration->Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Feature->State.Intended);
+    }
+    if (NT_SUCCESS(Enumeration->Status))
+    {
+        Enumeration->Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Feature->State.Requested);
+    }
+    if (!NT_SUCCESS(Enumeration->Status))
+    {
+        return HRESULT_FROM_NT(Enumeration->Status);
+    }
+
+    Enumeration->Status = ZpAdministration_AddRecordData(
+        Enumeration->Builder,
+        ZpAdministrationKindWindowsFeature,
+        (ULONG)Feature->State.Current,
+        0,
+        0,
+        Feature->Name,
+        Feature->DisplayName[0] != UNICODE_NULL ? Feature->DisplayName : Feature->Name,
+        Feature->Description,
+        NULL,
+        Data,
+        Writer.Offset);
+    return NT_SUCCESS(Enumeration->Status) ? S_OK : HRESULT_FROM_NT(Enumeration->Status);
+}
+
+static
+HRESULT
+CALLBACK
+ZpAdministration_EnumerateFeatureParentCallback(
+    _In_ PCSYS_CBS_FEATURE Feature,
+    _In_ PCWSTR ParentName,
+    _In_opt_ PCWSTR ParentSet,
+    _In_opt_ PVOID Context)
+{
+    PZP_FEATURE_ENUMERATION_CONTEXT Enumeration = Context;
 
     Enumeration->Status = ZpAdministration_AddRecord(Enumeration->Builder,
-                                                      ZpAdministrationKindWindowsFeature,
-                                                      State,
+                                                      ZpAdministrationKindWindowsFeatureParent,
+                                                      0,
                                                       0,
                                                       0,
                                                       Feature->Name,
-                                                      Feature->DisplayName[0] != UNICODE_NULL ?
-                                                          Feature->DisplayName : Feature->Name,
-                                                      Feature->Description,
-                                                      NULL);
-    return NT_SUCCESS(Enumeration->Status);
+                                                      ParentName,
+                                                      NULL,
+                                                      ParentSet);
+    return NT_SUCCESS(Enumeration->Status) ? S_OK : HRESULT_FROM_NT(Enumeration->Status);
 }
 
 static
@@ -215,17 +262,24 @@ ZpAdministration_EnumerateFeatures(
 {
     ZP_ADMINISTRATION_BUILDER Builder = { 0 };
     ZP_FEATURE_ENUMERATION_CONTEXT Enumeration = { &Builder, STATUS_SUCCESS };
-    HRESULT Result;
+    HRESULT Hr;
     NTSTATUS Status;
 
-    Result = KcbsEnumerateFeatures(L"KNSoft.ZPigeon", ZpAdministration_EnumerateFeatureCallback, &Enumeration);
-    if (FAILED(Result))
+    Hr = Sys_CbsEnumerateFeatures(L"KNSoft.ZPigeon",
+                                  ZpAdministration_EnumerateFeatureCallback,
+                                  ZpAdministration_EnumerateFeatureParentCallback,
+                                  &Enumeration);
+    if (!NT_SUCCESS(Enumeration.Status))
     {
         ZpAdministration_FreeBuilder(&Builder);
-        return ZpStatus_FromCode(ZpStatusHResult, Result);
+        return ZpStatus_FromNtStatus(Enumeration.Status);
     }
-    Status = Enumeration.Status;
-    if (NT_SUCCESS(Status)) Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
+    if (FAILED(Hr))
+    {
+        ZpAdministration_FreeBuilder(&Builder);
+        return ZpStatus_FromCode(ZpStatusHResult, Hr);
+    }
+    Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
     ZpAdministration_FreeBuilder(&Builder);
     return ZpStatus_FromNtStatus(Status);
 }
@@ -233,11 +287,16 @@ ZpAdministration_EnumerateFeatures(
 static
 ZP_STATUS
 ZpAdministration_ControlFeature(
-    _In_ PCZP_ADMINISTRATION_CONTROL_VIEW Control)
+    _In_ PCZP_ADMINISTRATION_CONTROL_VIEW Control,
+    _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
 {
-    KCBS_REQUIRED_ACTION RequiredAction;
+    CBS_REQUIRED_ACTION RequiredAction;
+    ZP_CODEC_WRITER Writer;
+    PBYTE Buffer;
     PWSTR Identity;
-    HRESULT Result;
+    HRESULT Hr;
+    NTSTATUS Status;
 
     if (Control->Action != ZpAdministrationActionEnable &&
         Control->Action != ZpAdministrationActionDisable)
@@ -246,13 +305,27 @@ ZpAdministration_ControlFeature(
     }
     Identity = ZpAdministration_CopyView(&Control->Identity);
     if (Identity == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
-    Result = KcbsSetFeatureState(L"KNSoft.ZPigeon",
-                                 Identity,
-                                 Control->Action == ZpAdministrationActionEnable,
-                                 TRUE,
-                                 &RequiredAction);
+    Hr = Sys_CbsSetFeatureEnabled(L"KNSoft.ZPigeon",
+                                  Identity,
+                                  Control->Action == ZpAdministrationActionEnable,
+                                  TRUE,
+                                  &RequiredAction);
     Mem_Free(Identity);
-    return ZpStatus_FromCode(ZpStatusHResult, Result);
+    if (FAILED(Hr)) return ZpStatus_FromCode(ZpStatusHResult, Hr);
+    Buffer = Mem_Alloc(ZP_WINDOWS_FEATURE_CONTROL_RESULT_WIRE_SIZE);
+    if (Buffer == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
+    ZpCodec_InitializeWriter(&Writer, Buffer, ZP_WINDOWS_FEATURE_CONTROL_RESULT_WIRE_SIZE);
+    Status = ZpCodec_WriteUInt32(&Writer, (ULONG)RequiredAction);
+    if (NT_SUCCESS(Status))
+    {
+        *Response = Buffer;
+        *ResponseLength = ZP_WINDOWS_FEATURE_CONTROL_RESULT_WIRE_SIZE;
+    }
+    else
+    {
+        Mem_Free(Buffer);
+    }
+    return ZpStatus_FromNtStatus(Status);
 }
 
 typedef struct _ZP_SOFTWARE_ENUMERATION_CONTEXT

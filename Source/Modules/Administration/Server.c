@@ -301,9 +301,9 @@ ZpServer_ControlAdministrationData(
     return Status;
 }
 
+static
 NTSTATUS
-NTAPI
-ZpServer_ControlAdministration(
+ZpAdministration_Control(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _In_ BYTE ModuleId,
     _In_ BYTE OperationId,
@@ -315,16 +315,15 @@ ZpServer_ControlAdministration(
     _In_reads_opt_(SecretLength) PCWCH Secret,
     _In_ ULONG SecretLength,
     _In_ ULONG TimeoutMilliseconds,
-    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_ ZP_REQUEST_COMPLETE_CALLBACK Complete,
+    _In_ ZP_ADMINISTRATION_CALLBACK Callback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request)
 {
-    ZP_ADMINISTRATION_CALLBACK AdministrationCallback;
     PBYTE Payload;
     ULONG PayloadLength;
     NTSTATUS Status;
 
-    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
     Status = ZpAdministration_EncodeControl(Action,
                                              Identity,
                                              IdentityLength,
@@ -352,19 +351,97 @@ ZpServer_ControlAdministration(
                                              &PayloadLength);
     if (NT_SUCCESS(Status))
     {
-        AdministrationCallback.Status = Callback;
         Status = ZpAdministration_Send(Connection,
                                        ModuleId,
                                        OperationId,
                                        TimeoutMilliseconds,
                                        Payload,
                                        PayloadLength,
-                                       ZpAdministration_StatusComplete,
-                                       AdministrationCallback,
+                                       Complete,
+                                       Callback,
                                        Context,
                                        Request);
     }
     RtlSecureZeroMemory(Payload, PayloadLength);
     Mem_Free(Payload);
     return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_ControlAdministration(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ BYTE ModuleId,
+    _In_ BYTE OperationId,
+    _In_ ZP_ADMINISTRATION_ACTION Action,
+    _In_reads_opt_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
+    _In_reads_opt_(ArgumentLength) PCWCH Argument,
+    _In_ ULONG ArgumentLength,
+    _In_reads_opt_(SecretLength) PCWCH Secret,
+    _In_ ULONG SecretLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_REQUEST_STATUS_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_ADMINISTRATION_CALLBACK AdministrationCallback;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    AdministrationCallback.Status = Callback;
+    return ZpAdministration_Control(
+        Connection,
+        ModuleId,
+        OperationId,
+        Action,
+        Identity,
+        IdentityLength,
+        Argument,
+        ArgumentLength,
+        Secret,
+        SecretLength,
+        TimeoutMilliseconds,
+        ZpAdministration_StatusComplete,
+        AdministrationCallback,
+        Context,
+        Request);
+}
+
+NTSTATUS
+NTAPI
+ZpServer_ControlAdministrationResult(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _In_ BYTE ModuleId,
+    _In_ BYTE OperationId,
+    _In_ ZP_ADMINISTRATION_ACTION Action,
+    _In_reads_opt_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
+    _In_reads_opt_(ArgumentLength) PCWCH Argument,
+    _In_ ULONG ArgumentLength,
+    _In_reads_opt_(SecretLength) PCWCH Secret,
+    _In_ ULONG SecretLength,
+    _In_ ULONG TimeoutMilliseconds,
+    _In_ ZP_ADMINISTRATION_DATA_CALLBACK Callback,
+    _In_opt_ PVOID Context,
+    _Out_ ZP_REQUEST_HANDLE* Request)
+{
+    ZP_ADMINISTRATION_CALLBACK AdministrationCallback;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    AdministrationCallback.Data = Callback;
+    return ZpAdministration_Control(Connection,
+                                    ModuleId,
+                                    OperationId,
+                                    Action,
+                                    Identity,
+                                    IdentityLength,
+                                    Argument,
+                                    ArgumentLength,
+                                    Secret,
+                                    SecretLength,
+                                    TimeoutMilliseconds,
+                                    ZpAdministration_DataComplete,
+                                    AdministrationCallback,
+                                    Context,
+                                    Request);
 }

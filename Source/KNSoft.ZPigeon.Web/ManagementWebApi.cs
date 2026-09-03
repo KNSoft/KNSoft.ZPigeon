@@ -932,8 +932,19 @@ internal static partial class ManagementWebApi
                           AdministrationOperation.ControlFirewall);
         MapAdministration(app, server, "power", AdministrationOperation.EnumeratePower,
                           AdministrationOperation.ControlPower);
-        MapAdministration(app, server, "features", AdministrationOperation.EnumerateFeatures,
-                          AdministrationOperation.ControlFeature);
+        app.MapPost("/api/features", () =>
+            server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateFeatures));
+        app.MapPost("/api/features/control", async (AdministrationControlRequest request) =>
+        {
+            if (request.Action is not (AdministrationAction.Enable or AdministrationAction.Disable) ||
+                string.IsNullOrWhiteSpace(request.Identity) || request.Identity.Length > 256 ||
+                request.Identity.Contains('\0'))
+            {
+                return Results.BadRequest();
+            }
+            var requiredAction = await server.ControlWindowsFeatureAsync(request.Action, request.Identity);
+            return Results.Ok(new { RequiredAction = requiredAction });
+        });
         MapAdministration(app, server, "system-details", AdministrationOperation.EnumerateSystem,
                           AdministrationOperation.ControlSystem);
         MapAdministration(app, server, "wsl", AdministrationOperation.EnumerateWslDistributions,

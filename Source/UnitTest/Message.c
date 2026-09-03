@@ -221,7 +221,9 @@ TEST_FUNC(ProtocolMessage)
     BYTE AdministrationData[] = { 1, 2, 3 };
     ZP_ADMINISTRATION_RECORD AdministrationRecords[] = {
         { ZpAdministrationKindSecurityDescriptor, 1, 2, 3, L"ID", 2, L"Device", 6, NULL, 0, L"Class", 5,
-          AdministrationData, sizeof(AdministrationData) }
+          AdministrationData, sizeof(AdministrationData) },
+        { ZpAdministrationKindWindowsFeatureParent, 0, 0, 0, L"Child", 5, L"Parent", 6, NULL, 0, NULL, 0,
+          NULL, 0 }
     };
     ZP_ADMINISTRATION_LIST_VIEW AdministrationList;
     ZP_ADMINISTRATION_RECORD_VIEW AdministrationRecord;
@@ -1248,6 +1250,12 @@ TEST_FUNC(ProtocolMessage)
             RtlEqualMemory(AdministrationRecord.Data.Buffer,
                            AdministrationData,
                            sizeof(AdministrationData)));
+    TEST_OK(NT_SUCCESS(ZpAdministration_GetNextRecord(&AdministrationList,
+                                                       &AdministrationOffset,
+                                                       &AdministrationRecord)) &&
+            AdministrationRecord.Kind == ZpAdministrationKindWindowsFeatureParent &&
+            AdministrationRecord.Identity.Length == 5 &&
+            AdministrationRecord.Name.Length == 6);
     TEST_OK(NT_SUCCESS(ZpAdministration_EncodeControl(
                            ZpAdministrationActionSetPassword,
                            L"User",

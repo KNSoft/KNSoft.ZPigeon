@@ -691,49 +691,97 @@ export class SoftwareManager extends AdministrationManager {
   }
   renderFeatures() {
     const records = this.datasets.get(4) || [],
-      byId = new Map(records.map((record) => [record.identity, record])),
-      children = new Map();
-    for (const record of records) {
-      const parent = byId.has(record.detail) ? record.detail : "";
-      if (!children.has(parent)) children.set(parent, []);
-      children.get(parent).push(record);
+      nodes = records.filter((record) => record.kind === 4),
+      byId = new Map(nodes.map((record) => [record.identity, record])),
+      children = new Map(),
+      parents = new Map();
+    for (const relation of records.filter((record) => record.kind === 76)) {
+      if (!byId.has(relation.identity) || !byId.has(relation.name)) continue;
+      if (!children.has(relation.name)) children.set(relation.name, new Map());
+      children.get(relation.name).set(relation.identity, byId.get(relation.identity));
+      if (!parents.has(relation.identity)) parents.set(relation.identity, new Set());
+      parents.get(relation.identity).add(relation.name);
     }
-    for (const values of children.values()) values.sort((a, b) => a.name.localeCompare(b.name));
+    for (const [identity, values] of children)
+      children.set(identity, [...values.values()].sort((a, b) => a.name.localeCompare(b.name)));
+    nodes.sort((a, b) => a.name.localeCompare(b.name));
+    const roots = nodes.filter((record) => !parents.has(record.identity)),
+      reachable = new Set(),
+      markReachable = (record) => {
+        const pending = [record];
+        while (pending.length) {
+          const item = pending.pop();
+          if (reachable.has(item.identity)) continue;
+          reachable.add(item.identity);
+          pending.push(...(children.get(item.identity) || []));
+        }
+      };
+    roots.forEach(markReachable);
+    for (const record of nodes)
+      if (!reachable.has(record.identity)) {
+        roots.push(record);
+        markReachable(record);
+      }
     const query = this.filter.value.toLocaleLowerCase(),
       matches = (record) =>
-        !query ||
-        `${record.name} ${record.identity} ${record.description}`.toLocaleLowerCase().includes(query) ||
-        (children.get(record.identity) || []).some(matches),
-      roots = (children.get("") || []).filter(matches);
-    this.featureTree.replaceChildren(...roots.map((record) => this.featureNode(record, children, matches)));
-    this.featureEmpty.hidden = roots.length !== 0;
+        !query || (() => {
+          const pending = [record],
+            visited = new Set();
+          while (pending.length) {
+            const item = pending.pop();
+            if (visited.has(item.identity)) continue;
+            visited.add(item.identity);
+            if (`${item.name} ${item.identity} ${item.description}`.toLocaleLowerCase().includes(query)) return true;
+            pending.push(...(children.get(item.identity) || []));
+          }
+          return false;
+        })(),
+      visibleRoots = roots.filter(matches);
+    this.featureTree.replaceChildren(
+      ...visibleRoots.map((record) => this.featureNode(record, children, matches, new Set())),
+    );
+    this.featureEmpty.hidden = visibleRoots.length !== 0;
     this.featureEmpty.textContent =
       this.featureError ||
-      t(records.length ? "software.noMatchingFeatures" : "software.noFeatures");
+      t(nodes.length ? "software.noMatchingFeatures" : "software.noFeatures");
   }
-  featureNode(record, children, matches) {
+  featureNode(record, children, matches, ancestors) {
     const item = document.createElement("li"),
       row = document.createElement("div"),
       arrow = document.createElement("button"),
       input = document.createElement("input"),
       label = document.createElement("button"),
       list = document.createElement("ul"),
-      values = (children.get(record.identity) || []).filter(matches),
-      pending = record.state === 1 || record.state === 5;
+      data = record.data,
+      path = new Set(ancestors).add(record.identity),
+      values = (children.get(record.identity) || []).filter(
+        (child) => !path.has(child.identity) && matches(child),
+      ),
+      state = data.currentState,
+      pending = [1, 3, 5, 6].includes(state),
+      mutable = [-19, 0, 2, 4, 7].includes(state);
     row.className = "administration-node-row";
     arrow.className = "administration-arrow";
     arrow.textContent = values.length ? "▸" : "";
     arrow.disabled = !values.length;
     arrow.tabIndex = -1;
     input.type = "checkbox";
-    input.checked = record.state === 4 || record.state === 5;
-    input.indeterminate = record.state === 7;
-    input.disabled = pending;
+    input.checked = state === 6 || state === 7 || state === 8;
+    input.indeterminate = state === -19;
+    input.disabled = !mutable;
     label.className = "administration-node-label";
     label.textContent = record.name || record.identity;
-    if (pending)
-      label.textContent += t(record.state === 5 ? "software.enablingRestart" : "software.disablingRestart");
-    label.title = `${record.identity}${record.description ? `\n${record.description}` : ""}`;
+    if (pending) label.textContent += t("software.featurePending");
+    const states = t("software.featureStates", {
+        current: this.featureStateName(data.currentState),
+        intended: this.featureStateName(data.intendedState),
+        requested: this.featureStateName(data.requestedState),
+      }),
+      capabilities = t("software.featureCapabilities", {
+        applicability: this.featureApplicabilityName(data.applicability),
+        selectability: this.featureSelectabilityName(data.selectability),
+      });
+    label.title = [record.identity, record.description, states, capabilities].filter(Boolean).join("\n");
     list.hidden = true;
     row.append(arrow, input, label);
     item.append(row, list);
@@ -742,19 +790,45 @@ export class SoftwareManager extends AdministrationManager {
       list.hidden = !list.hidden;
       arrow.textContent = list.hidden ? "▸" : "▾";
       if (!list.hidden && !list.childElementCount)
-        list.append(...values.map((child) => this.featureNode(child, children, matches)));
+        list.append(...values.map((child) => this.featureNode(child, children, matches, path)));
     };
     arrow.onclick = label.onclick = toggle;
     input.onchange = () => this.setFeature(record, input.checked, input);
     return item;
+  }
+  featureStateName(state) {
+    const key = {
+      [-19]: "partiallyInstalled",
+      0: "absent",
+      1: "resolving",
+      2: "resolved",
+      3: "staging",
+      4: "staged",
+      5: "uninstallRequested",
+      6: "installRequested",
+      7: "installed",
+      8: "permanent",
+    }[state];
+    return key ? t(`software.featureState.${key}`) : t("software.featureState.unknown", { state });
+  }
+  featureApplicabilityName(value) {
+    const key = { [-1]: "invalid", 0: "all", 1: "notApplicable", 2: "needsParent", 4: "applicable" }[value];
+    return key ? t(`software.featureApplicability.${key}`) : String(value);
+  }
+  featureSelectabilityName(value) {
+    const key = { [-1]: "invalid", 0: "all", 1: "child", 2: "root" }[value];
+    return key ? t(`software.featureSelectability.${key}`) : String(value);
   }
   async setFeature(record, enabled, input) {
     input.disabled = true;
     this.featureEmpty.hidden = false;
     this.featureEmpty.textContent = t(enabled ? "software.enablingFeature" : "software.disablingFeature");
     try {
-      await this.call("/api/features/control", { action: enabled ? 3 : 4, identity: record.identity });
-      this.notify(t("software.featureUpdated"));
+      const result = await this.call("/api/features/control", {
+        action: enabled ? 3 : 4,
+        identity: record.identity,
+      });
+      this.notify(t(result.requiredAction === 1 ? "software.featureUpdatedRestart" : "software.featureUpdated"));
     } catch (error) {
       this.notify(error);
     } finally {

@@ -514,7 +514,7 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 URL 下载是 Client 本机后台作业，不把文件内容经 Server 或 Web 中转。BITS 引擎用于弱网下的自动重试和断点续传，WinHTTP 引擎用于立即直连；两者都只接受 HTTP/HTTPS，先写目标目录内的唯一临时文件，成功后再以同卷原子移动提交到指定文件名。协议只传递 URL、目标路径、引擎、覆盖标志和作业状态元数据，未知总长度以协议哨兵值表达，不把 64 位字节数降为不精确的 JSON 数字。
 
 文件类型注册表由后缀映射到显示图标、I18N 类型名和右键菜单项；复合后缀按最长匹配，未知类型不猜测。文本按 64 KiB 分页读取，结构化查看设定 8 MiB 上限。原图、PDF、音视频使用支持 HTTP Range 的原始字节流；图片低、中、高档在 Client 端通过系统 WIC 缩放并编码为有界 JPEG，避免先传原图再在浏览器缩小。归档目录直接调用系统 `archiveint.dll` 导出的 libarchive 公共 ABI，不解析 `tar.exe` 的本地化文本输出，也不携带第三方运行时。
-- `Terminal`（ModuleId 5）：系统 ConPTY 会话、输入输出、Resize、批处理、PowerShell、WSH VBScript/JScript/WSF、HTA 脚本和退出状态；原生 `.js` 由 WSH JScript 执行，不依赖或回退到 NodeJS。
+- `Terminal`（ModuleId 5）：系统 ConPTY 会话、输入输出、Resize、批处理、PowerShell、WSH VBScript/JScript/WSF、HTA 脚本和退出状态；原生 `.js` 由 WSH JScript 执行，不依赖或回退到 NodeJS。ConPTY 通过 MLE `IO_CreatePipe` 使用两组 128 KiB 异步无名 NPFS 单向管道，不轮询管道状态。
 - `EventLog`（ModuleId 6）：频道枚举、事件分页、Bookmark、属性、启停和清除。
 - `Registry`（ModuleId 7）：键和值的枚举、读写、重命名、ACL 和范围读写。
 - `Window`（ModuleId 8）：窗口树、属性、控制、静态捕获和视频流。
@@ -529,7 +529,7 @@ URL 下载是 Client 本机后台作业，不把文件内容经 Server 或 Web �
 - `Serial`（ModuleId 17）：串口枚举、配置和双向流式数据。
 - `Recording`（ModuleId 18）：窗口、摄像头和音频录制任务。
 - `PortableDevice`（ModuleId 19）：MTP 设备和对象的浏览、传输与管理。
-- `Software`（ModuleId 20）：传统程序、Windows App、可选功能及当前账户输入法管理；动态探测 WinGet、Python/pip、NodeJS/npm、Chocolatey 和 .NET Global Tools，枚举其全局程序包，并统一承载安装包下发及后台部署作业。NodeJS/npm 仅表示已安装的第三方运行时和程序包管理器，不参与 WSH JScript 执行。WinGet 使用 `Microsoft.Management.Deployment`，其余包管理器直接启动已定位的真实可执行文件，不经过 Shell。Python 定位显式排除 WindowsApps 执行别名，并按 PEP 514 查询真实解释器注册信息。
+- `Software`（ModuleId 20）：传统程序、Windows App、可选功能及当前账户输入法管理；可选功能直接通过 CBS 枚举完整父子关系和当前、预期、请求状态，启停时解析依赖并返回重启要求。动态探测 WinGet、Python/pip、NodeJS/npm、Chocolatey 和 .NET Global Tools，枚举其全局程序包，并统一承载安装包下发及后台部署作业。NodeJS/npm 仅表示已安装的第三方运行时和程序包管理器，不参与 WSH JScript 执行。WinGet 使用 `Microsoft.Management.Deployment`，其余包管理器直接启动已定位的真实可执行文件，不经过 Shell。Python 定位显式排除 WindowsApps 执行别名，并按 PEP 514 查询真实解释器注册信息。
 - `Hardware`（ModuleId 21）：原生硬件和设备信息与控制。
 - `Update`（ModuleId 22）：Windows Update 状态、历史和检查操作。
 - `Task`（ModuleId 23）：任务计划枚举、控制以及任务 XML 的读取和更新。
@@ -555,7 +555,7 @@ URL 下载是 Client 本机后台作业，不把文件内容经 Server 或 Web �
 - `ProxyVpn`（ModuleId 43）：WinINET、WinHTTP 代理和 RAS VPN 配置管理。
 - `ClientStatus`（ModuleId 44）：Client 进程、启动、会话、安全、资源与环境状态。
 - `ShadowCopy`（ModuleId 45）：系统保护、还原点和卷影副本管理。
-- `BitLocker`（ModuleId 46）：BitLocker 卷和密钥保护器管理。
+- `BitLocker`（ModuleId 46）：直接通过 FVE API 枚举卷、转换状态、保护状态、锁定状态、加密方法、范围、自动解锁状态和密钥保护器；支持全卷或仅已用空间加密、解密、转换暂停与恢复、保护暂停与恢复、数据卷锁定与恢复密码解锁，以及恢复密码保护器的创建和删除。
 
 ModuleId 9、20–46 共用 `Administration` 的固定记录 Codec 和执行框架，但在线上仍是独立协商、独立版本的模块；目录复用不改变协议模块数量。
 

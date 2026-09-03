@@ -158,14 +158,64 @@ ZpNative_ControlAdministration(
                                        ArgumentLength,
                                        Secret,
                                        SecretLength,
-                                       (ModuleId == ZP_UPDATE_MODULE_ID ||
-                                        (ModuleId == ZP_SOFTWARE_MODULE_ID &&
-                                         OperationId == ZP_ADMINISTRATION_OPERATION_CONTROL_FEATURE)) ?
+                                       ModuleId == ZP_UPDATE_MODULE_ID ?
                                            ZP_NATIVE_LONG_OPERATION_TIMEOUT_MILLISECONDS :
                                            ZP_NATIVE_TIMEOUT_MILLISECONDS,
                                        ZpNative_StatusCallback,
                                         CallbackContext,
                                         &Request));
+}
+
+NTSTATUS
+NTAPI
+ZpNative_ControlAdministrationResult(
+    _In_ ULONGLONG ClientId,
+    _In_ BYTE ModuleId,
+    _In_ BYTE OperationId,
+    _In_ BYTE Action,
+    _In_reads_opt_(IdentityLength) PCWCH Identity,
+    _In_ ULONG IdentityLength,
+    _In_reads_opt_(ArgumentLength) PCWCH Argument,
+    _In_ ULONG ArgumentLength,
+    _In_reads_opt_(SecretLength) PCWCH Secret,
+    _In_ ULONG SecretLength,
+    _In_ ZP_NATIVE_ADMINISTRATION_DATA_CALLBACK Callback,
+    _In_opt_ PVOID Context)
+{
+    ZP_CONNECTION_HANDLE Connection;
+    PZP_NATIVE_CALLBACK_CONTEXT CallbackContext;
+    ZP_REQUEST_HANDLE Request;
+
+    if (Callback == NULL) return STATUS_INVALID_PARAMETER;
+    Connection = ZpNative_GetConnection(ClientId);
+    if (Connection == NULL) return STATUS_DEVICE_NOT_CONNECTED;
+    CallbackContext = ZpNative_CreateCallbackContext(Connection, Context);
+    if (CallbackContext == NULL)
+    {
+        ZpConnection_Release(Connection);
+        return STATUS_NO_MEMORY;
+    }
+    CallbackContext->Callback.AdministrationData = Callback;
+    return ZpNative_SendStatusRequest(
+        CallbackContext,
+        ZpServer_ControlAdministrationResult(
+            Connection,
+            ModuleId,
+            OperationId,
+            Action,
+            Identity,
+            IdentityLength,
+            Argument,
+            ArgumentLength,
+            Secret,
+            SecretLength,
+            ModuleId == ZP_SOFTWARE_MODULE_ID &&
+                    OperationId == ZP_ADMINISTRATION_OPERATION_CONTROL_FEATURE ?
+                ZP_NATIVE_LONG_OPERATION_TIMEOUT_MILLISECONDS :
+                ZP_NATIVE_TIMEOUT_MILLISECONDS,
+            ZpNative_AdministrationDataCallback,
+            CallbackContext,
+            &Request));
 }
 
 NTSTATUS

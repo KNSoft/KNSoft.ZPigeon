@@ -167,7 +167,7 @@ public sealed partial class ZPigeonApplication
             .ConfigureAwait(false), limit);
     }
 
-    public Task ControlAdministrationAsync(
+    public async Task<AdministrationControlResult> ControlAdministrationAsync(
         ulong clientId,
         AdministrationOperation operation,
         AdministrationAction action,
@@ -182,13 +182,22 @@ public sealed partial class ZPigeonApplication
         ValidateOptionalText(identity, 32767, nameof(identity));
         ValidateOptionalText(argument, 32767, nameof(argument));
         ValidateOptionalText(secret, 32767, nameof(secret));
-        return RunAsync(clientId,
-                        () => server.ControlAdministrationAsync(operation,
-                                                                 action,
-                                                                 identity,
-                                                                 argument,
-                                                                 secret),
-                        cancellationToken);
+        if (operation == AdministrationOperation.ControlFeature)
+        {
+            ValidateRequiredText(identity!, 32767, nameof(identity));
+            var requiredAction = await RunAsync(clientId,
+                                                () => server.ControlWindowsFeatureAsync(action, identity!),
+                                                cancellationToken).ConfigureAwait(false);
+            return new(requiredAction);
+        }
+        await RunAsync(clientId,
+                       () => server.ControlAdministrationAsync(operation,
+                                                                action,
+                                                                identity,
+                                                                argument,
+                                                                secret),
+                       cancellationToken).ConfigureAwait(false);
+        return new(null);
     }
 
     public static AdministrationCapabilities GetAdministrationCapabilities() =>
@@ -218,3 +227,5 @@ public sealed record AdministrationCapabilities(
     AdministrationControlCapability[] Controls);
 
 public sealed record AdministrationControlCapability(string Operation, string[] Actions);
+
+public sealed record AdministrationControlResult(WindowsFeatureRequiredAction? RequiredAction);

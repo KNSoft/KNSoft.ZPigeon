@@ -46,8 +46,8 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
-    <Import Project="..\packages\KNSoft.NDK.1.2.67-beta\build\KNSoft.NDK.targets" />
-    <Import Project="..\packages\KNSoft.MakeLifeEasier.1.0.8-beta\build\KNSoft.MakeLifeEasier.targets" />
+    <Import Project="..\packages\KNSoft.NDK.1.2.69-beta\build\KNSoft.NDK.targets" />
+    <Import Project="..\packages\KNSoft.MakeLifeEasier.1.0.10-beta\build\KNSoft.MakeLifeEasier.targets" />
     <Import Project="..\packages\KNSoft.Quic.1.0.2-beta\build\KNSoft.Quic.targets" />
   </ImportGroup>
   <Target Name="CopyWinGetBridge"

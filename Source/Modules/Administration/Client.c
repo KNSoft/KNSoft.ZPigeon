@@ -248,6 +248,7 @@ typedef const VOID* PCVOID;
 typedef ZP_STATUS (*ZP_ENUMERATE_ROUTINE)(PBYTE*, PULONG);
 typedef ZP_STATUS (*ZP_QUERY_ROUTINE)(PCZP_STRING_VIEW, PBYTE*, PULONG);
 typedef ZP_STATUS (*ZP_CONTROL_ROUTINE)(PCZP_ADMINISTRATION_CONTROL_VIEW);
+typedef ZP_STATUS (*ZP_CONTROL_RESULT_ROUTINE)(PCZP_ADMINISTRATION_CONTROL_VIEW, PBYTE*, PULONG);
 typedef ZP_STATUS (*ZP_DATA_CONTROL_ROUTINE)(PCZP_ADMINISTRATION_DATA_CONTROL_VIEW);
 
 typedef struct _ZP_ENUMERATE_OPERATION
@@ -270,6 +271,13 @@ typedef struct _ZP_CONTROL_OPERATION
     BYTE OperationId;
     ZP_CONTROL_ROUTINE Routine;
 } ZP_CONTROL_OPERATION;
+
+typedef struct _ZP_CONTROL_RESULT_OPERATION
+{
+    BYTE ModuleId;
+    BYTE OperationId;
+    ZP_CONTROL_RESULT_ROUTINE Routine;
+} ZP_CONTROL_RESULT_OPERATION;
 
 typedef struct _ZP_DATA_CONTROL_OPERATION
 {
@@ -423,7 +431,6 @@ static const ZP_CONTROL_OPERATION ZpControlOperations[] = {
     { ZP_USER_MODULE_ID,
       ZP_ADMINISTRATION_OPERATION_CONTROL_USER_PROFILE,
       ZpAdministration_ControlUserProfile },
-    { ZP_SOFTWARE_MODULE_ID, ZP_ADMINISTRATION_OPERATION_CONTROL_FEATURE, ZpAdministration_ControlFeature },
     { ZP_SOFTWARE_MODULE_ID,
       ZP_ADMINISTRATION_OPERATION_CONTROL_INPUT_METHOD,
       ZpAdministration_ControlInputMethod },
@@ -491,6 +498,10 @@ static const ZP_CONTROL_OPERATION ZpControlOperations[] = {
       ZpAdministration_ControlBitLockerProtector },
 };
 
+static const ZP_CONTROL_RESULT_OPERATION ZpControlResultOperations[] = {
+    { ZP_SOFTWARE_MODULE_ID, ZP_ADMINISTRATION_OPERATION_CONTROL_FEATURE, ZpAdministration_ControlFeature },
+};
+
 static const ZP_DATA_CONTROL_OPERATION ZpDataControlOperations[] = {
     { ZP_SOFTWARE_MODULE_ID, ZP_ADMINISTRATION_OPERATION_CONTROL_SOFTWARE, ZpAdministration_ControlSoftware },
     { ZP_CERTIFICATE_MODULE_ID,
@@ -553,6 +564,19 @@ ZpAdministration_Execute(
             Status = ZpAdministration_DecodeDataControl(Request, RequestLength, &DataControl);
             return NT_SUCCESS(Status) ?
                        Operation->Routine(&DataControl) :
+                       ZpStatus_FromNtStatus(Status);
+        }
+    }
+
+    for (Index = 0; Index < ARRAYSIZE(ZpControlResultOperations); Index++)
+    {
+        const ZP_CONTROL_RESULT_OPERATION* Operation = &ZpControlResultOperations[Index];
+
+        if (Operation->ModuleId == ModuleId && Operation->OperationId == OperationId)
+        {
+            Status = ZpAdministration_DecodeControl(Request, RequestLength, &Control);
+            return NT_SUCCESS(Status) ?
+                       Operation->Routine(&Control, Response, ResponseLength) :
                        ZpStatus_FromNtStatus(Status);
         }
     }
