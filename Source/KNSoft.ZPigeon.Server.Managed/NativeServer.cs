@@ -637,7 +637,7 @@ public sealed record EventLogChannelInfo(
     string LastWriteTime,
     string LogFilePath);
 
-public enum ZpStatusType : ushort
+public enum ZpStatusType : byte
 {
     None,
     NtStatus,

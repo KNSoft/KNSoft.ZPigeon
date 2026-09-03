@@ -70,9 +70,9 @@ public sealed partial class NativeServer
             0,
             BinaryDataCallback,
             context)).ConfigureAwait(false);
-        if (data.Length != sizeof(uint))
+        if (data.Length != sizeof(byte))
             throw new InvalidDataException("The client returned an invalid Windows feature result.");
-        var requiredAction = (WindowsFeatureRequiredAction)BinaryPrimitives.ReadUInt32LittleEndian(data);
+        var requiredAction = (WindowsFeatureRequiredAction)data[0];
         if (requiredAction is not (WindowsFeatureRequiredAction.None or WindowsFeatureRequiredAction.Reboot))
             throw new InvalidDataException("The client returned an invalid Windows feature action.");
         return requiredAction;
@@ -246,17 +246,17 @@ public sealed partial class NativeServer
         var span = data.AsSpan();
         switch (kind)
         {
-            case AdministrationKind.WindowsFeature when span.Length == 5 * sizeof(int):
+            case AdministrationKind.WindowsFeature when span.Length == 5:
                 return new WindowsFeatureData(
-                    (WindowsFeatureApplicability)BinaryPrimitives.ReadInt32LittleEndian(span),
-                    (WindowsFeatureSelectability)BinaryPrimitives.ReadInt32LittleEndian(span[4..]),
-                    (WindowsFeatureInstallState)BinaryPrimitives.ReadInt32LittleEndian(span[8..]),
-                    (WindowsFeatureInstallState)BinaryPrimitives.ReadInt32LittleEndian(span[12..]),
-                    (WindowsFeatureInstallState)BinaryPrimitives.ReadInt32LittleEndian(span[16..]));
-            case AdministrationKind.BluetoothRadio when span.Length == 8:
+                    (WindowsFeatureApplicability)unchecked((sbyte)span[0]),
+                    (WindowsFeatureSelectability)unchecked((sbyte)span[1]),
+                    (WindowsFeatureInstallState)unchecked((sbyte)span[2]),
+                    (WindowsFeatureInstallState)unchecked((sbyte)span[3]),
+                    (WindowsFeatureInstallState)unchecked((sbyte)span[4]));
+            case AdministrationKind.BluetoothRadio when span.Length == 4:
                 return new BluetoothRadioData(
-                    BinaryPrimitives.ReadUInt32LittleEndian(span),
-                    BinaryPrimitives.ReadUInt32LittleEndian(span[4..]));
+                    BinaryPrimitives.ReadUInt16LittleEndian(span),
+                    BinaryPrimitives.ReadUInt16LittleEndian(span[2..]));
             case AdministrationKind.Location when span.Length == 40:
                 return new LocationData(
                     ReadDouble(span),
@@ -273,15 +273,14 @@ public sealed partial class NativeServer
                     BinaryPrimitives.ReadUInt32LittleEndian(span[8..]));
             case AdministrationKind.Certificate:
             {
-                if (span.Length < sizeof(uint)) break;
-                var allPurposes = BinaryPrimitives.ReadUInt32LittleEndian(span) != 0;
-                var offset = sizeof(uint);
+                if (span.Length == 0 || span[0] > 1) break;
+                var allPurposes = span[0] != 0;
+                var offset = sizeof(byte);
                 var friendlyName = ReadAdministrationString(data, ref offset);
-                if (data.Length - offset < sizeof(uint)) break;
-                var count = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(offset));
-                offset += sizeof(uint);
-                if (count > 65535) break;
-                var usages = new string[checked((int)count)];
+                if (data.Length - offset < sizeof(ushort)) break;
+                var count = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(offset));
+                offset += sizeof(ushort);
+                var usages = new string[count];
                 for (var index = 0; index < usages.Length; index++)
                     usages[index] = ReadAdministrationString(data, ref offset);
                 if (offset == data.Length) return new CertificateMetadata(allPurposes, friendlyName, usages);
@@ -560,7 +559,7 @@ public enum AdministrationAction : byte
     Unlock
 }
 
-public enum WindowsFeatureApplicability
+public enum WindowsFeatureApplicability : sbyte
 {
     Invalid = -1,
     All = 0,
@@ -569,7 +568,7 @@ public enum WindowsFeatureApplicability
     Applicable = 4
 }
 
-public enum WindowsFeatureSelectability
+public enum WindowsFeatureSelectability : sbyte
 {
     Invalid = -1,
     All = 0,
@@ -577,7 +576,7 @@ public enum WindowsFeatureSelectability
     Root = 2
 }
 
-public enum WindowsFeatureInstallState
+public enum WindowsFeatureInstallState : sbyte
 {
     PartiallyInstalled = -19,
     Cancel = -18,
@@ -597,10 +596,10 @@ public enum WindowsFeatureInstallState
     InstallRequested = 6,
     Installed = 7,
     Permanent = 8,
-    Invalid = int.MaxValue
+    Invalid = sbyte.MaxValue
 }
 
-public enum WindowsFeatureRequiredAction : uint
+public enum WindowsFeatureRequiredAction : byte
 {
     None = 0,
     Reboot = 1
@@ -623,7 +622,7 @@ public sealed record WindowsFeatureData(
     WindowsFeatureInstallState CurrentState,
     WindowsFeatureInstallState IntendedState,
     WindowsFeatureInstallState RequestedState);
-public sealed record BluetoothRadioData(uint Manufacturer, uint LmpSubversion);
+public sealed record BluetoothRadioData(ushort Manufacturer, ushort LmpSubversion);
 public sealed record LocationData(
     double Latitude,
     double Longitude,

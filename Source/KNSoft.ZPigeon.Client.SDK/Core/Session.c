@@ -123,46 +123,6 @@ ZpClientSession_SignChallenge(
 
 static
 NTSTATUS
-ZpClientSession_ValidateReady(
-    _Inout_ PZP_CLIENT_SESSION Session,
-    _In_ const ZP_READY_VIEW* Ready)
-{
-    PZP_CLIENT_OBJECT Object = Session->Owner;
-
-    BYTE ClientIndex = 0, ReadyIndex = 0;
-    ULONGLONG ModuleMask = 0;
-
-    while (ClientIndex < Object->Config.ModuleCount && ReadyIndex < Ready->ModuleCount)
-    {
-        PCZP_MODULE_VERSION ClientModule = &Object->Config.Modules[ClientIndex];
-        PCZP_MODULE_VERSION ReadyModule = &Ready->Modules[ReadyIndex];
-
-        if (ClientModule->ModuleId < ReadyModule->ModuleId)
-        {
-            ClientIndex++;
-        }
-        else if (ClientModule->ModuleId != ReadyModule->ModuleId ||
-                 ClientModule->Version != ReadyModule->Version)
-        {
-            return STATUS_PROTOCOL_UNREACHABLE;
-        }
-        else
-        {
-            ModuleMask |= ZP_MODULE_BIT(ReadyModule->ModuleId);
-            ClientIndex++;
-            ReadyIndex++;
-        }
-    }
-    if (ReadyIndex != Ready->ModuleCount)
-    {
-        return STATUS_PROTOCOL_UNREACHABLE;
-    }
-    Object->ActiveModuleMask = ModuleMask;
-    return STATUS_SUCCESS;
-}
-
-static
-NTSTATUS
 NTAPI
 ZpClientSession_MessageCallback(
     _Inout_ PZP_CONNECTION Connection,
@@ -171,7 +131,6 @@ ZpClientSession_MessageCallback(
 {
     PZP_CLIENT_SESSION Session = Context;
     ZP_BUFFER_VIEW Data;
-    ZP_READY_VIEW Ready;
     ZP_CONNECTION_POLICY Policy;
     ZP_REQUEST_VIEW Request;
     ZP_CHANNEL_DATA_VIEW ChannelData;
@@ -213,15 +172,14 @@ ZpClientSession_MessageCallback(
                                      0) : Status;
 
         case ZpMessageReady:
-            Status = ZpMessage_DecodeReady(Frame->Body, Frame->BodyLength, &Ready);
-            if (NT_SUCCESS(Status))
-            {
-                Status = ZpClientSession_ValidateReady(Session, &Ready);
-            }
-            return NT_SUCCESS(Status) ?
-                       ZpClient_NotifyState((ZP_CLIENT_HANDLE)Session->Owner,
-                                            ZpClientStateReady,
-                                            ZpStatus_FromNtStatus(STATUS_SUCCESS)) : Status;
+            return ZpClient_NotifyState((ZP_CLIENT_HANDLE)Session->Owner,
+                                        ZpClientStateReady,
+                                        ZpStatus_FromNtStatus(STATUS_SUCCESS));
+
+        case ZpMessageServerReject:
+            Status = STATUS_REVISION_MISMATCH;
+            Session->Failure(Session->Context, ZpStatus_FromNtStatus(Status));
+            return Status;
 
         case ZpMessageConnectionPolicy:
             Status = ZpMessage_DecodeConnectionPolicy(Frame->Body,
@@ -290,13 +248,7 @@ NTSTATUS
 ZpClientSession_Start(
     _Inout_ PZP_CLIENT_SESSION Session)
 {
-    ZP_CLIENT_HELLO Hello = {
-        ZP_PROTOCOL_REVISION,
-        Session->Owner->Config.Modules,
-        Session->Owner->Config.ModuleCount,
-        Session->PublicKey
-    };
-    BYTE Body[ZP_CLIENT_HELLO_MAX_WIRE_SIZE];
+    BYTE Body[ZP_CLIENT_HELLO_WIRE_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -314,7 +266,10 @@ ZpClientSession_Start(
                                   ZpStatus_FromNtStatus(STATUS_SUCCESS));
     if (NT_SUCCESS(Status))
     {
-        Status = ZpMessage_EncodeClientHello(&Hello, Body, sizeof(Body), &BodyLength);
+        Status = ZpMessage_EncodeClientHello(Session->PublicKey,
+                                             Body,
+                                             sizeof(Body),
+                                             &BodyLength);
     }
     return NT_SUCCESS(Status) ?
                Session->Send(Session->Context,

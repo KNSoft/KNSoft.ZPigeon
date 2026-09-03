@@ -77,29 +77,26 @@ class AudioPlayer {
     joined.set(this.buffer);
     joined.set(data, this.buffer.length);
     this.buffer = joined;
-    while (this.buffer.length >= 14) {
+    while (this.buffer.length >= 7) {
       const view = new DataView(this.buffer.buffer, this.buffer.byteOffset),
-        format = view.getUint8(0),
-        channels = view.getUint8(1),
-        rate = view.getUint32(2, true),
-        frames = view.getUint32(6, true),
-        length = view.getUint32(10, true);
+        channels = view.getUint8(0),
+        rate = view.getUint32(1, true),
+        frames = view.getUint16(5, true),
+        length = frames * channels * 2;
       if (
-        format !== 1 ||
         !channels ||
         channels > 8 ||
         !rate ||
         rate > 192000 ||
         !frames ||
-        frames > 32768 ||
-        length !== frames * channels * 2
+        frames > 32768
       ) {
         socket.close(1002, "无效的音频数据");
         return;
       }
-      if (this.buffer.length < 14 + length) return;
-      const pcm = this.buffer.slice(14, 14 + length);
-      this.buffer = this.buffer.slice(14 + length);
+      if (this.buffer.length < 7 + length) return;
+      const pcm = this.buffer.slice(7, 7 + length);
+      this.buffer = this.buffer.slice(7 + length);
       this.status.textContent = `正在监听 · ${rate} Hz · ${channels} 声道`;
       this.play(pcm, channels, rate, frames);
     }

@@ -190,9 +190,8 @@ ZpService_EncodeQuery(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(ULONG) +
-                   (ULONGLONG)ServiceNameLength * sizeof(WCHAR);
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE)
+    RequiredSize = (ULONGLONG)ServiceNameLength * sizeof(WCHAR);
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE)
     {
         return STATUS_BUFFER_OVERFLOW;
     }
@@ -206,7 +205,7 @@ ZpService_EncodeQuery(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    return ZpCodec_WriteString(&Writer, ServiceName, ServiceNameLength);
+    return ZpCodec_WriteTailString(&Writer, ServiceName, ServiceNameLength);
 }
 
 NTSTATUS
@@ -219,7 +218,7 @@ ZpService_DecodeQuery(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadString(&Reader, ServiceName);
+    Status = ZpCodec_ReadTailString(&Reader, ServiceName);
     if (!NT_SUCCESS(Status) ||
         ServiceName->Length == 0 ||
         Reader.Offset != PayloadLength)
@@ -251,9 +250,9 @@ ZpService_EncodeControl(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(BYTE) + 2 * sizeof(ULONG) +
+    RequiredSize = sizeof(BYTE) + sizeof(ULONG) +
                    (ULONGLONG)(ServiceNameLength + ArgumentLength) * sizeof(WCHAR);
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE)
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE)
     {
         return STATUS_BUFFER_OVERFLOW;
     }
@@ -274,7 +273,7 @@ ZpService_EncodeControl(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteString(&Writer, Argument, ArgumentLength);
+        Status = ZpCodec_WriteTailString(&Writer, Argument, ArgumentLength);
     }
     return Status;
 }
@@ -298,7 +297,7 @@ ZpService_DecodeControl(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadString(&Reader, Argument);
+        Status = ZpCodec_ReadTailString(&Reader, Argument);
     }
     if (!NT_SUCCESS(Status) || *Control < ZP_SERVICE_CONTROL_START ||
         *Control > ZP_SERVICE_CONTROL_RESTART || ServiceName->Length == 0 ||
@@ -332,6 +331,7 @@ ZpService_EncodeInfo(
         Info->ServiceDllLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
         Info->RebootMessageLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
         Info->RecoveryCommandLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Info->DelayedAutoStart > TRUE ||
         Info->RecoverySupported > TRUE ||
         Info->FailureActionsOnNonCrashFailures > TRUE ||
         Info->FirstFailureAction > SC_ACTION_OWN_RESTART ||
@@ -352,7 +352,7 @@ ZpService_EncodeInfo(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 2 * sizeof(USHORT) + 10 * sizeof(BYTE) + 17 * sizeof(ULONG) +
+    RequiredSize = 2 * sizeof(USHORT) + 10 * sizeof(BYTE) + 16 * sizeof(ULONG) +
                    (ULONGLONG)(Info->ServiceNameLength +
                                Info->DisplayNameLength +
                                Info->DescriptionLength +
@@ -400,7 +400,7 @@ ZpService_EncodeInfo(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteByte(&Writer, Info->DelayedAutoStart);
+        Status = ZpCodec_WriteBoolean(&Writer, Info->DelayedAutoStart);
     }
     if (NT_SUCCESS(Status))
     {
@@ -408,11 +408,11 @@ ZpService_EncodeInfo(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteByte(&Writer, Info->RecoverySupported);
+        Status = ZpCodec_WriteBoolean(&Writer, Info->RecoverySupported);
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteByte(&Writer, Info->FailureActionsOnNonCrashFailures);
+        Status = ZpCodec_WriteBoolean(&Writer, Info->FailureActionsOnNonCrashFailures);
     }
     if (NT_SUCCESS(Status))
     {
@@ -498,7 +498,9 @@ ZpService_EncodeInfo(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteString(&Writer, Info->RecoveryCommand, Info->RecoveryCommandLength);
+        Status = ZpCodec_WriteTailString(&Writer,
+                                        Info->RecoveryCommand,
+                                        Info->RecoveryCommandLength);
     }
     return Status;
 }
@@ -512,7 +514,7 @@ ZpService_DecodeInfo(
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
-    if (PayloadLength < 2 * sizeof(USHORT) + 10 * sizeof(BYTE) + 17 * sizeof(ULONG))
+    if (PayloadLength < 2 * sizeof(USHORT) + 10 * sizeof(BYTE) + 16 * sizeof(ULONG))
     {
         return STATUS_DATA_ERROR;
     }
@@ -540,7 +542,7 @@ ZpService_DecodeInfo(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadByte(&Reader, &View->DelayedAutoStart);
+        Status = ZpCodec_ReadBoolean(&Reader, &View->DelayedAutoStart);
     }
     if (NT_SUCCESS(Status))
     {
@@ -548,11 +550,11 @@ ZpService_DecodeInfo(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadByte(&Reader, &View->RecoverySupported);
+        Status = ZpCodec_ReadBoolean(&Reader, &View->RecoverySupported);
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadByte(&Reader, &View->FailureActionsOnNonCrashFailures);
+        Status = ZpCodec_ReadBoolean(&Reader, &View->FailureActionsOnNonCrashFailures);
     }
     if (NT_SUCCESS(Status))
     {
@@ -628,12 +630,10 @@ ZpService_DecodeInfo(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadString(&Reader, &View->RecoveryCommand);
+        Status = ZpCodec_ReadTailString(&Reader, &View->RecoveryCommand);
     }
     if (!NT_SUCCESS(Status) ||
         View->ServiceName.Length == 0 ||
-        View->RecoverySupported > TRUE ||
-        View->FailureActionsOnNonCrashFailures > TRUE ||
         View->FirstFailureAction > SC_ACTION_OWN_RESTART ||
         View->SecondFailureAction > SC_ACTION_OWN_RESTART ||
         View->ThirdFailureAction > SC_ACTION_OWN_RESTART ||
@@ -671,11 +671,11 @@ ZpService_EncodeConfig(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 2 * sizeof(BYTE) + 5 * sizeof(ULONG) +
+    RequiredSize = 2 * sizeof(BYTE) + 4 * sizeof(ULONG) +
                    (ULONGLONG)(Config->ServiceNameLength + Config->DisplayNameLength +
                                Config->DescriptionLength + Config->BinaryPathNameLength +
                                Config->LoadOrderGroupLength) * sizeof(WCHAR);
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE)
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE)
     {
         return STATUS_BUFFER_OVERFLOW;
     }
@@ -692,7 +692,7 @@ ZpService_EncodeConfig(
     Status = ZpCodec_WriteByte(&Writer, (BYTE)Config->StartType);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteByte(&Writer, (BYTE)Config->DelayedAutoStart);
+        Status = ZpCodec_WriteBoolean(&Writer, (BOOLEAN)Config->DelayedAutoStart);
     }
     if (NT_SUCCESS(Status))
     {
@@ -712,7 +712,9 @@ ZpService_EncodeConfig(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteString(&Writer, Config->LoadOrderGroup, Config->LoadOrderGroupLength);
+        Status = ZpCodec_WriteTailString(&Writer,
+                                        Config->LoadOrderGroup,
+                                        Config->LoadOrderGroupLength);
     }
     return Status;
 }
@@ -730,7 +732,7 @@ ZpService_DecodeConfig(
     Status = ZpCodec_ReadByte(&Reader, &Config->StartType);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadByte(&Reader, &Config->DelayedAutoStart);
+        Status = ZpCodec_ReadBoolean(&Reader, &Config->DelayedAutoStart);
     }
     if (NT_SUCCESS(Status))
     {
@@ -750,10 +752,9 @@ ZpService_DecodeConfig(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadString(&Reader, &Config->LoadOrderGroup);
+        Status = ZpCodec_ReadTailString(&Reader, &Config->LoadOrderGroup);
     }
     if (!NT_SUCCESS(Status) || Config->StartType > SERVICE_DISABLED ||
-        Config->DelayedAutoStart > TRUE ||
         (Config->DelayedAutoStart && Config->StartType != SERVICE_AUTO_START) ||
         Config->ServiceName.Length == 0 || Config->DisplayName.Length == 0 ||
         Config->BinaryPathName.Length == 0 ||
@@ -789,10 +790,10 @@ ZpService_EncodeRecoveryConfig(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 6 * sizeof(BYTE) + 6 * sizeof(ULONG) +
+    RequiredSize = 6 * sizeof(BYTE) + 5 * sizeof(ULONG) +
                    (ULONGLONG)(Config->ServiceNameLength + Config->RebootMessageLength +
                                Config->CommandLength) * sizeof(WCHAR);
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE)
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE)
     {
         return STATUS_BUFFER_OVERFLOW;
     }
@@ -809,7 +810,8 @@ ZpService_EncodeRecoveryConfig(
     Status = ZpCodec_WriteByte(&Writer, (BYTE)Config->ErrorControl);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteByte(&Writer, (BYTE)Config->FailureActionsOnNonCrashFailures);
+        Status = ZpCodec_WriteBoolean(&Writer,
+                                      (BOOLEAN)Config->FailureActionsOnNonCrashFailures);
     }
     if (NT_SUCCESS(Status))
     {
@@ -849,7 +851,7 @@ ZpService_EncodeRecoveryConfig(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteString(&Writer, Config->Command, Config->CommandLength);
+        Status = ZpCodec_WriteTailString(&Writer, Config->Command, Config->CommandLength);
     }
     return Status;
 }
@@ -867,7 +869,7 @@ ZpService_DecodeRecoveryConfig(
     Status = ZpCodec_ReadByte(&Reader, &Config->ErrorControl);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadByte(&Reader, &Config->FailureActionsOnNonCrashFailures);
+        Status = ZpCodec_ReadBoolean(&Reader, &Config->FailureActionsOnNonCrashFailures);
     }
     if (NT_SUCCESS(Status))
     {
@@ -907,10 +909,9 @@ ZpService_DecodeRecoveryConfig(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadString(&Reader, &Config->Command);
+        Status = ZpCodec_ReadTailString(&Reader, &Config->Command);
     }
     if (!NT_SUCCESS(Status) || Config->ErrorControl > SERVICE_ERROR_CRITICAL ||
-        Config->FailureActionsOnNonCrashFailures > TRUE ||
         Config->FirstFailureAction > SC_ACTION_OWN_RESTART ||
         Config->SecondFailureAction > SC_ACTION_OWN_RESTART ||
         Config->ThirdFailureAction > SC_ACTION_OWN_RESTART ||
@@ -942,10 +943,10 @@ ZpService_EncodeAccountConfig(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(BYTE) + 3 * sizeof(ULONG) +
+    RequiredSize = sizeof(BYTE) + 2 * sizeof(ULONG) +
                    (ULONGLONG)(Config->ServiceNameLength + Config->StartNameLength +
                                Config->PasswordLength) * sizeof(WCHAR);
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE)
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE)
     {
         return STATUS_BUFFER_OVERFLOW;
     }
@@ -959,7 +960,7 @@ ZpService_EncodeAccountConfig(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteByte(&Writer, Config->PasswordPresent);
+    Status = ZpCodec_WriteBoolean(&Writer, Config->PasswordPresent);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_WriteString(&Writer, Config->ServiceName, Config->ServiceNameLength);
@@ -970,7 +971,7 @@ ZpService_EncodeAccountConfig(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteString(&Writer, Config->Password, Config->PasswordLength);
+        Status = ZpCodec_WriteTailString(&Writer, Config->Password, Config->PasswordLength);
     }
     return Status;
 }
@@ -985,7 +986,7 @@ ZpService_DecodeAccountConfig(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadByte(&Reader, &Config->PasswordPresent);
+    Status = ZpCodec_ReadBoolean(&Reader, &Config->PasswordPresent);
     if (NT_SUCCESS(Status))
     {
         Status = ZpCodec_ReadString(&Reader, &Config->ServiceName);
@@ -996,9 +997,9 @@ ZpService_DecodeAccountConfig(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadString(&Reader, &Config->Password);
+        Status = ZpCodec_ReadTailString(&Reader, &Config->Password);
     }
-    if (!NT_SUCCESS(Status) || Config->PasswordPresent > TRUE ||
+    if (!NT_SUCCESS(Status) ||
         Config->ServiceName.Length == 0 || Config->StartName.Length == 0 ||
         (!Config->PasswordPresent && Config->Password.Length != 0) ||
         Reader.Offset != PayloadLength)

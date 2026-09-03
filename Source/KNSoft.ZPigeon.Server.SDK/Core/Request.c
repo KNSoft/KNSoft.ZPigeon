@@ -250,16 +250,6 @@ ZpServerConnection_CancelRequest(
     return STATUS_SUCCESS;
 }
 
-static
-LOGICAL
-ZpServerConnection_HasModule(
-    _In_ PZP_CONNECTION_OBJECT Connection,
-    _In_ BYTE ModuleId)
-{
-    return ModuleId != 0 && ModuleId <= ZP_MODULE_MAX_ID &&
-           FlagOn(Connection->ModuleMask, ZP_MODULE_BIT(ModuleId));
-}
-
 NTSTATUS
 NTAPI
 ZpServer_SendRequest(
@@ -300,12 +290,9 @@ ZpServer_SendRequest(
 
     RtlEnterCriticalSection(&ConnectionObject->RequestSendLock);
     RtlAcquireSRWLockExclusive(&ConnectionObject->Lock);
-    if (ConnectionObject->Phase != ZpConnectionPhaseReady ||
-        !ZpServerConnection_HasModule(ConnectionObject, ModuleId))
+    if (ConnectionObject->Phase != ZpConnectionPhaseReady)
     {
-        Status = ConnectionObject->Phase == ZpConnectionPhaseReady ?
-                     STATUS_NOT_SUPPORTED :
-                     STATUS_INVALID_DEVICE_STATE;
+        Status = STATUS_INVALID_DEVICE_STATE;
         RtlReleaseSRWLockExclusive(&ConnectionObject->Lock);
         RtlLeaveCriticalSection(&ConnectionObject->RequestSendLock);
         Mem_Free(RequestObject);

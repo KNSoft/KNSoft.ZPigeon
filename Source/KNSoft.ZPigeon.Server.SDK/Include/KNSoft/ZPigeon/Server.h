@@ -179,8 +179,6 @@ typedef struct _ZP_SERVER_CONFIG
     ULONG ListenerCount;
     PCZP_SERVER_DEPLOYMENT Deployments;
     ULONG DeploymentCount;
-    PCZP_MODULE_VERSION Modules;
-    BYTE ModuleCount;
     ULONG MaxRequestsPerConnection;
     ULONG MaxChannelsPerConnection;
     ZP_SERVER_STATE_CALLBACK StateCallback;
@@ -362,6 +360,12 @@ NTAPI
 ZpServer_QueryConnectionClientPublicKey(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _Out_writes_bytes_(ZP_CLIENT_PUBLIC_KEY_SIZE) PBYTE PublicKey);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryConnectionClientVersion(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _Out_ PBYTE ClientVersion);
 
 NTSTATUS
 NTAPI

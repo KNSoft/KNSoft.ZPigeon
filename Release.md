@@ -7,7 +7,7 @@
 - 最低支持 Windows 10，当前只提供 x64；ARM64 后续按需加入。
 - 原生核心和公共 SDK 使用纯 C，并提供 Native DLL、Managed SDK、Application、共享工具目录、内置 Agent、Client EXE 和 C# Web 管理端。
 - Transport 支持 QUIC、TLS/TCP 和 DTLS/UDP，不允许降级到明文协议。
-- 46 个协议模块已经实现；`Execution`、`Browser` 和 `Software` 为 Version 2，其余模块为 Version 1。ModuleId 9、20–46 共用 `Administration` Codec 和执行框架，其余模块按功能目录独立实现。
+- 46 个协议模块已经实现。ModuleId 9、20–46 共用 `Administration` Codec 和执行框架，其余模块按功能目录独立实现。
 - Web 管理端覆盖系统、网络、存储、任务、硬件、软件、远程访问和智能体八类功能，并在 `/mcp` 提供无状态 Streamable HTTP。
 - ZPigeon 由同一 Solution 直接构建，不单独发布 NuGet 包。
 
@@ -17,7 +17,7 @@
 - [x] Request、Channel 使用不透明 Handle，并定义取消、关闭和回调期 Buffer 生命周期。
 - [x] 远程结果使用 `ZP_STATUS` 保留来源错误域和原始 32 位代码。
 - [x] Protocol 不传输指针、结构体填充或依赖编译器对齐的本机数据。
-- [x] 模块版本必须完全相同才参与协商，不保留旧 Decoder 或自动降级。
+- [x] Client 使用唯一版本约束全部模块格式；低于最低版本时明确拒绝，不保留逐模块版本或自动降级。
 - [x] ConsumerTest 只依赖公共 include 根，并验证 C/C++ 消费和三个静态库链接。
 - [x] ToolCatalogTest 验证 MCP/内置智能体工具目录，以及模型凭据、会话搜索、队列、Usage 和分支持久化。
 - [ ] 补齐 46 个模块的公开 API 参考和稳定 Payload 规格。
@@ -51,7 +51,7 @@
 - [ ] 在干净环境仅通过 restore、build 和 test 验证无开发机隐式依赖。
 - [ ] 在最终交付布局运行 Client、Server、Native、Managed 和 Web 冒烟测试。
 - [ ] 完成多 Client、断线重连、接收容错、请求取消和 Web 同源边界测试。
-- [ ] 完成 MCP 2026-07-28 无握手请求、旧版 initialize 兼容、tools/list、全部工具 Schema、显式 ClientId 路由、取消和错误域测试。
+- [ ] 完成 MCP 2026-07-28 无握手请求、tools/list、全部工具 Schema、显式 ClientId 路由、取消和错误域测试。
 - [ ] 完成内置 Agent 的 models.dev 目录、认证、OpenAI Responses/Chat Completions、Anthropic Messages、队列/Steer/Stop、压缩、工具循环、目标隔离和模型服务故障测试。
 - [ ] 完成浏览器运行中 History、Downloads、Cookie、Password 读取、App-Bound 成功与失败、Profile 复制、远程控制和 DevTools 测试。
 - [ ] 完成音频输入输出、摄像头、窗口录制以及停止、下载和删除测试。

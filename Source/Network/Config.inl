@@ -92,28 +92,3 @@ ZpConfig_IsTransportValid(
 {
     return Transport >= ZpTransportQuic && Transport < ZpTransportCount;
 }
-
-static
-LOGICAL
-ZpConfig_AreModulesValid(
-    _In_reads_(ModuleCount) PCZP_MODULE_VERSION Modules,
-    _In_ BYTE ModuleCount)
-{
-    BYTE Index, PreviousId = 0;
-
-    if (Modules == NULL || ModuleCount == 0 || ModuleCount > ZP_MODULE_MAX_ID)
-    {
-        return FALSE;
-    }
-    for (Index = 0; Index < ModuleCount; Index++)
-    {
-        if (Modules[Index].ModuleId <= PreviousId ||
-            Modules[Index].ModuleId > ZP_MODULE_MAX_ID ||
-            Modules[Index].Version == 0)
-        {
-            return FALSE;
-        }
-        PreviousId = Modules[Index].ModuleId;
-    }
-    return TRUE;
-}

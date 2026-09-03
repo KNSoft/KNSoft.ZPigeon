@@ -46,24 +46,24 @@ ZpWmi_EncodeCell(
 NTSTATUS
 ZpWmi_EncodePageHeader(
     _In_ ULONG RowCount,
-    _Out_writes_bytes_(sizeof(ULONG)) PVOID Buffer)
+    _Out_writes_bytes_(sizeof(USHORT)) PVOID Buffer)
 {
     PBYTE Cursor = Buffer;
 
     if (RowCount > ZP_WMI_MAX_ROWS || Buffer == NULL) return STATUS_INVALID_PARAMETER;
-    ZpWire_WriteUInt32(&Cursor, RowCount);
+    ZpWire_WriteUInt16(&Cursor, (USHORT)RowCount);
     return STATUS_SUCCESS;
 }
 
 NTSTATUS
 ZpWmi_EncodeRowHeader(
     _In_ ULONG CellCount,
-    _Out_writes_bytes_(sizeof(ULONG)) PVOID Buffer)
+    _Out_writes_bytes_(sizeof(USHORT)) PVOID Buffer)
 {
     PBYTE Cursor = Buffer;
 
     if (CellCount > ZP_WMI_MAX_CELLS || Buffer == NULL) return STATUS_INVALID_PARAMETER;
-    ZpWire_WriteUInt32(&Cursor, CellCount);
+    ZpWire_WriteUInt16(&Cursor, (USHORT)CellCount);
     return STATUS_SUCCESS;
 }
 
@@ -103,10 +103,11 @@ ZpWmi_ReadRow(
     _Out_opt_ PZP_WMI_ROW_VIEW Row)
 {
     const BYTE* Buffer;
-    ULONG Count, Index, Offset;
+    USHORT Count;
+    ULONG Index, Offset;
     NTSTATUS Status;
 
-    Status = ZpCodec_ReadArrayCount(Reader, &Count);
+    Status = ZpCodec_ReadUInt16(Reader, &Count);
     if (!NT_SUCCESS(Status) || Count > ZP_WMI_MAX_CELLS)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
@@ -135,7 +136,7 @@ ZpWmi_EncodePage(
     _Out_ PULONG BytesWritten)
 {
     PBYTE Cursor;
-    ULONGLONG RequiredSize = sizeof(ULONG);
+    ULONGLONG RequiredSize = sizeof(USHORT);
     ULONG RowIndex, CellIndex;
 
     if (RowCount > ZP_WMI_MAX_ROWS || (RowCount != 0 && Rows == NULL)) return STATUS_INVALID_PARAMETER;
@@ -146,7 +147,7 @@ ZpWmi_EncodePage(
         {
             return STATUS_INVALID_PARAMETER;
         }
-        RequiredSize += sizeof(ULONG);
+        RequiredSize += sizeof(USHORT);
         for (CellIndex = 0; CellIndex < Rows[RowIndex].CellCount; CellIndex++)
         {
             PCZP_WMI_CELL Cell = &Rows[RowIndex].Cells[CellIndex];
@@ -174,11 +175,11 @@ ZpWmi_EncodePage(
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
     ZpWmi_EncodePageHeader(RowCount, Buffer);
-    Cursor = Add2Ptr(Buffer, sizeof(ULONG));
+    Cursor = Add2Ptr(Buffer, sizeof(USHORT));
     for (RowIndex = 0; RowIndex < RowCount; RowIndex++)
     {
         ZpWmi_EncodeRowHeader(Rows[RowIndex].CellCount, Cursor);
-        Cursor += sizeof(ULONG);
+        Cursor += sizeof(USHORT);
         for (CellIndex = 0; CellIndex < Rows[RowIndex].CellCount; CellIndex++)
         {
             ULONG CellSize;
@@ -207,11 +208,12 @@ ZpWmi_DecodePage(
     _Out_ PZP_WMI_PAGE_VIEW Page)
 {
     ZP_CODEC_READER Reader;
-    ULONG Count, Index;
+    USHORT Count;
+    ULONG Index;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+    Status = ZpCodec_ReadUInt16(&Reader, &Count);
     if (!NT_SUCCESS(Status) || Count > ZP_WMI_MAX_ROWS)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
@@ -284,10 +286,10 @@ ZpWmi_EncodeRequest(
         return STATUS_INVALID_PARAMETER;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt32(&Writer, Limit);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Flags);
+    Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Limit);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, (BYTE)Flags);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Namespace, NamespaceLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Query, QueryLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, Query, QueryLength);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -299,13 +301,17 @@ ZpWmi_DecodeRequest(
     _Out_ PZP_WMI_REQUEST_VIEW Request)
 {
     ZP_CODEC_READER Reader;
+    USHORT Limit;
+    BYTE Flags;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadUInt32(&Reader, &Request->Limit);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Request->Flags);
+    Status = ZpCodec_ReadUInt16(&Reader, &Limit);
+    if (NT_SUCCESS(Status)) Request->Limit = Limit;
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &Flags);
+    if (NT_SUCCESS(Status)) Request->Flags = Flags;
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Namespace);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Query);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Request->Query);
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength || Request->Namespace.Length == 0 ||
         Request->Namespace.Length > ZP_WMI_MAX_NAMESPACE_LENGTH ||
         Request->Query.Length > ZP_WMI_MAX_QUERY_LENGTH || Request->Limit == 0 ||

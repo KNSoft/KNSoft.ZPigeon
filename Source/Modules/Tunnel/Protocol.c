@@ -1,5 +1,7 @@
 ﻿#include "../../KNSoft.ZPigeon.Protocol/Include/KNSoft/ZPigeon/Tunnel.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
 LOGICAL
 ZpTunnel_IsHostValid(
@@ -35,9 +37,9 @@ ZpTunnel_EncodeOpen(
         return STATUS_INVALID_PARAMETER;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteString(&Writer, Host, HostLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, Port);
+    Status = ZpCodec_WriteUInt16(&Writer, Port);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, Protocol);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, Host, HostLength);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -52,9 +54,9 @@ ZpTunnel_DecodeOpen(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadString(&Reader, &View->Host);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(&Reader, &View->Port);
+    Status = ZpCodec_ReadUInt16(&Reader, &View->Port);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &View->Protocol);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &View->Host);
     return NT_SUCCESS(Status) &&
            (!ZpTunnel_IsHostValid((PCWCH)View->Host.Buffer, View->Host.Length) || View->Port == 0 ||
             View->Protocol != ZP_TUNNEL_PROTOCOL_TCP && View->Protocol != ZP_TUNNEL_PROTOCOL_UDP ||

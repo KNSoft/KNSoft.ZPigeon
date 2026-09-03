@@ -70,13 +70,12 @@ ZpEventLog_WriteQuery(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(BYTE) +
-                   sizeof(ULONG) +
-                   3 * sizeof(ULONG) +
+    RequiredSize = 2 * sizeof(BYTE) +
+                   2 * sizeof(ULONG) +
                    ((ULONGLONG)ChannelPathLength +
                     QueryLength +
                     BookmarkLength) * sizeof(WCHAR);
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE)
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE)
     {
         return STATUS_BUFFER_OVERFLOW;
     }
@@ -93,7 +92,7 @@ ZpEventLog_WriteQuery(
     Status = ZpCodec_WriteByte(&Writer, StartMode);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteUInt32(&Writer, MaxEvents);
+        Status = ZpCodec_WriteByte(&Writer, (BYTE)(MaxEvents - 1));
     }
     if (NT_SUCCESS(Status))
     {
@@ -105,7 +104,7 @@ ZpEventLog_WriteQuery(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteString(&Writer, Bookmark, BookmarkLength);
+        Status = ZpCodec_WriteTailString(&Writer, Bookmark, BookmarkLength);
     }
     return Status;
 }
@@ -123,14 +122,14 @@ ZpEventLog_ReadQuery(
 {
     ZP_CODEC_READER Reader;
     ZP_EVENT_LOG_START_MODE LocalStartMode;
-    ULONG LocalMaxEvents;
+    BYTE EncodedMaxEvents;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadByte(&Reader, &LocalStartMode);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadUInt32(&Reader, &LocalMaxEvents);
+        Status = ZpCodec_ReadByte(&Reader, &EncodedMaxEvents);
     }
     if (NT_SUCCESS(Status))
     {
@@ -142,12 +141,10 @@ ZpEventLog_ReadQuery(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadString(&Reader, Bookmark);
+        Status = ZpCodec_ReadTailString(&Reader, Bookmark);
     }
     if (!NT_SUCCESS(Status) ||
         !ZpEventLog_IsStartModeValid(LocalStartMode, Bookmark->Length) ||
-        LocalMaxEvents == 0 ||
-        LocalMaxEvents > ZP_EVENT_LOG_PAGE_MAX_COUNT ||
         ChannelPath->Length == 0 ||
         Bookmark->Length > ZP_EVENT_LOG_BOOKMARK_MAX_LENGTH ||
         Reader.Offset != PayloadLength)
@@ -155,7 +152,7 @@ ZpEventLog_ReadQuery(
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
     }
     *StartMode = LocalStartMode;
-    *MaxEvents = LocalMaxEvents;
+    *MaxEvents = (ULONG)EncodedMaxEvents + 1;
     return STATUS_SUCCESS;
 }
 
@@ -256,7 +253,7 @@ ZpEventLog_EncodePage(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(BYTE) + 2 * sizeof(ULONG) +
+    RequiredSize = sizeof(BYTE) + sizeof(USHORT) + sizeof(ULONG) +
                    (ULONGLONG)NextBookmarkLength * sizeof(WCHAR);
     for (Index = 0; Index < RecordCount; Index++)
     {
@@ -305,7 +302,7 @@ ZpEventLog_EncodePage(
     Cursor = Buffer;
     ZpWire_WriteByte(&Cursor, HasMore);
     ZpWire_WriteString(&Cursor, NextBookmark, NextBookmarkLength);
-    ZpWire_WriteUInt32(&Cursor, RecordCount);
+    ZpWire_WriteUInt16(&Cursor, (USHORT)RecordCount);
     for (Index = 0; Index < RecordCount; Index++)
     {
         ZpWire_WriteString(&Cursor, Records[Index].Bookmark, Records[Index].BookmarkLength);
@@ -322,7 +319,8 @@ ZpEventLog_DecodePage(
 {
     ZP_CODEC_READER Reader;
     ZP_EVENT_LOG_RECORD_VIEW Record;
-    ULONG Count, Index, ListOffset;
+    USHORT Count;
+    ULONG Index, ListOffset;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
@@ -333,7 +331,7 @@ ZpEventLog_DecodePage(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+        Status = ZpCodec_ReadUInt16(&Reader, &Count);
         if (NT_SUCCESS(Status) && Count > ZP_EVENT_LOG_PAGE_MAX_COUNT)
         {
             Status = STATUS_DATA_ERROR;
@@ -400,14 +398,14 @@ ZpEventLog_EncodeChannelRequest(
     if (!ZpEventLog_IsStringValid(ChannelPath,
                                   ChannelPathLength,
                                   ZP_CODEC_MAX_ELEMENT_COUNT,
-                                  TRUE))
+                                  TRUE) ||
+        (Enabled != NULL && *Enabled > TRUE))
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(ULONG) +
-                   (ULONGLONG)ChannelPathLength * sizeof(WCHAR) +
+    RequiredSize = (ULONGLONG)ChannelPathLength * sizeof(WCHAR) +
                    (Enabled != NULL ? sizeof(BYTE) : 0);
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE)
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE)
     {
         return STATUS_BUFFER_OVERFLOW;
     }
@@ -421,11 +419,12 @@ ZpEventLog_EncodeChannelRequest(
         return STATUS_BUFFER_TOO_SMALL;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteString(&Writer, ChannelPath, ChannelPathLength);
-    if (NT_SUCCESS(Status) && Enabled != NULL)
+    Status = STATUS_SUCCESS;
+    if (Enabled != NULL)
     {
         Status = ZpCodec_WriteBoolean(&Writer, *Enabled);
     }
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, ChannelPath, ChannelPathLength);
     return Status;
 }
 
@@ -441,11 +440,12 @@ ZpEventLog_DecodeChannelRequest(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadString(&Reader, ChannelPath);
-    if (NT_SUCCESS(Status) && Enabled != NULL)
+    Status = STATUS_SUCCESS;
+    if (Enabled != NULL)
     {
         Status = ZpCodec_ReadBoolean(&Reader, Enabled);
     }
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, ChannelPath);
     if (!NT_SUCCESS(Status) ||
         ChannelPath->Length == 0 ||
         Reader.Offset != PayloadLength)
@@ -539,12 +539,12 @@ ZpEventLog_EncodeChannel(
 NTSTATUS
 ZpEventLog_EncodeChannelListHeader(
     _In_ ULONG ChannelCount,
-    _Out_writes_bytes_(sizeof(ULONG)) PVOID Buffer)
+    _Out_writes_bytes_(sizeof(USHORT)) PVOID Buffer)
 {
     PBYTE Cursor = Buffer;
 
     if (ChannelCount > ZP_EVENT_LOG_CHANNEL_MAX_COUNT || Buffer == NULL) return STATUS_INVALID_PARAMETER;
-    ZpWire_WriteUInt32(&Cursor, ChannelCount);
+    ZpWire_WriteUInt16(&Cursor, (USHORT)ChannelCount);
     return STATUS_SUCCESS;
 }
 
@@ -557,7 +557,7 @@ ZpEventLog_EncodeChannels(
     _Out_ PULONG BytesWritten)
 {
     PBYTE Cursor;
-    ULONGLONG RequiredSize = sizeof(ULONG);
+    ULONGLONG RequiredSize = sizeof(USHORT);
     ULONG ChannelSize, Index;
 
     if (ChannelCount > ZP_EVENT_LOG_CHANNEL_MAX_COUNT || (ChannelCount != 0 && Channels == NULL))
@@ -580,7 +580,7 @@ ZpEventLog_EncodeChannels(
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
     ZpEventLog_EncodeChannelListHeader(ChannelCount, Buffer);
-    Cursor = Add2Ptr(Buffer, sizeof(ULONG));
+    Cursor = Add2Ptr(Buffer, sizeof(USHORT));
     for (Index = 0; Index < ChannelCount; Index++)
     {
         NTSTATUS Status = ZpEventLog_EncodeChannel((PCWCH)Channels[Index].Buffer,
@@ -603,17 +603,18 @@ ZpEventLog_DecodeChannels(
 {
     ZP_CODEC_READER Reader;
     ZP_STRING_VIEW Channel;
+    USHORT Count;
     ULONG Index, Offset;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadArrayCount(&Reader, &View->Count);
-    if (!NT_SUCCESS(Status) || View->Count > ZP_EVENT_LOG_CHANNEL_MAX_COUNT)
+    Status = ZpCodec_ReadUInt16(&Reader, &Count);
+    if (!NT_SUCCESS(Status) || Count > ZP_EVENT_LOG_CHANNEL_MAX_COUNT)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
     }
     Offset = Reader.Offset;
-    for (Index = 0; NT_SUCCESS(Status) && Index < View->Count; Index++)
+    for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
     {
         Status = ZpCodec_ReadString(&Reader, &Channel);
         if (NT_SUCCESS(Status) && Channel.Length == 0) Status = STATUS_DATA_ERROR;
@@ -624,6 +625,7 @@ ZpEventLog_DecodeChannels(
     }
     View->Buffer = Add2Ptr(Payload, Offset);
     View->Length = PayloadLength - Offset;
+    View->Count = Count;
     return STATUS_SUCCESS;
 }
 
@@ -654,7 +656,8 @@ ZpEventLog_EncodeChannelInfo(
     ULONGLONG RequiredSize;
     NTSTATUS Status;
 
-    if (Info->Type > 3 || Info->RetentionMode > ZpEventLogRetentionManual ||
+    if (Info->Enabled > TRUE || Info->Type > 3 ||
+        Info->RetentionMode > ZpEventLogRetentionManual ||
         !ZpEventLog_IsStringValid(Info->LogFilePath,
                                   Info->LogFilePathLength,
                                   ZP_CODEC_MAX_ELEMENT_COUNT,
@@ -663,7 +666,7 @@ ZpEventLog_EncodeChannelInfo(
         return STATUS_INVALID_PARAMETER;
     }
     RequiredSize = 3 * sizeof(BYTE) + 5 * sizeof(ULONGLONG) +
-                   sizeof(ULONG) + (ULONGLONG)Info->LogFilePathLength * sizeof(WCHAR);
+                   (ULONGLONG)Info->LogFilePathLength * sizeof(WCHAR);
     if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
@@ -679,7 +682,7 @@ ZpEventLog_EncodeChannelInfo(
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, Info->LastWriteTime);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteString(&Writer, Info->LogFilePath, Info->LogFilePathLength);
+        Status = ZpCodec_WriteTailString(&Writer, Info->LogFilePath, Info->LogFilePathLength);
     }
     return Status;
 }
@@ -702,7 +705,7 @@ ZpEventLog_DecodeChannelInfo(
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &Info->CreationTime);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &Info->LastAccessTime);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &Info->LastWriteTime);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Info->LogFilePath);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Info->LogFilePath);
     if (!NT_SUCCESS(Status) || Info->Type > 3 || Info->RetentionMode > ZpEventLogRetentionManual ||
         Info->LogFilePath.Length == 0 || Reader.Offset != PayloadLength)
     {
@@ -730,21 +733,21 @@ ZpEventLog_EncodeConfigureChannelRequest(
                                   ChannelPathLength,
                                   ZP_CODEC_MAX_ELEMENT_COUNT,
                                   TRUE) ||
-        RetentionMode > ZpEventLogRetentionManual || MaximumSize == 0)
+        Enabled > TRUE || RetentionMode > ZpEventLogRetentionManual || MaximumSize == 0)
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(ULONG) + (ULONGLONG)ChannelPathLength * sizeof(WCHAR) +
-                    2 * sizeof(BYTE) + sizeof(ULONGLONG);
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
+    RequiredSize = (ULONGLONG)ChannelPathLength * sizeof(WCHAR) +
+                   2 * sizeof(BYTE) + sizeof(ULONGLONG);
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteString(&Writer, ChannelPath, ChannelPathLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteBoolean(&Writer, Enabled);
+    Status = ZpCodec_WriteBoolean(&Writer, Enabled);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, RetentionMode);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, MaximumSize);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, ChannelPath, ChannelPathLength);
     return Status;
 }
 
@@ -761,10 +764,10 @@ ZpEventLog_DecodeConfigureChannelRequest(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadString(&Reader, ChannelPath);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadBoolean(&Reader, Enabled);
+    Status = ZpCodec_ReadBoolean(&Reader, Enabled);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, RetentionMode);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, MaximumSize);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, ChannelPath);
     if (!NT_SUCCESS(Status) || ChannelPath->Length == 0 ||
         *RetentionMode > ZpEventLogRetentionManual || *MaximumSize == 0 || Reader.Offset != PayloadLength)
     {

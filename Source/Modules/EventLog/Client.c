@@ -330,7 +330,7 @@ ZpEventLog_QueryPage(
         {
             goto Cleanup;
         }
-        CandidateLength = sizeof(BYTE) + 2 * sizeof(ULONG) +
+        CandidateLength = sizeof(BYTE) + sizeof(USHORT) + sizeof(ULONG) +
                           EncodedRecordsLength + 2 * sizeof(ULONG) +
                           ((ULONGLONG)Records[Index].BookmarkLength * 2 +
                            Records[Index].XmlLength) * sizeof(WCHAR);
@@ -624,7 +624,7 @@ ZpEventLog_EnumerateChannels(
     PWSTR Buffer = NULL;
     PBYTE Output, Values;
     DWORD Error = ERROR_SUCCESS, Required;
-    ULONG Count = 0, Capacity = 1024, OutputLength = sizeof(ULONG), ChannelLength;
+    ULONG Count = 0, Capacity = 1024, OutputLength = sizeof(USHORT), ChannelLength;
     NTSTATUS Status = STATUS_SUCCESS;
 
     Enumerator = EvtOpenChannelEnum(NULL, 0);

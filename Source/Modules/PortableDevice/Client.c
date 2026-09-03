@@ -706,7 +706,7 @@ ZpPortable_SendCloseLocked(
     _In_ PZP_CLIENT_PORTABLE_CHANNEL Channel,
     _In_ ZP_STATUS CloseStatus)
 {
-    BYTE Body[sizeof(ULONG) + ZP_STATUS_WIRE_SIZE];
+    BYTE Body[sizeof(ULONG) + ZP_STATUS_MAX_WIRE_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;
 

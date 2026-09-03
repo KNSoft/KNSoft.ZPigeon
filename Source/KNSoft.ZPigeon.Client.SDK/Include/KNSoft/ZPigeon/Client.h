@@ -55,8 +55,6 @@ typedef struct _ZP_CLIENT_CONFIG
     const BYTE* DeploymentRootCertificate;
     ULONG DeploymentRootCertificateLength;
     PCWSTR ClientKeyName;
-    PCZP_MODULE_VERSION Modules;
-    BYTE ModuleCount;
     ULONG ConnectTimeoutMilliseconds;
     ZP_CLIENT_STATE_CALLBACK StateCallback;
     ZP_CLIENT_OPERATION_CALLBACK OperationCallback;

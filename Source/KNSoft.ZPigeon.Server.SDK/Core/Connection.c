@@ -56,7 +56,6 @@ ZpServerConnection_Initialize(
     Connection->ChannelCount = 0;
     Connection->ChannelReservations = 0;
     Connection->MaxChannels = MaxChannels;
-    Connection->ModuleMask = 0;
     Connection->RemoteAddress.Family = RemoteAddress->sa_family;
     if (RemoteAddress->sa_family == AF_INET)
     {
@@ -103,16 +102,6 @@ ZpServerConnection_SetPhase(
 {
     RtlAcquireSRWLockExclusive(&Connection->Lock);
     Connection->Phase = Phase;
-    RtlReleaseSRWLockExclusive(&Connection->Lock);
-}
-
-VOID
-ZpServerConnection_SetModuleMask(
-    _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ ULONGLONG ModuleMask)
-{
-    RtlAcquireSRWLockExclusive(&Connection->Lock);
-    Connection->ModuleMask = ModuleMask;
     RtlReleaseSRWLockExclusive(&Connection->Lock);
 }
 

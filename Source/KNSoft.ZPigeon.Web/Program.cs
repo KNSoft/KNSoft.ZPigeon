@@ -124,7 +124,7 @@ app.Use(async (context, next) =>
         await context.Response.WriteAsJsonAsync(new
         {
             exception.Message,
-            Type = (ushort)exception.Status.Type,
+            Type = (byte)exception.Status.Type,
             exception.Status.Code
         });
     }

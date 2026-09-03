@@ -1,5 +1,7 @@
 ﻿#include "../../KNSoft.ZPigeon.Protocol/Include/KNSoft/ZPigeon/PortableDevice.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
 LOGICAL
 ZpPortable_IsStringValid(
@@ -47,7 +49,7 @@ ZpPortable_EncodeDeviceList(
 
     if (Count > ZP_PORTABLE_DEVICE_MAX_DEVICES || (Count != 0 && Devices == NULL)) return STATUS_INVALID_PARAMETER;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, Count);
+    Status = ZpCodec_WriteByte(&Writer, (BYTE)Count);
     for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
     {
         PCZP_PORTABLE_DEVICE_RECORD Device = &Devices[Index];
@@ -79,11 +81,12 @@ ZpPortable_DecodeDeviceList(
     _Out_ PZP_PORTABLE_DEVICE_LIST_VIEW List)
 {
     ZP_CODEC_READER Reader;
-    ULONG Count, Index, Offset;
+    BYTE Count;
+    ULONG Index, Offset;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+    Status = ZpCodec_ReadByte(&Reader, &Count);
     if (!NT_SUCCESS(Status) || Count > ZP_PORTABLE_DEVICE_MAX_DEVICES)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
@@ -120,9 +123,11 @@ ZpPortable_ReadObject(
     _Out_opt_ PZP_PORTABLE_OBJECT_RECORD_VIEW Object)
 {
     ZP_PORTABLE_OBJECT_RECORD_VIEW Local;
+    BYTE Flags;
     NTSTATUS Status;
 
-    Status = ZpCodec_ReadUInt32(Reader, &Local.Flags);
+    Status = ZpCodec_ReadByte(Reader, &Flags);
+    if (NT_SUCCESS(Status)) Local.Flags = Flags;
     if (NT_SUCCESS(Status) &&
         (Local.Flags & ~(ZP_PORTABLE_OBJECT_FOLDER | ZP_PORTABLE_OBJECT_STORAGE |
                          ZP_PORTABLE_OBJECT_CAN_DELETE)) != 0)
@@ -173,7 +178,7 @@ ZpPortable_EncodeObjectPage(
 
     if (Count > ZP_PORTABLE_DEVICE_PAGE_COUNT || (Count != 0 && Objects == NULL)) return STATUS_INVALID_PARAMETER;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, Count);
+    Status = ZpCodec_WriteByte(&Writer, (BYTE)Count);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, NextOffset);
     for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
     {
@@ -188,7 +193,7 @@ ZpPortable_EncodeObjectPage(
         {
             return STATUS_INVALID_PARAMETER;
         }
-        Status = ZpCodec_WriteUInt32(&Writer, Object->Flags);
+        Status = ZpCodec_WriteByte(&Writer, (BYTE)Object->Flags);
         if (NT_SUCCESS(Status) && !FlagOn(Object->Flags, ZP_PORTABLE_OBJECT_FOLDER))
         {
             Status = ZpCodec_WriteUInt64(&Writer, Object->Size);
@@ -217,11 +222,12 @@ ZpPortable_DecodeObjectPage(
     _Out_ PZP_PORTABLE_OBJECT_PAGE_VIEW Page)
 {
     ZP_CODEC_READER Reader;
-    ULONG Count, Index, Offset;
+    BYTE Count;
+    ULONG Index, Offset;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+    Status = ZpCodec_ReadByte(&Reader, &Count);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Page->NextOffset);
     if (!NT_SUCCESS(Status) || Count > ZP_PORTABLE_DEVICE_PAGE_COUNT)
     {
@@ -265,6 +271,19 @@ ZpPortable_WriteString(
     return ZpCodec_WriteString(Writer, String, Length);
 }
 
+static
+NTSTATUS
+ZpPortable_WriteTailString(
+    _Inout_ PZP_CODEC_WRITER Writer,
+    _In_reads_opt_(Length) PCWCH String,
+    _In_ ULONG Length,
+    _In_ LOGICAL Empty)
+{
+    if (Length > ZP_PORTABLE_DEVICE_MAX_STRING_LENGTH || (!Empty && Length == 0) ||
+        (Length != 0 && String == NULL)) return STATUS_INVALID_PARAMETER;
+    return ZpCodec_WriteTailString(Writer, String, Length);
+}
+
 NTSTATUS
 ZpPortable_EncodeObjectPageRequest(
     _In_reads_(DeviceIdLength) PCWCH DeviceId,
@@ -279,10 +298,11 @@ ZpPortable_EncodeObjectPageRequest(
     ZP_CODEC_WRITER Writer;
     NTSTATUS Status;
 
+    if (Offset > MAXULONG - ZP_PORTABLE_DEVICE_PAGE_COUNT) return STATUS_INVALID_PARAMETER;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpPortable_WriteString(&Writer, DeviceId, DeviceIdLength, FALSE);
-    if (NT_SUCCESS(Status)) Status = ZpPortable_WriteString(&Writer, ParentId, ParentIdLength, TRUE);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Offset);
+    Status = ZpCodec_WriteUInt32(&Writer, Offset);
+    if (NT_SUCCESS(Status)) Status = ZpPortable_WriteString(&Writer, DeviceId, DeviceIdLength, FALSE);
+    if (NT_SUCCESS(Status)) Status = ZpPortable_WriteTailString(&Writer, ParentId, ParentIdLength, TRUE);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -297,9 +317,9 @@ ZpPortable_DecodeObjectPageRequest(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadString(&Reader, &Request->DeviceId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->ParentId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Request->Offset);
+    Status = ZpCodec_ReadUInt32(&Reader, &Request->Offset);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->DeviceId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Request->ParentId);
     return NT_SUCCESS(Status) &&
            (!ZpPortable_IsStringValid(&Request->DeviceId, FALSE) ||
             !ZpPortable_IsStringValid(&Request->ParentId, TRUE) ||
@@ -322,7 +342,7 @@ ZpPortable_EncodeObjectRequest(
 
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpPortable_WriteString(&Writer, DeviceId, DeviceIdLength, FALSE);
-    if (NT_SUCCESS(Status)) Status = ZpPortable_WriteString(&Writer, ObjectId, ObjectIdLength, FALSE);
+    if (NT_SUCCESS(Status)) Status = ZpPortable_WriteTailString(&Writer, ObjectId, ObjectIdLength, FALSE);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -338,7 +358,7 @@ ZpPortable_DecodeObjectRequest(
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadString(&Reader, &Request->DeviceId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->ObjectId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Request->ObjectId);
     return NT_SUCCESS(Status) &&
            (!ZpPortable_IsStringValid(&Request->DeviceId, FALSE) ||
             !ZpPortable_IsStringValid(&Request->ObjectId, FALSE) || Reader.Offset != PayloadLength) ?
@@ -363,7 +383,7 @@ ZpPortable_EncodeNameRequest(
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpPortable_WriteString(&Writer, DeviceId, DeviceIdLength, FALSE);
     if (NT_SUCCESS(Status)) Status = ZpPortable_WriteString(&Writer, ObjectId, ObjectIdLength, FALSE);
-    if (NT_SUCCESS(Status)) Status = ZpPortable_WriteString(&Writer, Name, NameLength, FALSE);
+    if (NT_SUCCESS(Status)) Status = ZpPortable_WriteTailString(&Writer, Name, NameLength, FALSE);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -380,7 +400,7 @@ ZpPortable_DecodeNameRequest(
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadString(&Reader, &Request->DeviceId);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->ObjectId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Name);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Request->Name);
     return NT_SUCCESS(Status) &&
            (!ZpPortable_IsStringValid(&Request->DeviceId, FALSE) ||
             !ZpPortable_IsStringValid(&Request->ObjectId, FALSE) ||
@@ -405,10 +425,10 @@ ZpPortable_EncodeWriteRequest(
     NTSTATUS Status;
 
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpPortable_WriteString(&Writer, DeviceId, DeviceIdLength, FALSE);
+    Status = ZpCodec_WriteUInt64(&Writer, FileSize);
+    if (NT_SUCCESS(Status)) Status = ZpPortable_WriteString(&Writer, DeviceId, DeviceIdLength, FALSE);
     if (NT_SUCCESS(Status)) Status = ZpPortable_WriteString(&Writer, ParentId, ParentIdLength, FALSE);
-    if (NT_SUCCESS(Status)) Status = ZpPortable_WriteString(&Writer, Name, NameLength, FALSE);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt64(&Writer, FileSize);
+    if (NT_SUCCESS(Status)) Status = ZpPortable_WriteTailString(&Writer, Name, NameLength, FALSE);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -423,10 +443,10 @@ ZpPortable_DecodeWriteRequest(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadString(&Reader, &Request->DeviceId);
+    Status = ZpCodec_ReadUInt64(&Reader, &Request->FileSize);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->DeviceId);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->ParentId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Name);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &Request->FileSize);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Request->Name);
     return NT_SUCCESS(Status) &&
            (!ZpPortable_IsStringValid(&Request->DeviceId, FALSE) ||
             !ZpPortable_IsStringValid(&Request->ParentId, FALSE) ||

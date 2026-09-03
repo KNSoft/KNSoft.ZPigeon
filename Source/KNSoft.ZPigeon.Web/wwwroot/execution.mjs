@@ -1164,12 +1164,12 @@ export class RemoteDesktopManager {
     this.send(data, socket);
   }
   reportVideoCodecs(codecs, width, height, socket) {
-    const data = new ArrayBuffer(10),
+    const data = new ArrayBuffer(6),
       view = new DataView(data);
     view.setUint8(0, 6);
     view.setUint8(1, codecs);
-    view.setUint32(2, width, true);
-    view.setUint32(6, height, true);
+    view.setUint16(2, width, true);
+    view.setUint16(4, height, true);
     this.send(data, socket);
   }
   pointerDown(event) {

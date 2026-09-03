@@ -1,5 +1,7 @@
 ﻿#include "../../KNSoft.ZPigeon.Protocol/Include/KNSoft/ZPigeon/Audio.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
 LOGICAL
 ZpAudio_IsFlowValid(
@@ -47,7 +49,7 @@ ZpAudio_EncodeDeviceList(
 
     if (Count > ZP_AUDIO_MAX_DEVICES || (Count != 0 && Devices == NULL)) return STATUS_INVALID_PARAMETER;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, Count);
+    Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Count);
     for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
     {
         PCZP_AUDIO_DEVICE Device = &Devices[Index];
@@ -76,11 +78,12 @@ ZpAudio_DecodeDeviceList(
     _Out_ PZP_AUDIO_DEVICE_LIST_VIEW List)
 {
     ZP_CODEC_READER Reader;
-    ULONG Count, Index, Offset;
+    USHORT Count;
+    ULONG Index, Offset;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+    Status = ZpCodec_ReadUInt16(&Reader, &Count);
     if (!NT_SUCCESS(Status) || Count > ZP_AUDIO_MAX_DEVICES)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
@@ -153,7 +156,7 @@ ZpAudio_EncodeSessionList(
 
     if (Count > ZP_AUDIO_MAX_SESSIONS || (Count != 0 && Sessions == NULL)) return STATUS_INVALID_PARAMETER;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, Count);
+    Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Count);
     for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
     {
         PCZP_AUDIO_SESSION Session = &Sessions[Index];
@@ -184,11 +187,12 @@ ZpAudio_DecodeSessionList(
     _Out_ PZP_AUDIO_SESSION_LIST_VIEW List)
 {
     ZP_CODEC_READER Reader;
-    ULONG Count, Index, Offset;
+    USHORT Count;
+    ULONG Index, Offset;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+    Status = ZpCodec_ReadUInt16(&Reader, &Count);
     if (!NT_SUCCESS(Status) || Count > ZP_AUDIO_MAX_SESSIONS)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
@@ -247,8 +251,8 @@ ZpAudio_EncodeEndpointControl(
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpCodec_WriteByte(&Writer, Flow);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, Control);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Value);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, DeviceId, DeviceIdLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Value);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, DeviceId, DeviceIdLength);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -260,13 +264,15 @@ ZpAudio_DecodeEndpointControl(
     _Out_ PZP_AUDIO_ENDPOINT_CONTROL_VIEW Control)
 {
     ZP_CODEC_READER Reader;
+    USHORT Value;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadByte(&Reader, &Control->Flow);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &Control->Control);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Control->Value);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Control->DeviceId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(&Reader, &Value);
+    if (NT_SUCCESS(Status)) Control->Value = Value;
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Control->DeviceId);
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength || !ZpAudio_IsFlowValid(Control->Flow) ||
         Control->Control < ZpAudioEndpointSetVolume || Control->Control > ZpAudioEndpointSetEnabled ||
         Control->DeviceId.Length == 0 || Control->DeviceId.Length > ZP_AUDIO_MAX_ID_LENGTH ||
@@ -305,9 +311,9 @@ ZpAudio_EncodeSessionControl(
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpCodec_WriteByte(&Writer, Control);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Value);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Value);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, DeviceId, DeviceIdLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, SessionId, SessionIdLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, SessionId, SessionIdLength);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -319,13 +325,15 @@ ZpAudio_DecodeSessionControl(
     _Out_ PZP_AUDIO_SESSION_CONTROL_VIEW Control)
 {
     ZP_CODEC_READER Reader;
+    USHORT Value;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadByte(&Reader, &Control->Control);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Control->Value);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(&Reader, &Value);
+    if (NT_SUCCESS(Status)) Control->Value = Value;
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Control->DeviceId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Control->SessionId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Control->SessionId);
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength ||
         Control->Control < ZpAudioSessionSetVolume || Control->Control > ZpAudioSessionSetMute ||
         Control->DeviceId.Length == 0 || Control->DeviceId.Length > ZP_AUDIO_MAX_ID_LENGTH ||
@@ -359,7 +367,7 @@ ZpAudio_EncodeStreamRequest(
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpCodec_WriteByte(&Writer, Flow);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, DirectStreamId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, DeviceId, DeviceIdLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, DeviceId, DeviceIdLength);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -376,7 +384,7 @@ ZpAudio_DecodeStreamRequest(
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadByte(&Reader, &Request->Flow);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Request->DirectStreamId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->DeviceId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Request->DeviceId);
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength || !ZpAudio_IsFlowValid(Request->Flow) ||
         Request->DeviceId.Length > ZP_AUDIO_MAX_ID_LENGTH)
     {
@@ -434,11 +442,9 @@ ZpAudio_EncodePacket(
         return STATUS_INVALID_PARAMETER;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteByte(&Writer, Packet->Format);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, Packet->Channels);
+    Status = ZpCodec_WriteByte(&Writer, Packet->Channels);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Packet->SampleRate);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Packet->FrameCount);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Packet->DataLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Packet->FrameCount);
     *BytesWritten = Writer.Offset;
     return Status;
 }

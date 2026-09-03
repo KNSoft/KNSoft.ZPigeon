@@ -1,5 +1,7 @@
 ﻿#include "../../KNSoft.ZPigeon.Protocol/Include/KNSoft/ZPigeon/Serial.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 LOGICAL
 ZpSerial_IsPortNameValid(
     _In_reads_(Length) PCWCH Name,
@@ -53,7 +55,7 @@ ZpSerial_EncodePortList(
 
     if (Count > ZP_SERIAL_MAX_PORTS || (Count != 0 && Ports == NULL)) return STATUS_INVALID_PARAMETER;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, Count);
+    Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Count);
     for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
     {
         PCZP_SERIAL_PORT Port = &Ports[Index];
@@ -77,11 +79,12 @@ ZpSerial_DecodePortList(
     _Out_ PZP_SERIAL_PORT_LIST_VIEW List)
 {
     ZP_CODEC_READER Reader;
-    ULONG Count, Index, Offset;
+    USHORT Count;
+    ULONG Index, Offset;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+    Status = ZpCodec_ReadUInt16(&Reader, &Count);
     if (!NT_SUCCESS(Status) || Count > ZP_SERIAL_MAX_PORTS) return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
     Offset = Reader.Offset;
     for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++) Status = ZpSerial_ReadPort(&Reader, NULL);
@@ -146,12 +149,12 @@ ZpSerial_EncodeOpenRequest(
         return STATUS_INVALID_PARAMETER;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteString(&Writer, Port, PortLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, BaudRate);
+    Status = ZpCodec_WriteUInt32(&Writer, BaudRate);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, DataBits);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, Parity);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, StopBits);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, FlowControl);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, Port, PortLength);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -166,12 +169,12 @@ ZpSerial_DecodeOpenRequest(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadString(&Reader, &Request->Port);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Request->BaudRate);
+    Status = ZpCodec_ReadUInt32(&Reader, &Request->BaudRate);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &Request->DataBits);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &Request->Parity);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &Request->StopBits);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &Request->FlowControl);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Request->Port);
     return NT_SUCCESS(Status) &&
            (!ZpSerial_IsConfigurationValid((PCWCH)Request->Port.Buffer,
                                            Request->Port.Length,

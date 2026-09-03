@@ -18,7 +18,7 @@ public sealed record FileInfo(
 public sealed record FileHash(ulong FileSize, string Value);
 public sealed record SecurityDescriptor(string Sddl, bool DaclProtected);
 
-public enum FileImagePreviewQuality : uint
+public enum FileImagePreviewQuality : byte
 {
     Low = 1,
     Medium,

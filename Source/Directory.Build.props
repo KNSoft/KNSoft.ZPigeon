@@ -88,19 +88,4 @@
         <ForceImportAfterCppProps>$(MsbuildThisFileDirectory)\Directory.Build.AfterCpp.props</ForceImportAfterCppProps>
     </PropertyGroup>
 
-    <!-- Import $(MSBuildProjectName).Build.props if exists -->
-    <Import Project="$(MSBuildProjectDirectory)\$(MSBuildProjectName).Build.props" Condition="Exists('$(MSBuildProjectDirectory)\$(MSBuildProjectName).Build.props')"/>
-
-    <!-- Fall back to an early import when a caller-provided ForceImportAfterCppTargets hook already occupies the late import. -->
-    <Import Project="$(MSBuildProjectDirectory)\$(MSBuildProjectName).Build.targets" Condition="'$(ForceImportAfterCppTargets)' != '' and Exists('$(MSBuildProjectDirectory)\$(MSBuildProjectName).Build.targets')"/>
-
-    <PropertyGroup>
-        <!-- Import project-specific targets after Microsoft.Cpp.targets so their build dependency customizations are not overwritten.
-             Preserve a caller-provided ForceImportAfterCppTargets hook. -->
-        <ForceImportAfterCppTargets Condition="'$(ForceImportAfterCppTargets)' == '' and Exists('$(MSBuildProjectDirectory)\$(MSBuildProjectName).Build.targets')">$(MSBuildProjectDirectory)\$(MSBuildProjectName).Build.targets</ForceImportAfterCppTargets>
-    </PropertyGroup>
-    
-    <!-- Import outer Directory.Build.props if exists -->
-    <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" Condition="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../')) != ''" />
-
 </Project>

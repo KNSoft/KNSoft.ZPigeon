@@ -183,7 +183,7 @@ TEST_FUNC(ProtocolWindow)
     ULONG Length, Offset = 0;
 
     TEST_OK(NT_SUCCESS(ZpWindow_EncodeCaptureRequest(&Desktop, Buffer, sizeof(Buffer), &Length)) &&
-            Length == ZP_WINDOW_CAPTURE_REQUEST_WIRE_SIZE &&
+            Length == ZP_WINDOW_CAPTURE_REQUEST_WIRE_SIZE && Length == 30 &&
             NT_SUCCESS(ZpWindow_DecodeCaptureRequest(Buffer, Length, &Decoded)) &&
             Decoded.Handle == 0 && Decoded.Flags == Desktop.Flags && Decoded.DirectStreamId == 7 &&
             Decoded.MonitorIndex == ZP_WINDOW_CAPTURE_PRIMARY_MONITOR &&
@@ -360,17 +360,13 @@ TEST_FUNC(ProtocolCodec)
 TEST_FUNC(ProtocolFrame)
 {
     BYTE CancelBody[sizeof(ULONG)], Frame[128];
-    const ZP_MODULE_VERSION Modules[] = { { 1, 1 } };
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE] = { 0x04 };
-    BYTE ClientHello[ZP_CLIENT_HELLO_MAX_WIRE_SIZE];
+    BYTE ClientHello[ZP_CLIENT_HELLO_WIRE_SIZE + sizeof(BYTE)];
     BYTE InvalidFrame[5] = { 1, 0, 0, 0, 0xFF };
-    ZP_CLIENT_HELLO Hello = {
-        ZP_PROTOCOL_REVISION, Modules, (BYTE)RTL_NUMBER_OF(Modules), PublicKey
-    };
+    ZP_CLIENT_HELLO_VIEW Hello;
     ZP_CODEC_WRITER Writer;
     ZP_FRAME_VIEW View;
     ULONG FrameSize, BytesConsumed, ClientHelloLength;
-    NTSTATUS Status;
 
     ZpCodec_InitializeWriter(&Writer, CancelBody, sizeof(CancelBody));
     TEST_OK(NT_SUCCESS(ZpCodec_WriteUInt32(&Writer, 1)));
@@ -409,7 +405,7 @@ TEST_FUNC(ProtocolFrame)
     InvalidFrame[0] = 0;
     TEST_OK(ZpFrame_Decode(InvalidFrame, sizeof(InvalidFrame), &View, &BytesConsumed) == STATUS_DATA_ERROR);
 
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(&Hello,
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey,
                                                    ClientHello,
                                                    sizeof(ClientHello),
                                                    &ClientHelloLength)));
@@ -422,19 +418,28 @@ TEST_FUNC(ProtocolFrame)
     TEST_OK(NT_SUCCESS(ZpFrame_Decode(Frame, FrameSize, &View, &BytesConsumed)) &&
             View.MessageType == ZpMessageClientHello);
 
-    ClientHello[0] = 2;
-    Status = ZpFrame_Encode(ZpMessageClientHello,
-                            ClientHello,
-                            ClientHelloLength,
-                            Frame,
-                            sizeof(Frame),
-                            &FrameSize);
-    TEST_OK(Status == STATUS_REVISION_MISMATCH);
-    ClientHello[0] = ZP_PROTOCOL_REVISION;
-    ClientHello[sizeof(BYTE) + sizeof(BYTE) + ZP_MODULE_VERSION_WIRE_SIZE] = 0x03;
+    ClientHello[0] = 0;
+    TEST_OK(NT_SUCCESS(ZpMessage_DecodeClientHello(ClientHello,
+                                                   ClientHelloLength,
+                                                   &Hello)) &&
+            Hello.ClientVersion == 0);
+    ClientHello[0] = ZP_CLIENT_VERSION + 1;
+    TEST_OK(NT_SUCCESS(ZpMessage_DecodeClientHello(ClientHello,
+                                                   ClientHelloLength,
+                                                   &Hello)) &&
+            Hello.ClientVersion == ZP_CLIENT_VERSION + 1);
+    ClientHello[sizeof(BYTE)] = 0;
     TEST_OK(ZpFrame_Encode(ZpMessageClientHello,
                           ClientHello,
                           ClientHelloLength,
+                          Frame,
+                          sizeof(Frame),
+                          &FrameSize) == STATUS_DATA_ERROR);
+    ClientHello[sizeof(BYTE)] = 0x04;
+    ClientHello[ClientHelloLength] = 0;
+    TEST_OK(ZpFrame_Encode(ZpMessageClientHello,
+                          ClientHello,
+                          ClientHelloLength + sizeof(BYTE),
                           Frame,
                           sizeof(Frame),
                           &FrameSize) == STATUS_DATA_ERROR);

@@ -350,20 +350,19 @@ internal sealed record ExecutionCustomTokenRequest(
         }
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.UTF8, true);
-        writer.Write(1U);
-        writer.Write((UiAccess ? 1U : 0U) | (AddLogonSid ? 2U : 0U));
+        writer.Write((byte)((UiAccess ? 1 : 0) | (AddLogonSid ? 2 : 0)));
         writer.Write(AuthenticationId);
         writer.Write(IntegrityRid);
         WriteSid(writer, UserSid);
         WriteSid(writer, OwnerSid);
         WriteSid(writer, PrimaryGroupSid);
-        writer.Write((uint)Groups.Length);
+        writer.Write((ushort)Groups.Length);
         foreach (var group in Groups)
         {
             writer.Write(group.Attributes);
             WriteSid(writer, group.Sid);
         }
-        writer.Write((uint)Privileges.Length);
+        writer.Write((ushort)Privileges.Length);
         foreach (var privilege in Privileges)
         {
             writer.Write(privilege.Luid);
@@ -377,7 +376,7 @@ internal sealed record ExecutionCustomTokenRequest(
         var sid = new SecurityIdentifier(value);
         var bytes = GC.AllocateUninitializedArray<byte>(sid.BinaryLength);
         sid.GetBinaryForm(bytes, 0);
-        writer.Write((uint)bytes.Length);
+        writer.Write((byte)bytes.Length);
         writer.Write(bytes);
     }
 }

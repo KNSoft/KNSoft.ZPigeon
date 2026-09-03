@@ -5,21 +5,51 @@ LOGICAL
 ZpMessage_IsTypeValid(
     _In_ ZP_MESSAGE_TYPE MessageType)
 {
-    return (MessageType >= ZpMessageClientHello && MessageType <= ZpMessageReady) ||
+    return (MessageType >= ZpMessageClientHello && MessageType <= ZpMessageServerReject) ||
            (MessageType >= ZpMessageRequest && MessageType <= ZpMessageConnectionPolicy);
 }
 
 static
-LOGICAL
-ZpMessage_IsStatusValid(
-    _In_reads_bytes_(ZP_STATUS_WIRE_SIZE) const BYTE* Buffer)
+ULONG
+ZpMessage_GetStatusWireSize(
+    _In_ ZP_STATUS_TYPE Type)
 {
-    ZP_STATUS Status = {
-        ZpReadUInt16(Buffer),
-        ZpReadUInt32(Buffer + sizeof(USHORT))
-    };
+    return Type == ZpStatusNone ? ZP_STATUS_MIN_WIRE_SIZE : ZP_STATUS_MAX_WIRE_SIZE;
+}
 
-    return ZpStatus_IsValid(Status);
+static
+VOID
+ZpMessage_WriteStatus(
+    _Inout_ PBYTE* Cursor,
+    _In_ ZP_STATUS Status)
+{
+    ZpWire_WriteByte(Cursor, Status.Type);
+    if (Status.Type != ZpStatusNone) ZpWire_WriteUInt32(Cursor, Status.Code);
+}
+
+static
+NTSTATUS
+ZpMessage_ReadStatus(
+    _In_reads_bytes_(BufferLength) const BYTE* Buffer,
+    _In_ ULONG BufferLength,
+    _Out_ PZP_STATUS Status,
+    _Out_ PULONG BytesRead)
+{
+    if (BufferLength < ZP_STATUS_MIN_WIRE_SIZE) return STATUS_DATA_ERROR;
+    Status->Type = Buffer[0];
+    if (Status->Type == ZpStatusNone)
+    {
+        Status->Code = 0;
+        *BytesRead = ZP_STATUS_MIN_WIRE_SIZE;
+    }
+    else
+    {
+        if (BufferLength < ZP_STATUS_MAX_WIRE_SIZE) return STATUS_DATA_ERROR;
+        Status->Code = ZpReadUInt32(Buffer + sizeof(BYTE));
+        *BytesRead = ZP_STATUS_MAX_WIRE_SIZE;
+    }
+
+    return ZpStatus_IsValid(*Status) ? STATUS_SUCCESS : STATUS_DATA_ERROR;
 }
 
 static
@@ -111,31 +141,11 @@ ZpMessage_ValidateBody(
     switch (MessageType)
     {
         case ZpMessageClientHello:
-            if (BodyLength < 2 * sizeof(BYTE) + ZP_MODULE_VERSION_WIRE_SIZE +
-                                 ZP_CLIENT_PUBLIC_KEY_SIZE ||
-                BodyLength != 2 * sizeof(BYTE) + Body[1] * ZP_MODULE_VERSION_WIRE_SIZE +
-                                  ZP_CLIENT_PUBLIC_KEY_SIZE)
+            if (BodyLength != ZP_CLIENT_HELLO_WIRE_SIZE)
             {
                 return STATUS_DATA_ERROR;
             }
-            if (Body[0] != ZP_PROTOCOL_REVISION)
-            {
-                return STATUS_REVISION_MISMATCH;
-            }
-            for (BYTE Index = 0, PreviousId = 0; Index < Body[1]; Index++)
-            {
-                const BYTE* Module = Body + 2 * sizeof(BYTE) +
-                                     Index * ZP_MODULE_VERSION_WIRE_SIZE;
-
-                if (Module[0] <= PreviousId || Module[0] > ZP_MODULE_MAX_ID ||
-                    ZpReadUInt16(Module + sizeof(BYTE)) == 0)
-                {
-                    return STATUS_DATA_ERROR;
-                }
-                PreviousId = Module[0];
-            }
-            return Body[BodyLength - ZP_CLIENT_PUBLIC_KEY_SIZE] == 0x04 ?
-                       STATUS_SUCCESS : STATUS_DATA_ERROR;
+            return Body[sizeof(BYTE)] == 0x04 ? STATUS_SUCCESS : STATUS_DATA_ERROR;
 
         case ZpMessageServerChallenge:
             return BodyLength == ZP_SERVER_CHALLENGE_SIZE ? STATUS_SUCCESS : STATUS_DATA_ERROR;
@@ -144,24 +154,12 @@ ZpMessage_ValidateBody(
             return BodyLength == ZP_CLIENT_SIGNATURE_SIZE ? STATUS_SUCCESS : STATUS_DATA_ERROR;
 
         case ZpMessageReady:
-            if (BodyLength < sizeof(BYTE) + ZP_MODULE_VERSION_WIRE_SIZE ||
-                BodyLength != sizeof(BYTE) + Body[0] * ZP_MODULE_VERSION_WIRE_SIZE)
-            {
-                return STATUS_DATA_ERROR;
-            }
-            for (BYTE Index = 0, PreviousId = 0; Index < Body[0]; Index++)
-            {
-                const BYTE* Module = Body + sizeof(BYTE) +
-                                     Index * ZP_MODULE_VERSION_WIRE_SIZE;
+            return BodyLength == 0 ? STATUS_SUCCESS : STATUS_DATA_ERROR;
 
-                if (Module[0] <= PreviousId || Module[0] > ZP_MODULE_MAX_ID ||
-                    ZpReadUInt16(Module + sizeof(BYTE)) == 0)
-                {
-                    return STATUS_DATA_ERROR;
-                }
-                PreviousId = Module[0];
-            }
-            return STATUS_SUCCESS;
+        case ZpMessageServerReject:
+            return BodyLength == sizeof(BYTE) &&
+                   Body[0] == ZpServerRejectClientVersionTooOld ?
+                       STATUS_SUCCESS : STATUS_DATA_ERROR;
 
         case ZpMessageRequest:
             {
@@ -176,11 +174,18 @@ ZpMessage_ValidateBody(
             }
 
         case ZpMessageResponse:
-            return BodyLength >= sizeof(ULONG) + ZP_STATUS_WIRE_SIZE &&
-                   ZpReadUInt32(Body) != 0 &&
-                   ZpMessage_IsStatusValid(Body + sizeof(ULONG)) ?
-                       STATUS_SUCCESS :
-                       STATUS_DATA_ERROR;
+            {
+                ZP_STATUS Status;
+                ULONG StatusLength;
+
+                return BodyLength >= ZP_RESPONSE_MIN_HEADER_WIRE_SIZE &&
+                       ZpReadUInt32(Body) != 0 &&
+                       NT_SUCCESS(ZpMessage_ReadStatus(Body + sizeof(ULONG),
+                                                       BodyLength - sizeof(ULONG),
+                                                       &Status,
+                                                       &StatusLength)) ?
+                           STATUS_SUCCESS : STATUS_DATA_ERROR;
+            }
 
         case ZpMessageCancel:
             return BodyLength == sizeof(ULONG) && ZpReadUInt32(Body) != 0 ? STATUS_SUCCESS : STATUS_DATA_ERROR;
@@ -193,11 +198,19 @@ ZpMessage_ValidateBody(
                        STATUS_DATA_ERROR;
 
         case ZpMessageChannelClose:
-            return BodyLength == sizeof(ULONG) + ZP_STATUS_WIRE_SIZE &&
-                   ZpReadUInt32(Body) != 0 &&
-                   ZpMessage_IsStatusValid(Body + sizeof(ULONG)) ?
-                       STATUS_SUCCESS :
-                       STATUS_DATA_ERROR;
+            {
+                ZP_STATUS Status;
+                ULONG StatusLength;
+
+                return BodyLength >= sizeof(ULONG) + ZP_STATUS_MIN_WIRE_SIZE &&
+                       ZpReadUInt32(Body) != 0 &&
+                       NT_SUCCESS(ZpMessage_ReadStatus(Body + sizeof(ULONG),
+                                                       BodyLength - sizeof(ULONG),
+                                                       &Status,
+                                                       &StatusLength)) &&
+                       BodyLength == sizeof(ULONG) + StatusLength ?
+                           STATUS_SUCCESS : STATUS_DATA_ERROR;
+            }
 
         case ZpMessageChannelWindow:
             return BodyLength == 2 * sizeof(ULONG) &&
@@ -220,7 +233,7 @@ ZpMessage_ValidateBody(
 
 NTSTATUS
 ZpMessage_EncodeClientHello(
-    _In_ PCZP_CLIENT_HELLO Message,
+    _In_reads_bytes_(ZP_CLIENT_PUBLIC_KEY_SIZE) const BYTE* ClientPublicKey,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
@@ -228,47 +241,22 @@ ZpMessage_EncodeClientHello(
     NTSTATUS Status;
     PBYTE Cursor;
 
-    if (Message->ProtocolRevision != ZP_PROTOCOL_REVISION)
-    {
-        return STATUS_REVISION_MISMATCH;
-    }
-    if (Message->Modules == NULL || Message->ModuleCount == 0 ||
-        Message->ModuleCount > ZP_MODULE_MAX_ID || Message->ClientPublicKey == NULL ||
-        Message->ClientPublicKey[0] != 0x04)
+    if (ClientPublicKey == NULL || ClientPublicKey[0] != 0x04)
     {
         return STATUS_INVALID_PARAMETER;
     }
-
-    for (BYTE Index = 0, PreviousId = 0; Index < Message->ModuleCount; Index++)
-    {
-        if (Message->Modules[Index].ModuleId <= PreviousId ||
-            Message->Modules[Index].ModuleId > ZP_MODULE_MAX_ID ||
-            Message->Modules[Index].Version == 0)
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
-        PreviousId = Message->Modules[Index].ModuleId;
-    }
-    Status = ZpMessage_PrepareOutput(
-        Buffer,
-        BufferSize,
-        2 * sizeof(BYTE) + Message->ModuleCount * ZP_MODULE_VERSION_WIRE_SIZE +
-            ZP_CLIENT_PUBLIC_KEY_SIZE,
-        BytesWritten);
+    Status = ZpMessage_PrepareOutput(Buffer,
+                                     BufferSize,
+                                     ZP_CLIENT_HELLO_WIRE_SIZE,
+                                     BytesWritten);
     if (!NT_SUCCESS(Status) || Buffer == NULL)
     {
         return Status;
     }
 
     Cursor = Buffer;
-    ZpWire_WriteByte(&Cursor, Message->ProtocolRevision);
-    ZpWire_WriteByte(&Cursor, Message->ModuleCount);
-    for (BYTE Index = 0; Index < Message->ModuleCount; Index++)
-    {
-        ZpWire_WriteByte(&Cursor, Message->Modules[Index].ModuleId);
-        ZpWire_WriteUInt16(&Cursor, Message->Modules[Index].Version);
-    }
-    ZpWire_WriteData(&Cursor, Message->ClientPublicKey, ZP_CLIENT_PUBLIC_KEY_SIZE);
+    ZpWire_WriteByte(&Cursor, ZP_CLIENT_VERSION);
+    ZpWire_WriteData(&Cursor, ClientPublicKey, ZP_CLIENT_PUBLIC_KEY_SIZE);
     return STATUS_SUCCESS;
 }
 
@@ -284,16 +272,8 @@ ZpMessage_DecodeClientHello(
     Status = ZpMessage_ValidateBody(ZpMessageClientHello, Buffer, BodyLength);
     if (NT_SUCCESS(Status))
     {
-        View->ProtocolRevision = Buffer[0];
-        View->ModuleCount = Buffer[1];
-        Buffer += 2 * sizeof(BYTE);
-        for (BYTE Index = 0; Index < View->ModuleCount; Index++)
-        {
-            View->Modules[Index].ModuleId = Buffer[0];
-            View->Modules[Index].Version = ZpReadUInt16(Buffer + sizeof(BYTE));
-            Buffer += ZP_MODULE_VERSION_WIRE_SIZE;
-        }
-        View->ClientPublicKey = Buffer;
+        View->ClientVersion = Buffer[0];
+        View->ClientPublicKey = Buffer + sizeof(BYTE);
     }
     return Status;
 }
@@ -342,74 +322,6 @@ ZpMessage_DecodeClientAuthenticate(
     _Out_ PZP_BUFFER_VIEW View)
 {
     return ZpMessage_DecodeFixedData(ZpMessageClientAuthenticate, Body, BodyLength, View);
-}
-
-NTSTATUS
-ZpMessage_EncodeReady(
-    _In_ PCZP_READY Message,
-    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
-    _In_ ULONG BufferSize,
-    _Out_ PULONG BytesWritten)
-{
-    NTSTATUS Status;
-    PBYTE Cursor;
-
-    if (Message->Modules == NULL || Message->ModuleCount == 0 ||
-        Message->ModuleCount > ZP_MODULE_MAX_ID)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-    for (BYTE Index = 0, PreviousId = 0; Index < Message->ModuleCount; Index++)
-    {
-        if (Message->Modules[Index].ModuleId <= PreviousId ||
-            Message->Modules[Index].ModuleId > ZP_MODULE_MAX_ID ||
-            Message->Modules[Index].Version == 0)
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
-        PreviousId = Message->Modules[Index].ModuleId;
-    }
-    Status = ZpMessage_PrepareOutput(Buffer,
-                                     BufferSize,
-                                     sizeof(BYTE) + Message->ModuleCount *
-                                                        ZP_MODULE_VERSION_WIRE_SIZE,
-                                     BytesWritten);
-    if (!NT_SUCCESS(Status) || Buffer == NULL)
-    {
-        return Status;
-    }
-
-    Cursor = Buffer;
-    ZpWire_WriteByte(&Cursor, Message->ModuleCount);
-    for (BYTE Index = 0; Index < Message->ModuleCount; Index++)
-    {
-        ZpWire_WriteByte(&Cursor, Message->Modules[Index].ModuleId);
-        ZpWire_WriteUInt16(&Cursor, Message->Modules[Index].Version);
-    }
-    return STATUS_SUCCESS;
-}
-
-NTSTATUS
-ZpMessage_DecodeReady(
-    _In_reads_bytes_(BodyLength) const VOID* Body,
-    _In_ ULONG BodyLength,
-    _Out_ PZP_READY_VIEW View)
-{
-    NTSTATUS Status;
-    const BYTE* Buffer = Body;
-
-    Status = ZpMessage_ValidateBody(ZpMessageReady, Buffer, BodyLength);
-    if (NT_SUCCESS(Status))
-    {
-        View->ModuleCount = *Buffer++;
-        for (BYTE Index = 0; Index < View->ModuleCount; Index++)
-        {
-            View->Modules[Index].ModuleId = Buffer[0];
-            View->Modules[Index].Version = ZpReadUInt16(Buffer + sizeof(BYTE));
-            Buffer += ZP_MODULE_VERSION_WIRE_SIZE;
-        }
-    }
-    return Status;
 }
 
 NTSTATUS
@@ -536,23 +448,24 @@ ZpMessage_DecodeRequest(
 NTSTATUS
 ZpMessage_EncodeResponseHeader(
     _In_ PCZP_RESPONSE Message,
-    _Out_writes_bytes_(ZP_RESPONSE_HEADER_WIRE_SIZE) PVOID Buffer)
+    _Out_writes_bytes_to_(ZP_RESPONSE_MAX_HEADER_WIRE_SIZE, *BytesWritten) PVOID Buffer,
+    _Out_ PULONG BytesWritten)
 {
+    ULONG HeaderSize;
     PBYTE Cursor;
 
+    HeaderSize = sizeof(ULONG) + ZpMessage_GetStatusWireSize(Message->Status.Type);
     if (Message->RequestId == 0 ||
         !ZpStatus_IsValid(Message->Status) ||
-        Message->PayloadLength > ZP_RESPONSE_MAX_PAYLOAD_SIZE ||
+        Message->PayloadLength > ZP_MESSAGE_MAX_BODY_SIZE - HeaderSize ||
         (Message->PayloadLength != 0 && Message->Payload == NULL))
     {
         return STATUS_INVALID_PARAMETER;
     }
     Cursor = Buffer;
-    ZpWriteUInt32(Cursor, Message->RequestId);
-    Cursor += sizeof(Message->RequestId);
-    ZpWriteUInt16(Cursor, Message->Status.Type);
-    Cursor += sizeof(Message->Status.Type);
-    ZpWriteUInt32(Cursor, Message->Status.Code);
+    ZpWire_WriteUInt32(&Cursor, Message->RequestId);
+    ZpMessage_WriteStatus(&Cursor, Message->Status);
+    *BytesWritten = HeaderSize;
     return STATUS_SUCCESS;
 }
 
@@ -563,18 +476,18 @@ ZpMessage_EncodeResponse(
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
-    BYTE Header[ZP_RESPONSE_HEADER_WIRE_SIZE];
+    BYTE Header[ZP_RESPONSE_MAX_HEADER_WIRE_SIZE];
     NTSTATUS Status;
-    ULONG RequiredSize;
+    ULONG HeaderSize, RequiredSize;
     PBYTE Cursor;
 
-    Status = ZpMessage_EncodeResponseHeader(Message, Header);
+    Status = ZpMessage_EncodeResponseHeader(Message, Header, &HeaderSize);
     if (!NT_SUCCESS(Status)) return Status;
-    RequiredSize = ZP_RESPONSE_HEADER_WIRE_SIZE + Message->PayloadLength;
+    RequiredSize = HeaderSize + Message->PayloadLength;
     Status = ZpMessage_PrepareOutput(Buffer, BufferSize, RequiredSize, BytesWritten);
     if (!NT_SUCCESS(Status) || Buffer == NULL) return Status;
     Cursor = Buffer;
-    ZpWire_WriteData(&Cursor, Header, sizeof(Header));
+    ZpWire_WriteData(&Cursor, Header, HeaderSize);
     ZpWire_WriteData(&Cursor, Message->Payload, Message->PayloadLength);
     return STATUS_SUCCESS;
 }
@@ -591,14 +504,17 @@ ZpMessage_DecodeResponse(
     Status = ZpMessage_ValidateBody(ZpMessageResponse, Buffer, BodyLength);
     if (NT_SUCCESS(Status))
     {
+        ULONG StatusLength;
+
         View->RequestId = ZpReadUInt32(Buffer);
         Buffer += sizeof(ULONG);
-        View->Status.Type = ZpReadUInt16(Buffer);
-        Buffer += sizeof(USHORT);
-        View->Status.Code = ZpReadUInt32(Buffer);
-        Buffer += sizeof(ULONG);
+        Status = ZpMessage_ReadStatus(Buffer,
+                                     BodyLength - sizeof(ULONG),
+                                     &View->Status,
+                                     &StatusLength);
+        Buffer += StatusLength;
         View->Payload.Buffer = Buffer;
-        View->Payload.Length = BodyLength - ZP_RESPONSE_HEADER_WIRE_SIZE;
+        View->Payload.Length = BodyLength - sizeof(ULONG) - StatusLength;
     }
     return Status;
 }
@@ -709,23 +625,21 @@ ZpMessage_EncodeChannelClose(
 {
     PBYTE Cursor;
     NTSTATUS Status;
+    ULONG RequiredSize;
 
     if (ChannelId == 0 || !ZpStatus_IsValid(StatusCode))
     {
         return STATUS_INVALID_PARAMETER;
     }
-    Status = ZpMessage_PrepareOutput(Buffer,
-                                     BufferSize,
-                                     sizeof(ULONG) + ZP_STATUS_WIRE_SIZE,
-                                     BytesWritten);
+    RequiredSize = sizeof(ULONG) + ZpMessage_GetStatusWireSize(StatusCode.Type);
+    Status = ZpMessage_PrepareOutput(Buffer, BufferSize, RequiredSize, BytesWritten);
     if (!NT_SUCCESS(Status) || Buffer == NULL)
     {
         return Status;
     }
     Cursor = Buffer;
     ZpWire_WriteUInt32(&Cursor, ChannelId);
-    ZpWire_WriteUInt16(&Cursor, StatusCode.Type);
-    ZpWire_WriteUInt32(&Cursor, StatusCode.Code);
+    ZpMessage_WriteStatus(&Cursor, StatusCode);
     return STATUS_SUCCESS;
 }
 
@@ -743,10 +657,13 @@ ZpMessage_DecodeChannelClose(
                                     BodyLength);
     if (NT_SUCCESS(Status))
     {
+        ULONG StatusLength;
+
         Message->ChannelId = ZpReadUInt32(Buffer);
-        Message->Status.Type = ZpReadUInt16(Buffer + sizeof(ULONG));
-        Message->Status.Code = ZpReadUInt32(
-            Buffer + sizeof(ULONG) + sizeof(USHORT));
+        Status = ZpMessage_ReadStatus(Buffer + sizeof(ULONG),
+                                     BodyLength - sizeof(ULONG),
+                                     &Message->Status,
+                                     &StatusLength);
     }
     return Status;
 }

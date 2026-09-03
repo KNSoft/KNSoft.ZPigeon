@@ -245,7 +245,9 @@ ZpWindow_EnumerateMonitorCallback(
     }
     Record = &Enumeration->Monitors[Enumeration->Count];
     Record->Index = Enumeration->Count;
-    Record->Flags = Info.dwFlags;
+    Record->Flags = FlagOn(Info.dwFlags, MONITORINFOF_PRIMARY) ?
+                        ZP_WINDOW_MONITOR_FLAG_PRIMARY :
+                        0;
     Record->Left = Info.rcMonitor.left;
     Record->Top = Info.rcMonitor.top;
     Record->Right = Info.rcMonitor.right;
@@ -673,7 +675,7 @@ ZpWindowCapture_SendCloseLocked(
     _Inout_ PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel,
     _In_ ZP_STATUS CloseStatus)
 {
-    BYTE Body[sizeof(ULONG) + ZP_STATUS_WIRE_SIZE];
+    BYTE Body[sizeof(ULONG) + ZP_STATUS_MAX_WIRE_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -953,7 +955,7 @@ ZpWindowCapture_SendFrame(
     _In_reads_bytes_(Record->DataLength) const VOID* Data,
     _Out_ PBYTE AckFlags)
 {
-    BYTE Header[sizeof(USHORT) + 8 * sizeof(ULONG)];
+    BYTE Header[ZP_WINDOW_CAPTURE_RECORD_WIRE_SIZE];
     ULONG HeaderLength;
     NTSTATUS Status;
 
@@ -1431,13 +1433,13 @@ ZpWindowCapture_ChannelData(
     {
         ULONG VideoWidth, VideoHeight;
 
-        if (Length != 2 * sizeof(BYTE) + 2 * sizeof(ULONG) ||
+        if (Length != 2 * sizeof(BYTE) + 2 * sizeof(USHORT) ||
             FlagOn(Data[1], ~ZP_WINDOW_VIDEO_CODECS_MASK))
         {
             return STATUS_PROTOCOL_UNREACHABLE;
         }
-        VideoWidth = ZpWindowCapture_ReadUInt32(Data + 2 * sizeof(BYTE));
-        VideoHeight = ZpWindowCapture_ReadUInt32(Data + 2 * sizeof(BYTE) + sizeof(ULONG));
+        VideoWidth = ZpWindowCapture_ReadUInt16(Data + 2 * sizeof(BYTE));
+        VideoHeight = ZpWindowCapture_ReadUInt16(Data + 2 * sizeof(BYTE) + sizeof(USHORT));
         if (VideoWidth < ZP_WINDOW_CAPTURE_MIN_VIDEO_DIMENSION ||
             VideoWidth > ZP_WINDOW_CAPTURE_MAX_DIMENSION ||
             VideoHeight < ZP_WINDOW_CAPTURE_MIN_VIDEO_DIMENSION ||
@@ -1457,16 +1459,16 @@ ZpWindowCapture_ChannelData(
     {
         const BYTE* Cursor = Data + sizeof(BYTE);
         PZP_WINDOW_SHARED_CAPTURE Capture;
-        ULONG MaxDimension;
+        USHORT MaxDimension;
         BYTE FrameRate, Quality, Encoding;
         HRESULT Result;
 
-        if (Length != sizeof(BYTE) + sizeof(ULONG) + 3 * sizeof(BYTE))
+        if (Length != sizeof(BYTE) + sizeof(USHORT) + 3 * sizeof(BYTE))
         {
             return STATUS_PROTOCOL_UNREACHABLE;
         }
-        MaxDimension = ZpWindowCapture_ReadUInt32(Cursor);
-        Cursor += sizeof(ULONG);
+        MaxDimension = ZpWindowCapture_ReadUInt16(Cursor);
+        Cursor += sizeof(USHORT);
         FrameRate = *Cursor++;
         Quality = *Cursor++;
         Encoding = *Cursor;

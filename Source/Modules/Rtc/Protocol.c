@@ -1,5 +1,7 @@
 ﻿#include "../../KNSoft.ZPigeon.Protocol/Include/KNSoft/ZPigeon/Rtc.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
 LOGICAL
 ZpRtc_IsStringValid(
@@ -42,7 +44,7 @@ ZpRtc_EncodeOpenRequest(
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpCodec_WriteData(&Writer, SessionId, ZP_RTC_SESSION_ID_SIZE);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Offer, OfferLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteArrayCount(&Writer, IceServerCount);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, (BYTE)IceServerCount);
     for (Index = 0; NT_SUCCESS(Status) && Index < IceServerCount; Index++)
     {
         Status = ZpCodec_WriteString(&Writer, IceServers[Index].Url, IceServers[Index].UrlLength);
@@ -60,6 +62,7 @@ ZpRtc_DecodeOpenRequest(
     ZP_CODEC_READER Reader;
     ZP_BUFFER_VIEW SessionId;
     ZP_STRING_VIEW IceServer;
+    BYTE IceServerCount;
     NTSTATUS Status;
     ULONG Index;
 
@@ -67,7 +70,8 @@ ZpRtc_DecodeOpenRequest(
     Status = ZpCodec_ReadData(&Reader, ZP_RTC_SESSION_ID_SIZE, &SessionId);
     if (NT_SUCCESS(Status)) Request->SessionId = SessionId.Buffer;
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Offer);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadArrayCount(&Reader, &Request->IceServerCount);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &IceServerCount);
+    if (NT_SUCCESS(Status)) Request->IceServerCount = IceServerCount;
     if (NT_SUCCESS(Status) &&
         (Request->Offer.Length == 0 || Request->Offer.Length > ZP_RTC_MAX_SDP_LENGTH ||
          Request->IceServerCount > ZP_RTC_MAX_ICE_SERVERS))
@@ -123,7 +127,7 @@ ZpRtc_EncodeAnswer(
 
     if (!ZpRtc_IsStringValid(Answer, AnswerLength, ZP_RTC_MAX_SDP_LENGTH)) return STATUS_INVALID_PARAMETER;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteString(&Writer, Answer, AnswerLength);
+    Status = ZpCodec_WriteTailString(&Writer, Answer, AnswerLength);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -138,7 +142,7 @@ ZpRtc_DecodeAnswer(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadString(&Reader, Answer);
+    Status = ZpCodec_ReadTailString(&Reader, Answer);
     return NT_SUCCESS(Status) && Reader.Offset == PayloadLength && Answer->Length != 0 &&
            Answer->Length <= ZP_RTC_MAX_SDP_LENGTH ? STATUS_SUCCESS :
                NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;

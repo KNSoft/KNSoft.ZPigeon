@@ -120,7 +120,8 @@ ZpCertificate_EncodeMetadata(
     PWSTR Oid = NULL;
     SIZE_T FriendlyNameLength = FriendlyName == NULL ? 0 : wcslen(FriendlyName);
     SIZE_T MaximumOidLength = 0;
-    ULONGLONG RequiredSize = sizeof(ULONG) * 3 + FriendlyNameLength * sizeof(WCHAR);
+    ULONGLONG RequiredSize = sizeof(BYTE) + sizeof(USHORT) + sizeof(ULONG) +
+                             FriendlyNameLength * sizeof(WCHAR);
     ULONG Count = 0, Index;
     NTSTATUS Status;
 
@@ -135,6 +136,11 @@ ZpCertificate_EncodeMetadata(
             return Status;
         }
         Count = Usage->cUsageIdentifier;
+        if (Count > MAXUSHORT)
+        {
+            Mem_Free(Usage);
+            return STATUS_BUFFER_OVERFLOW;
+        }
         for (Index = 0; Index < Count; Index++)
         {
             SIZE_T Length = strlen(Usage->rgpszUsageIdentifier[Index]);
@@ -165,10 +171,10 @@ ZpCertificate_EncodeMetadata(
         }
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, (ULONG)RequiredSize);
-    Status = ZpCodec_WriteUInt32(&Writer, Usage != NULL && Count == 0);
+    Status = ZpCodec_WriteBoolean(&Writer, Usage != NULL && Count == 0);
     if (NT_SUCCESS(Status))
         Status = ZpCodec_WriteString(&Writer, FriendlyName, (ULONG)FriendlyNameLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Count);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Count);
     for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
     {
         SIZE_T Length = strlen(Usage->rgpszUsageIdentifier[Index]);

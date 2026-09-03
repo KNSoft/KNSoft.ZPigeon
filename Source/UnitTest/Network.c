@@ -45,23 +45,19 @@ ConnectionTest_MessageCallback(
 
 TEST_FUNC(NetworkConnection)
 {
-    const ZP_MODULE_VERSION Modules[] = { { 1, 1 } };
-    ZP_CLIENT_HELLO ClientHello = {
-        ZP_PROTOCOL_REVISION, Modules, (BYTE)RTL_NUMBER_OF(Modules), NULL
-    };
-    ZP_READY Ready = { Modules, (BYTE)RTL_NUMBER_OF(Modules) };
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE] = { 0x04 };
+    ZP_SERVER_REJECT_REASON RejectReason = ZpServerRejectClientVersionTooOld;
     BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE] = { 0 };
     BYTE Signature[ZP_CLIENT_SIGNATURE_SIZE] = { 0 };
     BYTE ChannelWindowBody[16];
-    BYTE HelloBody[128], ReadyBody[16], PolicyBody[ZP_CONNECTION_POLICY_WIRE_SIZE], HelloFrame[160];
-    BYTE ChallengeFrame[64], AuthenticateFrame[96], ReadyFrame[32], PolicyFrame[16];
+    BYTE HelloBody[128], PolicyBody[ZP_CONNECTION_POLICY_WIRE_SIZE], HelloFrame[160];
+    BYTE ChallengeFrame[64], AuthenticateFrame[96], ReadyFrame[32], RejectFrame[16], PolicyFrame[16];
     BYTE ChannelWindowFrame[32];
     BYTE InvalidPrefix[sizeof(ULONG)] = { 0 };
     BYTE MaximumPrefix[sizeof(ULONG)] = { 0, 0, 0, 1 };
     static BYTE CompressionPayload[8192], CompressionBody[sizeof(CompressionPayload) + 16];
     static BYTE CompressionFrame[sizeof(CompressionBody) + 16], RandomBody[sizeof(CompressionBody)];
-    BYTE ResponseHeader[ZP_RESPONSE_HEADER_WIRE_SIZE];
+    BYTE ResponseHeader[ZP_RESPONSE_MAX_HEADER_WIRE_SIZE];
     CONNECTION_TEST_CONTEXT Context = { 0 };
     ZP_RESPONSE CompressionResponse = {
         1, { ZpStatusNone, 0 }, CompressionPayload, sizeof(CompressionPayload)
@@ -76,8 +72,9 @@ TEST_FUNC(NetworkConnection)
     ZP_NETWORK_STATISTICS Statistics;
     ZP_CONNECTION Connection;
     ULONG BodyLength, HelloFrameLength, ChallengeFrameLength, AuthenticateFrameLength;
-    ULONG ReadyFrameLength, ChannelWindowFrameLength;
-    ULONG PolicyFrameLength, CompressionBodyLength, CompressionFrameLength, Index, RandomValue = 1;
+    ULONG ReadyFrameLength, RejectFrameLength, ChannelWindowFrameLength;
+    ULONG PolicyFrameLength, CompressionBodyLength, CompressionFrameLength, ResponseHeaderLength, Index;
+    ULONG RandomValue = 1;
     ULONG BytesConsumed;
 
     TEST_OK(NT_SUCCESS(RtlInitializeCriticalSectionEx(
@@ -95,8 +92,7 @@ TEST_FUNC(NetworkConnection)
     TEST_OK(UdpTickStatus.Type == UdpCloseStatus.Type && UdpTickStatus.Code == UdpCloseStatus.Code);
     RtlDeleteCriticalSection(&UdpConnection.Lock);
 
-    ClientHello.ClientPublicKey = PublicKey;
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(&ClientHello,
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey,
                                                    HelloBody,
                                                    sizeof(HelloBody),
                                                    &BodyLength)));
@@ -118,13 +114,18 @@ TEST_FUNC(NetworkConnection)
                                      AuthenticateFrame,
                                      sizeof(AuthenticateFrame),
                                      &AuthenticateFrameLength)));
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeReady(&Ready, ReadyBody, sizeof(ReadyBody), &BodyLength)));
     TEST_OK(NT_SUCCESS(ZpFrame_Encode(ZpMessageReady,
-                                     ReadyBody,
-                                     BodyLength,
-                                     ReadyFrame,
-                                     sizeof(ReadyFrame),
-                                     &ReadyFrameLength)));
+                                      NULL,
+                                      0,
+                                      ReadyFrame,
+                                      sizeof(ReadyFrame),
+                                      &ReadyFrameLength)));
+    TEST_OK(NT_SUCCESS(ZpFrame_Encode(ZpMessageServerReject,
+                                      &RejectReason,
+                                      sizeof(RejectReason),
+                                      RejectFrame,
+                                      sizeof(RejectFrame),
+                                      &RejectFrameLength)));
     TEST_OK(NT_SUCCESS(ZpMessage_EncodeConnectionPolicy(&Policy,
                                                         PolicyBody,
                                                         sizeof(PolicyBody),
@@ -168,7 +169,9 @@ TEST_FUNC(NetworkConnection)
                                                 CompressionBody,
                                                 sizeof(CompressionBody),
                                                 &CompressionBodyLength)) &&
-            NT_SUCCESS(ZpMessage_EncodeResponseHeader(&CompressionResponse, ResponseHeader)));
+            NT_SUCCESS(ZpMessage_EncodeResponseHeader(&CompressionResponse,
+                                                       ResponseHeader,
+                                                       &ResponseHeaderLength)));
     TEST_OK(NT_SUCCESS(ZpConnection_Initialize(&Connection,
                                               ZpConnectionRoleClient,
                                               ConnectionTest_MessageCallback,
@@ -177,7 +180,7 @@ TEST_FUNC(NetworkConnection)
                 ZP_SEND_FLAG_COMPRESSIBLE,
                 ZpMessageResponse,
                 ResponseHeader,
-                sizeof(ResponseHeader),
+                ResponseHeaderLength,
                 CompressionPayload,
                 sizeof(CompressionPayload),
                 &SendMessage)) &&
@@ -242,7 +245,7 @@ TEST_FUNC(NetworkConnection)
                                                 0,
                                                 ZpMessageResponse,
                                                 ResponseHeader,
-                                                sizeof(ResponseHeader),
+                                                ResponseHeaderLength,
                                                 CompressionPayload,
                                                 sizeof(CompressionPayload),
                                                 16,
@@ -314,6 +317,23 @@ TEST_FUNC(NetworkConnection)
     TEST_OK(ZpConnection_NotifyMessageSent(&Connection,
                                            ZpMessageReady,
                                            1) == STATUS_INVALID_DEVICE_STATE);
+    ZpConnection_Uninitialize(&Connection);
+
+    RtlZeroMemory(&Context, sizeof(Context));
+    Context.CallbackStatus = STATUS_REVISION_MISMATCH;
+    TEST_OK(NT_SUCCESS(ZpConnection_Initialize(&Connection,
+                                               ZpConnectionRoleClient,
+                                               ConnectionTest_MessageCallback,
+                                               &Context)) &&
+            NT_SUCCESS(ZpConnection_NotifyMessageSent(&Connection,
+                                                       ZpMessageClientHello,
+                                                       1)) &&
+            ZpConnection_Receive(&Connection,
+                                 RejectFrame,
+                                 RejectFrameLength) == STATUS_REVISION_MISMATCH &&
+            Context.Count == 1 &&
+            Context.MessageTypes[0] == ZpMessageServerReject &&
+            Connection.State == ZpConnectionStateClosed);
     ZpConnection_Uninitialize(&Connection);
 
     RtlZeroMemory(&Context, sizeof(Context));

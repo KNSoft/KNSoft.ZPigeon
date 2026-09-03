@@ -124,7 +124,7 @@ ZpBrowser_AddRecord(
     ULONG RecordLength;
     NTSTATUS Status;
 
-    if (Builder->Count == ZP_CODEC_MAX_ELEMENT_COUNT)
+    if (Builder->Count == ZP_BROWSER_MAX_PAGE_RECORDS)
     {
         return STATUS_QUOTA_EXCEEDED;
     }
@@ -142,7 +142,7 @@ ZpBrowser_AddRecord(
     Record.DetailLength = Detail == NULL ? 0 : (ULONG)wcslen(Detail);
     Status = ZpBrowser_EncodeRecord(&Record, NULL, 0, &RecordLength);
     if (!NT_SUCCESS(Status)) return Status;
-    if (Builder->Length == 0) Builder->Length = sizeof(ULONGLONG) + sizeof(ULONG);
+    if (Builder->Length == 0) Builder->Length = sizeof(ULONGLONG) + sizeof(USHORT);
     Status = ZpBrowser_ReserveBuilder(Builder, RecordLength);
     if (!NT_SUCCESS(Status)) return Status;
     Status = ZpBrowser_EncodeRecord(&Record,
@@ -178,9 +178,9 @@ ZpBrowser_EncodeBuilder(
 
     if (Builder->Length == 0)
     {
-        Status = ZpBrowser_ReserveBuilder(Builder, sizeof(ULONGLONG) + sizeof(ULONG));
+        Status = ZpBrowser_ReserveBuilder(Builder, sizeof(ULONGLONG) + sizeof(USHORT));
         if (!NT_SUCCESS(Status)) return Status;
-        Builder->Length = sizeof(ULONGLONG) + sizeof(ULONG);
+        Builder->Length = sizeof(ULONGLONG) + sizeof(USHORT);
     }
     Status = ZpBrowser_EncodePageHeader(NextCursor, Builder->Count, Builder->Buffer);
     if (!NT_SUCCESS(Status)) return Status;

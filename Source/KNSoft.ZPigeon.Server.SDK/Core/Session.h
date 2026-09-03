@@ -11,9 +11,7 @@ typedef struct _ZP_SERVER_SESSION
     PZP_CONNECTION_OBJECT Public;
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE];
     BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE];
-    ZP_MODULE_VERSION Modules[ZP_MODULE_MAX_ID];
-    BYTE ModuleCount;
-    ULONGLONG ModuleMask;
+    BYTE ClientVersion;
     ZP_CONNECTION Connection;
     BOOLEAN ConnectionInitialized;
 } ZP_SERVER_SESSION, *PZP_SERVER_SESSION;

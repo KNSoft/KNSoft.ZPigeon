@@ -418,8 +418,6 @@ wmain(VOID)
     Config.EndpointCount = 1;
     Config.DeploymentRootCertificate = RootCertificate;
     Config.DeploymentRootCertificateLength = RootCertificateLength;
-    Config.Modules = ZpBuiltinModules;
-    Config.ModuleCount = ZP_BUILTIN_MODULE_COUNT;
     Config.StateCallback = ZpClient_StateCallback;
     Config.OperationCallback = ZpClient_OperationCallback;
     Config.ClientKeyScope = ZpClientKeyUser;

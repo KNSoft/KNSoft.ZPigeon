@@ -28,7 +28,6 @@ ZpClient_ValidateConfig(
         Config->DeploymentRootCertificate == NULL ||
         Config->DeploymentRootCertificateLength == 0 ||
         Config->DeploymentRootCertificateLength > ZP_CERTIFICATE_MAX_SIZE ||
-        !ZpConfig_AreModulesValid(Config->Modules, Config->ModuleCount) ||
         Config->MaxRequestsPerConnection > ZP_CLIENT_MAX_REQUESTS_PER_CONNECTION ||
         Config->MaxRequestPayloadBytesPerConnection >
             ZP_CLIENT_MAX_REQUEST_PAYLOAD_BYTES_PER_CONNECTION ||
@@ -41,7 +40,6 @@ ZpClient_ValidateConfig(
     }
     Size = sizeof(ZP_CLIENT_OBJECT) +
            (SIZE_T)Config->EndpointCount * sizeof(ZP_ENDPOINT) +
-           (SIZE_T)Config->ModuleCount * sizeof(ZP_MODULE_VERSION) +
            Config->DeploymentRootCertificateLength;
     Status = ZpConfig_AddStringSize(&Size, Config->ClientKeyName, FALSE, &StringSize);
     if (!NT_SUCCESS(Status))
@@ -142,11 +140,6 @@ ZpClient_Create(
     Endpoints = (PZP_ENDPOINT)Cursor;
     Cursor += (SIZE_T)Config->EndpointCount * sizeof(*Endpoints);
     Object->Config.Endpoints = Endpoints;
-    Object->Config.Modules = (PCZP_MODULE_VERSION)Cursor;
-    RtlCopyMemory(Cursor,
-                  Config->Modules,
-                  (SIZE_T)Config->ModuleCount * sizeof(ZP_MODULE_VERSION));
-    Cursor += (SIZE_T)Config->ModuleCount * sizeof(ZP_MODULE_VERSION);
     ZpConfig_CopyString(&Cursor, Config->ClientKeyName, &Object->Config.ClientKeyName);
 
     for (Index = 0; Index < Config->EndpointCount; Index++)
@@ -590,7 +583,6 @@ ZpClient_NotifyState(
     if (State == ZpClientStateAuthenticating)
     {
         Object->HighestInboundRequestId = 0;
-        Object->ActiveModuleMask = 0;
     }
     else if (State == ZpClientStateReady)
     {

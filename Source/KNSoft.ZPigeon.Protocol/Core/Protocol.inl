@@ -140,6 +140,39 @@ ZpWire_WriteString(
     ZpWire_WriteData(Cursor, String, Length * sizeof(WCHAR));
 }
 
+FORCEINLINE
+NTSTATUS
+ZpCodec_WriteTailString(
+    _Inout_ PZP_CODEC_WRITER Writer,
+    _In_reads_opt_(Length) PCWCH String,
+    _In_ ULONG Length)
+{
+    if (Length > ZP_CODEC_MAX_ELEMENT_COUNT)
+    {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    return ZpCodec_WriteData(Writer, String, Length * sizeof(WCHAR));
+}
+
+FORCEINLINE
+NTSTATUS
+ZpCodec_ReadTailString(
+    _Inout_ PZP_CODEC_READER Reader,
+    _Out_ PZP_STRING_VIEW String)
+{
+    ULONG ByteLength = Reader->Size - Reader->Offset;
+
+    if ((ByteLength & (sizeof(WCHAR) - 1)) != 0 ||
+        ByteLength / sizeof(WCHAR) > ZP_CODEC_MAX_ELEMENT_COUNT)
+    {
+        return STATUS_DATA_ERROR;
+    }
+    String->Buffer = (PCWCH)(Reader->Buffer + Reader->Offset);
+    String->Length = ByteLength / sizeof(WCHAR);
+    Reader->Offset = Reader->Size;
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS
 ZpMessage_ValidateBody(
     _In_ ZP_MESSAGE_TYPE MessageType,

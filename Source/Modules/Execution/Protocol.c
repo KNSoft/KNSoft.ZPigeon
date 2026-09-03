@@ -9,13 +9,21 @@ ZpExecution_ReadSession(
     _Out_opt_ PZP_EXECUTION_SESSION_RECORD_VIEW Record)
 {
     ZP_EXECUTION_SESSION_RECORD_VIEW Local;
+    BYTE State, Flags;
     NTSTATUS Status;
 
     Status = ZpCodec_ReadUInt32(Reader, &Local.SessionId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.State);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.Flags);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(Reader, &State);
+    if (NT_SUCCESS(Status)) Local.State = State;
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(Reader, &Flags);
+    if (NT_SUCCESS(Status)) Local.Flags = Flags;
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.StationName);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.UserName);
+    if (NT_SUCCESS(Status) &&
+        (Local.State > 9 || (Local.Flags & ~ZP_EXECUTION_SESSION_FLAGS_MASK) != 0))
+    {
+        Status = STATUS_DATA_ERROR;
+    }
     if (NT_SUCCESS(Status) && Record != NULL) *Record = Local;
     return Status;
 }
@@ -29,20 +37,22 @@ ZpExecution_EncodeSessions(
     _Out_ PULONG BytesWritten)
 {
     PBYTE Cursor;
-    ULONGLONG RequiredSize = sizeof(ULONG);
+    ULONGLONG RequiredSize = sizeof(USHORT);
     ULONG Index;
 
-    if (Count > ZP_CODEC_MAX_ELEMENT_COUNT || (Count != 0 && Records == NULL)) return STATUS_INVALID_PARAMETER;
+    if (Count > MAXUSHORT || (Count != 0 && Records == NULL)) return STATUS_INVALID_PARAMETER;
     for (Index = 0; Index < Count; Index++)
     {
         if ((Records[Index].StationNameLength != 0 && Records[Index].StationName == NULL) ||
             (Records[Index].UserNameLength != 0 && Records[Index].UserName == NULL) ||
             Records[Index].StationNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
-            Records[Index].UserNameLength > ZP_CODEC_MAX_ELEMENT_COUNT)
+            Records[Index].UserNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+            Records[Index].State > 9 ||
+            (Records[Index].Flags & ~ZP_EXECUTION_SESSION_FLAGS_MASK) != 0)
         {
             return STATUS_INVALID_PARAMETER;
         }
-        RequiredSize += 5 * sizeof(ULONG) +
+        RequiredSize += 3 * sizeof(ULONG) + 2 * sizeof(BYTE) +
                         ((ULONGLONG)Records[Index].StationNameLength + Records[Index].UserNameLength) * sizeof(WCHAR);
     }
     if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
@@ -50,12 +60,12 @@ ZpExecution_EncodeSessions(
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
     Cursor = Buffer;
-    ZpWire_WriteUInt32(&Cursor, Count);
+    ZpWire_WriteUInt16(&Cursor, (USHORT)Count);
     for (Index = 0; Index < Count; Index++)
     {
         ZpWire_WriteUInt32(&Cursor, Records[Index].SessionId);
-        ZpWire_WriteUInt32(&Cursor, Records[Index].State);
-        ZpWire_WriteUInt32(&Cursor, Records[Index].Flags);
+        ZpWire_WriteByte(&Cursor, (BYTE)Records[Index].State);
+        ZpWire_WriteByte(&Cursor, (BYTE)Records[Index].Flags);
         ZpWire_WriteString(&Cursor, Records[Index].StationName, Records[Index].StationNameLength);
         ZpWire_WriteString(&Cursor, Records[Index].UserName, Records[Index].UserNameLength);
     }
@@ -69,19 +79,21 @@ ZpExecution_DecodeSessions(
     _Out_ PZP_EXECUTION_SESSION_LIST_VIEW View)
 {
     ZP_CODEC_READER Reader;
+    USHORT Count;
     ULONG Index;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadArrayCount(&Reader, &View->Count);
+    Status = ZpCodec_ReadUInt16(&Reader, &Count);
     if (!NT_SUCCESS(Status)) return Status;
+    View->Count = Count;
     View->Buffer = Add2Ptr(Payload, Reader.Offset);
     for (Index = 0; NT_SUCCESS(Status) && Index < View->Count; Index++)
     {
         Status = ZpExecution_ReadSession(&Reader, NULL);
     }
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength) return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
-    View->Length = PayloadLength - sizeof(ULONG);
+    View->Length = PayloadLength - sizeof(USHORT);
     return STATUS_SUCCESS;
 }
 
@@ -139,10 +151,10 @@ ZpExecution_EncodeEnvironment(
     _Out_ PULONG BytesWritten)
 {
     PBYTE Cursor;
-    ULONGLONG RequiredSize = 2 * sizeof(ULONG);
+    ULONGLONG RequiredSize = 2 * sizeof(BYTE);
     ULONG Index, VersionIndex;
 
-    if ((Flags & ~ZP_EXECUTION_ENVIRONMENT_FLAG_ADMINISTRATOR) != 0 || Count > ZP_CODEC_MAX_ELEMENT_COUNT ||
+    if ((Flags & ~ZP_EXECUTION_ENVIRONMENT_FLAG_ADMINISTRATOR) != 0 || Count > MAXBYTE ||
         (Count != 0 && Records == NULL))
     {
         return STATUS_INVALID_PARAMETER;
@@ -163,8 +175,8 @@ ZpExecution_EncodeEnvironment(
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
     Cursor = Buffer;
-    ZpWire_WriteUInt32(&Cursor, Flags);
-    ZpWire_WriteUInt32(&Cursor, Count);
+    ZpWire_WriteByte(&Cursor, (BYTE)Flags);
+    ZpWire_WriteByte(&Cursor, (BYTE)Count);
     for (Index = 0; Index < Count; Index++)
     {
         ZpWire_WriteByte(&Cursor, Records[Index].Kind);
@@ -186,12 +198,15 @@ ZpExecution_DecodeEnvironment(
     _Out_ PZP_EXECUTION_ENVIRONMENT_VIEW View)
 {
     ZP_CODEC_READER Reader;
+    BYTE Flags, Count;
     ULONG Index;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadUInt32(&Reader, &View->Flags);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadArrayCount(&Reader, &View->Count);
+    Status = ZpCodec_ReadByte(&Reader, &Flags);
+    if (NT_SUCCESS(Status)) View->Flags = Flags;
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &Count);
+    if (NT_SUCCESS(Status)) View->Count = Count;
     if (!NT_SUCCESS(Status) || (View->Flags & ~ZP_EXECUTION_ENVIRONMENT_FLAG_ADMINISTRATOR) != 0)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
@@ -202,7 +217,7 @@ ZpExecution_DecodeEnvironment(
         Status = ZpExecution_ReadRuntime(&Reader, NULL);
     }
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength) return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
-    View->Length = PayloadLength - 2 * sizeof(ULONG);
+    View->Length = PayloadLength - 2 * sizeof(BYTE);
     return STATUS_SUCCESS;
 }
 
@@ -285,6 +300,14 @@ ZpExecution_EncodeStart(
                           ZP_EXECUTION_FLAG_JOB_OBJECT)) != 0 ||
         (FlagOn(Start->Flags, ZP_EXECUTION_FLAG_JOB_OBJECT) &&
          Start->Engine != ZpExecutionEngineCreateProcess) ||
+        Start->FileNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Start->ArgumentsLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Start->WorkingDirectoryLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Start->VerbLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Start->UserNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Start->PasswordLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Start->AppContainerSidLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        Start->CustomTokenLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
         Start->FileNameLength == 0 || Start->FileName == NULL ||
         (Start->ArgumentsLength != 0 && Start->Arguments == NULL) ||
         (Start->WorkingDirectoryLength != 0 && Start->WorkingDirectory == NULL) ||
@@ -308,12 +331,12 @@ ZpExecution_EncodeStart(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 2 * sizeof(BYTE) + 2 * sizeof(ULONG) + 8 * sizeof(ULONG) +
+    RequiredSize = 3 * sizeof(BYTE) + 8 * sizeof(ULONG) +
                    ((ULONGLONG)Start->FileNameLength + Start->ArgumentsLength +
                     Start->WorkingDirectoryLength + Start->VerbLength +
                      Start->UserNameLength + Start->PasswordLength +
                      Start->AppContainerSidLength) * sizeof(WCHAR) + Start->CustomTokenLength;
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
@@ -321,7 +344,7 @@ ZpExecution_EncodeStart(
     Status = ZpCodec_WriteByte(&Writer, Start->Engine);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, Start->Identity);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Start->SessionId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Start->Flags);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, (BYTE)Start->Flags);
 #define ZP_EXECUTION_WRITE_START_STRING(Field) \
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Start->Field, Start->Field##Length)
     ZP_EXECUTION_WRITE_START_STRING(FileName);
@@ -334,7 +357,7 @@ ZpExecution_EncodeStart(
 #undef ZP_EXECUTION_WRITE_START_STRING
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteByteString(&Writer, Start->CustomToken, Start->CustomTokenLength);
+        Status = ZpCodec_WriteData(&Writer, Start->CustomToken, Start->CustomTokenLength);
     }
     return Status;
 }
@@ -346,13 +369,15 @@ ZpExecution_DecodeStart(
     _Out_ PZP_EXECUTION_START_VIEW Start)
 {
     ZP_CODEC_READER Reader;
+    BYTE Flags;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadByte(&Reader, &Start->Engine);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &Start->Identity);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Start->SessionId);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Start->Flags);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &Flags);
+    if (NT_SUCCESS(Status)) Start->Flags = Flags;
 #define ZP_EXECUTION_READ_START_STRING(Field) \
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Start->Field)
     ZP_EXECUTION_READ_START_STRING(FileName);
@@ -363,7 +388,14 @@ ZpExecution_DecodeStart(
     ZP_EXECUTION_READ_START_STRING(Password);
     ZP_EXECUTION_READ_START_STRING(AppContainerSid);
 #undef ZP_EXECUTION_READ_START_STRING
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByteString(&Reader, &Start->CustomToken);
+    if (NT_SUCCESS(Status) && Reader.Size - Reader.Offset > ZP_CODEC_MAX_ELEMENT_COUNT)
+    {
+        Status = STATUS_DATA_ERROR;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadData(&Reader, Reader.Size - Reader.Offset, &Start->CustomToken);
+    }
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength || Start->FileName.Length == 0 ||
         (Start->Engine != ZpExecutionEngineCreateProcess && Start->Engine != ZpExecutionEngineShellExecute) ||
         Start->Identity < ZpExecutionIdentityCurrent || Start->Identity > ZpExecutionIdentityCustomToken ||
@@ -401,7 +433,7 @@ ZpExecution_WriteJob(
     ZpWire_WriteUInt32(Cursor, Record->ProcessId);
     ZpWire_WriteUInt32(Cursor, Record->SessionId);
     ZpWire_WriteUInt32(Cursor, Record->ExitCode);
-    ZpWire_WriteUInt32(Cursor, Record->Flags);
+    ZpWire_WriteByte(Cursor, (BYTE)Record->Flags);
     ZpWire_WriteByte(Cursor, Record->Engine);
     ZpWire_WriteByte(Cursor, Record->Identity);
     ZpWire_WriteByte(Cursor, Record->State);
@@ -415,6 +447,7 @@ ZpExecution_ReadJob(
     _Out_opt_ PZP_EXECUTION_JOB_RECORD_VIEW Record)
 {
     ZP_EXECUTION_JOB_RECORD_VIEW Local;
+    BYTE Flags;
     NTSTATUS Status;
 
     Status = ZpCodec_ReadUInt32(Reader, &Local.JobId);
@@ -423,13 +456,20 @@ ZpExecution_ReadJob(
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.ProcessId);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.SessionId);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.ExitCode);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.Flags);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(Reader, &Flags);
+    if (NT_SUCCESS(Status)) Local.Flags = Flags;
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(Reader, &Local.Engine);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(Reader, &Local.Identity);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(Reader, &Local.State);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.FileName);
-    if (NT_SUCCESS(Status) && (Local.JobId == 0 || Local.State < ZpExecutionJobRunning ||
-                               Local.State > ZpExecutionJobExited))
+    if (NT_SUCCESS(Status) &&
+        (Local.JobId == 0 ||
+         (Local.Flags & ~(ZP_EXECUTION_FLAG_HIDDEN | ZP_EXECUTION_FLAG_DELETE_FILE |
+                          ZP_EXECUTION_FLAG_JOB_OBJECT)) != 0 ||
+         (Local.Engine != ZpExecutionEngineCreateProcess &&
+          Local.Engine != ZpExecutionEngineShellExecute) ||
+         Local.Identity < ZpExecutionIdentityCurrent || Local.Identity > ZpExecutionIdentityCustomToken ||
+         Local.State < ZpExecutionJobRunning || Local.State > ZpExecutionJobExited))
     {
         Status = STATUS_DATA_ERROR;
     }
@@ -446,18 +486,26 @@ ZpExecution_EncodeJobs(
     _Out_ PULONG BytesWritten)
 {
     PBYTE Cursor;
-    ULONGLONG RequiredSize = sizeof(ULONG);
+    ULONGLONG RequiredSize = sizeof(USHORT);
     ULONG Index;
 
-    if (Count > ZP_CODEC_MAX_ELEMENT_COUNT || (Count != 0 && Records == NULL)) return STATUS_INVALID_PARAMETER;
+    if (Count > MAXUSHORT || (Count != 0 && Records == NULL)) return STATUS_INVALID_PARAMETER;
     for (Index = 0; Index < Count; Index++)
     {
-        if (Records[Index].JobId == 0 || Records[Index].FileNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+        if (Records[Index].JobId == 0 ||
+            (Records[Index].Flags & ~(ZP_EXECUTION_FLAG_HIDDEN | ZP_EXECUTION_FLAG_DELETE_FILE |
+                                      ZP_EXECUTION_FLAG_JOB_OBJECT)) != 0 ||
+            (Records[Index].Engine != ZpExecutionEngineCreateProcess &&
+             Records[Index].Engine != ZpExecutionEngineShellExecute) ||
+            Records[Index].Identity < ZpExecutionIdentityCurrent ||
+            Records[Index].Identity > ZpExecutionIdentityCustomToken ||
+            Records[Index].State < ZpExecutionJobRunning || Records[Index].State > ZpExecutionJobExited ||
+            Records[Index].FileNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
             (Records[Index].FileNameLength != 0 && Records[Index].FileName == NULL))
         {
             return STATUS_INVALID_PARAMETER;
         }
-        RequiredSize += 2 * sizeof(ULONGLONG) + 6 * sizeof(ULONG) + 3 * sizeof(BYTE) +
+        RequiredSize += 2 * sizeof(ULONGLONG) + 5 * sizeof(ULONG) + 4 * sizeof(BYTE) +
                         (ULONGLONG)Records[Index].FileNameLength * sizeof(WCHAR);
     }
     if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
@@ -465,7 +513,7 @@ ZpExecution_EncodeJobs(
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
     Cursor = Buffer;
-    ZpWire_WriteUInt32(&Cursor, Count);
+    ZpWire_WriteUInt16(&Cursor, (USHORT)Count);
     for (Index = 0; Index < Count; Index++) ZpExecution_WriteJob(&Cursor, &Records[Index]);
     return STATUS_SUCCESS;
 }
@@ -477,16 +525,18 @@ ZpExecution_DecodeJobs(
     _Out_ PZP_EXECUTION_JOB_LIST_VIEW View)
 {
     ZP_CODEC_READER Reader;
+    USHORT Count;
     ULONG Index;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadArrayCount(&Reader, &View->Count);
+    Status = ZpCodec_ReadUInt16(&Reader, &Count);
     if (!NT_SUCCESS(Status)) return Status;
+    View->Count = Count;
     View->Buffer = Add2Ptr(Payload, Reader.Offset);
     for (Index = 0; NT_SUCCESS(Status) && Index < View->Count; Index++) Status = ZpExecution_ReadJob(&Reader, NULL);
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength) return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
-    View->Length = PayloadLength - sizeof(ULONG);
+    View->Length = PayloadLength - sizeof(USHORT);
     return STATUS_SUCCESS;
 }
 
@@ -549,13 +599,13 @@ ZpExecution_EncodeStaging(
     ULONGLONG RequiredSize;
 
     if (NameLength == 0 || Name == NULL || NameLength > ZP_CODEC_MAX_ELEMENT_COUNT) return STATUS_INVALID_PARAMETER;
-    RequiredSize = sizeof(ULONG) + (ULONGLONG)NameLength * sizeof(WCHAR);
+    RequiredSize = (ULONGLONG)NameLength * sizeof(WCHAR);
     if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    return ZpCodec_WriteString(&Writer, Name, NameLength);
+    return ZpCodec_WriteTailString(&Writer, Name, NameLength);
 }
 
 NTSTATUS
@@ -568,7 +618,7 @@ ZpExecution_DecodeStaging(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadString(&Reader, Name);
+    Status = ZpCodec_ReadTailString(&Reader, Name);
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength || Name->Length == 0)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;

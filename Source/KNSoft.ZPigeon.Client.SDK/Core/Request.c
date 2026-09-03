@@ -130,16 +130,17 @@ ZpClientInbound_SendResponse(
     _In_reads_bytes_opt_(PayloadLength) const VOID* Payload,
     _In_ ULONG PayloadLength)
 {
-    BYTE Header[ZP_RESPONSE_HEADER_WIRE_SIZE];
+    BYTE Header[ZP_RESPONSE_MAX_HEADER_WIRE_SIZE];
     ZP_RESPONSE Response = {
         RequestId,
         ResponseStatus,
         Payload,
         PayloadLength
     };
+    ULONG HeaderLength;
     NTSTATUS Status;
 
-    Status = ZpMessage_EncodeResponseHeader(&Response, Header);
+    Status = ZpMessage_EncodeResponseHeader(&Response, Header, &HeaderLength);
     if (NT_SUCCESS(Status))
     {
         RtlAcquireSRWLockShared(&Object->Lock);
@@ -147,22 +148,12 @@ ZpClientInbound_SendResponse(
                                      SendFlags,
                                      ZpMessageResponse,
                                      Header,
-                                     sizeof(Header),
+                                     HeaderLength,
                                      Payload,
                                      PayloadLength);
         RtlReleaseSRWLockShared(&Object->Lock);
     }
     return Status;
-}
-
-static
-LOGICAL
-ZpClientInbound_HasModule(
-    _In_ PZP_CLIENT_OBJECT Object,
-    _In_ BYTE ModuleId)
-{
-    return ModuleId != 0 && ModuleId <= ZP_MODULE_MAX_ID &&
-           FlagOn(Object->ActiveModuleMask, ZP_MODULE_BIT(ModuleId));
 }
 
 static
@@ -456,16 +447,11 @@ ZpClient_QueueRequest(
     SIZE_T AllocationSize = FIELD_OFFSET(ZP_CLIENT_INBOUND_REQUEST, Payload) +
                             Request->Payload.Length;
 
-    if (Request->RequestId == 0)
+    if (Request->RequestId == 0 || Request->ModuleId == 0)
     {
         return STATUS_PROTOCOL_UNREACHABLE;
     }
     RtlAcquireSRWLockExclusive(&Object->Lock);
-    if (!ZpClientInbound_HasModule(Object, Request->ModuleId))
-    {
-        RtlReleaseSRWLockExclusive(&Object->Lock);
-        return STATUS_PROTOCOL_UNREACHABLE;
-    }
     if (Request->RequestId <= Object->HighestInboundRequestId)
     {
         RtlReleaseSRWLockExclusive(&Object->Lock);

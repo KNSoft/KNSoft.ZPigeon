@@ -1,6 +1,8 @@
 ﻿#include "Include/KNSoft/ZPigeon/System.h"
 
-#define ZP_SYSTEM_INFO_FIXED_SIZE 29
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
+#define ZP_SYSTEM_INFO_FIXED_SIZE 17
 
 NTSTATUS
 ZpSystem_EncodeInfo(
@@ -15,9 +17,11 @@ ZpSystem_EncodeInfo(
 
     if (Info->Architecture < ZpSystemArchitectureX86 ||
         Info->Architecture > ZpSystemArchitectureArm64 ||
-        Info->ProcessorCount == 0 ||
+        Info->MajorVersion > MAXBYTE || Info->MinorVersion > MAXBYTE ||
+        Info->ProcessorCount == 0 || Info->ProcessorCount > MAXUSHORT ||
+        Info->ComputerNameLength == 0 ||
         Info->ComputerNameLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
-        (Info->ComputerNameLength != 0 && Info->ComputerName == NULL))
+        Info->ComputerName == NULL)
     {
         return STATUS_INVALID_PARAMETER;
     }
@@ -37,11 +41,11 @@ ZpSystem_EncodeInfo(
     Status = ZpCodec_WriteByte(&Writer, Info->Architecture);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteUInt32(&Writer, Info->MajorVersion);
+        Status = ZpCodec_WriteByte(&Writer, (BYTE)Info->MajorVersion);
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteUInt32(&Writer, Info->MinorVersion);
+        Status = ZpCodec_WriteByte(&Writer, (BYTE)Info->MinorVersion);
     }
     if (NT_SUCCESS(Status))
     {
@@ -49,7 +53,7 @@ ZpSystem_EncodeInfo(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteUInt32(&Writer, Info->ProcessorCount);
+        Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Info->ProcessorCount);
     }
     if (NT_SUCCESS(Status))
     {
@@ -57,9 +61,9 @@ ZpSystem_EncodeInfo(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteString(&Writer,
-                                     Info->ComputerName,
-                                     Info->ComputerNameLength);
+        Status = ZpCodec_WriteTailString(&Writer,
+                                         Info->ComputerName,
+                                         Info->ComputerNameLength);
     }
     return Status;
 }
@@ -72,6 +76,8 @@ ZpSystem_DecodeInfo(
 {
     ZP_CODEC_READER Reader;
     ZP_SYSTEM_ARCHITECTURE Architecture;
+    USHORT ProcessorCount;
+    BYTE MajorVersion, MinorVersion;
     NTSTATUS Status;
 
     if (PayloadLength < ZP_SYSTEM_INFO_FIXED_SIZE)
@@ -82,11 +88,13 @@ ZpSystem_DecodeInfo(
     Status = ZpCodec_ReadByte(&Reader, &Architecture);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadUInt32(&Reader, &View->MajorVersion);
+        Status = ZpCodec_ReadByte(&Reader, &MajorVersion);
+        if (NT_SUCCESS(Status)) View->MajorVersion = MajorVersion;
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadUInt32(&Reader, &View->MinorVersion);
+        Status = ZpCodec_ReadByte(&Reader, &MinorVersion);
+        if (NT_SUCCESS(Status)) View->MinorVersion = MinorVersion;
     }
     if (NT_SUCCESS(Status))
     {
@@ -94,7 +102,8 @@ ZpSystem_DecodeInfo(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadUInt32(&Reader, &View->ProcessorCount);
+        Status = ZpCodec_ReadUInt16(&Reader, &ProcessorCount);
+        if (NT_SUCCESS(Status)) View->ProcessorCount = ProcessorCount;
     }
     if (NT_SUCCESS(Status))
     {
@@ -102,13 +111,13 @@ ZpSystem_DecodeInfo(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadString(&Reader, &View->ComputerName);
+        Status = ZpCodec_ReadTailString(&Reader, &View->ComputerName);
     }
     if (!NT_SUCCESS(Status) ||
         Reader.Offset != PayloadLength ||
         Architecture < ZpSystemArchitectureX86 ||
         Architecture > ZpSystemArchitectureArm64 ||
-        View->ProcessorCount == 0)
+        View->ProcessorCount == 0 || View->ComputerName.Length == 0)
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
     }

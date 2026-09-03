@@ -3603,12 +3603,12 @@ export class WindowManager {
   }
   reportVideoCodecs(codecs, width, height, socket) {
     if (socket?.readyState !== WebSocket.OPEN) return;
-    const data = new ArrayBuffer(10),
+    const data = new ArrayBuffer(6),
       view = new DataView(data);
     view.setUint8(0, 6);
     view.setUint8(1, codecs);
-    view.setUint32(2, width, true);
-    view.setUint32(6, height, true);
+    view.setUint16(2, width, true);
+    view.setUint16(4, height, true);
     socket.send(data);
   }
   async apply() {

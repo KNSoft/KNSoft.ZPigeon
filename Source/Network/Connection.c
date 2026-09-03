@@ -643,6 +643,11 @@ ZpConnection_GetReceiveState(
                 *State = ZpConnectionStateClientSendAuthenticate;
                 return STATUS_SUCCESS;
             }
+            if (MessageType == ZpMessageServerReject)
+            {
+                *State = ZpConnectionStateClosed;
+                return STATUS_SUCCESS;
+            }
             break;
 
         case ZpConnectionStateClientWaitReady:
@@ -912,6 +917,11 @@ ZpConnection_NotifyMessageSent(
             if (MessageType == ZpMessageServerChallenge)
             {
                 Connection->State = ZpConnectionStateServerWaitAuthenticate;
+                Status = STATUS_SUCCESS;
+            }
+            else if (MessageType == ZpMessageServerReject)
+            {
+                Connection->State = ZpConnectionStateClosed;
                 Status = STATUS_SUCCESS;
             }
             break;

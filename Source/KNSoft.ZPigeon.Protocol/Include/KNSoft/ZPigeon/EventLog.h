@@ -192,7 +192,7 @@ ZpEventLog_EncodeChannel(
 NTSTATUS
 ZpEventLog_EncodeChannelListHeader(
     _In_ ULONG ChannelCount,
-    _Out_writes_bytes_(sizeof(ULONG)) PVOID Buffer);
+    _Out_writes_bytes_(sizeof(USHORT)) PVOID Buffer);
 
 NTSTATUS
 ZpEventLog_EncodeChannels(

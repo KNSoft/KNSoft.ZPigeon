@@ -231,18 +231,18 @@ export class VideoManager {
     joined.set(this.buffer);
     joined.set(data, this.buffer.length);
     this.buffer = joined;
-    while (this.buffer.length >= 12) {
+    while (this.buffer.length >= 8) {
       const view = new DataView(this.buffer.buffer, this.buffer.byteOffset),
-        width = view.getUint32(0, true),
-        height = view.getUint32(4, true),
-        length = view.getUint32(8, true);
+        width = view.getUint16(0, true),
+        height = view.getUint16(2, true),
+        length = view.getUint32(4, true);
       if (!width || width > 3840 || !height || height > 3840 || !length || length > 0x1000000) {
         socket.close(1002, "无效的视频帧");
         return;
       }
-      if (this.buffer.length < 12 + length) return;
-      this.show(new Blob([this.buffer.slice(12, 12 + length)], { type: "image/jpeg" }), socket);
-      this.buffer = this.buffer.slice(12 + length);
+      if (this.buffer.length < 8 + length) return;
+      this.show(new Blob([this.buffer.slice(8, 8 + length)], { type: "image/jpeg" }), socket);
+      this.buffer = this.buffer.slice(8 + length);
     }
   }
   show(blob, socket) {

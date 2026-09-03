@@ -226,8 +226,8 @@ typedef BYTE ZP_ADMINISTRATION_KIND, *PZP_ADMINISTRATION_KIND;
 // PackageContext uses Name for the current account user name.
 // InputMethodContext uses State for the session ID and Name for the current user name.
 // InputMethod uses Identity for the layout/TIP ID, Description for language, and Detail for locale name.
-// WindowsFeature uses State for CBS_INSTALL_STATE. Data encodes applicability, selectability, current state,
-// intended state, and requested state as five signed 32-bit integers.
+// WindowsFeature Data encodes applicability, selectability, current state, intended state, and requested state
+// as five signed bytes. CBS_INSTALL_STATE_INVALID is encoded as INT8_MAX.
 // WindowsFeatureParent uses Identity for the child, Name for the parent, and Detail for the optional parent set.
 // BitLockerVolume uses State for conversion status, Flags for volume status, and Value for converted percent.
 // BitLockerProtector uses State for protector type, Value for creation FILETIME, and Description for its label.
@@ -375,8 +375,8 @@ typedef BYTE ZP_ADMINISTRATION_ACTION, *PZP_ADMINISTRATION_ACTION;
 #define ZP_SOFTWARE_DEPLOYMENT_STATE_COMPLETED 5
 #define ZP_SOFTWARE_DEPLOYMENT_STATE_FAILED 6
 
-#define ZP_WINDOWS_FEATURE_DATA_WIRE_SIZE (5 * sizeof(ULONG))
-#define ZP_WINDOWS_FEATURE_CONTROL_RESULT_WIRE_SIZE sizeof(ULONG)
+#define ZP_WINDOWS_FEATURE_DATA_WIRE_SIZE (5 * sizeof(BYTE))
+#define ZP_WINDOWS_FEATURE_CONTROL_RESULT_WIRE_SIZE sizeof(BYTE)
 
 typedef struct _ZP_ADMINISTRATION_RECORD
 {

@@ -72,10 +72,10 @@ ZpRegistry_EncodeEnumerateRequest(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(BYTE) + sizeof(ULONG) + sizeof(BYTE) +
-                   2 * sizeof(ULONG) +
+    RequiredSize = sizeof(BYTE) + sizeof(USHORT) + sizeof(BYTE) +
+                   sizeof(ULONG) +
                    ((ULONGLONG)PathLength + CursorLength) * sizeof(WCHAR);
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE)
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE)
     {
         return STATUS_BUFFER_OVERFLOW;
     }
@@ -92,7 +92,7 @@ ZpRegistry_EncodeEnumerateRequest(
     Status = ZpRegistry_WriteScope(&Writer, Root);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteUInt32(&Writer, MaxEntries);
+        Status = ZpCodec_WriteUInt16(&Writer, (USHORT)MaxEntries);
     }
     if (NT_SUCCESS(Status))
     {
@@ -104,7 +104,7 @@ ZpRegistry_EncodeEnumerateRequest(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteString(&Writer, Cursor, CursorLength);
+        Status = ZpCodec_WriteTailString(&Writer, Cursor, CursorLength);
     }
     return Status;
 }
@@ -116,13 +116,15 @@ ZpRegistry_DecodeEnumerateRequest(
     _Out_ PZP_REGISTRY_ENUMERATE_VIEW Request)
 {
     ZP_CODEC_READER Reader;
+    USHORT MaxEntries;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpRegistry_ReadScope(&Reader, &Request->Root);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadUInt32(&Reader, &Request->MaxEntries);
+        Status = ZpCodec_ReadUInt16(&Reader, &MaxEntries);
+        if (NT_SUCCESS(Status)) Request->MaxEntries = MaxEntries;
     }
     if (NT_SUCCESS(Status))
     {
@@ -134,7 +136,7 @@ ZpRegistry_DecodeEnumerateRequest(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadString(&Reader, &Request->Cursor);
+        Status = ZpCodec_ReadTailString(&Reader, &Request->Cursor);
     }
     if (!NT_SUCCESS(Status) ||
         Request->MaxEntries == 0 ||
@@ -279,7 +281,7 @@ ZpRegistry_EncodeKeyPage(
     {
         return Status;
     }
-    RequiredSize = sizeof(BYTE) + 2 * sizeof(ULONG) +
+    RequiredSize = sizeof(BYTE) + sizeof(USHORT) + sizeof(ULONG) +
                    (ULONGLONG)NextCursorLength * sizeof(WCHAR);
     for (Index = 0; Index < RecordCount; Index++)
     {
@@ -309,7 +311,7 @@ ZpRegistry_EncodeKeyPage(
     Cursor = Buffer;
     ZpWire_WriteByte(&Cursor, HasMore);
     ZpWire_WriteString(&Cursor, NextCursor, NextCursorLength);
-    ZpWire_WriteUInt32(&Cursor, RecordCount);
+    ZpWire_WriteUInt16(&Cursor, (USHORT)RecordCount);
     for (Index = 0; Index < RecordCount; Index++)
     {
         ZpWire_WriteString(&Cursor, Records[Index].Name, Records[Index].NameLength);
@@ -327,6 +329,7 @@ ZpRegistry_DecodeKeyPage(
 {
     ZP_CODEC_READER Reader;
     ZP_REGISTRY_KEY_RECORD_VIEW LastRecord;
+    USHORT Count;
     ULONG Index;
     NTSTATUS Status;
 
@@ -338,7 +341,12 @@ ZpRegistry_DecodeKeyPage(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadArrayCount(&Reader, &Page->Records.Count);
+        Status = ZpCodec_ReadUInt16(&Reader, &Count);
+        if (NT_SUCCESS(Status))
+        {
+            Status = Count <= ZP_REGISTRY_PAGE_MAX_COUNT ? STATUS_SUCCESS : STATUS_DATA_ERROR;
+            Page->Records.Count = Count;
+        }
     }
     Page->Records.Buffer = Add2Ptr(Payload, Reader.Offset);
     for (Index = 0;
@@ -417,7 +425,7 @@ ZpRegistry_EncodeValuePage(
     {
         return Status;
     }
-    RequiredSize = sizeof(BYTE) + 2 * sizeof(ULONG) +
+    RequiredSize = sizeof(BYTE) + sizeof(USHORT) + sizeof(ULONG) +
                    (ULONGLONG)NextCursorLength * sizeof(WCHAR);
     for (Index = 0; Index < RecordCount; Index++)
     {
@@ -451,7 +459,7 @@ ZpRegistry_EncodeValuePage(
     Cursor = Buffer;
     ZpWire_WriteByte(&Cursor, HasMore);
     ZpWire_WriteString(&Cursor, NextCursor, NextCursorLength);
-    ZpWire_WriteUInt32(&Cursor, RecordCount);
+    ZpWire_WriteUInt16(&Cursor, (USHORT)RecordCount);
     for (Index = 0; Index < RecordCount; Index++)
     {
         ZpWire_WriteString(&Cursor, Records[Index].Name, Records[Index].NameLength);
@@ -470,6 +478,7 @@ ZpRegistry_DecodeValuePage(
 {
     ZP_CODEC_READER Reader;
     ZP_REGISTRY_VALUE_RECORD_VIEW LastRecord;
+    USHORT Count;
     ULONG Index;
     NTSTATUS Status;
 
@@ -481,7 +490,12 @@ ZpRegistry_DecodeValuePage(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadArrayCount(&Reader, &Page->Records.Count);
+        Status = ZpCodec_ReadUInt16(&Reader, &Count);
+        if (NT_SUCCESS(Status))
+        {
+            Status = Count <= ZP_REGISTRY_PAGE_MAX_COUNT ? STATUS_SUCCESS : STATUS_DATA_ERROR;
+            Page->Records.Count = Count;
+        }
     }
     Page->Records.Buffer = Add2Ptr(Payload, Reader.Offset);
     for (Index = 0;
@@ -549,9 +563,9 @@ ZpRegistry_EncodeValueRequest(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(BYTE) + 2 * sizeof(ULONG) +
+    RequiredSize = sizeof(BYTE) + sizeof(ULONG) +
                    ((ULONGLONG)PathLength + ValueNameLength) * sizeof(WCHAR);
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE)
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE)
     {
         return STATUS_BUFFER_OVERFLOW;
     }
@@ -572,9 +586,9 @@ ZpRegistry_EncodeValueRequest(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteString(&Writer,
-                                     ValueName,
-                                     ValueNameLength);
+        Status = ZpCodec_WriteTailString(&Writer,
+                                         ValueName,
+                                         ValueNameLength);
     }
     return Status;
 }
@@ -596,7 +610,7 @@ ZpRegistry_DecodeValueRequest(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadString(&Reader, &Request->ValueName);
+        Status = ZpCodec_ReadTailString(&Reader, &Request->ValueName);
     }
     if (!NT_SUCCESS(Status) ||
         Request->Path.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
@@ -631,9 +645,9 @@ ZpRegistry_EncodeRangeRequest(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(BYTE) + 4 * sizeof(ULONG) +
+    RequiredSize = sizeof(BYTE) + 3 * sizeof(ULONG) +
                    ((ULONGLONG)PathLength + ValueNameLength) * sizeof(WCHAR);
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
@@ -642,7 +656,7 @@ ZpRegistry_EncodeRangeRequest(
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Offset);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Length);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Path, PathLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, ValueName, ValueNameLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, ValueName, ValueNameLength);
     return Status;
 }
 
@@ -660,7 +674,7 @@ ZpRegistry_DecodeRangeRequest(
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Request->Offset);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Request->Length);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Path);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->ValueName);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Request->ValueName);
     if (!NT_SUCCESS(Status) || Request->Path.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
         Request->ValueName.Length > ZP_REGISTRY_PATH_MAX_LENGTH || Request->Length == 0 ||
         Request->Length > ZP_REGISTRY_RANGE_MAX_LENGTH || Reader.Offset != PayloadLength)
@@ -694,9 +708,9 @@ ZpRegistry_EncodeRangeWriteRequest(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(BYTE) + 4 * sizeof(ULONG) +
+    RequiredSize = sizeof(BYTE) + 3 * sizeof(ULONG) +
                    ((ULONGLONG)PathLength + ValueNameLength) * sizeof(WCHAR) + DataLength;
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE) return STATUS_BUFFER_OVERFLOW;
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
@@ -705,7 +719,7 @@ ZpRegistry_EncodeRangeWriteRequest(
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Offset);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Path, PathLength);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, ValueName, ValueNameLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByteString(&Writer, Data, DataLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteData(&Writer, Data, DataLength);
     return Status;
 }
 
@@ -723,7 +737,10 @@ ZpRegistry_DecodeRangeWriteRequest(
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Request->Offset);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Path);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->ValueName);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByteString(&Reader, &Request->Data);
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadData(&Reader, Reader.Size - Reader.Offset, &Request->Data);
+    }
     if (!NT_SUCCESS(Status) || Request->Path.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
         Request->ValueName.Length > ZP_REGISTRY_PATH_MAX_LENGTH || Request->Data.Length == 0 ||
         Request->Data.Length > ZP_REGISTRY_RANGE_MAX_LENGTH || Reader.Offset != PayloadLength)
@@ -750,7 +767,7 @@ ZpRegistry_EncodeValue(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    *BytesWritten = 2 * sizeof(ULONG) + DataLength;
+    *BytesWritten = sizeof(ULONG) + DataLength;
     if (Buffer == NULL)
     {
         return STATUS_SUCCESS;
@@ -763,7 +780,7 @@ ZpRegistry_EncodeValue(
     Status = ZpCodec_WriteUInt32(&Writer, Type);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteByteString(&Writer, Data, DataLength);
+        Status = ZpCodec_WriteData(&Writer, Data, DataLength);
     }
     return Status;
 }
@@ -781,7 +798,7 @@ ZpRegistry_DecodeValue(
     Status = ZpCodec_ReadUInt32(&Reader, &Value->Type);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadByteString(&Reader, &Value->Data);
+        Status = ZpCodec_ReadData(&Reader, Reader.Size - Reader.Offset, &Value->Data);
     }
     if (!NT_SUCCESS(Status) ||
         Value->Data.Length > ZP_REGISTRY_DATA_MAX_LENGTH ||
@@ -809,12 +826,12 @@ ZpRegistry_EncodeRange(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    *BytesWritten = 2 * sizeof(ULONG) + DataLength;
+    *BytesWritten = sizeof(ULONG) + DataLength;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < *BytesWritten) return STATUS_BUFFER_TOO_SMALL;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpCodec_WriteUInt32(&Writer, TotalLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByteString(&Writer, Data, DataLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteData(&Writer, Data, DataLength);
     return Status;
 }
 
@@ -829,7 +846,7 @@ ZpRegistry_DecodeRange(
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadUInt32(&Reader, &Range->TotalLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByteString(&Reader, &Range->Data);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadData(&Reader, Reader.Size - Reader.Offset, &Range->Data);
     if (!NT_SUCCESS(Status) || Range->TotalLength > ZP_REGISTRY_DATA_MAX_LENGTH ||
         Range->Data.Length > Range->TotalLength || Range->Data.Length > ZP_REGISTRY_RANGE_MAX_LENGTH ||
         Reader.Offset != PayloadLength)
@@ -865,10 +882,10 @@ ZpRegistry_EncodeSetValueRequest(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(BYTE) + 4 * sizeof(ULONG) +
+    RequiredSize = sizeof(BYTE) + 3 * sizeof(ULONG) +
                    ((ULONGLONG)PathLength + ValueNameLength) * sizeof(WCHAR) +
                    DataLength;
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE)
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE)
     {
         return STATUS_BUFFER_OVERFLOW;
     }
@@ -899,7 +916,7 @@ ZpRegistry_EncodeSetValueRequest(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteByteString(&Writer, Data, DataLength);
+        Status = ZpCodec_WriteData(&Writer, Data, DataLength);
     }
     return Status;
 }
@@ -929,7 +946,7 @@ ZpRegistry_DecodeSetValueRequest(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadByteString(&Reader, &Request->Data);
+        Status = ZpCodec_ReadData(&Reader, Reader.Size - Reader.Offset, &Request->Data);
     }
     if (!NT_SUCCESS(Status) ||
         Request->Path.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
@@ -961,8 +978,7 @@ ZpRegistry_EncodeKeyRequest(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(BYTE) + sizeof(ULONG) +
-                   (ULONGLONG)PathLength * sizeof(WCHAR);
+    RequiredSize = sizeof(BYTE) + (ULONGLONG)PathLength * sizeof(WCHAR);
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL)
     {
@@ -976,7 +992,7 @@ ZpRegistry_EncodeKeyRequest(
     Status = ZpRegistry_WriteScope(&Writer, Root);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteString(&Writer, Path, PathLength);
+        Status = ZpCodec_WriteTailString(&Writer, Path, PathLength);
     }
     return Status;
 }
@@ -994,7 +1010,7 @@ ZpRegistry_DecodeKeyRequest(
     Status = ZpRegistry_ReadScope(&Reader, &Request->Root);
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadString(&Reader, &Request->Path);
+        Status = ZpCodec_ReadTailString(&Reader, &Request->Path);
     }
     if (!NT_SUCCESS(Status) ||
         Request->Path.Length == 0 ||
@@ -1031,10 +1047,10 @@ ZpRegistry_EncodeRenameRequest(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = sizeof(BYTE) + 3 * sizeof(ULONG) +
+    RequiredSize = sizeof(BYTE) + 2 * sizeof(ULONG) +
                    ((ULONGLONG)PathLength + NameLength + NewNameLength) *
                        sizeof(WCHAR);
-    if (RequiredSize > ZP_RESPONSE_MAX_PAYLOAD_SIZE)
+    if (RequiredSize > ZP_REQUEST_MAX_PAYLOAD_SIZE)
     {
         return STATUS_BUFFER_OVERFLOW;
     }
@@ -1059,7 +1075,7 @@ ZpRegistry_EncodeRenameRequest(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_WriteString(&Writer, NewName, NewNameLength);
+        Status = ZpCodec_WriteTailString(&Writer, NewName, NewNameLength);
     }
     return Status;
 }
@@ -1085,7 +1101,7 @@ ZpRegistry_DecodeRenameRequest(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = ZpCodec_ReadString(&Reader, &Request->NewName);
+        Status = ZpCodec_ReadTailString(&Reader, &Request->NewName);
     }
     if (!NT_SUCCESS(Status) ||
         Request->Path.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
@@ -1125,7 +1141,7 @@ ZpRegistry_EncodeSecurityRequest(
     {
         return STATUS_INVALID_PARAMETER;
     }
-    RequiredSize = 2 * sizeof(BYTE) + 2 * sizeof(ULONG) +
+    RequiredSize = 2 * sizeof(BYTE) + sizeof(ULONG) +
                    ((ULONGLONG)PathLength + SddlLength) * sizeof(WCHAR);
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL)
@@ -1138,9 +1154,9 @@ ZpRegistry_EncodeSecurityRequest(
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpRegistry_WriteScope(&Writer, Root);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Path, PathLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Sddl, SddlLength);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteBoolean(&Writer, DaclProtected);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Path, PathLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, Sddl, SddlLength);
     return Status;
 }
 
@@ -1155,9 +1171,9 @@ ZpRegistry_DecodeSecurityRequest(
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpRegistry_ReadScope(&Reader, &Request->Root);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Path);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Sddl);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadBoolean(&Reader, &Request->DaclProtected);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->Path);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Request->Sddl);
     if (!NT_SUCCESS(Status) ||
         Request->Path.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
         Request->Sddl.Length > ZP_REGISTRY_PATH_MAX_LENGTH ||
@@ -1183,13 +1199,13 @@ ZpRegistry_EncodeSecurityDescriptor(
 
     if (Sddl == NULL || SddlLength == 0 || SddlLength > ZP_REGISTRY_PATH_MAX_LENGTH || DaclProtected > TRUE)
         return STATUS_INVALID_PARAMETER;
-    RequiredSize = sizeof(BYTE) + sizeof(ULONG) + (ULONGLONG)SddlLength * sizeof(WCHAR);
+    RequiredSize = sizeof(BYTE) + (ULONGLONG)SddlLength * sizeof(WCHAR);
     *BytesWritten = (ULONG)RequiredSize;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < RequiredSize) return STATUS_BUFFER_TOO_SMALL;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpCodec_WriteBoolean(&Writer, DaclProtected);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Sddl, SddlLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, Sddl, SddlLength);
     return Status;
 }
 
@@ -1204,7 +1220,7 @@ ZpRegistry_DecodeSecurityDescriptor(
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadBoolean(&Reader, &Descriptor->DaclProtected);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Descriptor->Sddl);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Descriptor->Sddl);
     if (!NT_SUCCESS(Status) || Descriptor->Sddl.Length == 0 ||
         Descriptor->Sddl.Length > ZP_REGISTRY_PATH_MAX_LENGTH || Reader.Offset != PayloadLength)
     {

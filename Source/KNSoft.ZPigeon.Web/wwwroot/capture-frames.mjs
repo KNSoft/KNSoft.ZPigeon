@@ -1,5 +1,6 @@
-const headerLength = 33,
+const headerLength = 21,
   maximumImageLength = 0x1000000,
+  maximumDimension = 7680,
   minimumVideoDimension = 128;
 const h264Codec = "avc1.4D0033",
   h265Codec = "hev1.1.6.L153.B0",
@@ -53,13 +54,13 @@ export class CaptureFrameDecoder {
         this.pending = {
           type: view.getUint8(0),
           sequence: view.getUint32(1, true),
-          canvasWidth: view.getUint32(5, true),
-          canvasHeight: view.getUint32(9, true),
-          left: view.getUint32(13, true),
-          top: view.getUint32(17, true),
-          width: view.getUint32(21, true),
-          height: view.getUint32(25, true),
-          length: view.getUint32(29, true),
+          canvasWidth: view.getUint16(5, true),
+          canvasHeight: view.getUint16(7, true),
+          left: view.getUint16(9, true),
+          top: view.getUint16(11, true),
+          width: view.getUint16(13, true),
+          height: view.getUint16(15, true),
+          length: view.getUint32(17, true),
         };
         if (this.pending.length > maximumImageLength) {
           socket.close(1009, "画面数据过大");
@@ -305,7 +306,9 @@ function valid(frame) {
     frame.type <= 6 &&
     frame.sequence &&
     frame.canvasWidth &&
+    frame.canvasWidth <= maximumDimension &&
     frame.canvasHeight &&
+    frame.canvasHeight <= maximumDimension &&
     frame.width &&
     frame.height &&
     frame.left < frame.canvasWidth &&

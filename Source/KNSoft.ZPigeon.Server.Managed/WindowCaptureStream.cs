@@ -169,12 +169,12 @@ public sealed class WindowCaptureStream : IAsyncDisposable
     public void Update(WindowCaptureOptions options)
     {
         NativeServer.ValidateWindowCaptureOptions(options);
-        Span<byte> message = stackalloc byte[sizeof(byte) + sizeof(uint) + 3 * sizeof(byte)];
+        Span<byte> message = stackalloc byte[sizeof(byte) + sizeof(ushort) + 3 * sizeof(byte)];
         message[0] = 5;
-        BinaryPrimitives.WriteUInt32LittleEndian(message[sizeof(byte)..], options.MaxDimension);
-        message[sizeof(byte) + sizeof(uint)] = options.FrameRate;
-        message[sizeof(byte) + sizeof(uint) + sizeof(byte)] = options.ImageQuality;
-        message[sizeof(byte) + sizeof(uint) + 2 * sizeof(byte)] = options.Encoding;
+        BinaryPrimitives.WriteUInt16LittleEndian(message[sizeof(byte)..], (ushort)options.MaxDimension);
+        message[sizeof(byte) + sizeof(ushort)] = options.FrameRate;
+        message[sizeof(byte) + sizeof(ushort) + sizeof(byte)] = options.ImageQuality;
+        message[sizeof(byte) + sizeof(ushort) + 2 * sizeof(byte)] = options.Encoding;
         Send(message);
     }
 

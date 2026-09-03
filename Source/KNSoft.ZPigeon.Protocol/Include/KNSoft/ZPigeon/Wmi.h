@@ -79,12 +79,12 @@ ZpWmi_EncodeCell(
 NTSTATUS
 ZpWmi_EncodePageHeader(
     _In_ ULONG RowCount,
-    _Out_writes_bytes_(sizeof(ULONG)) PVOID Buffer);
+    _Out_writes_bytes_(sizeof(USHORT)) PVOID Buffer);
 
 NTSTATUS
 ZpWmi_EncodeRowHeader(
     _In_ ULONG CellCount,
-    _Out_writes_bytes_(sizeof(ULONG)) PVOID Buffer);
+    _Out_writes_bytes_(sizeof(USHORT)) PVOID Buffer);
 
 NTSTATUS
 ZpWmi_EncodePage(

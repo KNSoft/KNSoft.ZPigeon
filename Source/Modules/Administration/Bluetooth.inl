@@ -267,7 +267,7 @@ ZpAdministration_EnumerateBluetooth(
     ZP_CODEC_WRITER Writer;
     HANDLE Handle;
     WCHAR Identity[32], Address[24];
-    BYTE Data[sizeof(ULONG) * 2];
+    BYTE Data[sizeof(USHORT) * 2];
     enum __x_ABI_CWindows_CDevices_CRadios_CRadioKind Kind;
     enum __x_ABI_CWindows_CDevices_CRadios_CRadioState State;
     LOGICAL Uninitialize;
@@ -308,9 +308,9 @@ ZpAdministration_EnumerateBluetooth(
                                  Information.address.ullLong);
                     ZpBluetooth_FormatAddress(Information.address, Address, ARRAYSIZE(Address));
                     ZpCodec_InitializeWriter(&Writer, Data, sizeof(Data));
-                    Status = ZpCodec_WriteUInt32(&Writer, Information.manufacturer);
+                    Status = ZpCodec_WriteUInt16(&Writer, Information.manufacturer);
                     if (NT_SUCCESS(Status))
-                        Status = ZpCodec_WriteUInt32(&Writer, Information.lmpSubversion);
+                        Status = ZpCodec_WriteUInt16(&Writer, Information.lmpSubversion);
                     DataLength = Writer.Offset;
                     Flags |= (BluetoothIsDiscoverable(Handle) ? ZP_BLUETOOTH_DISCOVERABLE : 0) |
                              (BluetoothIsConnectable(Handle) ? ZP_BLUETOOTH_CONNECTABLE : 0);

@@ -72,7 +72,7 @@ ZpAudio_SendCloseLocked(
     _Inout_ PZP_CLIENT_AUDIO_CHANNEL Channel,
     _In_ ZP_STATUS CloseStatus)
 {
-    BYTE Body[sizeof(ULONG) + ZP_STATUS_WIRE_SIZE];
+    BYTE Body[sizeof(ULONG) + ZP_STATUS_MAX_WIRE_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -512,7 +512,7 @@ ZpAudio_StreamCapture(
     _In_opt_ PVOID Context)
 {
     PZP_CLIENT_AUDIO_CHANNEL Channel = Context;
-    BYTE Header[sizeof(BYTE) * 2 + sizeof(ULONG) * 3];
+    BYTE Header[sizeof(BYTE) + sizeof(ULONG) + sizeof(USHORT)];
     ZP_AUDIO_PACKET Packet;
     ULONG HeaderLength, DataLength;
     NTSTATUS Status;

@@ -300,9 +300,11 @@ ZpProcess_ReadSid(
 {
     ZP_BUFFER_VIEW View;
     PISID Value;
+    BYTE Length;
     NTSTATUS Status;
 
-    Status = ZpCodec_ReadByteString(Reader, &View);
+    Status = ZpCodec_ReadByte(Reader, &Length);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadData(Reader, Length, &View);
     if (!NT_SUCCESS(Status)) return Status;
     if (View.Length < (ULONG)FIELD_OFFSET(SID, SubAuthority)) return STATUS_INVALID_SID;
     Value = (PISID)View.Buffer;
@@ -336,17 +338,18 @@ ZpProcess_CreateCustomToken(
     LARGE_INTEGER Expiration = { 0 };
     LUID AuthenticationId;
     ULONGLONG AuthenticationValue, PrivilegeValue;
-    ULONG Version, Flags, IntegrityRid, GroupCount, PrivilegeCount, Index, Attributes;
+    ULONG IntegrityRid, GroupCount, PrivilegeCount, Index, Attributes;
     ULONG GroupIndex = 0;
     ULONG UiAccess;
+    USHORT Count;
+    BYTE Flags;
     LOGICAL LogonSidFound;
     BOOLEAN PreviousDebugPrivilege, RestoreDebugPrivilege = FALSE;
     NTSTATUS Status;
     ZP_STATUS Result;
 
     ZpCodec_InitializeReader(&Reader, Definition->Buffer, Definition->Length);
-    Status = ZpCodec_ReadUInt32(&Reader, &Version);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Flags);
+    Status = ZpCodec_ReadByte(&Reader, &Flags);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt64(&Reader, &AuthenticationValue);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &IntegrityRid);
     if (NT_SUCCESS(Status))
@@ -364,8 +367,9 @@ ZpProcess_CreateCustomToken(
         Status = ZpProcess_ReadSid(&Reader, &PrimaryGroupSid);
         if (NT_SUCCESS(Status)) PrimaryGroup.PrimaryGroup = PrimaryGroupSid;
     }
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadArrayCount(&Reader, &GroupCount);
-    if (!NT_SUCCESS(Status) || Version != ZP_EXECUTION_CUSTOM_TOKEN_VERSION ||
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(&Reader, &Count);
+    if (NT_SUCCESS(Status)) GroupCount = Count;
+    if (!NT_SUCCESS(Status) ||
         (Flags & ~(ZP_EXECUTION_CUSTOM_TOKEN_FLAG_UI_ACCESS |
                    ZP_EXECUTION_CUSTOM_TOKEN_FLAG_ADD_LOGON_SID)) != 0 ||
         GroupCount > ZP_EXECUTION_CUSTOM_TOKEN_MAX_GROUPS)
@@ -434,7 +438,8 @@ ZpProcess_CreateCustomToken(
         }
     }
     Groups->GroupCount = GroupIndex;
-    Status = ZpCodec_ReadArrayCount(&Reader, &PrivilegeCount);
+    Status = ZpCodec_ReadUInt16(&Reader, &Count);
+    if (NT_SUCCESS(Status)) PrivilegeCount = Count;
     if (!NT_SUCCESS(Status) || PrivilegeCount > ZP_EXECUTION_CUSTOM_TOKEN_MAX_PRIVILEGES)
     {
         Status = NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;

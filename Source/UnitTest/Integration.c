@@ -49,6 +49,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ZP_STATUS ClientStoppedStatus;
     ZP_STATUS ServerReadyStatus;
     ZP_STATUS ServerStoppedStatus;
+    BYTE ClientVersion;
     ZP_STATUS SystemInfoStatus;
     ZP_SYSTEM_ARCHITECTURE SystemArchitecture;
     ULONG SystemProcessorCount;
@@ -957,7 +958,10 @@ SDKIntegration_ServerConnectionCallback(
     if (Phase == ZpConnectionPhaseReady)
     {
         ZP_CONNECTION_HANDLE Previous;
+        NTSTATUS NtStatus;
 
+        NtStatus = ZpServer_QueryConnectionClientVersion(Connection,
+                                                         &TestContext->ClientVersion);
         ZpConnection_AddRef(Connection);
         Previous = InterlockedExchangePointer((PVOID volatile*)&TestContext->Connection,
                                               Connection);
@@ -965,7 +969,9 @@ SDKIntegration_ServerConnectionCallback(
         {
             ZpConnection_Release(Previous);
         }
-        TestContext->ServerReadyStatus = Status;
+        TestContext->ServerReadyStatus = NT_SUCCESS(NtStatus) ?
+                                             Status :
+                                             ZpStatus_FromNtStatus(NtStatus);
         SetEvent(TestContext->ServerReadyEvent);
     }
     else if (Phase == ZpConnectionPhaseClosed)
@@ -1241,15 +1247,6 @@ SDKIntegration_Run(
         "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX) "
         "& exit /b 7\r\n";
     static SDK_INTEGRATION_CONTEXT TestContext;
-    const ZP_MODULE_VERSION Modules[] = {
-        { ZP_SYSTEM_MODULE_ID, 1 },
-        { ZP_PROCESS_MODULE_ID, 2 },
-        { ZP_SERVICE_MODULE_ID, 1 },
-        { ZP_FILE_MODULE_ID, 1 },
-        { ZP_TERMINAL_MODULE_ID, 1 },
-        { ZP_EVENT_LOG_MODULE_ID, 1 },
-        { ZP_REGISTRY_MODULE_ID, 1 }
-    };
     ZP_ENDPOINT Endpoint = { Transport, L"127.0.0.1", 0, ServerName };
     ZP_LISTENER_ENDPOINT Listener = { Transport, L"127.0.0.1", 0 };
     ZP_SERVER_DEPLOYMENT Deployment = { ServerName, NULL };
@@ -1395,8 +1392,6 @@ SDKIntegration_Run(
     ClientConfig.DeploymentRootCertificate = Certificate->pbCertEncoded;
     ClientConfig.DeploymentRootCertificateLength = Certificate->cbCertEncoded;
     ClientConfig.ClientKeyName = NULL;
-    ClientConfig.Modules = Modules;
-    ClientConfig.ModuleCount = (BYTE)RTL_NUMBER_OF(Modules);
     ClientConfig.ConnectTimeoutMilliseconds = SDK_INTEGRATION_TIMEOUT_MILLISECONDS;
     ClientConfig.StateCallback = SDKIntegration_ClientStateCallback;
     ClientConfig.CallbackContext = &TestContext;
@@ -1406,8 +1401,6 @@ SDKIntegration_Run(
     ServerConfig.ListenerCount = 1;
     ServerConfig.Deployments = &Deployment;
     ServerConfig.DeploymentCount = 1;
-    ServerConfig.Modules = Modules;
-    ServerConfig.ModuleCount = (BYTE)RTL_NUMBER_OF(Modules);
     ServerConfig.MaxRequestsPerConnection = 4;
     ServerConfig.MaxChannelsPerConnection = 1;
     ServerConfig.StateCallback = SDKIntegration_ServerStateCallback;
@@ -1447,7 +1440,8 @@ SDKIntegration_Run(
         WaitForSingleObject(TestContext.ServerReadyEvent,
                             SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
         !ZpStatus_IsSuccess(TestContext.ClientReadyStatus) ||
-        !ZpStatus_IsSuccess(TestContext.ServerReadyStatus))
+        !ZpStatus_IsSuccess(TestContext.ServerReadyStatus) ||
+        TestContext.ClientVersion != ZP_CLIENT_VERSION)
     {
         goto Cleanup;
     }

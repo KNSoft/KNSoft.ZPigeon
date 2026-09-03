@@ -54,7 +54,6 @@ struct _ZP_CONNECTION_OBJECT
     ULONG ChannelCount;
     ULONG ChannelReservations;
     ULONG MaxChannels;
-    ULONGLONG ModuleMask;
     ZP_IP_ADDRESS RemoteAddress;
     ZP_CONNECTION_SEND_ROUTINE Send;
     ZP_CONNECTION_DISCONNECT_ROUTINE Disconnect;
@@ -78,11 +77,6 @@ VOID
 ZpServerConnection_SetPhase(
     _Inout_ PZP_CONNECTION_OBJECT Connection,
     _In_ ZP_CONNECTION_PHASE Phase);
-
-VOID
-ZpServerConnection_SetModuleMask(
-    _Inout_ PZP_CONNECTION_OBJECT Connection,
-    _In_ ULONGLONG ModuleMask);
 
 NTSTATUS
 ZpServerConnection_ReceiveResponse(

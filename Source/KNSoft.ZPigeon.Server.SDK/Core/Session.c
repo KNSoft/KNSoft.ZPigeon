@@ -21,8 +21,7 @@ ZpServerSession_MessageCallback(
     ZP_RESPONSE_VIEW Response;
     ZP_CHANNEL_DATA_VIEW ChannelData;
     ZP_CHANNEL_CLOSE ChannelClose;
-    ZP_READY Ready;
-    BYTE Body[ZP_MODULE_MANIFEST_MAX_WIRE_SIZE];
+    BYTE Body[ZP_SERVER_CHALLENGE_SIZE];
     ULONG BodyLength, ChannelId, CreditBytes;
     NTSTATUS Status;
 
@@ -33,41 +32,22 @@ ZpServerSession_MessageCallback(
             Status = ZpMessage_DecodeClientHello(Frame->Body, Frame->BodyLength, &Hello);
             if (NT_SUCCESS(Status))
             {
-                BYTE ClientIndex = 0, ServerIndex = 0;
+                Session->ClientVersion = Hello.ClientVersion;
+                if (Hello.ClientVersion < ZP_MIN_CLIENT_VERSION)
+                {
+                    ZP_SERVER_REJECT_REASON Reason = ZpServerRejectClientVersionTooOld;
 
+                    return Session->Public->Send(Session->Public,
+                                                  0,
+                                                  ZpMessageServerReject,
+                                                  &Reason,
+                                                  sizeof(Reason),
+                                                  NULL,
+                                                  0);
+                }
                 RtlCopyMemory(Session->PublicKey,
                               Hello.ClientPublicKey,
                               sizeof(Session->PublicKey));
-                while (ClientIndex < Hello.ModuleCount &&
-                       ServerIndex < Session->Owner->Config.ModuleCount)
-                {
-                    PCZP_MODULE_VERSION ClientModule = &Hello.Modules[ClientIndex];
-                    PCZP_MODULE_VERSION ServerModule =
-                        &Session->Owner->Config.Modules[ServerIndex];
-
-                    if (ClientModule->ModuleId < ServerModule->ModuleId)
-                    {
-                        ClientIndex++;
-                    }
-                    else if (ClientModule->ModuleId > ServerModule->ModuleId)
-                    {
-                        ServerIndex++;
-                    }
-                    else
-                    {
-                        if (ClientModule->Version == ServerModule->Version)
-                        {
-                            Session->Modules[Session->ModuleCount++] = *ClientModule;
-                            Session->ModuleMask |= ZP_MODULE_BIT(ClientModule->ModuleId);
-                        }
-                        ClientIndex++;
-                        ServerIndex++;
-                    }
-                }
-                if (Session->ModuleCount == 0)
-                {
-                    Status = STATUS_NOT_SUPPORTED;
-                }
             }
             if (NT_SUCCESS(Status))
             {
@@ -107,22 +87,15 @@ ZpServerSession_MessageCallback(
             {
                 return STATUS_ACCESS_DENIED;
             }
-            Ready.Modules = Session->Modules;
-            Ready.ModuleCount = Session->ModuleCount;
-            Status = ZpMessage_EncodeReady(&Ready, Body, sizeof(Body), &BodyLength);
+            Status = Session->Public->Send(Session->Public,
+                                           0,
+                                           ZpMessageReady,
+                                           NULL,
+                                           0,
+                                           NULL,
+                                           0);
             if (NT_SUCCESS(Status))
             {
-                Status = Session->Public->Send(Session->Public,
-                                               0,
-                                               ZpMessageReady,
-                                               Body,
-                                               BodyLength,
-                                               NULL,
-                                               0);
-            }
-            if (NT_SUCCESS(Status))
-            {
-                ZpServerConnection_SetModuleMask(Session->Public, Session->ModuleMask);
                 ZpServerConnection_SetPhase(Session->Public, ZpConnectionPhaseReady);
                 ZpServer_NotifyConnection((ZP_SERVER_HANDLE)Session->Owner,
                                           (ZP_CONNECTION_HANDLE)Session->Public,
@@ -212,6 +185,35 @@ ZpServer_QueryConnectionClientPublicKey(
                                     ZP_SERVER_SESSION,
                                     Connection);
         RtlCopyMemory(PublicKey, Session->PublicKey, ZP_CLIENT_PUBLIC_KEY_SIZE);
+        Status = STATUS_SUCCESS;
+    }
+    else
+    {
+        Status = STATUS_INVALID_DEVICE_STATE;
+    }
+    RtlReleaseSRWLockShared(&ConnectionObject->Lock);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
+ZpServer_QueryConnectionClientVersion(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _Out_ PBYTE ClientVersion)
+{
+    PZP_CONNECTION_OBJECT ConnectionObject = Connection;
+    PZP_SERVER_SESSION Session;
+    NTSTATUS Status;
+
+    if (ConnectionObject == NULL || ClientVersion == NULL) return STATUS_INVALID_PARAMETER;
+    RtlAcquireSRWLockShared(&ConnectionObject->Lock);
+    if (ConnectionObject->Phase == ZpConnectionPhaseReady &&
+        ConnectionObject->ProtocolConnection != NULL)
+    {
+        Session = CONTAINING_RECORD(ConnectionObject->ProtocolConnection,
+                                    ZP_SERVER_SESSION,
+                                    Connection);
+        *ClientVersion = Session->ClientVersion;
         Status = STATUS_SUCCESS;
     }
     else

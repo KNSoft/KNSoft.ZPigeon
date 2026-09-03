@@ -147,7 +147,7 @@ REST / UI 适配器 -----------> Application | Server.Managed
 
 REST、MCP 和内置智能体是三种入口，不是三套业务实现。REST 路由按 UI 和传输需求显式映射；`ToolAudience.ExternalMcp` 与 `ToolAudience.BuiltInAgent` 只决定一个工具面向哪类智能体。模型 Provider 与暴露范围正交，不能以 Provider 类型决定工具权限或目标。
 
-外部 MCP 使用无状态 Streamable HTTP，直接支持 2026-07-28 无握手请求，并由官方 SDK 兼容较早的 initialize 客户端。除 `list_clients` 外，工具都要求显式传入字符串形式的瞬时 `ClientId`，不得依赖服务器端“当前 Client”。内置智能体在创建工具 Schema 时绑定当前页面 Client，并从 Schema 中移除 `clientId`；模型无法选择其他目标。需要由调用方回传的 64 位身份、游标和进程创建时间以十进制字符串跨 JSON 边界传递，避免 JavaScript 数字精度损失。
+外部 MCP 使用无状态 Streamable HTTP，直接支持 2026-07-28 无握手请求。除 `list_clients` 外，工具都要求显式传入字符串形式的瞬时 `ClientId`，不得依赖服务器端“当前 Client”。内置智能体在创建工具 Schema 时绑定当前页面 Client，并从 Schema 中移除 `clientId`；模型无法选择其他目标。需要由调用方回传的 64 位身份、游标和进程创建时间以十进制字符串跨 JSON 边界传递，避免 JavaScript 数字精度损失。
 
 新增 SDK API 或枚举值不自动成为 REST 或 AI 能力。先按产品语义决定是否增加 Application 用例；需要 AI 调用时只在 Tools 中增加一次定义，MCP 与内置智能体自动同步；需要 Web UI 时再显式增加 REST、流或页面适配。Administration 等聚合入口使用显式操作白名单、固定控制操作与动作组合并限制结果数；需要 Flags、二进制或专用结构载荷的操作不进入通用字符串工具。这样不会把底层面过度暴露，也不会维护两套 MCP/Agent 映射。
 
@@ -228,7 +228,7 @@ C 按配置顺序尝试 Endpoint；连接超时、失败后的轮次推进、重
 选择 Endpoint
     -> 建立 QUIC/TLS/DTLS 安全连接
     -> 使用 Deployment 根公钥验证 S 在线证书
-    -> 交换 Hello 与版本/模块能力
+    -> 交换 Hello 与 Client 版本
     -> S 发出客户端 Challenge
     -> C 使用实例私钥签名
     -> S 验证签名和客户端公钥
@@ -238,14 +238,13 @@ C 按配置顺序尝试 Endpoint；连接超时、失败后的轮次推进、重
 
 握手只保留实际需要的信息：
 
-- C 核心协议版本；
-- C 各模块协议版本；
+- C 的 Client 版本；
 - 客户端公钥；
 - Challenge、签名以及必要的防重放数据。
 
 Deployment 已由当前连接的 SNI 和证书上下文确定，握手中不重复传输 DeploymentKeyId。
 
-C 不内置、不依赖 S 的协议版本。双方只选择当前实现明确支持的版本；不存在对应实现时拒绝协商，不保留未要求的旧版 Decoder、兼容路径或降级逻辑。
+C 不内置、不依赖 S 的版本。S 保存 C 的 Client 版本；低于最低可接受版本时拒绝连接，不保留未要求的旧版 Decoder、兼容路径或降级逻辑。
 
 QUIC、TLS/TCP 和 DTLS/UDP 均使用 TLS 派生的对称会话密钥保护业务数据。分组公私钥不用于逐包加解密，也不在 TLS 外增加应用层二次加密。Client QUIC 使用 20 秒 KeepAlive，避免空闲但仍有效的控制连接被默认空闲超时关闭。
 
@@ -257,7 +256,9 @@ Connection 通用实现位于共享的 `Source/Network`，由 Client SDK 和 Ser
 
 ```text
 Client: SendHello -> WaitChallenge -> SendAuthenticate -> WaitReady -> Ready
+                         \-> ServerReject -> Closed
 Server: WaitHello -> SendChallenge -> WaitAuthenticate -> SendReady -> Ready
+                  \-> SendReject -> Closed
 ```
 
 - Transport 成功接受一条本端握手消息后，Connection 通过发送通知推进到下一状态；
@@ -277,13 +278,13 @@ Protocol 负责：
 - 线上数据结构定义；
 - Frame 编码、解码和边界校验；
 - 固定版本 Payload Codec；
-- 消息和模块版本处理；
+- 消息和 Client 版本处理；
 - 架构无关的整数、字符串、数组及 Buffer 表达。
 
 Protocol 不允许直接发送本机 C 结构体。线上格式使用：
 
 - 小端整数；
-- 按模块版本固定的字段顺序；
+- 按 Client 版本固定的字段顺序；
 - UTF-16LE 字符串；
 - 显式长度或数量；
 - 不依赖指针宽度、编译器对齐或结构体 Padding。
@@ -322,31 +323,22 @@ BYTE[] Type-specific body
 
 | 值 | 名称 | 方向 | 类型专用 Body |
 |---:|---|---|---|
-| `0x01` | `ClientHello` | C -> S | `BYTE CoreVersion`、`BYTE ModuleCount`、模块记录、65 字节客户端公钥 |
+| `0x01` | `ClientHello` | C -> S | `BYTE ClientVersion`、65 字节客户端公钥 |
 | `0x02` | `ServerChallenge` | S -> C | 32 字节随机 Challenge |
 | `0x03` | `ClientAuthenticate` | C -> S | 64 字节 ECDSA P-256 `r || s` 签名 |
-| `0x04` | `Ready` | S -> C | `BYTE ModuleCount`、协商后的模块记录 |
+| `0x04` | `Ready` | S -> C | 空 |
+| `0x05` | `ServerReject` | S -> C | `BYTE Reason`：1 表示 Client 版本过旧 |
 | `0x10` | `Request` | S -> C | `UINT32 RequestId`、`BYTE ModuleId`、`BYTE OperationId`、`UINT32 TimeoutMilliseconds`、Payload |
-| `0x11` | `Response` | C -> S | `UINT32 RequestId`、`UINT16 StatusType`、`UINT32 StatusCode`、Payload |
+| `0x11` | `Response` | C -> S | `UINT32 RequestId`、`BYTE StatusType`、`StatusType != None` 时的 `UINT32 StatusCode`、Payload |
 | `0x12` | `Cancel` | S -> C | `UINT32 RequestId` |
 | `0x13` | `ChannelData` | 双向 | `UINT32 ChannelId`、非空数据 |
-| `0x14` | `ChannelClose` | 双向 | `UINT32 ChannelId`、`UINT16 StatusType`、`UINT32 StatusCode` |
+| `0x14` | `ChannelClose` | 双向 | `UINT32 ChannelId`、`BYTE StatusType`、`StatusType != None` 时的 `UINT32 StatusCode` |
 | `0x15` | `ChannelWindow` | 双向 | `UINT32 ChannelId`、非零 `UINT32 CreditBytes` |
 | `0x16` | `ConnectionPolicy` | S -> C | 单字节连接性能策略 |
 
-其他值在 Core Version 1 中非法。消息类型的最小 Body 长度由 Protocol 解码器校验。`ChannelData` 单帧数据最大为 1 MiB，单次 `ChannelWindow` Credit 最大为 16 MiB，避免大块传输长期占用连接发送队列；其他消息仍受 16 MiB Frame 上限约束。
+其他值在 Client Version 1 中非法。消息类型的最小 Body 长度由 Protocol 解码器校验。`ChannelData` 单帧数据最大为 1 MiB，单次 `ChannelWindow` Credit 最大为 16 MiB，避免大块传输长期占用连接发送队列；其他消息仍受 16 MiB Frame 上限约束。
 
-模块记录编码为：
-
-```text
-BYTE ModuleId
-BYTE ModuleVersion
-```
-
-- `ModuleId` 和 `ModuleVersion` 均不得为 0；
-- 单个 Hello/Ready 最多 64 条模块记录；
-- 记录按 `ModuleId` 严格升序排列，不允许重复；
-- S 仅选择双方版本完全相同的模块放入 `Ready`；未出现在 `Ready` 的模块在当前连接不可用。
+`ClientVersion` 是 Client EXE 单调递增的线上兼容版本。Client 的模块随 EXE 同步编译和发布，因此不发送模块清单、能力位图或模块版本。Server 保存每条连接的 Client 版本；当前 Client 版本和最低可接受版本均为 1。低于最低版本时，Server 在认证前以 `ServerReject` Reason 1 拒绝，Client 以上报 `STATUS_REVISION_MISMATCH` 后断开；高于当前版本的 Client 不在握手层被拒绝。未来只有 Client 已无法由任何模块正确处理时才提高最低版本；存在格式差异的模块按连接的 Client 版本选择 Codec。任一不兼容的线上变化必须提升 Client 版本。
 
 初始业务消息语义限制为：
 
@@ -358,7 +350,7 @@ BYTE ModuleVersion
 
 `RequestId` 和 `ChannelId` 均为连接内非零 `UINT32`，在各自命名空间从 1 单调递增且不复用，不按奇偶或方向预留取值；耗尽后拒绝继续分配。第一版 Request 只由 Server 创建；Client 发来的业务 Request 是协议错误。Client 只接受严格大于本连接最高已见值的 RequestId，允许发送失败造成的序号空洞，但拒绝重复或倒序 Request。已结束 Request 的迟到 Cancel 和 Response 幂等忽略，未来未知 ID 仍是协议错误；只保存最高值或下一分配值，不建立 tombstone 表。第一版业务 Channel 只由 Client 创建。`ModuleId` 和 `OperationId` 为非零 `BYTE`。
 
-`StatusType` 固定占 16 位，`StatusCode` 固定占 32 位，线上合计 6 字节，不传本机结构体填充或 64 位扩展码。Type 定义为 `None = 0`、`NTSTATUS = 1`、`Win32 = 2`、`Winsock = 3`、`HRESULT = 4`、`Security = 5`、`QUIC = 6`、`ProcessExit = 7`；Code 保留来源 API 返回的原始 32 位 bit pattern，不做跨错误域映射。`None` 只允许 Code 0；其他错误域的 Code 0 统一编码为 None；ProcessExit 必须保留类型且允许退出码 0。NTSTATUS、HRESULT、Security 和 QUIC 按各自有符号成功语义判断，Win32/Winsock 仅 Code 0 成功，ProcessExit 表示会话正常收尾而不是把退出码解释成错误。
+`StatusType` 固定占 1 字节；`None = 0` 表示没有来源状态码且不传 `StatusCode`，其他类型紧跟 32 位 `StatusCode`，因此线上状态占 1 或 5 字节，不传本机结构体填充或 64 位扩展码。其余 Type 定义为 `NTSTATUS = 1`、`Win32 = 2`、`Winsock = 3`、`HRESULT = 4`、`Security = 5`、`QUIC = 6`、`ProcessExit = 7`、`ConfigurationManager = 8`、`SQLite = 9`；Code 保留来源 API 返回的原始 32 位 bit pattern，不做跨错误域映射。其他错误域的 Code 0 统一编码为 None；ProcessExit 必须保留类型且允许退出码 0。NTSTATUS、HRESULT、Security 和 QUIC 按各自有符号成功语义判断，Win32、Winsock、ConfigurationManager 和 SQLite 仅 Code 0 成功，ProcessExit 表示会话正常收尾而不是把退出码解释成错误。
 
 `TimeoutMilliseconds` 是接收方从完整收到 Request 起计算的处理预算；0 表示协议层不额外施加超时。发送方 SDK 仍维护本地 Deadline：Deadline 到期后在本地以 `STATUS_IO_TIMEOUT` 完成操作，尽力发送 `Cancel`，并忽略迟到的 Response。显式取消在本地以 `STATUS_CANCELLED` 完成，`Cancel` 不要求单独响应。
 
@@ -386,15 +378,16 @@ Response 和明确允许的 ChannelData 在原始 Body 不小于 4 KiB 时，可
 
 ### 7.3 固定 Codec
 
-Core Version 1 使用以下固定 Codec：
+Client Version 1 使用以下固定 Codec：
 
 - `BYTE`、`UINT16`、`UINT32`、`UINT64` 和 `INT32` 分别占 1、2、4、8 和 4 字节；
 - `BOOLEAN` 占 1 字节，只允许 0 和 1；
 - 字节串编码为 `UINT32 ByteLength` 后跟原始字节；
 - UTF-16LE 字符串编码为 `UINT32 CodeUnitCount` 后跟对应数量的 16 位代码单元，不包含结尾 NUL；
-- 数组编码为 `UINT32 ElementCount` 后跟逐项固定编码；
+- 无专用上限的数组编码为 `UINT32 ElementCount` 后跟逐项固定编码；具有模块上限的数组使用能覆盖该上限的最小固定宽度；
 - 可选值先编码一个 `BOOLEAN Present`，为 1 时紧跟该值；
 - 需要边界隔离的嵌套对象编码为 `UINT32 ByteLength` 后跟其内部固定编码；
+- 值占据消息剩余部分且不需要内部边界时，直接使用外层 Body 长度，不重复发送长度；
 - 不发送本机指针、`SIZE_T`、`HANDLE`、C 结构体 Padding 或依赖编译器布局的数据。
 
 通用 Codec 的单个字节串、字符串或数组计数上限为 `0x00100000`；模块可制定更小上限。长度乘法和游标加法必须在访问 Buffer 前检查溢出。解码成功得到的 View 指向原始接收 Buffer，地址可能未对齐，其生命周期止于接收 Buffer 被释放或复用。
@@ -402,11 +395,11 @@ Core Version 1 使用以下固定 Codec：
 ### 7.4 版本演进
 
 - 最外层 Frame 格式保持稳定；
-- C 报告核心协议版本和各模块版本；
-- 模块 Payload 使用确定版本的固定 Codec；
-- 结构变化通过模块版本演进；
+- C 报告唯一的 Client 版本；
+- 模块 Payload 使用该 Client 版本确定的固定 Codec；
+- 结构变化通过 Client 版本演进；
 - 当前代码只实现当前发布所需版本，不背负未发布旧版本兼容；
-- 没有共同实现版本时明确拒绝协商，不自动降级或猜测 Payload 格式。
+- Client 版本低于最低可接受版本时明确拒绝连接，不自动降级或猜测 Payload 格式。
 
 ## 8. SDK API 与执行模型
 
@@ -441,7 +434,7 @@ Core Version 1 使用以下固定 Codec：
 - 完成、取消、Deadline 和断开竞争时，以第一个原子确定的终止原因完成一次，其余事件只做清理；
 - 回调不得长期阻塞；需要阻塞的业务工作由上层投递到自己的执行环境。
 
-Protocol 第一阶段公开 `ZpFrame_*` 与 `ZpCodec_*` 纯函数；它们不分配内存、不持有全局状态。编码支持 `Buffer == NULL` 的长度计算模式，实际写入模式遇到容量不足返回 `STATUS_BUFFER_TOO_SMALL`。解码遇到不完整 Frame 返回 `STATUS_MORE_PROCESSING_REQUIRED`，遇到非法长度、字段或枚举返回 `STATUS_DATA_ERROR`，遇到不支持的版本返回 `STATUS_REVISION_MISMATCH`。除长度计算契约明确要求的输出外，失败时不初始化输出参数。
+Protocol 第一阶段公开 `ZpFrame_*` 与 `ZpCodec_*` 纯函数；它们不分配内存、不持有全局状态。编码支持 `Buffer == NULL` 的长度计算模式，实际写入模式遇到容量不足返回 `STATUS_BUFFER_TOO_SMALL`。解码遇到不完整 Frame 返回 `STATUS_MORE_PROCESSING_REQUIRED`，遇到非法长度、字段或枚举返回 `STATUS_DATA_ERROR`。Client 版本由 Server 握手层判断并通过 `ServerReject` 返回；除长度计算契约明确要求的输出外，失败时不初始化输出参数。
 
 ### 8.1 Endpoint 与重连默认值
 
@@ -465,7 +458,6 @@ Client 配置包含：
 - 按尝试顺序排列的 Endpoint 数组；
 - Deployment 根证书 DER；
 - 可选的 CNG 客户端持久化密钥名；为空时由 SDK 使用默认名称；默认使用机器范围，也可明确选择当前用户范围；
-- 严格按 `ModuleId` 升序排列的模块版本；
 - 连接超时，0 使用 10 秒默认值；
 - 单连接入站 Request 数量和 Payload 总量上限，以及本机 Channel 上限；
 - 状态回调、操作回调和调用方 Context。
@@ -474,13 +466,12 @@ Server 配置包含：
 
 - Listener 数组；Listener 的 `Host` 为空表示通配绑定；
 - Deployment 数组，每项由 `ServerName` 和带可用私钥的 Windows `PCCERT_CONTEXT` 组成；SDK 在 `Create` 中复制证书 Context，调用方随后可释放原引用；
-- 严格按 `ModuleId` 升序排列的模块版本；
 - 单连接出站 Request 和 Channel Handle 上限；
 - Server 生命周期回调、单连接阶段回调和调用方 Context。
 
 Client 状态为 `Stopped`、`Connecting`、`Authenticating`、`Ready`、`RetryWait` 和 `Stopping`；Server 状态为 `Stopped`、`Starting`、`Running` 和 `Stopping`；Server 单连接以及需要统一表达的连接阶段使用 `Connecting`、`Authenticating`、`Ready` 和 `Closed`。状态回调中的 `ZP_STATUS` 表示触发当前转换的结果，成功转换使用 `{ None, 0 }`。
 
-`Create` 验证并复制数组、字符串、证书和模块配置，成功后对象处于 `Stopped`；回调函数指针和 Context 只保存值。`Start`、`Stop` 和 `Close` 遵循本节前述异步生命周期契约。第一版不公开内部 Connection 结构，也不允许调用方直接驱动 Frame 状态机。
+`Create` 验证并复制数组、字符串和证书配置，成功后对象处于 `Stopped`；回调函数指针和 Context 只保存值。`Start`、`Stop` 和 `Close` 遵循本节前述异步生命周期契约。第一版不公开内部 Connection 结构，也不允许调用方直接驱动 Frame 状态机。
 
 Server 连接回调中的 `ZP_CONNECTION_HANDLE` 默认只在当前回调期间借用。应用需要在回调外保存连接时调用 `ZpConnection_AddRef`，不再使用时调用 `ZpConnection_Release`；引用只保持对象内存有效，不阻止网络断开。连接进入 Closed 后，新的管理操作返回连接终止状态，所有已提交的 Request 和 Channel 仍恰好终止一次。
 
@@ -496,7 +487,7 @@ Server 通过 `ZpServer_SendRequest` 对指定已认证 Connection 创建引用�
 
 Server 的非零 `TimeoutMilliseconds` 同时建立基于 `GetTickCount64` 的本地 Deadline；每条连接的线程池定时器始终只等待最近截止项，到期请求以 `STATUS_IO_TIMEOUT` 完成并尽力发送 Cancel，Response、取消和计时器竞争由同一请求表锁串行化。
 
-Client 完整收到 Request 后检查方向、协商模块和配额，随后复制 Payload 并投递线程池；MsQuic 接收回调不执行系统查询等业务工作。每条连接维护活动入站 Request 表和引用计数，Cancel、连接关闭与工作完成只竞争一次终止。来自已认证 Server 的已协商且协议合法的操作直接执行；Windows 本机权限或资源不足通过对应来源类型和原始码返回。
+Client 完整收到 Request 后检查方向、字段和配额，随后复制 Payload 并投递线程池；MsQuic 接收回调不执行系统查询等业务工作。每条连接维护活动入站 Request 表和引用计数，Cancel、连接关闭与工作完成只竞争一次终止。来自已认证 Server 的协议合法操作直接执行；Windows 本机权限或资源不足通过对应来源类型和原始码返回。
 
 Client 的 `MaxRequestsPerConnection` 和 `MaxRequestPayloadBytesPerConnection` 限制已投递且尚未完成的入站 Request 及其深拷贝 Payload；`MaxChannelsPerConnection` 限制正在创建或已经激活的本机 Channel。Server 使用同名对象上限约束每连接的调用方 Handle。名额在执行业务或创建 OS 资源前预留，达到上限返回 `STATUS_QUOTA_EXCEEDED`，并在创建失败、响应失败、取消、关闭或完成后立即归还。
 
@@ -504,7 +495,7 @@ Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多
 
 ## 9. 功能模块
 
-当前协议包含 46 个模块；`Execution`、`Browser` 和 `Software` 为 Version 2，其余模块为 Version 1：
+当前协议包含 46 个模块：
 
 - `System`（ModuleId 1）：系统基础信息。
 - `Process`（ModuleId 2）：进程枚举、查询、控制、转储和内存读写。
@@ -557,7 +548,7 @@ URL 下载是 Client 本机后台作业，不把文件内容经 Server 或 Web �
 - `ShadowCopy`（ModuleId 45）：系统保护、还原点和卷影副本管理。
 - `BitLocker`（ModuleId 46）：直接通过 FVE API 枚举卷、转换状态、保护状态、锁定状态、加密方法、范围、自动解锁状态和密钥保护器；支持全卷或仅已用空间加密、解密、转换暂停与恢复、保护暂停与恢复、数据卷锁定与恢复密码解锁，以及恢复密码保护器的创建和删除。
 
-ModuleId 9、20–46 共用 `Administration` 的固定记录 Codec 和执行框架，但在线上仍是独立协商、独立版本的模块；目录复用不改变协议模块数量。
+ModuleId 9、20–46 共用 `Administration` 的固定记录 Codec 和执行框架，但仍保留独立的 ModuleId 和请求路由；目录复用不改变协议模块数量。
 
 输入法清单和控制均在 Client 进程当前账户下执行。Client 返回当前账户（用户名）与交互式桌面状态，Web
 也统一使用这一表述。清单由 `input.dll` 的当前用户设置与 TSF profile 合并生成，控制使用
@@ -582,9 +573,9 @@ CDP `Page.startScreencast` 按 Chromium 协议产生 JSON 内 Base64 JPEG。Tunn
 
 模块契约遵循以下规则：
 
-- 公共头文件定义 ModuleId、ModuleVersion、OperationId、请求结构、结果 View 和资源上限；模块目录中的 `Protocol.c`、`Client.c`、`Server.c` 分别负责 Codec、被控端执行和管理端控制。
+- 公共头文件定义 ModuleId、OperationId、请求结构、结果 View 和资源上限；模块目录中的 `Protocol.c`、`Client.c`、`Server.c` 分别负责 Codec、被控端执行和管理端控制。
 - 线上 Payload 使用固定 Codec，不传本机指针、Handle、结构体填充或依赖编译器对齐的数据。
-- 模块版本必须完全相同才参与协商；当前未发布，不保留旧 Decoder、兼容分支或自动降级。
+- 所有模块服从唯一的 Client 版本；当前未发布，不保留旧 Decoder、兼容分支或自动降级。
 - 大型文件、终端、隧道、原图和音频数据使用带窗口的 Channel，按需传输，不塞入单个 Response 或完整缓存在 Web 层；Client 生成且有明确大小上限的图片预览可以使用二进制 Response。
 - 本机 API 的失败保留 NTSTATUS、Win32、Winsock、HRESULT、Security、QUIC 或 ProcessExit 等来源类型和原始 32 位代码。
 - 破坏性操作必须由 Server 明确发起；Client 不扩大目标范围，不静默重试，不增加与请求语义不同的兜底路径。
@@ -592,7 +583,7 @@ CDP `Page.startScreencast` 按 Chromium 协议产生 JSON 内 Base64 JPEG。Tunn
 ## 10. 安全与资源限制
 
 - 所有 Transport 必须验证 S 身份并使用 TLS 保护传输；
-- Frame 解码必须检查长度、整数溢出、字段边界、消息类型和版本；
+- 握手必须检查 Client 版本；Frame 解码必须检查长度、整数溢出、字段边界和消息类型；
 - 未匹配的未来 RequestId、ChannelId 或未知 Data 视为协议违规；完整 Frame 按 6.1 节限制在当前消息并计入预算，仅对单调序列中已结束对象的迟到 Response/Cancel/Window/Close 做幂等忽略；
 - 正式发布前，新连接应按来源 IP、Deployment 和全局维度实施连接及握手速率限制；
 - S 限制同时握手数量、自动登记记录数量和每连接出站对象数量；C 限制入站 Request、Payload、Channel 及本机 OS 资源数量；
@@ -638,14 +629,14 @@ CDP `Page.startScreencast` 按 Chromium 协议产生 JSON 内 Base64 JPEG。Tunn
 - S 的 Challenge 使用系统 CSPRNG 生成 32 字节，每条连接只使用一次；
 - 客户端签名摘要为 `SHA-256("KNSoft.ZPigeon.ClientAuth.v1" || 0x00 || Challenge[32] || PublicKey[65])`；
 - `ClientAuthenticate` 使用 IEEE P1363 编码的 ECDSA P-256 签名，即 32 字节大端 `r` 后跟 32 字节大端 `s`；
-- `ClientHello` 之后只接受 `ServerChallenge`，`ServerChallenge` 之后只接受 `ClientAuthenticate`，认证成功后 S 发送 `Ready`；任何越序、重复或握手阶段业务消息均以 `STATUS_PROTOCOL_UNREACHABLE` 关闭连接；
+- `ClientHello` 之后只接受 `ServerChallenge` 或版本过旧的 `ServerReject`，`ServerChallenge` 之后只接受 `ClientAuthenticate`，认证成功后 S 发送空 Body 的 `Ready`；任何越序、重复或握手阶段业务消息均以 `STATUS_PROTOCOL_UNREACHABLE` 关闭连接；
 - QUIC/TLS 关闭、无法重同步的 Frame 前缀错误、身份验证失败、内部不变量错误和持续违规触发的断开均终止所有未完成请求、订阅和通道，不尝试在新连接上透明续接；可恢复的完整 Frame 错误和瞬时资源不足按 6.1 节处理。
 
 Client 未配置 `ClientKeyName` 时使用持久化 CNG 密钥名 `KNSoft.ZPigeon.Client`。`ClientKeyScope` 显式选择当前用户或本地计算机作用域，不在两者之间回退或复制身份；当前交互式原型选择用户作用域，管理员、非管理员和 SYSTEM 服务可按宿主配置选择其作用域。SDK 通过 Microsoft Software Key Storage Provider 打开或创建 `ECDSA_P256` 密钥，只导出 `BCRYPT_ECCPUBLIC_BLOB` 并转换为线上 SEC1 格式；私钥签名由 `NCryptSignHash` 在 Provider 内完成。Server 使用系统首选 CSPRNG 生成 Challenge，把 SEC1 公钥转换为 `BCRYPT_ECCPUBLIC_BLOB` 后通过 `BCryptVerifySignature` 验证 P1363 签名。签名验证成功前不会发送 `Ready` 或进入 Ready 阶段。
 
 Client QUIC Transport 内部允许测试代码借用一个调用方持有的 `NCRYPT_KEY_HANDLE`，用于无持久化副作用的端到端测试；该入口不属于公开 ABI，SDK 不释放借用句柄，调用方必须保持它存活到 Client 完成关闭。正常产品路径始终使用上述选定作用域的持久化密钥。
 
-QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接受发送后立即推进 Connection 发送状态，Buffer 一直保留到 `SEND_COMPLETE`；接收回调按 MsQuic Buffer 顺序交给 `ZpConnection_Receive`，由 Connection 统一处理任意分片/合并和握手越序。每连接和进程全局分别限制 32 MiB、256 MiB 未完成发送字节，并记录当前/峰值积压、最长排队时延和配额拒绝次数；达到配额只拒绝当前发送，不把健康连接误判为 fatal。交互与批量标记用于观测和后续保持通道顺序的调度，不能让 `ChannelClose` 越过此前的 `ChannelData`。Server 在 `ClientHello` 时只选择 ModuleId 与 ModuleVersion 均完全相同的模块；Client 对 `Ready` 再验证版本相等。模块没有独立能力位，行为变化直接提升模块版本。
+QUIC Stream 发送为每个 Frame 持有独立异步发送 Context：MsQuic 接受发送后立即推进 Connection 发送状态，Buffer 一直保留到 `SEND_COMPLETE`；接收回调按 MsQuic Buffer 顺序交给 `ZpConnection_Receive`，由 Connection 统一处理任意分片/合并和握手越序。每连接和进程全局分别限制 32 MiB、256 MiB 未完成发送字节，并记录当前/峰值积压、最长排队时延和配额拒绝次数；达到配额只拒绝当前发送，不把健康连接误判为 fatal。交互与批量标记用于观测和后续保持通道顺序的调度，不能让 `ChannelClose` 越过此前的 `ChannelData`。Server 在 `ClientHello` 时验证并保存唯一的 Client 版本；模块没有独立版本或能力协商，行为变化直接提升 Client 版本。
 
 ### 12.1 发布前仍需固定的规格
 

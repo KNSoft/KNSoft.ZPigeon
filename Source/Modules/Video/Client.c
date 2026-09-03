@@ -54,7 +54,7 @@ ZpVideo_SendCloseLocked(
     _Inout_ PZP_CLIENT_VIDEO_CHANNEL Channel,
     _In_ ZP_STATUS CloseStatus)
 {
-    BYTE Body[sizeof(ULONG) + ZP_STATUS_WIRE_SIZE];
+    BYTE Body[sizeof(ULONG) + ZP_STATUS_MAX_WIRE_SIZE];
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -153,7 +153,7 @@ ZpVideo_SendFrame(
     _Inout_ PZP_CLIENT_VIDEO_CHANNEL Channel,
     _In_ PZP_VIDEO_IMAGE Image)
 {
-    BYTE Header[sizeof(ULONG) * 3];
+    BYTE Header[ZP_VIDEO_FRAME_HEADER_WIRE_SIZE];
     ULONG HeaderLength;
     NTSTATUS Status;
 

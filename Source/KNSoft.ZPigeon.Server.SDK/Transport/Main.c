@@ -16,7 +16,6 @@ ZpServer_ValidateConfig(
         Config->ListenerCount > ZP_LISTENER_MAX_COUNT ||
         Config->Listeners == NULL ||
         Config->DeploymentCount > ZP_DEPLOYMENT_MAX_COUNT ||
-        !ZpConfig_AreModulesValid(Config->Modules, Config->ModuleCount) ||
         Config->MaxRequestsPerConnection >
             ZP_SERVER_MAX_REQUESTS_PER_CONNECTION ||
         Config->MaxChannelsPerConnection >
@@ -29,8 +28,7 @@ ZpServer_ValidateConfig(
     }
     Size = sizeof(ZP_SERVER_OBJECT) +
            (SIZE_T)Config->ListenerCount * sizeof(ZP_LISTENER_ENDPOINT) +
-           (SIZE_T)Config->DeploymentCount * sizeof(ZP_SERVER_DEPLOYMENT) +
-           (SIZE_T)Config->ModuleCount * sizeof(ZP_MODULE_VERSION);
+           (SIZE_T)Config->DeploymentCount * sizeof(ZP_SERVER_DEPLOYMENT);
     for (Index = 0; Index < Config->ListenerCount; Index++)
     {
         PCZP_LISTENER_ENDPOINT Listener = &Config->Listeners[Index];
@@ -135,11 +133,6 @@ ZpServer_Create(
     Cursor += (SIZE_T)Config->DeploymentCount * sizeof(*Deployments);
     Object->Config.Listeners = Listeners;
     Object->Config.Deployments = Config->DeploymentCount != 0 ? Deployments : NULL;
-    Object->Config.Modules = (PCZP_MODULE_VERSION)Cursor;
-    RtlCopyMemory(Cursor,
-                  Config->Modules,
-                  (SIZE_T)Config->ModuleCount * sizeof(ZP_MODULE_VERSION));
-    Cursor += (SIZE_T)Config->ModuleCount * sizeof(ZP_MODULE_VERSION);
 
     for (Index = 0; Index < Config->ListenerCount; Index++)
     {

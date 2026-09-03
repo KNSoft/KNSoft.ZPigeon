@@ -44,7 +44,6 @@ typedef struct _ZP_CLIENT_OBJECT
     ULONG RecordingJobCount;
     ULONG FileEnumerationCount;
     ULONG ArchiveEnumerationCount;
-    ULONGLONG ActiveModuleMask;
     ZP_CLIENT_CONFIG Config;
     PCZP_TRANSPORT_OPERATIONS TransportOperations[ZpTransportCount];
     PVOID TransportContexts[ZpTransportCount];

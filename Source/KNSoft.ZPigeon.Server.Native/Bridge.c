@@ -255,8 +255,6 @@ ZpNative_Start(
     Config.ListenerCount = 1;
     Config.Deployments = &Deployment;
     Config.DeploymentCount = 1;
-    Config.Modules = ZpBuiltinModules;
-    Config.ModuleCount = ZP_BUILTIN_MODULE_COUNT;
     Config.StateCallback = ZpNative_ServerStateCallback;
     Config.ConnectionCallback = ZpNative_ServerConnectionCallback;
     CreateStatus = ZpServer_Create(&Config, &ZpNativeServer);

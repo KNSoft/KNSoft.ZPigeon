@@ -10,7 +10,10 @@
 #define ZP_ADMINISTRATION_RECORD_DESCRIPTION 0x20
 #define ZP_ADMINISTRATION_RECORD_DETAIL 0x40
 #define ZP_ADMINISTRATION_RECORD_DATA 0x80
-#define ZP_ADMINISTRATION_RECORD_VALID_MASK 0xFF
+#define ZP_ADMINISTRATION_CONTROL_IDENTITY 0x01
+#define ZP_ADMINISTRATION_CONTROL_ARGUMENT 0x02
+#define ZP_ADMINISTRATION_CONTROL_SECRET 0x04
+#define ZP_ADMINISTRATION_CONTROL_VALID_MASK 0x07
 
 static
 LOGICAL
@@ -121,7 +124,6 @@ ZpAdministration_ReadRecord(
         Local.Kind = Kind;
         Status = ZpCodec_ReadByte(Reader, &Fields);
     }
-    if (NT_SUCCESS(Status) && (Fields & ~ZP_ADMINISTRATION_RECORD_VALID_MASK) != 0) return STATUS_DATA_ERROR;
     if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_ADMINISTRATION_RECORD_STATE))
         Status = ZpCodec_ReadUInt32(Reader, &Local.State);
     if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_ADMINISTRATION_RECORD_FLAGS))
@@ -262,6 +264,7 @@ ZpAdministration_EncodeControl(
     _Out_ PULONG BytesWritten)
 {
     ZP_CODEC_WRITER Writer;
+    BYTE Fields;
     NTSTATUS Status;
 
     if (!ZpAdministration_IsActionValid(Action) ||
@@ -273,11 +276,28 @@ ZpAdministration_EncodeControl(
     {
         return STATUS_INVALID_PARAMETER;
     }
+    Fields = (IdentityLength != 0 ? ZP_ADMINISTRATION_CONTROL_IDENTITY : 0) |
+             (ArgumentLength != 0 ? ZP_ADMINISTRATION_CONTROL_ARGUMENT : 0) |
+             (SecretLength != 0 ? ZP_ADMINISTRATION_CONTROL_SECRET : 0);
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
     Status = ZpCodec_WriteByte(&Writer, (BYTE)Action);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Identity, IdentityLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Argument, ArgumentLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Secret, SecretLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, Fields);
+    if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_ADMINISTRATION_CONTROL_IDENTITY))
+    {
+        Status = FlagOn(Fields, ZP_ADMINISTRATION_CONTROL_ARGUMENT | ZP_ADMINISTRATION_CONTROL_SECRET) ?
+                     ZpCodec_WriteString(&Writer, Identity, IdentityLength) :
+                     ZpCodec_WriteTailString(&Writer, Identity, IdentityLength);
+    }
+    if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_ADMINISTRATION_CONTROL_ARGUMENT))
+    {
+        Status = FlagOn(Fields, ZP_ADMINISTRATION_CONTROL_SECRET) ?
+                     ZpCodec_WriteString(&Writer, Argument, ArgumentLength) :
+                     ZpCodec_WriteTailString(&Writer, Argument, ArgumentLength);
+    }
+    if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_ADMINISTRATION_CONTROL_SECRET))
+    {
+        Status = ZpCodec_WriteTailString(&Writer, Secret, SecretLength);
+    }
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -289,25 +309,41 @@ ZpAdministration_DecodeControl(
     _Out_ PZP_ADMINISTRATION_CONTROL_VIEW Control)
 {
     ZP_CODEC_READER Reader;
+    ZP_ADMINISTRATION_CONTROL_VIEW Local = { 0 };
+    BYTE Fields;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
+    Status = ZpCodec_ReadByte(&Reader, &Local.Action);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &Fields);
+    if (NT_SUCCESS(Status) && (Fields & ~ZP_ADMINISTRATION_CONTROL_VALID_MASK) != 0)
     {
-        BYTE Action;
-
-        Status = ZpCodec_ReadByte(&Reader, &Action);
-        Control->Action = Action;
+        Status = STATUS_DATA_ERROR;
     }
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Control->Identity);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Control->Argument);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Control->Secret);
+    if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_ADMINISTRATION_CONTROL_IDENTITY))
+    {
+        Status = FlagOn(Fields, ZP_ADMINISTRATION_CONTROL_ARGUMENT | ZP_ADMINISTRATION_CONTROL_SECRET) ?
+                     ZpCodec_ReadString(&Reader, &Local.Identity) :
+                     ZpCodec_ReadTailString(&Reader, &Local.Identity);
+    }
+    if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_ADMINISTRATION_CONTROL_ARGUMENT))
+    {
+        Status = FlagOn(Fields, ZP_ADMINISTRATION_CONTROL_SECRET) ?
+                     ZpCodec_ReadString(&Reader, &Local.Argument) :
+                     ZpCodec_ReadTailString(&Reader, &Local.Argument);
+    }
+    if (NT_SUCCESS(Status) && FlagOn(Fields, ZP_ADMINISTRATION_CONTROL_SECRET))
+    {
+        Status = ZpCodec_ReadTailString(&Reader, &Local.Secret);
+    }
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength ||
-        !ZpAdministration_IsActionValid(Control->Action) ||
-        (Control->Identity.Length == 0 && Control->Action != ZpAdministrationActionRefresh &&
-         Control->Action != ZpAdministrationActionCheck))
+        !ZpAdministration_IsActionValid(Local.Action) ||
+        (Local.Identity.Length == 0 && Local.Action != ZpAdministrationActionRefresh &&
+         Local.Action != ZpAdministrationActionCheck))
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
     }
+    *Control = Local;
     return STATUS_SUCCESS;
 }
 
@@ -336,7 +372,7 @@ ZpAdministration_EncodeDataControl(
     Status = ZpCodec_WriteByte(&Writer, (BYTE)Action);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Flags);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Identity, IdentityLength);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByteString(&Writer, Data, DataLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteData(&Writer, Data, DataLength);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -353,10 +389,17 @@ ZpAdministration_DecodeDataControl(
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
     Status = ZpCodec_ReadByte(&Reader, &Action);
-    Control->Action = Action;
+    if (NT_SUCCESS(Status)) Control->Action = Action;
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Control->Flags);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Control->Identity);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByteString(&Reader, &Control->Data);
+    if (NT_SUCCESS(Status) && Reader.Size - Reader.Offset > ZP_CODEC_MAX_ELEMENT_COUNT)
+    {
+        Status = STATUS_DATA_ERROR;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpCodec_ReadData(&Reader, Reader.Size - Reader.Offset, &Control->Data);
+    }
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength ||
         !ZpAdministration_IsActionValid(Control->Action) || Control->Identity.Length == 0)
     {
@@ -381,7 +424,7 @@ ZpAdministration_EncodeQuery(
         return STATUS_INVALID_PARAMETER;
     }
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteString(&Writer, Identity, IdentityLength);
+    Status = ZpCodec_WriteTailString(&Writer, Identity, IdentityLength);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -396,8 +439,7 @@ ZpAdministration_DecodeQuery(
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadString(&Reader, Identity);
-    return NT_SUCCESS(Status) && Reader.Offset == PayloadLength && Identity->Length != 0 ?
-               STATUS_SUCCESS :
-               NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
+    Status = ZpCodec_ReadTailString(&Reader, Identity);
+    return NT_SUCCESS(Status) && Identity->Length != 0 ? STATUS_SUCCESS :
+           NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
 }

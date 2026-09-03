@@ -21,7 +21,7 @@ ZpTerminal_EncodeCreate(
     }
     Status = ZpExecution_EncodeStart(Start, NULL, 0, &StartLength);
     if (!NT_SUCCESS(Status)) return Status;
-    if (StartLength > ZP_RESPONSE_MAX_PAYLOAD_SIZE - 2 * sizeof(USHORT)) return STATUS_BUFFER_OVERFLOW;
+    if (StartLength > ZP_REQUEST_MAX_PAYLOAD_SIZE - 2 * sizeof(USHORT)) return STATUS_BUFFER_OVERFLOW;
     *BytesWritten = 2 * sizeof(USHORT) + StartLength;
     if (Buffer == NULL) return STATUS_SUCCESS;
     if (BufferSize < *BytesWritten) return STATUS_BUFFER_TOO_SMALL;

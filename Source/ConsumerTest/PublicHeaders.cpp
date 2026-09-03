@@ -18,7 +18,7 @@ ZpConsumer_CheckCppHeaders(
 {
     ULONG FrameSize;
 
-    static_assert(ZP_PROTOCOL_REVISION == 1);
+    static_assert(ZP_CLIENT_VERSION == 1);
     return NT_SUCCESS(ZpFrame_GetSize(0, &FrameSize)) &&
            FrameSize != 0;
 }

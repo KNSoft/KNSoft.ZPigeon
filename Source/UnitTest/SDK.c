@@ -359,7 +359,6 @@ SDKTest_OrderedConcurrentRequests(VOID)
     {
         return FALSE;
     }
-    ZpServerConnection_SetModuleMask(&Connection.Connection, ZP_MODULE_BIT(ZP_SYSTEM_MODULE_ID));
     ZpServerConnection_SetPhase(&Connection.Connection,
                                 ZpConnectionPhaseReady);
     Connection.SendDelay = 5;
@@ -1319,7 +1318,6 @@ TEST_FUNC(SDKContract)
     WCHAR FileLoopbackPath[MAX_PATH];
     WCHAR FileAttributePath[MAX_PATH], TempPath[MAX_PATH];
     BYTE RootCertificate[] = { 0x30, 0x01, 0x00 };
-    const ZP_MODULE_VERSION Modules[] = { { 1, 1 }, { 2, 1 } };
     ZP_ENDPOINT Endpoint = { ZpTransportQuic, Host, 443, ServerName };
     ZP_ENDPOINT MixedEndpoints[] = {
         { ZpTransportTcp, Host, 443, ServerName },
@@ -1333,8 +1331,6 @@ TEST_FUNC(SDKContract)
         RootCertificate,
         sizeof(RootCertificate),
         ClientKeyName,
-        Modules,
-        (BYTE)RTL_NUMBER_OF(Modules),
         0,
         SDKTest_ClientStateCallback,
         NULL,
@@ -1345,8 +1341,6 @@ TEST_FUNC(SDKContract)
         1,
         NULL,
         0,
-        Modules,
-        (BYTE)RTL_NUMBER_OF(Modules),
         0,
         0,
         SDKTest_ServerStateCallback,
@@ -1424,16 +1418,6 @@ TEST_FUNC(SDKContract)
     static SDK_REQUEST_CONNECTION RegistryConnection;
     LOGICAL TempFileCreated;
     ULONG CanceledRequestId;
-    const ULONGLONG LoopbackModuleMask = ZP_MODULE_BIT(ZP_SYSTEM_MODULE_ID) |
-                                         ZP_MODULE_BIT(ZP_PROCESS_MODULE_ID) |
-                                         ZP_MODULE_BIT(ZP_SERVICE_MODULE_ID) |
-                                         ZP_MODULE_BIT(ZP_FILE_MODULE_ID) |
-                                         ZP_MODULE_BIT(ZP_REGISTRY_MODULE_ID);
-    const ULONGLONG ServerModuleMask = ZP_MODULE_BIT(ZP_SERVICE_MODULE_ID) |
-                                       ZP_MODULE_BIT(ZP_FILE_MODULE_ID) |
-                                       ZP_MODULE_BIT(ZP_TERMINAL_MODULE_ID) |
-                                       ZP_MODULE_BIT(ZP_EVENT_LOG_MODULE_ID) |
-                                       ZP_MODULE_BIT(ZP_REGISTRY_MODULE_ID);
     QUIC_ADDR QuicAddress;
     QUIC_STATUS QuicStatus;
 
@@ -1469,7 +1453,7 @@ TEST_FUNC(SDKContract)
     TEST_OK(ZpStatus_FromCode(ZpStatusQuic,
                                (ULONG)QUIC_STATUS_CONNECTION_TIMEOUT).Code ==
                 (ULONG)QUIC_STATUS_CONNECTION_TIMEOUT &&
-            sizeof(ZP_STATUS_TYPE) == sizeof(USHORT) &&
+            sizeof(ZP_STATUS_TYPE) == sizeof(BYTE) &&
             sizeof(ZP_STATUS) == 2 * sizeof(ULONG) &&
             ZpStatus_IsValid(ZpStatus_FromProcessExit(0)) &&
             !ZpStatus_IsValid(ZpStatus_Make(ZpStatusQuic, 0)));
@@ -1493,7 +1477,6 @@ TEST_FUNC(SDKContract)
                            SDKTest_SystemConnectionSend,
                            SDKTest_ConnectionDisconnect,
                            SDKTest_SystemConnectionDestroy)));
-    ZpServerConnection_SetModuleMask(&SystemLoopback.Connection, LoopbackModuleMask);
     ZpServerConnection_SetPhase(&SystemLoopback.Connection,
                                 ZpConnectionPhaseReady);
     TEST_OK(NT_SUCCESS(ZpServer_GetSystemInfo(
@@ -1749,10 +1732,6 @@ TEST_FUNC(SDKContract)
             wcscmp(ClientObject->Config.Endpoints[0].ServerName, L"server.example") == 0);
     TEST_OK(wcscmp(ClientObject->Config.ClientKeyName, L"ClientKey") == 0);
     TEST_OK(ClientObject->Config.DeploymentRootCertificate[0] == 0x30);
-    TEST_OK(ClientObject->Config.Modules != Modules &&
-            ClientObject->Config.ModuleCount == RTL_NUMBER_OF(Modules) &&
-            ClientObject->Config.Modules[1].ModuleId == 2 &&
-            ClientObject->Config.Modules[1].Version == 1);
     TEST_OK(ClientObject->TransportOperations[ZpTransportQuic] != NULL &&
             ClientObject->TransportContexts[ZpTransportQuic] == &ClientObject->QuicTransport &&
             ClientObject->TransportOperations[ZpTransportTcp] == NULL &&
@@ -1807,9 +1786,6 @@ TEST_FUNC(SDKContract)
     Endpoint.Transport = ZpTransportCount;
     TEST_OK(ZpClient_Create(&ClientConfig, &Client) == STATUS_INVALID_PARAMETER);
     Endpoint.Transport = ZpTransportQuic;
-    ClientConfig.ModuleCount = 0;
-    TEST_OK(ZpClient_Create(&ClientConfig, &Client) == STATUS_INVALID_PARAMETER);
-    ClientConfig.ModuleCount = (BYTE)RTL_NUMBER_OF(Modules);
     ServerConfig.MaxRequestsPerConnection =
         ZP_SERVER_MAX_REQUESTS_PER_CONNECTION + 1;
     TEST_OK(ZpServer_Create(&ServerConfig, &Server) == STATUS_INVALID_PARAMETER);
@@ -1827,11 +1803,7 @@ TEST_FUNC(SDKContract)
             ServerObject->Config.MaxChannelsPerConnection ==
                 ZP_SERVER_DEFAULT_MAX_CHANNELS_PER_CONNECTION);
     TEST_OK(wcscmp(ServerObject->Config.Listeners[0].Host, L"::") == 0);
-    TEST_OK(ServerObject->Config.Modules != Modules &&
-            ServerObject->Config.ModuleCount == RTL_NUMBER_OF(Modules) &&
-            ServerObject->Config.Modules[1].ModuleId == 2 &&
-            ServerObject->Config.Modules[1].Version == 1 &&
-            ServerObject->TransportOperations[ZpTransportQuic] != NULL &&
+    TEST_OK(ServerObject->TransportOperations[ZpTransportQuic] != NULL &&
             ServerObject->TransportContexts[ZpTransportQuic] == &ServerObject->QuicTransport &&
             ServerObject->TransportOperations[ZpTransportTcp] == NULL &&
             ServerObject->TransportOperations[ZpTransportUdp] == NULL);
@@ -1967,7 +1939,6 @@ TEST_FUNC(SDKContract)
             TestContext.SendChannelId == ChannelData.ChannelId &&
             SDK_STATUS_IS(TestContext.SendChannelStatus,
                           STATUS_PROTOCOL_UNREACHABLE));
-    ClientObject->ActiveModuleMask |= ZP_MODULE_BIT(InboundRequest.ModuleId);
     ClientObject->InboundRequestCount = ClientObject->Config.MaxRequestsPerConnection;
     TEST_OK(NT_SUCCESS(ZpClient_QueueRequest(Client, &InboundRequest)) &&
             ClientObject->HighestInboundRequestId == InboundRequest.RequestId &&
@@ -1993,7 +1964,6 @@ TEST_FUNC(SDKContract)
                            SDKTest_RequestConnectionSend,
                            SDKTest_ConnectionDisconnect,
                            SDKTest_RequestConnectionDestroy)));
-    ZpServerConnection_SetModuleMask(&RegistryConnection.Connection, ServerModuleMask);
     ZpServerConnection_SetPhase(&RegistryConnection.Connection,
                                 ZpConnectionPhaseReady);
     TEST_OK(NT_SUCCESS(ZpServer_SetRegistryValue(

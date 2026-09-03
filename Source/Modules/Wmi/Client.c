@@ -134,13 +134,13 @@ ZpWmi_BeginRow(
     NTSTATUS Status;
 
     if (Builder->Count == ZP_WMI_MAX_ROWS) return STATUS_QUOTA_EXCEEDED;
-    if (Builder->Length == 0) Builder->Length = sizeof(ULONG);
-    Status = ZpWmi_ReserveBuilder(Builder, sizeof(ULONG));
+    if (Builder->Length == 0) Builder->Length = sizeof(USHORT);
+    Status = ZpWmi_ReserveBuilder(Builder, sizeof(USHORT));
     if (!NT_SUCCESS(Status)) return Status;
     Row->Owner = Builder;
     Row->Offset = Builder->Length;
     Row->Count = 0;
-    Builder->Length += sizeof(ULONG);
+    Builder->Length += sizeof(USHORT);
     return STATUS_SUCCESS;
 }
 
@@ -583,9 +583,9 @@ ZpWmi_EncodeBuilder(
 
     if (Builder->Length == 0)
     {
-        Status = ZpWmi_ReserveBuilder(Builder, sizeof(ULONG));
+        Status = ZpWmi_ReserveBuilder(Builder, sizeof(USHORT));
         if (!NT_SUCCESS(Status)) return Status;
-        Builder->Length = sizeof(ULONG);
+        Builder->Length = sizeof(USHORT);
     }
     Status = ZpWmi_EncodePageHeader(Builder->Count, Builder->Buffer);
     if (!NT_SUCCESS(Status)) return Status;

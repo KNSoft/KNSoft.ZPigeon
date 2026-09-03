@@ -28,15 +28,9 @@ TEST_FUNC(ProtocolMessage)
     static const WCHAR TunnelHost[] = L"debug-host.test";
     static const BYTE RegistryData[] = { 1, 2, 3, 4 };
     static const BYTE CustomToken[] = { 1, 2, 3, 4 };
-    const ZP_MODULE_VERSION Modules[] = { { 1, 1 }, { 3, 2 } };
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE] = { 0x04 };
     BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE], Signature[ZP_CLIENT_SIGNATURE_SIZE], Buffer[512];
-    ZP_CLIENT_HELLO ClientHello = {
-        ZP_PROTOCOL_REVISION, Modules, (BYTE)RTL_NUMBER_OF(Modules), PublicKey
-    };
     ZP_CLIENT_HELLO_VIEW ClientHelloView;
-    ZP_READY Ready = { Modules, (BYTE)RTL_NUMBER_OF(Modules) };
-    ZP_READY_VIEW ReadyView;
     const BYTE RequestPayload[] = { 1, 2, 3 };
     const BYTE ResponsePayload[] = { 4, 5 };
     ZP_REQUEST Request = { 7, 1, 2, 5000, RequestPayload, sizeof(RequestPayload) };
@@ -174,6 +168,7 @@ TEST_FUNC(ProtocolMessage)
     ZP_STRING_VIEW FilePathView, FileNewPathView, FileFilterView;
     ZP_FILE_HASH_ALGORITHM FileHashAlgorithm;
     ZP_FILE_CREATE_DISPOSITION FileDisposition;
+    ZP_FILE_IMAGE_PREVIEW_QUALITY ImageQuality;
     ZP_FILE_HASH_VIEW FileHashView;
     BYTE FileDigest[ZP_FILE_SHA256_SIZE];
     ZP_FILE_RECORD FileRecords[] = {
@@ -228,6 +223,7 @@ TEST_FUNC(ProtocolMessage)
     ZP_ADMINISTRATION_LIST_VIEW AdministrationList;
     ZP_ADMINISTRATION_RECORD_VIEW AdministrationRecord;
     ZP_ADMINISTRATION_CONTROL_VIEW AdministrationControl;
+    ZP_ADMINISTRATION_DATA_CONTROL_VIEW AdministrationDataControl;
     ZP_STRING_VIEW AdministrationQuery;
     ZP_BROWSER_RECORD BrowserRecords[] = {
         { ZpBrowserKindHistory, ZpBrowserEdge, 3, { { 4, 5, 2 } },
@@ -349,29 +345,21 @@ TEST_FUNC(ProtocolMessage)
         FileDigest[Index] = (BYTE)(Index + 1);
     }
 
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(&ClientHello, NULL, 0, &Length)) && Length == 73);
-    TEST_OK(ZpMessage_EncodeClientHello(&ClientHello, Buffer, Length - 1, &Index) == STATUS_BUFFER_TOO_SMALL &&
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey, NULL, 0, &Length)) &&
+            Length == ZP_CLIENT_HELLO_WIRE_SIZE);
+    TEST_OK(ZpMessage_EncodeClientHello(PublicKey, Buffer, Length - 1, &Index) == STATUS_BUFFER_TOO_SMALL &&
             Index == Length);
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(&ClientHello, Buffer, sizeof(Buffer), &Length)) && Length == 73);
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey, Buffer, sizeof(Buffer), &Length)) &&
+            Length == ZP_CLIENT_HELLO_WIRE_SIZE);
     TEST_OK(NT_SUCCESS(ZpMessage_DecodeClientHello(Buffer, Length, &ClientHelloView)) &&
-            ClientHelloView.ProtocolRevision == ZP_PROTOCOL_REVISION &&
-            ClientHelloView.ModuleCount == RTL_NUMBER_OF(Modules) &&
-            ClientHelloView.Modules[0].ModuleId == 1 &&
-            ClientHelloView.Modules[0].Version == 1 &&
-            ClientHelloView.Modules[1].ModuleId == 3 &&
-            ClientHelloView.Modules[1].Version == 2 &&
+            ClientHelloView.ClientVersion == ZP_CLIENT_VERSION &&
             RtlCompareMemory(ClientHelloView.ClientPublicKey,
                              PublicKey,
                              sizeof(PublicKey)) == sizeof(PublicKey));
-    ClientHello.Modules = NULL;
-    TEST_OK(ZpMessage_EncodeClientHello(&ClientHello, NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
-    ClientHello.Modules = Modules;
+    TEST_OK(ZpMessage_EncodeClientHello(NULL, NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
     PublicKey[0] = 0x03;
-    TEST_OK(ZpMessage_EncodeClientHello(&ClientHello, NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(ZpMessage_EncodeClientHello(PublicKey, NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
     PublicKey[0] = 0x04;
-    ClientHello.ProtocolRevision++;
-    TEST_OK(ZpMessage_EncodeClientHello(&ClientHello, NULL, 0, &Length) == STATUS_REVISION_MISMATCH);
-    ClientHello.ProtocolRevision = ZP_PROTOCOL_REVISION;
 
     TEST_OK(NT_SUCCESS(ZpMessage_EncodeServerChallenge(Challenge, Buffer, sizeof(Buffer), &Length)) &&
             Length == sizeof(Challenge));
@@ -386,11 +374,13 @@ TEST_FUNC(ProtocolMessage)
             BufferView.Length == sizeof(Signature) &&
             RtlCompareMemory(BufferView.Buffer, Signature, sizeof(Signature)) == sizeof(Signature));
 
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeReady(&Ready, Buffer, sizeof(Buffer), &Length)) &&
-            Length == sizeof(BYTE) + RTL_NUMBER_OF(Modules) * ZP_MODULE_VERSION_WIRE_SIZE);
-    TEST_OK(NT_SUCCESS(ZpMessage_DecodeReady(Buffer, Length, &ReadyView)) &&
-            ReadyView.ModuleCount == RTL_NUMBER_OF(Modules) &&
-            ReadyView.Modules[1].ModuleId == 3 && ReadyView.Modules[1].Version == 2);
+    TEST_OK(NT_SUCCESS(ZpFrame_Encode(ZpMessageReady,
+                                     NULL,
+                                     0,
+                                     Buffer,
+                                     sizeof(Buffer),
+                                     &Length)) &&
+            Length == sizeof(ULONG) + sizeof(BYTE));
 
     TEST_OK(NT_SUCCESS(ZpTunnel_EncodeOpen(TunnelHost,
                                            ARRAYSIZE(TunnelHost) - 1,
@@ -421,7 +411,7 @@ TEST_FUNC(ProtocolMessage)
     TEST_OK(ZpMessage_EncodeRequest(&Request, NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
     Request.RequestId = 7;
 
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeResponse(&Response, Buffer, sizeof(Buffer), &Length)) && Length == 12);
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeResponse(&Response, Buffer, sizeof(Buffer), &Length)) && Length == 11);
     TEST_OK(NT_SUCCESS(ZpMessage_DecodeResponse(Buffer, Length, &ResponseView)) &&
             ResponseView.RequestId == Response.RequestId &&
             ResponseView.Status.Type == Response.Status.Type &&
@@ -430,6 +420,11 @@ TEST_FUNC(ProtocolMessage)
             RtlCompareMemory(ResponseView.Payload.Buffer,
                              ResponsePayload,
                              sizeof(ResponsePayload)) == sizeof(ResponsePayload));
+    Response.Status = ZpStatus_FromNtStatus(STATUS_SUCCESS);
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeResponse(&Response, Buffer, sizeof(Buffer), &Length)) && Length == 7 &&
+            NT_SUCCESS(ZpMessage_DecodeResponse(Buffer, Length, &ResponseView)) &&
+            ZpStatus_IsSuccess(ResponseView.Status) &&
+            ResponseView.Payload.Length == sizeof(ResponsePayload));
 
     TEST_OK(NT_SUCCESS(ZpMessage_EncodeCancel(7, Buffer, sizeof(Buffer), &Length)) &&
             Length == sizeof(ULONG) &&
@@ -462,10 +457,18 @@ TEST_FUNC(ProtocolMessage)
             NT_SUCCESS(ZpMessage_DecodeChannelClose(Buffer,
                                                     Length,
                                                     &ChannelClose)) &&
-            Length == sizeof(ULONG) + ZP_STATUS_WIRE_SIZE &&
+            Length == sizeof(ULONG) + ZP_STATUS_MAX_WIRE_SIZE &&
             ChannelClose.ChannelId == 9 &&
             ChannelClose.Status.Type == ZpStatusProcessExit &&
             ChannelClose.Status.Code == 7);
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeChannelClose(9,
+                                                    ZpStatus_FromNtStatus(STATUS_SUCCESS),
+                                                    Buffer,
+                                                    sizeof(Buffer),
+                                                    &Length)) &&
+            Length == sizeof(ULONG) + ZP_STATUS_MIN_WIRE_SIZE &&
+            NT_SUCCESS(ZpMessage_DecodeChannelClose(Buffer, Length, &ChannelClose)) &&
+            ZpStatus_IsSuccess(ChannelClose.Status));
     TEST_OK(NT_SUCCESS(ZpMessage_EncodeChannelWindow(9,
                                                      ZP_CHANNEL_DATA_MAX_SIZE,
                                                      Buffer,
@@ -490,7 +493,7 @@ TEST_FUNC(ProtocolMessage)
                                           &Length) == STATUS_INVALID_PARAMETER);
 
     TEST_OK(NT_SUCCESS(ZpSystem_EncodeInfo(&SystemInfo, Buffer, sizeof(Buffer), &Length)) &&
-            Length == 47 &&
+            Length == 35 &&
             NT_SUCCESS(ZpSystem_DecodeInfo(Buffer, Length, &SystemInfoView)) &&
             SystemInfoView.Architecture == SystemInfo.Architecture &&
             SystemInfoView.BuildNumber == SystemInfo.BuildNumber &&
@@ -508,7 +511,7 @@ TEST_FUNC(ProtocolMessage)
                                            Buffer,
                                            sizeof(Buffer),
                                            &Length)) &&
-            Length == 256 &&
+            Length == 250 &&
             NT_SUCCESS(ZpProcess_DecodeList(Buffer, Length, &ProcessList)) &&
             ProcessList.Count == ARRAYSIZE(Processes) &&
             NT_SUCCESS(ZpProcess_GetNextRecord(&ProcessList, &ProcessOffset, &ProcessRecord)) &&
@@ -553,7 +556,7 @@ TEST_FUNC(ProtocolMessage)
                                             Buffer,
                                             sizeof(Buffer),
                                             &Length)) &&
-            Length == 205 &&
+            Length == 198 &&
             NT_SUCCESS(ZpProcess_DecodeInfo(Buffer, Length, &ProcessInfoView)) &&
             ProcessInfoView.ProcessId == ProcessInfo.ProcessId &&
             ProcessInfoView.ParentProcessId == ProcessInfo.ParentProcessId &&
@@ -699,6 +702,7 @@ TEST_FUNC(ProtocolMessage)
                                          Buffer,
                                          sizeof(Buffer),
                                          &Length)) &&
+            Length == 11 * sizeof(WCHAR) &&
             NT_SUCCESS(ZpFile_DecodePath(Buffer, Length, &FilePathView)) &&
             FilePathView.Length == 11);
     TEST_OK(NT_SUCCESS(ZpFile_EncodeRenameRequest(L"C:\\Test.bin",
@@ -738,6 +742,18 @@ TEST_FUNC(ProtocolMessage)
                                                          &FileAttributes)) &&
             FilePathView.Length == 11 &&
             FileAttributes == (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE));
+    TEST_OK(NT_SUCCESS(ZpFile_EncodeImagePreviewRequest(L"C:\\Test.bin",
+                                                        11,
+                                                        ZpFileImagePreviewMedium,
+                                                        Buffer,
+                                                        sizeof(Buffer),
+                                                        &Length)) &&
+            Length == sizeof(BYTE) + 11 * sizeof(WCHAR) &&
+            NT_SUCCESS(ZpFile_DecodeImagePreviewRequest(Buffer,
+                                                        Length,
+                                                        &FilePathView,
+                                                        &ImageQuality)) &&
+            FilePathView.Length == 11 && ImageQuality == ZpFileImagePreviewMedium);
     TEST_OK(NT_SUCCESS(ZpFile_EncodeEnumeratePageRequest(L"C:\\Test",
                                                          7,
                                                          0,
@@ -1267,6 +1283,7 @@ TEST_FUNC(ProtocolMessage)
                            Buffer,
                            sizeof(Buffer),
                            &Length)) &&
+            Length == 26 &&
             NT_SUCCESS(ZpAdministration_DecodeControl(Buffer,
                                                        Length,
                                                        &AdministrationControl)) &&
@@ -1287,6 +1304,7 @@ TEST_FUNC(ProtocolMessage)
                                                        Buffer,
                                                        sizeof(Buffer),
                                                        &Length)) &&
+            Length == 8 &&
             NT_SUCCESS(ZpAdministration_DecodeControl(Buffer,
                                                        Length,
                                                        &AdministrationControl)) &&
@@ -1298,9 +1316,28 @@ TEST_FUNC(ProtocolMessage)
                                                      sizeof(Buffer),
                                                      &Length)) &&
             NT_SUCCESS(ZpAdministration_DecodeQuery(Buffer, Length, &AdministrationQuery)) &&
-            AdministrationQuery.Length == 17 &&
+            Length == 17 * sizeof(WCHAR) && AdministrationQuery.Length == 17 &&
             ZpAdministration_DecodeQuery(Buffer, Length - 1, &AdministrationQuery) == STATUS_DATA_ERROR &&
             ZpAdministration_EncodeQuery(NULL, 0, Buffer, sizeof(Buffer), &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(NT_SUCCESS(ZpAdministration_EncodeDataControl(ZpAdministrationActionConfigure,
+                                                           7,
+                                                           L"ID",
+                                                           2,
+                                                           AdministrationData,
+                                                           sizeof(AdministrationData),
+                                                           Buffer,
+                                                           sizeof(Buffer),
+                                                           &Length)) &&
+            Length == 16 &&
+            NT_SUCCESS(ZpAdministration_DecodeDataControl(Buffer,
+                                                           Length,
+                                                           &AdministrationDataControl)) &&
+            AdministrationDataControl.Action == ZpAdministrationActionConfigure &&
+            AdministrationDataControl.Flags == 7 && AdministrationDataControl.Identity.Length == 2 &&
+            AdministrationDataControl.Data.Length == sizeof(AdministrationData) &&
+            RtlEqualMemory(AdministrationDataControl.Data.Buffer,
+                           AdministrationData,
+                           sizeof(AdministrationData)));
     TEST_OK(NT_SUCCESS(ZpBrowser_EncodePage(BrowserRecords,
                                             ARRAYSIZE(BrowserRecords),
                                             3,
@@ -1314,6 +1351,9 @@ TEST_FUNC(ProtocolMessage)
             BrowserRecord.Data.History.LastVisitTime == 4 &&
             BrowserRecord.Data.History.VisitCount == 5 &&
             BrowserRecord.Data.History.TypedCount == 2 && BrowserRecord.Name.Length == 7);
+    TEST_OK(NT_SUCCESS(ZpBrowser_EncodePageHeader(0, 256, Buffer)) &&
+            Buffer[sizeof(ULONGLONG)] == 0 && Buffer[sizeof(ULONGLONG) + 1] == 1 &&
+            ZpBrowser_EncodePageHeader(0, MAXUSHORT + 1UL, Buffer) == STATUS_INVALID_PARAMETER);
     TEST_OK(NT_SUCCESS(ZpBrowser_EncodeQuery(ZpBrowserEdge,
                                              ZpBrowserKindDownload,
                                              L"Default",
@@ -1363,6 +1403,7 @@ TEST_FUNC(ProtocolMessage)
                                              Buffer,
                                              sizeof(Buffer),
                                              &Length)) &&
+            Length == 51 &&
             NT_SUCCESS(ZpWindow_DecodeUpdate(Buffer, Length, &WindowUpdateView)) &&
             WindowUpdateView.Handle == 1 && WindowUpdateView.Fields == WindowUpdate.Fields &&
             WindowUpdateView.Caption.Length == 7 && WindowUpdateView.Left == 30 &&

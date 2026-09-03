@@ -1,5 +1,7 @@
 ﻿#include "../../KNSoft.ZPigeon.Protocol/Include/KNSoft/ZPigeon/Video.h"
 
+#include "../../KNSoft.ZPigeon.Protocol/Core/Protocol.inl"
+
 static
 LOGICAL
 ZpVideo_IsValidFormat(
@@ -19,10 +21,13 @@ ZpVideo_ReadFormat(
     _Out_opt_ PZP_VIDEO_FORMAT Format)
 {
     ZP_VIDEO_FORMAT Local;
+    USHORT Width, Height;
     NTSTATUS Status;
 
-    Status = ZpCodec_ReadUInt32(Reader, &Local.Width);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.Height);
+    Status = ZpCodec_ReadUInt16(Reader, &Width);
+    if (NT_SUCCESS(Status)) Local.Width = Width;
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(Reader, &Height);
+    if (NT_SUCCESS(Status)) Local.Height = Height;
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.FrameRateNumerator);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(Reader, &Local.FrameRateDenominator);
     if (NT_SUCCESS(Status) && !ZpVideo_IsValidFormat(&Local)) return STATUS_DATA_ERROR;
@@ -39,8 +44,8 @@ ZpVideo_WriteFormat(
     NTSTATUS Status;
 
     if (!ZpVideo_IsValidFormat(Format)) return STATUS_INVALID_PARAMETER;
-    Status = ZpCodec_WriteUInt32(Writer, Format->Width);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Format->Height);
+    Status = ZpCodec_WriteUInt16(Writer, (USHORT)Format->Width);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(Writer, (USHORT)Format->Height);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Format->FrameRateNumerator);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(Writer, Format->FrameRateDenominator);
     return Status;
@@ -53,12 +58,14 @@ ZpVideo_ReadDevice(
     _Out_opt_ PZP_VIDEO_DEVICE_VIEW Device)
 {
     ZP_VIDEO_DEVICE_VIEW Local;
+    USHORT FormatCount;
     ULONG Index;
     NTSTATUS Status;
 
     Status = ZpCodec_ReadString(Reader, &Local.Id);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(Reader, &Local.Name);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadArrayCount(Reader, &Local.FormatCount);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt16(Reader, &FormatCount);
+    if (NT_SUCCESS(Status)) Local.FormatCount = FormatCount;
     if (NT_SUCCESS(Status) && (Local.Id.Length == 0 || Local.Id.Length > ZP_VIDEO_MAX_ID_LENGTH ||
         Local.Name.Length > ZP_VIDEO_MAX_NAME_LENGTH || Local.FormatCount == 0 ||
         Local.FormatCount > ZP_VIDEO_MAX_FORMATS)) return STATUS_DATA_ERROR;
@@ -85,7 +92,7 @@ ZpVideo_EncodeDeviceList(
 
     if (Count > ZP_VIDEO_MAX_DEVICES || (Count != 0 && Devices == NULL)) return STATUS_INVALID_PARAMETER;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteArrayCount(&Writer, Count);
+    Status = ZpCodec_WriteByte(&Writer, (BYTE)Count);
     for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++)
     {
         PCZP_VIDEO_DEVICE Device = &Devices[Index];
@@ -98,7 +105,7 @@ ZpVideo_EncodeDeviceList(
         }
         Status = ZpCodec_WriteString(&Writer, Device->Id, Device->IdLength);
         if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, Device->Name, Device->NameLength);
-        if (NT_SUCCESS(Status)) Status = ZpCodec_WriteArrayCount(&Writer, Device->FormatCount);
+        if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Device->FormatCount);
         for (FormatIndex = 0; NT_SUCCESS(Status) && FormatIndex < Device->FormatCount; FormatIndex++)
         {
             Status = ZpVideo_WriteFormat(&Writer, &Device->Formats[FormatIndex]);
@@ -115,11 +122,12 @@ ZpVideo_DecodeDeviceList(
     _Out_ PZP_VIDEO_DEVICE_LIST_VIEW List)
 {
     ZP_CODEC_READER Reader;
-    ULONG Count, Index, Offset;
+    BYTE Count;
+    ULONG Index, Offset;
     NTSTATUS Status;
 
     ZpCodec_InitializeReader(&Reader, Payload, PayloadLength);
-    Status = ZpCodec_ReadArrayCount(&Reader, &Count);
+    Status = ZpCodec_ReadByte(&Reader, &Count);
     if (!NT_SUCCESS(Status) || Count > ZP_VIDEO_MAX_DEVICES) return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
     Offset = Reader.Offset;
     for (Index = 0; NT_SUCCESS(Status) && Index < Count; Index++) Status = ZpVideo_ReadDevice(&Reader, NULL);
@@ -155,10 +163,10 @@ ZpVideo_GetNextFormat(
     ZP_CODEC_READER Reader;
     NTSTATUS Status;
 
-    if (*Offset >= Device->FormatCount * sizeof(*Format)) return STATUS_INVALID_PARAMETER;
+    if (*Offset >= Device->FormatCount * ZP_VIDEO_FORMAT_WIRE_SIZE) return STATUS_INVALID_PARAMETER;
     ZpCodec_InitializeReader(&Reader,
                              Add2Ptr(Device->Formats, *Offset),
-                             Device->FormatCount * sizeof(*Format) - *Offset);
+                             Device->FormatCount * ZP_VIDEO_FORMAT_WIRE_SIZE - *Offset);
     Status = ZpVideo_ReadFormat(&Reader, Format);
     if (NT_SUCCESS(Status)) *Offset += Reader.Offset;
     return Status;
@@ -187,7 +195,7 @@ ZpVideo_EncodeStreamRequest(
     Status = ZpVideo_WriteFormat(&Writer, Format);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, DirectStreamId);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteByte(&Writer, Quality);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteString(&Writer, DeviceId, DeviceIdLength);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteTailString(&Writer, DeviceId, DeviceIdLength);
     *BytesWritten = Writer.Offset;
     return Status;
 }
@@ -205,7 +213,7 @@ ZpVideo_DecodeStreamRequest(
     Status = ZpVideo_ReadFormat(&Reader, (PZP_VIDEO_FORMAT)Request);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadUInt32(&Reader, &Request->DirectStreamId);
     if (NT_SUCCESS(Status)) Status = ZpCodec_ReadByte(&Reader, &Request->Quality);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadString(&Reader, &Request->DeviceId);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_ReadTailString(&Reader, &Request->DeviceId);
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength || Request->DeviceId.Length == 0 ||
         Request->DeviceId.Length > ZP_VIDEO_MAX_ID_LENGTH || Request->Quality == 0 || Request->Quality > 100)
     {
@@ -296,8 +304,8 @@ ZpVideo_EncodeFrame(
         Frame->Height > ZP_VIDEO_MAX_DIMENSION || Frame->DataLength == 0 ||
         Frame->DataLength > ZP_VIDEO_MAX_FRAME_SIZE) return STATUS_INVALID_PARAMETER;
     ZpCodec_InitializeWriter(&Writer, Buffer, BufferSize);
-    Status = ZpCodec_WriteUInt32(&Writer, Frame->Width);
-    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Frame->Height);
+    Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Frame->Width);
+    if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt16(&Writer, (USHORT)Frame->Height);
     if (NT_SUCCESS(Status)) Status = ZpCodec_WriteUInt32(&Writer, Frame->DataLength);
     *BytesWritten = Writer.Offset;
     return Status;

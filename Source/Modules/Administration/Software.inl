@@ -183,6 +183,14 @@ typedef struct _ZP_FEATURE_ENUMERATION_CONTEXT
 } ZP_FEATURE_ENUMERATION_CONTEXT, *PZP_FEATURE_ENUMERATION_CONTEXT;
 
 static
+BYTE
+ZpAdministration_EncodeFeatureInstallState(
+    _In_ CBS_INSTALL_STATE State)
+{
+    return State == CbsInstallStateInvalid ? MAXCHAR : (BYTE)(CHAR)State;
+}
+
+static
 HRESULT
 CALLBACK
 ZpAdministration_EnumerateFeatureCallback(
@@ -190,36 +198,18 @@ ZpAdministration_EnumerateFeatureCallback(
     _In_opt_ PVOID Context)
 {
     PZP_FEATURE_ENUMERATION_CONTEXT Enumeration = Context;
-    ZP_CODEC_WRITER Writer;
-    BYTE Data[ZP_WINDOWS_FEATURE_DATA_WIRE_SIZE];
-
-    ZpCodec_InitializeWriter(&Writer, Data, sizeof(Data));
-    Enumeration->Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Feature->State.Applicability);
-    if (NT_SUCCESS(Enumeration->Status))
-    {
-        Enumeration->Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Feature->State.Selectability);
-    }
-    if (NT_SUCCESS(Enumeration->Status))
-    {
-        Enumeration->Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Feature->State.Current);
-    }
-    if (NT_SUCCESS(Enumeration->Status))
-    {
-        Enumeration->Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Feature->State.Intended);
-    }
-    if (NT_SUCCESS(Enumeration->Status))
-    {
-        Enumeration->Status = ZpCodec_WriteUInt32(&Writer, (ULONG)Feature->State.Requested);
-    }
-    if (!NT_SUCCESS(Enumeration->Status))
-    {
-        return HRESULT_FROM_NT(Enumeration->Status);
-    }
+    BYTE Data[ZP_WINDOWS_FEATURE_DATA_WIRE_SIZE] = {
+        (BYTE)(CHAR)Feature->State.Applicability,
+        (BYTE)(CHAR)Feature->State.Selectability,
+        ZpAdministration_EncodeFeatureInstallState(Feature->State.Current),
+        ZpAdministration_EncodeFeatureInstallState(Feature->State.Intended),
+        ZpAdministration_EncodeFeatureInstallState(Feature->State.Requested)
+    };
 
     Enumeration->Status = ZpAdministration_AddRecordData(
         Enumeration->Builder,
         ZpAdministrationKindWindowsFeature,
-        (ULONG)Feature->State.Current,
+        0,
         0,
         0,
         Feature->Name,
@@ -227,7 +217,7 @@ ZpAdministration_EnumerateFeatureCallback(
         Feature->Description,
         NULL,
         Data,
-        Writer.Offset);
+        sizeof(Data));
     return NT_SUCCESS(Enumeration->Status) ? S_OK : HRESULT_FROM_NT(Enumeration->Status);
 }
 
@@ -292,11 +282,9 @@ ZpAdministration_ControlFeature(
     _Out_ PULONG ResponseLength)
 {
     CBS_REQUIRED_ACTION RequiredAction;
-    ZP_CODEC_WRITER Writer;
     PBYTE Buffer;
     PWSTR Identity;
     HRESULT Hr;
-    NTSTATUS Status;
 
     if (Control->Action != ZpAdministrationActionEnable &&
         Control->Action != ZpAdministrationActionDisable)
@@ -314,18 +302,10 @@ ZpAdministration_ControlFeature(
     if (FAILED(Hr)) return ZpStatus_FromCode(ZpStatusHResult, Hr);
     Buffer = Mem_Alloc(ZP_WINDOWS_FEATURE_CONTROL_RESULT_WIRE_SIZE);
     if (Buffer == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
-    ZpCodec_InitializeWriter(&Writer, Buffer, ZP_WINDOWS_FEATURE_CONTROL_RESULT_WIRE_SIZE);
-    Status = ZpCodec_WriteUInt32(&Writer, (ULONG)RequiredAction);
-    if (NT_SUCCESS(Status))
-    {
-        *Response = Buffer;
-        *ResponseLength = ZP_WINDOWS_FEATURE_CONTROL_RESULT_WIRE_SIZE;
-    }
-    else
-    {
-        Mem_Free(Buffer);
-    }
-    return ZpStatus_FromNtStatus(Status);
+    Buffer[0] = (BYTE)RequiredAction;
+    *Response = Buffer;
+    *ResponseLength = ZP_WINDOWS_FEATURE_CONTROL_RESULT_WIRE_SIZE;
+    return ZpStatus_FromNtStatus(STATUS_SUCCESS);
 }
 
 typedef struct _ZP_SOFTWARE_ENUMERATION_CONTEXT

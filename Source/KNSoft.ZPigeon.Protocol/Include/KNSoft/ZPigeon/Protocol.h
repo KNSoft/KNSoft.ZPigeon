@@ -4,7 +4,8 @@
 
 EXTERN_C_START
 
-#define ZP_PROTOCOL_REVISION 1
+#define ZP_CLIENT_VERSION 1
+#define ZP_MIN_CLIENT_VERSION 1
 #define ZP_FRAME_MAX_BODY_SIZE 0x01000000UL
 #define ZP_MESSAGE_MAX_BODY_SIZE (ZP_FRAME_MAX_BODY_SIZE - sizeof(BYTE))
 #define ZP_CHANNEL_DATA_MAX_SIZE 0x00100000UL
@@ -18,18 +19,13 @@ EXTERN_C_START
 #define ZP_CONNECTION_POLICY_LATENCY_SHIFT 3
 #define ZP_CONNECTION_POLICY_RESERVED_MASK 0xC0
 #define ZP_PERFORMANCE_CLASS_COUNT 5
-#define ZP_MODULE_MAX_ID 64
 #define ZP_MODULE_BIT(ModuleId) (1ull << ((ModuleId) - 1))
 #define ZP_CLIENT_PUBLIC_KEY_SIZE 65
 #define ZP_SERVER_CHALLENGE_SIZE 32
 #define ZP_CLIENT_SIGNATURE_SIZE 64
-#define ZP_MODULE_VERSION_WIRE_SIZE (sizeof(BYTE) + sizeof(USHORT))
-#define ZP_MODULE_MANIFEST_MAX_WIRE_SIZE \
-    (sizeof(BYTE) + ZP_MODULE_MAX_ID * ZP_MODULE_VERSION_WIRE_SIZE)
-#define ZP_CLIENT_HELLO_MAX_WIRE_SIZE \
-    (sizeof(BYTE) + ZP_MODULE_MANIFEST_MAX_WIRE_SIZE + ZP_CLIENT_PUBLIC_KEY_SIZE)
+#define ZP_CLIENT_HELLO_WIRE_SIZE (sizeof(BYTE) + ZP_CLIENT_PUBLIC_KEY_SIZE)
 
-typedef USHORT ZP_STATUS_TYPE, *PZP_STATUS_TYPE;
+typedef BYTE ZP_STATUS_TYPE, *PZP_STATUS_TYPE;
 
 typedef BYTE ZP_PERFORMANCE_CLASS, *PZP_PERFORMANCE_CLASS;
 
@@ -50,11 +46,13 @@ typedef BYTE ZP_PERFORMANCE_CLASS, *PZP_PERFORMANCE_CLASS;
 #define ZpStatusConfigurationManager ((ZP_STATUS_TYPE)8)
 #define ZpStatusSqlite ((ZP_STATUS_TYPE)9)
 
-#define ZP_STATUS_WIRE_SIZE (sizeof(USHORT) + sizeof(ULONG))
+#define ZP_STATUS_MIN_WIRE_SIZE sizeof(BYTE)
+#define ZP_STATUS_MAX_WIRE_SIZE (sizeof(BYTE) + sizeof(ULONG))
 #define ZP_REQUEST_HEADER_WIRE_SIZE (2 * sizeof(ULONG) + 2 * sizeof(BYTE))
-#define ZP_RESPONSE_HEADER_WIRE_SIZE (sizeof(ULONG) + ZP_STATUS_WIRE_SIZE)
+#define ZP_RESPONSE_MIN_HEADER_WIRE_SIZE (sizeof(ULONG) + ZP_STATUS_MIN_WIRE_SIZE)
+#define ZP_RESPONSE_MAX_HEADER_WIRE_SIZE (sizeof(ULONG) + ZP_STATUS_MAX_WIRE_SIZE)
 #define ZP_REQUEST_MAX_PAYLOAD_SIZE (ZP_MESSAGE_MAX_BODY_SIZE - ZP_REQUEST_HEADER_WIRE_SIZE)
-#define ZP_RESPONSE_MAX_PAYLOAD_SIZE (ZP_MESSAGE_MAX_BODY_SIZE - ZP_RESPONSE_HEADER_WIRE_SIZE)
+#define ZP_RESPONSE_MAX_PAYLOAD_SIZE (ZP_MESSAGE_MAX_BODY_SIZE - ZP_RESPONSE_MIN_HEADER_WIRE_SIZE)
 
 typedef struct _ZP_STATUS
 {
@@ -150,6 +148,7 @@ typedef BYTE ZP_MESSAGE_TYPE, *PZP_MESSAGE_TYPE;
 #define ZpMessageServerChallenge ((ZP_MESSAGE_TYPE)0x02)
 #define ZpMessageClientAuthenticate ((ZP_MESSAGE_TYPE)0x03)
 #define ZpMessageReady ((ZP_MESSAGE_TYPE)0x04)
+#define ZpMessageServerReject ((ZP_MESSAGE_TYPE)0x05)
 #define ZpMessageRequest ((ZP_MESSAGE_TYPE)0x10)
 #define ZpMessageResponse ((ZP_MESSAGE_TYPE)0x11)
 #define ZpMessageCancel ((ZP_MESSAGE_TYPE)0x12)
@@ -219,45 +218,15 @@ typedef struct _ZP_FRAME_VIEW
     ULONG BodyLength;
 } ZP_FRAME_VIEW, *PZP_FRAME_VIEW;
 
-typedef struct _ZP_MODULE_VERSION
-{
-    BYTE ModuleId;
-    USHORT Version;
-} ZP_MODULE_VERSION, *PZP_MODULE_VERSION;
-
-typedef const ZP_MODULE_VERSION* PCZP_MODULE_VERSION;
-
-typedef struct _ZP_CLIENT_HELLO
-{
-    BYTE ProtocolRevision;
-    PCZP_MODULE_VERSION Modules;
-    BYTE ModuleCount;
-    const BYTE* ClientPublicKey;
-} ZP_CLIENT_HELLO, *PZP_CLIENT_HELLO;
-
-typedef const ZP_CLIENT_HELLO* PCZP_CLIENT_HELLO;
-
 typedef struct _ZP_CLIENT_HELLO_VIEW
 {
-    BYTE ProtocolRevision;
-    ZP_MODULE_VERSION Modules[ZP_MODULE_MAX_ID];
-    BYTE ModuleCount;
+    BYTE ClientVersion;
     const BYTE* ClientPublicKey;
 } ZP_CLIENT_HELLO_VIEW, *PZP_CLIENT_HELLO_VIEW;
 
-typedef struct _ZP_READY
-{
-    PCZP_MODULE_VERSION Modules;
-    BYTE ModuleCount;
-} ZP_READY, *PZP_READY;
+typedef BYTE ZP_SERVER_REJECT_REASON, *PZP_SERVER_REJECT_REASON;
 
-typedef const ZP_READY* PCZP_READY;
-
-typedef struct _ZP_READY_VIEW
-{
-    ZP_MODULE_VERSION Modules[ZP_MODULE_MAX_ID];
-    BYTE ModuleCount;
-} ZP_READY_VIEW, *PZP_READY_VIEW;
+#define ZpServerRejectClientVersionTooOld ((ZP_SERVER_REJECT_REASON)1)
 
 typedef struct _ZP_CONNECTION_POLICY
 {
@@ -432,7 +401,7 @@ ZpCodec_ReadArrayCount(
 
 NTSTATUS
 ZpMessage_EncodeClientHello(
-    _In_ PCZP_CLIENT_HELLO Message,
+    _In_reads_bytes_(ZP_CLIENT_PUBLIC_KEY_SIZE) const BYTE* ClientPublicKey,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten);
@@ -470,19 +439,6 @@ ZpMessage_DecodeClientAuthenticate(
     _Out_ PZP_BUFFER_VIEW View);
 
 NTSTATUS
-ZpMessage_EncodeReady(
-    _In_ PCZP_READY Message,
-    _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
-    _In_ ULONG BufferSize,
-    _Out_ PULONG BytesWritten);
-
-NTSTATUS
-ZpMessage_DecodeReady(
-    _In_reads_bytes_(BodyLength) const VOID* Body,
-    _In_ ULONG BodyLength,
-    _Out_ PZP_READY_VIEW View);
-
-NTSTATUS
 ZpMessage_EncodeConnectionPolicy(
     _In_ PCZP_CONNECTION_POLICY Policy,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
@@ -516,7 +472,8 @@ ZpMessage_DecodeRequest(
 NTSTATUS
 ZpMessage_EncodeResponseHeader(
     _In_ PCZP_RESPONSE Message,
-    _Out_writes_bytes_(ZP_RESPONSE_HEADER_WIRE_SIZE) PVOID Buffer);
+    _Out_writes_bytes_to_(ZP_RESPONSE_MAX_HEADER_WIRE_SIZE, *BytesWritten) PVOID Buffer,
+    _Out_ PULONG BytesWritten);
 
 NTSTATUS
 ZpMessage_EncodeResponse(
