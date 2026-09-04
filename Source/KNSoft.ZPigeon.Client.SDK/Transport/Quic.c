@@ -9,6 +9,57 @@ static const QUIC_REGISTRATION_CONFIG ZpClientQuicRegistrationConfig = {
     QUIC_EXECUTION_PROFILE_LOW_LATENCY
 };
 
+static const QUIC_GLOBAL_EXECUTION_CONFIG ZpClientQuicExecutionConfig = {
+    QUIC_GLOBAL_EXECUTION_CONFIG_FLAG_NONE,
+    0,
+    1,
+    { 0 }
+};
+
+static RTL_SRWLOCK ZpClientQuicLibraryLock = RTL_SRWLOCK_INIT;
+static ULONG ZpClientQuicLibraryReferenceCount;
+
+static
+QUIC_STATUS
+ZpClientQuic_InitializeLibrary(VOID)
+{
+    QUIC_STATUS Status;
+
+    RtlAcquireSRWLockExclusive(&ZpClientQuicLibraryLock);
+    Status = KNSoftQuicInitialize();
+    if (QUIC_SUCCEEDED(Status))
+    {
+        if (ZpClientQuicLibraryReferenceCount == 0)
+        {
+            Status = MsQuicSetParam(
+                NULL,
+                QUIC_PARAM_GLOBAL_EXECUTION_CONFIG,
+                QUIC_GLOBAL_EXECUTION_CONFIG_MIN_SIZE + sizeof(uint16_t),
+                &ZpClientQuicExecutionConfig);
+        }
+        if (QUIC_SUCCEEDED(Status))
+        {
+            ZpClientQuicLibraryReferenceCount++;
+        }
+        else
+        {
+            KNSoftQuicUninitialize();
+        }
+    }
+    RtlReleaseSRWLockExclusive(&ZpClientQuicLibraryLock);
+    return Status;
+}
+
+static
+VOID
+ZpClientQuic_UninitializeLibrary(VOID)
+{
+    RtlAcquireSRWLockExclusive(&ZpClientQuicLibraryLock);
+    ZpClientQuicLibraryReferenceCount--;
+    KNSoftQuicUninitialize();
+    RtlReleaseSRWLockExclusive(&ZpClientQuicLibraryLock);
+}
+
 static
 VOID
 ZpClientQuic_UninitializeAttempt(
@@ -330,7 +381,7 @@ ZpClientQuic_StartEndpoint(
     Transport->Owner = Object;
     Transport->ShutdownStatus = ZpStatus_FromNtStatus(STATUS_SUCCESS);
 
-    QuicStatus = KNSoftQuicInitialize();
+    QuicStatus = ZpClientQuic_InitializeLibrary();
     if (QUIC_FAILED(QuicStatus))
     {
         return ZpStatus_FromCode(ZpStatusQuic, (ULONG)QuicStatus);
@@ -530,7 +581,7 @@ ZpClientQuic_UninitializeAttempt(
     ZpClientSession_Uninitialize(&Transport->Session);
     if (Transport->Initialized)
     {
-        KNSoftQuicUninitialize();
+        ZpClientQuic_UninitializeLibrary();
         Transport->Initialized = FALSE;
     }
 }
