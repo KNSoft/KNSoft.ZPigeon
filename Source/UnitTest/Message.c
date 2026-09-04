@@ -1352,6 +1352,35 @@ TEST_FUNC(ProtocolMessage)
             RtlEqualMemory(AdministrationDataControl.Data.Buffer,
                            AdministrationData,
                            sizeof(AdministrationData)));
+    TEST_OK(NT_SUCCESS(ZpAdministration_EncodeDataControl(ZpAdministrationActionCheck,
+                                                           0,
+                                                           NULL,
+                                                           0,
+                                                           AdministrationData,
+                                                           sizeof(AdministrationData),
+                                                           Buffer,
+                                                           sizeof(Buffer),
+                                                           &Length)) &&
+            NT_SUCCESS(ZpAdministration_DecodeDataControl(Buffer,
+                                                           Length,
+                                                           &AdministrationDataControl)) &&
+            AdministrationDataControl.Identity.Length == 0 &&
+            AdministrationDataControl.Data.Length == sizeof(AdministrationData));
+    TEST_OK(NT_SUCCESS(ZpAdministration_EncodeDataControl(ZpAdministrationActionConfigure,
+                                                           0x00071234,
+                                                           NULL,
+                                                           0,
+                                                           NULL,
+                                                           0,
+                                                           Buffer,
+                                                           sizeof(Buffer),
+                                                           &Length)) &&
+            NT_SUCCESS(ZpAdministration_DecodeDataControl(Buffer,
+                                                           Length,
+                                                           &AdministrationDataControl)) &&
+            AdministrationDataControl.Flags == 0x00071234 &&
+            AdministrationDataControl.Identity.Length == 0 &&
+            AdministrationDataControl.Data.Length == 0);
     TEST_OK(NT_SUCCESS(ZpBrowser_EncodePage(BrowserRecords,
                                             ARRAYSIZE(BrowserRecords),
                                             3,

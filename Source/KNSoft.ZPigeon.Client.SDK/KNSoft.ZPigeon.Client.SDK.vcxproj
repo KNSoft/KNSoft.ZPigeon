@@ -154,6 +154,7 @@
     <ClInclude Include="..\Modules\Administration\Power.inl" />
     <ClInclude Include="..\Modules\Administration\Software.inl" />
     <ClInclude Include="..\Modules\Administration\InputMethod.inl" />
+    <ClInclude Include="..\Modules\Administration\RemoteDesktop.inl" />
     <ClInclude Include="..\Modules\Administration\System.inl" />
     <ClInclude Include="..\Modules\Administration\Task.inl" />
     <ClInclude Include="..\Modules\Administration\Update.inl" />

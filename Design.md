@@ -528,7 +528,7 @@ URL 下载是 Client 本机后台作业，不把文件内容经 Server 或 Web �
 - `Task`（ModuleId 23）：任务计划枚举、控制以及任务 XML 的读取和更新。
 - `Firewall`（ModuleId 24）：防火墙配置文件和规则管理。
 - `Power`（ModuleId 25）：电源计划和系统电源操作。
-- `SystemAdministration`（ModuleId 26）：系统配置和环境信息管理。
+- `SystemAdministration`（ModuleId 26）：系统配置、环境信息及远程桌面配置和多会话内存补丁管理。
 - `Wlan`（ModuleId 27）：无线网络、接口和配置文件管理。
 - `Certificate`（ModuleId 28）：用户和计算机证书存储管理，以及指定作用域、存储区和私钥选项的静默安装。
 - `Clipboard`（ModuleId 29）：剪贴板格式、内容和变化等待。
@@ -551,6 +551,8 @@ URL 下载是 Client 本机后台作业，不把文件内容经 Server 或 Web �
 - `BitLocker`（ModuleId 46）：直接通过 FVE API 枚举卷、转换状态、保护状态、锁定状态、加密方法、范围、自动解锁状态和密钥保护器；支持全卷或仅已用空间加密、解密、转换暂停与恢复、保护暂停与恢复、数据卷锁定与恢复密码解锁，以及恢复密码保护器的创建和删除。
 
 ModuleId 9、20–46 共用 `Administration` 的固定记录 Codec 和执行框架，但仍保留独立的 ModuleId 和请求路由；目录复用不改变协议模块数量。
+
+远程桌面补丁定义来自 `Source/3rdParty/rdpwrap.ini` 子模块。Client 上报 `termsrv.dll` 文件版本，Server 仅下发该精确版本所需的 RVA、属性和值；Client 校验文件版本、已加载映像和原始代码后，通过 `NtReadVirtualMemory`、`NtProtectVirtualMemory` 与 `NtWriteVirtualMemory` 检查或修改 `TermService` 进程。操作要求 Client 具有调试特权，不替换磁盘文件、不修改服务配置。Client 应用补丁时在进程内保存原字节，关闭补丁时原位恢复；Client 重启导致备份丢失时，通过重启 `TermService` 恢复。服务或系统重启后补丁失效。
 
 输入法清单和控制均在 Client 进程当前账户下执行。Client 返回当前账户（用户名）与交互式桌面状态，Web
 也统一使用这一表述。清单由 `input.dll` 的当前用户设置与 TSF profile 合并生成，控制使用

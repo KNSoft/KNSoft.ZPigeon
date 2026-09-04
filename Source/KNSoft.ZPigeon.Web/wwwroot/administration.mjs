@@ -3376,8 +3376,6 @@ const systemInformationFields = {
   processor: ["处理器", "硬件"],
   installTime: ["安装时间", "Windows"],
   secureBoot: ["安全启动", "固件"],
-  remoteDesktopEnabled: ["允许远程桌面连接", "远程桌面"],
-  remoteDesktopPort: ["监听端口", "远程桌面"],
 };
 
 export class SystemInformationManager {
@@ -3526,16 +3524,12 @@ export class SystemInformationManager {
   value(record) {
     if (record.identity === "bootTime" || record.identity === "installTime") return fileTime(record.value);
     if (record.identity === "secureBoot") return Number(record.value) ? "已启用" : "未启用";
-    if (record.identity === "remoteDesktopEnabled") return Number(record.value) ? "已启用" : "已禁用";
-    if (record.identity === "remoteDesktopPort") return record.value;
     if (record.identity === "firmware") return { 1: "BIOS", 2: "UEFI" }[record.value] || "未知";
     return record.detail;
   }
   render() {
     const query = this.filter.value.toLocaleLowerCase(),
       excluded = new Set([
-        "remoteDesktopEnabled",
-        "remoteDesktopPort",
         "firmware",
         "secureBoot",
         "biosVendor",

@@ -392,7 +392,7 @@ NTSTATUS
 ZpAdministration_EncodeDataControl(
     _In_ ZP_ADMINISTRATION_ACTION Action,
     _In_ ULONG Flags,
-    _In_reads_bytes_(IdentityLength) const VOID* Identity,
+    _In_reads_bytes_opt_(IdentityLength) const VOID* Identity,
     _In_ ULONG IdentityLength,
     _In_reads_bytes_opt_(DataLength) const VOID* Data,
     _In_ ULONG DataLength,
@@ -403,8 +403,10 @@ ZpAdministration_EncodeDataControl(
     ZP_CODEC_WRITER Writer;
     NTSTATUS Status;
 
-    if (!ZpAdministration_IsActionValid(Action) || Identity == NULL || IdentityLength == 0 ||
-        IdentityLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
+    if (!ZpAdministration_IsActionValid(Action) ||
+        (IdentityLength == 0 && Action != ZpAdministrationActionCheck &&
+         Action != ZpAdministrationActionConfigure) ||
+        (IdentityLength != 0 && Identity == NULL) || IdentityLength > ZP_CODEC_MAX_ELEMENT_COUNT ||
         DataLength > ZP_CODEC_MAX_ELEMENT_COUNT || (DataLength != 0 && Data == NULL))
     {
         return STATUS_INVALID_PARAMETER;
@@ -442,7 +444,9 @@ ZpAdministration_DecodeDataControl(
         Status = ZpCodec_ReadData(&Reader, Reader.Size - Reader.Offset, &Control->Data);
     }
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength ||
-        !ZpAdministration_IsActionValid(Control->Action) || Control->Identity.Length == 0)
+        !ZpAdministration_IsActionValid(Control->Action) ||
+        (Control->Identity.Length == 0 && Control->Action != ZpAdministrationActionCheck &&
+         Control->Action != ZpAdministrationActionConfigure))
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
     }

@@ -18,6 +18,8 @@
              CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\3rdParty\models.dev\LICENSE" Link="3rdParty\models.dev\LICENSE"
              CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\3rdParty\rdpwrap.ini\rdpwrap.ini" Link="3rdParty\rdpwrap.ini\rdpwrap.ini"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

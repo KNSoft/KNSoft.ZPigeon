@@ -80,6 +80,7 @@
     <ClInclude Include="..\Modules\Administration\Power.inl"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\Software.inl"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\InputMethod.inl"><Filter>Modules\Administration</Filter></ClInclude>
+    <ClInclude Include="..\Modules\Administration\RemoteDesktop.inl"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\System.inl"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\Task.inl"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\Update.inl"><Filter>Modules\Administration</Filter></ClInclude>

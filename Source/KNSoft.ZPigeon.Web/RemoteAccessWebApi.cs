@@ -11,6 +11,10 @@ internal static class RemoteAccessWebApi
         string proxyUserHeader)
     {
         var server = services.Server;
+        var rdpPatches = new RdpPatchManager(
+            server,
+            Path.Combine(AppContext.BaseDirectory, "3rdParty", "rdpwrap.ini", "rdpwrap.ini"));
+        app.Lifetime.ApplicationStopped.Register(rdpPatches.Dispose);
         app.MapPost("/api/remote/rdp", (HttpContext context, RdpForwardRequest request) =>
         {
             if (!IsAuthenticated(context, proxyUserHeader) ||
@@ -19,6 +23,33 @@ internal static class RemoteAccessWebApi
                 return request.Port == 0 ? Results.BadRequest() : Results.Unauthorized();
             }
             return Results.Ok(services.Current.RdpForwards.Create(sourceAddress, request.Port));
+        });
+        app.MapPost("/api/remote/rdp/status", async (HttpContext context) =>
+            IsAuthenticated(context, proxyUserHeader) ?
+                Results.Ok(await rdpPatches.GetStatusAsync()) :
+                Results.Unauthorized());
+        app.MapPost("/api/remote/rdp/settings", async (HttpContext context, RdpSettingsRequest request) =>
+        {
+            if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
+            if (request.Port == 0) return Results.BadRequest();
+            await rdpPatches.ConfigureAsync(request.Enabled,
+                                            request.Port,
+                                            request.Nla,
+                                            request.SameUserMultipleSessions);
+            return Results.NoContent();
+        });
+        app.MapPost("/api/remote/rdp/patch", async (HttpContext context, RdpPatchRequest request) =>
+        {
+            if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
+            try
+            {
+                await rdpPatches.SetEnabledAsync(request.Enabled);
+                return Results.NoContent();
+            }
+            catch (NotSupportedException exception)
+            {
+                return Results.BadRequest(new { exception.Message });
+            }
         });
         app.MapPost("/api/remote/desktop/image", async (HttpContext context, DesktopCaptureRequest request) =>
         {
@@ -394,6 +425,8 @@ internal sealed record CdpCreateProfileRequest(string Browser, string Name);
 internal sealed record CdpCreateTargetRequest(Guid Id, string Url);
 internal sealed record CdpTargetRequest(Guid Id, string Target);
 internal sealed record RdpForwardRequest(ushort Port);
+internal sealed record RdpSettingsRequest(bool Enabled, ushort Port, bool Nla, bool SameUserMultipleSessions);
+internal sealed record RdpPatchRequest(bool Enabled);
 internal sealed record DesktopCaptureRequest(
     bool CaptureCursor,
     uint MaxDimension,

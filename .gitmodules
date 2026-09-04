@@ -1,0 +1,3 @@
+[submodule "Source/3rdParty/rdpwrap.ini"]
+	path = Source/3rdParty/rdpwrap.ini
+	url = https://github.com/sebaxakerhtc/rdpwrap.ini.git

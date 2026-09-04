@@ -759,29 +759,57 @@ export class RemoteDesktopManager {
     this.notify = notify;
     this.rtc = rtc;
     this.connected = false;
+    this.configurationBusy = false;
+    this.patchAvailable = false;
     this.pressedKeys = new Map();
     this.pressedButtons = 0;
-    host.innerHTML = /* HTML */ `<div class="manager-toolbar">
-        <strong>远程桌面</strong><span class="spacer"></span><button data-action="refresh">刷新配置</button>
-      </div>
+    host.innerHTML = /* HTML */ `<div class="manager-toolbar"><strong>远程桌面</strong></div>
       <div class="tools remote-desktop">
-        <section class="card">
-          <h2>被控端配置</h2>
-          <label class="property-choice"><input type="checkbox" data-field="enabled" />允许远程桌面连接</label
-          ><label>监听端口<input type="number" data-field="port" min="1" max="65535" required /></label>
-          <p class="property-note">监听端口修改后需要重新启动远程桌面服务或系统。</p>
-          <button data-action="save">保存配置</button>
-        </section>
-        <section class="card">
-          <h2>RDP（TCP/UDP）</h2>
-          <p class="muted">创建临时入口，目标系统仍使用 Windows NLA 登录。</p>
-          <button data-action="create">创建 RDP 入口</button>
-          <div data-role="lease" hidden>
-            <p><code data-role="address"></code></p>
-            <p data-role="state" class="muted"></p>
-            <div class="dialog-actions">
-              <button data-action="copy">复制地址</button><button data-action="download">下载 .rdp</button>
-            </div>
+        <section class="card rdp-card">
+          <h2>RDP</h2>
+          <div class="rdp-sections">
+            <section class="rdp-section">
+              <h3>${t("rdp.statusTitle")}</h3>
+              <dl class="details-grid">
+                <dt>${t("rdp.version")}</dt><dd data-role="rdp-version">—</dd>
+                <dt>${t("rdp.service")}</dt><dd data-role="rdp-service">—</dd>
+                <dt>${t("rdp.patchStatus")}</dt><dd data-role="rdp-patch-status">—</dd>
+              </dl>
+              <p class="property-note">${t("rdp.patchSource")}</p>
+              <p class="property-note">${t("rdp.patchVolatile")}</p>
+            </section>
+            <section class="rdp-section">
+              <h3>${t("rdp.settingsTitle")}</h3>
+              <label class="property-choice"
+                ><input type="checkbox" data-field="enabled" />${t("rdp.enabled")}</label
+              ><label>${t("rdp.port")}<input type="number" data-field="port" min="1" max="65535" required /></label
+              ><label class="property-choice"><input type="checkbox" data-field="nla" />${t("rdp.nla")}</label
+              ><label class="property-choice"
+                ><input type="checkbox" data-field="multipleSessions" />${t("rdp.multipleSessions")}</label
+              ><label class="property-choice"
+                ><input type="checkbox" data-field="sameUserMultipleSessions" />${t(
+                  "rdp.sameUserMultipleSessions",
+                )}</label
+              >
+              <p class="property-note">${t("rdp.multipleSessionsNote")}</p>
+              <p class="property-note">${t("rdp.portNote")}</p>
+              <div class="dialog-actions">
+                <button data-action="save">${t("rdp.saveSettings")}</button
+                ><button data-action="refresh">${t("rdp.refreshSettings")}</button>
+              </div>
+            </section>
+            <section class="rdp-section">
+              <h3>${t("rdp.connectionTitle")}</h3>
+              <p class="muted">创建临时入口，目标系统仍使用 Windows NLA 登录。</p>
+              <button data-action="create">创建 RDP 入口</button>
+              <div data-role="lease" hidden>
+                <p><code data-role="address"></code></p>
+                <p data-role="state" class="muted"></p>
+                <div class="dialog-actions">
+                  <button data-action="copy">复制地址</button><button data-action="download">下载 .rdp</button>
+                </div>
+              </div>
+            </section>
           </div>
         </section>
         <section class="card remote-control-card">
@@ -830,8 +858,12 @@ export class RemoteDesktopManager {
       </div>`;
     this.create = host.querySelector("[data-action=create]");
     this.enabled = host.querySelector("[data-field=enabled]");
+    this.nla = host.querySelector("[data-field=nla]");
+    this.multipleSessions = host.querySelector("[data-field=multipleSessions]");
+    this.sameUserMultipleSessions = host.querySelector("[data-field=sameUserMultipleSessions]");
     this.port = host.querySelector("[data-field=port]");
     this.save = host.querySelector("[data-action=save]");
+    this.refresh = host.querySelector("[data-action=refresh]");
     this.lease = host.querySelector("[data-role=lease]");
     this.view = host.querySelector(".remote-control-view");
     this.canvas = host.querySelector("[data-role=desktop-canvas]");
@@ -848,7 +880,7 @@ export class RemoteDesktopManager {
     );
     this.create.onclick = () => this.open();
     this.save.onclick = () => this.saveConfiguration();
-    host.querySelector("[data-action=refresh]").onclick = () => this.loadConfiguration();
+    this.refresh.onclick = () => this.loadConfiguration();
     host.querySelector("[data-action=copy]").onclick = () => navigator.clipboard.writeText(this.address);
     host.querySelector("[data-action=download]").onclick = () => this.download();
     host.querySelector("[data-action=desktop-refresh]").onclick = () => this.capture();
@@ -884,9 +916,12 @@ export class RemoteDesktopManager {
   activate(connected) {
     const reconnected = connected && !this.connected;
     this.connected = connected;
-    this.create.disabled = this.save.disabled = this.toggle.disabled = this.startButton.disabled = !connected;
+    this.create.disabled = this.toggle.disabled = this.startButton.disabled = !connected;
+    this.updateConfigurationState();
     if (connected) {
       if (reconnected) {
+        this.patchAvailable = false;
+        this.updateConfigurationState();
         this.image.hidden = this.canvas.hidden = true;
         this.startButton.hidden = false;
         this.desktopStatus.hidden = false;
@@ -901,17 +936,29 @@ export class RemoteDesktopManager {
     this.connected = false;
     clearTimeout(this.timer);
     this.stopStream(true);
-    this.create.disabled = this.save.disabled = this.toggle.disabled = this.startButton.disabled = true;
+    this.patchAvailable = false;
+    this.configuration = null;
+    this.create.disabled = this.toggle.disabled = this.startButton.disabled = true;
+    this.updateConfigurationState();
     this.lease.hidden = true;
     this.image.hidden = this.canvas.hidden = true;
     this.startButton.hidden = false;
     this.desktopStatus.hidden = false;
     this.desktopStatus.textContent = "Client 未连接";
+    for (const role of ["rdp-version", "rdp-service", "rdp-patch-status"])
+      this.host.querySelector(`[data-role=${role}]`).textContent = "—";
+  }
+  updateConfigurationState() {
+    const disabled = !this.connected || this.configurationBusy;
+    for (const field of [this.enabled, this.port, this.nla]) field.disabled = disabled;
+    this.multipleSessions.disabled = this.sameUserMultipleSessions.disabled = disabled || !this.patchAvailable;
+    this.save.disabled = disabled || !this.configuration;
+    this.refresh.disabled = disabled;
   }
   async open() {
     const port = Number(this.port.value);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      this.notify("远程桌面端口无效");
+      this.notify(t("rdp.invalidPort"));
       return;
     }
     this.create.disabled = true;
@@ -933,46 +980,101 @@ export class RemoteDesktopManager {
     }
   }
   async loadConfiguration() {
-    if (!this.connected) return;
+    if (!this.connected || this.configurationBusy) return;
+    this.configurationBusy = true;
+    this.updateConfigurationState();
     try {
-      const records = await this.call("/api/system-details"),
-        enabled = records.find((record) => record.identity === "remoteDesktopEnabled"),
-        port = records.find((record) => record.identity === "remoteDesktopPort");
-      this.enabled.checked = Number(enabled?.value) === 1;
-      this.port.value = port?.value || 3389;
-      this.configuration = { enabled: this.enabled.checked, port: Number(this.port.value) };
+      const status = await this.call("/api/remote/rdp/status");
+      this.enabled.checked = status.enabled;
+      this.nla.checked = status.nla;
+      this.multipleSessions.checked = status.applied === true;
+      this.sameUserMultipleSessions.checked = status.sameUserMultipleSessions;
+      this.port.value = status.port;
+      this.configuration = {
+        enabled: status.enabled,
+        nla: status.nla,
+        multipleSessions: status.applied === true,
+        sameUserMultipleSessions: status.sameUserMultipleSessions,
+        port: status.port,
+      };
+      this.host.querySelector("[data-role=rdp-version]").textContent = status.version;
+      this.host.querySelector("[data-role=rdp-service]").textContent = this.serviceState(status.serviceState);
+      const patchStatus = this.host.querySelector("[data-role=rdp-patch-status]");
+      patchStatus.textContent = !status.supported
+        ? t("rdp.unsupported")
+        : status.applied === true
+          ? t("rdp.applied")
+          : status.applied === false
+            ? t("rdp.notApplied")
+            : t("rdp.unavailable", {
+                type: status.error?.type ?? 0,
+                code: (status.error?.code ?? 0).toString(16).padStart(8, "0").toUpperCase(),
+              });
+      this.patchAvailable = status.supported && status.applied !== null && !status.error && status.serviceState === 4;
     } catch (error) {
+      this.patchAvailable = false;
       this.notify(error);
+    } finally {
+      this.configurationBusy = false;
+      this.updateConfigurationState();
     }
   }
   async saveConfiguration() {
     const port = Number(this.port.value);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      this.notify("远程桌面端口无效");
+      this.notify(t("rdp.invalidPort"));
       return;
     }
-    this.save.disabled = true;
+    const patchChanged =
+        this.patchAvailable && this.multipleSessions.checked !== this.configuration?.multipleSessions,
+      sameUserChanged =
+        this.sameUserMultipleSessions.checked !== this.configuration?.sameUserMultipleSessions,
+      settingsChanged =
+        this.enabled.checked !== this.configuration?.enabled ||
+        this.nla.checked !== this.configuration?.nla ||
+        sameUserChanged ||
+        port !== this.configuration?.port;
+    if (
+      patchChanged &&
+      !confirm(t(this.multipleSessions.checked ? "rdp.confirmEnablePatch" : "rdp.confirmDisablePatch"))
+    )
+      return;
+    if (!patchChanged && sameUserChanged && !confirm(t("rdp.confirmDependentSetting"))) return;
+    this.configurationBusy = true;
+    this.updateConfigurationState();
     try {
-      if (this.enabled.checked !== this.configuration?.enabled)
-        await this.call("/api/system-details/control", {
-          action: 23,
-          identity: "remoteDesktopEnabled",
-          argument: this.enabled.checked ? "1" : "0",
+      if (patchChanged && this.multipleSessions.checked)
+        await this.call("/api/remote/rdp/patch", { enabled: true });
+      if (settingsChanged)
+        await this.call("/api/remote/rdp/settings", {
+          enabled: this.enabled.checked,
+          port,
+          nla: this.nla.checked,
+          sameUserMultipleSessions: this.sameUserMultipleSessions.checked,
         });
-      if (port !== this.configuration?.port)
-        await this.call("/api/system-details/control", {
-          action: 23,
-          identity: "remoteDesktopPort",
-          argument: String(port),
-        });
-      this.notify("远程桌面配置已保存");
-      await this.loadConfiguration();
+      if (patchChanged && !this.multipleSessions.checked)
+        await this.call("/api/remote/rdp/patch", { enabled: false });
+      this.notify(t("rdp.settingsSaved"));
     } catch (error) {
       this.notify(error);
-      await this.loadConfiguration();
     } finally {
-      this.save.disabled = !this.connected;
+      this.configurationBusy = false;
+      this.updateConfigurationState();
+      await this.loadConfiguration();
     }
+  }
+  serviceState(state) {
+    return (
+      {
+        1: t("rdp.serviceState.stopped"),
+        2: t("rdp.serviceState.starting"),
+        3: t("rdp.serviceState.stopping"),
+        4: t("rdp.serviceState.running"),
+        5: t("rdp.serviceState.resuming"),
+        6: t("rdp.serviceState.pausing"),
+        7: t("rdp.serviceState.paused"),
+      }[state] || String(state)
+    );
   }
   render(lease) {
     const status = lease.status

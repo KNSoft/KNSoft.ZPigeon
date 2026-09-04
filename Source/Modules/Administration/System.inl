@@ -26,14 +26,6 @@ static const UNICODE_STRING ZpSystemSecureBootKey = RTL_CONSTANT_STRING(
 static const UNICODE_STRING ZpSystemEnvironmentKey = RTL_CONSTANT_STRING(
     L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment");
 static const UNICODE_STRING ZpUserEnvironmentKey = RTL_CONSTANT_STRING(L"Environment");
-static const UNICODE_STRING ZpRemoteDesktopKey = RTL_CONSTANT_STRING(
-    L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server");
-static const UNICODE_STRING ZpRemoteDesktopPortKey = RTL_CONSTANT_STRING(
-    L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp");
-static const UNICODE_STRING ZpRemoteDesktopEnabledValue = RTL_CONSTANT_STRING(L"fDenyTSConnections");
-static const UNICODE_STRING ZpRemoteDesktopPortValue = RTL_CONSTANT_STRING(L"PortNumber");
-
-
 static
 NTSTATUS
 ZpAdministration_AddSystemValue(
@@ -107,38 +99,7 @@ ZpAdministration_AddDisplays(
     return Status;
 }
 
-static
-NTSTATUS
-ZpAdministration_AddRemoteDesktop(
-    _Inout_ PZP_ADMINISTRATION_BUILDER Builder)
-{
-    HANDLE Key;
-    ULONG Value;
-    NTSTATUS Status;
-
-    Status = Sys_RegOpenKey(&Key, KEY_QUERY_VALUE, &ZpRemoteDesktopKey);
-    if (!NT_SUCCESS(Status)) return Status;
-    Status = Sys_RegQueryDword(Key, &ZpRemoteDesktopEnabledValue, &Value);
-    NtClose(Key);
-    if (!NT_SUCCESS(Status)) return Status;
-    Status = ZpAdministration_AddSystemValue(Builder,
-                                             L"remoteDesktopEnabled",
-                                             NULL,
-                                             ZP_SYSTEM_INFORMATION_EDITABLE,
-                                             Value == 0);
-    if (!NT_SUCCESS(Status)) return Status;
-    Status = Sys_RegOpenKey(&Key, KEY_QUERY_VALUE, &ZpRemoteDesktopPortKey);
-    if (!NT_SUCCESS(Status)) return Status;
-    Status = Sys_RegQueryDword(Key, &ZpRemoteDesktopPortValue, &Value);
-    NtClose(Key);
-    if (!NT_SUCCESS(Status)) return Status;
-    return ZpAdministration_AddSystemValue(Builder,
-                                           L"remoteDesktopPort",
-                                           NULL,
-                                           ZP_SYSTEM_INFORMATION_EDITABLE |
-                                               ZP_SYSTEM_INFORMATION_RESTART_REQUIRED,
-                                           Value);
-}
+#include "RemoteDesktop.inl"
 
 static
 NTSTATUS
@@ -587,7 +548,6 @@ ZpAdministration_EnumerateSystem(
                                                  FALSE);
     }
     if (NT_SUCCESS(Status)) Status = ZpAdministration_AddDisplays(&Builder);
-    if (NT_SUCCESS(Status)) Status = ZpAdministration_AddRemoteDesktop(&Builder);
     if (NT_SUCCESS(Status)) Status = ZpAdministration_AddEnvironment(&Builder, TRUE);
     if (NT_SUCCESS(Status)) Status = ZpAdministration_AddEnvironment(&Builder, FALSE);
     if (NT_SUCCESS(Status)) Status = ZpAdministration_EncodeBuilder(&Builder, Response, ResponseLength);
@@ -706,44 +666,6 @@ ZpAdministration_ControlSystem(
                 }
                 Status = STATUS_SUCCESS;
                 break;
-            }
-        }
-    }
-    else if (wcscmp(Identity, L"remoteDesktopEnabled") == 0 ||
-             wcscmp(Identity, L"remoteDesktopPort") == 0)
-    {
-        UNICODE_STRING Number;
-        ULONG Value;
-
-        RtlInitUnicodeString(&Number, Argument);
-        Status = RtlUnicodeStringToInteger(&Number, 10, &Value);
-        if (NT_SUCCESS(Status) && wcscmp(Identity, L"remoteDesktopEnabled") == 0 && Value > 1)
-        {
-            Status = STATUS_INVALID_PARAMETER;
-        }
-        if (NT_SUCCESS(Status) && wcscmp(Identity, L"remoteDesktopPort") == 0 &&
-            (Value == 0 || Value > MAXUSHORT))
-        {
-            Status = STATUS_INVALID_PARAMETER;
-        }
-        if (NT_SUCCESS(Status))
-        {
-            Status = Sys_RegOpenKey(&Key,
-                                    KEY_SET_VALUE,
-                                    wcscmp(Identity, L"remoteDesktopEnabled") == 0 ?
-                                        &ZpRemoteDesktopKey : &ZpRemoteDesktopPortKey);
-            if (NT_SUCCESS(Status))
-            {
-                if (wcscmp(Identity, L"remoteDesktopEnabled") == 0) Value = !Value;
-                Status = NtSetValueKey(Key,
-                                       wcscmp(Identity, L"remoteDesktopEnabled") == 0 ?
-                                           (PUNICODE_STRING)&ZpRemoteDesktopEnabledValue :
-                                           (PUNICODE_STRING)&ZpRemoteDesktopPortValue,
-                                       0,
-                                       REG_DWORD,
-                                       &Value,
-                                       sizeof(Value));
-                NtClose(Key);
             }
         }
     }
