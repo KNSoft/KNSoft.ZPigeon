@@ -785,17 +785,30 @@ export class RemoteDesktopManager {
             <dt>${t("rdp.patchStatus")}</dt><dd data-role="rdp-patch-status">—</dd>
           </dl>
           <p class="property-note">${t("rdp.patchNote")}</p>
-          <div class="dialog-actions">
-            <button data-action="create">创建 RDP 入口</button
+          <div class="dialog-actions rdp-actions">
+            <button data-action="forward">${t("rdp.openForward")}</button
             ><button data-action="save">${t("rdp.saveSettings")}</button
             ><button data-action="refresh">${t("rdp.refreshSettings")}</button>
           </div>
-          <div data-role="lease" hidden>
-            <p><code data-role="address"></code></p>
-            <p data-role="state" class="muted"></p>
-            <div class="dialog-actions">
-              <button data-action="copy">复制地址</button><button data-action="download">下载 .rdp</button>
-            </div>
+          <div class="manager-table rdp-forward-table" data-role="lease" hidden>
+            <table>
+              <thead>
+                <tr>
+                  <th data-table-unsortable>${t("rdp.forwardAddress")}</th>
+                  <th data-table-unsortable>${t("rdp.forwardTarget")}</th>
+                  <th data-table-unsortable>${t("rdp.forwardState")}</th>
+                  <th data-table-unsortable>${t("common.actions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td data-copyable><code data-role="address"></code></td>
+                  <td><code data-role="target"></code></td>
+                  <td data-role="state"></td>
+                  <td><button data-action="download">${t("rdp.download")}</button></td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
         <section class="card remote-control-card">
@@ -842,7 +855,7 @@ export class RemoteDesktopManager {
           </footer>
         </section>
       </div>`;
-    this.create = host.querySelector("[data-action=create]");
+    this.forward = host.querySelector("[data-action=forward]");
     this.enabled = host.querySelector("[data-field=enabled]");
     this.multipleSessions = host.querySelector("[data-field=multipleSessions]");
     this.sameUserMultipleSessions = host.querySelector("[data-field=sameUserMultipleSessions]");
@@ -850,6 +863,9 @@ export class RemoteDesktopManager {
     this.save = host.querySelector("[data-action=save]");
     this.refresh = host.querySelector("[data-action=refresh]");
     this.lease = host.querySelector("[data-role=lease]");
+    this.forwardAddress = host.querySelector("[data-role=address]");
+    this.forwardTarget = host.querySelector("[data-role=target]");
+    this.forwardState = host.querySelector("[data-role=state]");
     this.view = host.querySelector(".remote-control-view");
     this.canvas = host.querySelector("[data-role=desktop-canvas]");
     this.image = host.querySelector("[data-role=desktop-image]");
@@ -863,10 +879,19 @@ export class RemoteDesktopManager {
       (sequence, keyframe, socket) => this.acknowledgeFrame(sequence, keyframe, socket),
       (codecs, width, height, socket) => this.reportVideoCodecs(codecs, width, height, socket),
     );
-    this.create.onclick = () => this.open();
+    this.forward.onclick = async () => {
+      if (this.forwardBusy) return;
+      this.forwardBusy = true;
+      this.forward.disabled = true;
+      try {
+        await (this.id ? this.closeForward() : this.openForward());
+      } finally {
+        this.forwardBusy = false;
+        this.forward.disabled = !this.connected;
+      }
+    };
     this.save.onclick = () => this.saveConfiguration();
     this.refresh.onclick = () => this.loadConfiguration();
-    host.querySelector("[data-action=copy]").onclick = () => navigator.clipboard.writeText(this.address);
     host.querySelector("[data-action=download]").onclick = () => this.download();
     host.querySelector("[data-action=desktop-refresh]").onclick = () => this.capture();
     this.toggle.onclick = () => (this.socket ? this.stopStream() : this.startStream());
@@ -901,7 +926,7 @@ export class RemoteDesktopManager {
   activate(connected) {
     const reconnected = connected && !this.connected;
     this.connected = connected;
-    this.create.disabled = this.toggle.disabled = this.startButton.disabled = !connected;
+    this.forward.disabled = this.toggle.disabled = this.startButton.disabled = !connected;
     this.updateConfigurationState();
     if (connected) {
       if (reconnected) {
@@ -914,18 +939,18 @@ export class RemoteDesktopManager {
       }
       this.ensureMonitorPicker();
       this.loadConfiguration();
+      this.loadForward();
       this.loadMonitors();
     }
   }
   disconnect() {
     this.connected = false;
-    clearTimeout(this.timer);
     this.stopStream(true);
     this.patchAvailable = false;
     this.configuration = null;
-    this.create.disabled = this.toggle.disabled = this.startButton.disabled = true;
+    this.forward.disabled = this.toggle.disabled = this.startButton.disabled = true;
     this.updateConfigurationState();
-    this.lease.hidden = true;
+    this.clearForward();
     this.image.hidden = this.canvas.hidden = true;
     this.startButton.hidden = false;
     this.desktopStatus.hidden = false;
@@ -940,29 +965,61 @@ export class RemoteDesktopManager {
     this.save.disabled = disabled || !this.configuration;
     this.refresh.disabled = disabled;
   }
-  async open() {
+  async openForward() {
     const port = Number(this.port.value);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       this.notify(t("rdp.invalidPort"));
       return;
     }
-    this.create.disabled = true;
-    this.create.textContent = "正在创建…";
     try {
-      const lease = await this.call("/api/remote/rdp", { port }),
-        host = location.hostname.includes(":") ? `[${location.hostname}]` : location.hostname;
-      this.address = `${host}:${lease.port}`;
-      this.id = lease.id;
-      this.lease.hidden = false;
-      this.host.querySelector("[data-role=address]").textContent = this.address;
-      this.render(lease);
-      this.poll();
+      this.showForward(await this.call("/api/remote/rdp", { port }));
     } catch (error) {
       this.notify(error);
-    } finally {
-      this.create.disabled = !this.connected;
-      this.create.textContent = "创建 RDP 入口";
     }
+  }
+  async loadForward() {
+    this.forward.disabled = true;
+    try {
+      const { rules } = await this.call("/api/remote/forwards"),
+        lease = rules.find((rule) => rule.kind === "RDP");
+      if (!this.connected) return;
+      if (lease) this.showForward(lease);
+      else this.clearForward();
+    } catch (error) {
+      if (this.connected) this.notify(error);
+    } finally {
+      this.forward.disabled = !this.connected;
+    }
+  }
+  showForward(lease) {
+    const host = location.hostname.includes(":") ? `[${location.hostname}]` : location.hostname;
+    this.address = `${host}:${lease.port}`;
+    this.id = lease.id;
+    this.lease.hidden = false;
+    this.forwardAddress.textContent = this.address;
+    this.forwardTarget.textContent = `${lease.targetHost}:${lease.targetPort}`;
+    this.updateForwardButton();
+    this.render(lease);
+    this.poll();
+  }
+  clearForward() {
+    clearTimeout(this.timer);
+    this.id = this.address = null;
+    this.lease.hidden = true;
+    this.updateForwardButton();
+  }
+  async closeForward() {
+    const id = this.id;
+    try {
+      await this.call(`/api/remote/forward/${id}/close`);
+      if (this.id === id) this.clearForward();
+    } catch (error) {
+      this.notify(error);
+    }
+  }
+  updateForwardButton() {
+    this.forward.textContent = t(this.id ? "rdp.closeForward" : "rdp.openForward");
+    this.forward.classList.toggle("danger", Boolean(this.id));
   }
   async loadConfiguration() {
     if (!this.connected || this.configurationBusy) return;
@@ -1064,16 +1121,19 @@ export class RemoteDesktopManager {
       idle = lease.idleExpires
         ? ` · 无连接时于 ${new Date(lease.idleExpires).toLocaleTimeString()} 自动关闭`
         : " · 活动连接中";
-    this.host.querySelector("[data-role=state]").textContent = `${lease.state}${status}${idle}`;
+    this.forwardState.textContent = `${lease.state}${status}${idle}`;
   }
   async poll() {
     clearTimeout(this.timer);
+    const id = this.id;
+    if (!id) return;
     try {
-      const lease = await this.call(`/api/remote/forward/${this.id}`);
+      const lease = await this.call(`/api/remote/forward/${id}`);
+      if (this.id !== id) return;
       this.render(lease);
       if (["Waiting", "Connected"].includes(lease.state)) this.timer = setTimeout(() => this.poll(), 1000);
     } catch (error) {
-      this.notify(error);
+      if (this.id === id) this.notify(error);
     }
   }
   async download() {

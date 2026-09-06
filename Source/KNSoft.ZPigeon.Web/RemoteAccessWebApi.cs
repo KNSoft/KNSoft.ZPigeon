@@ -22,7 +22,7 @@ internal static class RemoteAccessWebApi
             {
                 return request.Port == 0 ? Results.BadRequest() : Results.Unauthorized();
             }
-            return Results.Ok(services.Current.RdpForwards.Create(sourceAddress, request.Port));
+            return Results.Ok(services.Current.RdpForwards.GetOrCreate(sourceAddress, request.Port));
         });
         app.MapPost("/api/remote/rdp/status", async (HttpContext context) =>
             IsAuthenticated(context, proxyUserHeader) ?

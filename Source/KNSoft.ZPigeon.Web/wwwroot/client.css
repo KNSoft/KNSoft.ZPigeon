@@ -1781,9 +1781,11 @@ th[aria-sort="descending"]::before {
 .port-forward-table th:nth-child(10) {
   width: 140px;
 }
-.port-forward-table td:last-child {
-  display: flex;
-  gap: 6px;
+.port-forward-table td:last-child button {
+  padding: 3px 9px;
+}
+.port-forward-table td:last-child button + button {
+  margin-left: 6px;
 }
 .service-table th:nth-child(2) {
   width: 76px;
@@ -3118,6 +3120,22 @@ th[aria-sort="descending"]::before {
 .rdp-card,
 .remote-control-card {
   min-width: 0;
+}
+.rdp-actions {
+  justify-content: flex-start;
+}
+.rdp-forward-table {
+  margin-top: 14px;
+}
+.rdp-forward-table th:nth-child(1),
+.rdp-forward-table th:nth-child(2) {
+  width: 24%;
+}
+.rdp-forward-table th:nth-child(3) {
+  width: 38%;
+}
+.rdp-forward-table th:nth-child(4) {
+  width: 14%;
 }
 .remote-control-card > header,
 .remote-control-card > footer {
