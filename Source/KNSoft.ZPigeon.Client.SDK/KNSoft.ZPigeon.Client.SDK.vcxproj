@@ -95,6 +95,7 @@
     <ClCompile Include="Core\Certificate.c" />
     <ClCompile Include="Core\Account.c" />
     <ClCompile Include="Core\AppContainer.c" />
+    <ClCompile Include="Core\Json.cpp" />
     <ClCompile Include="Core\Security.c" />
     <ClCompile Include="Core\Session.c" />
     <ClCompile Include="Core\Snapshot.c" />
@@ -171,6 +172,7 @@
     <ClInclude Include="Core\Certificate.h" />
     <ClInclude Include="Core\Account.h" />
     <ClInclude Include="Core\AppContainer.h" />
+    <ClInclude Include="Core\Json.h" />
     <ClInclude Include="Core\Security.h" />
     <ClInclude Include="Core\Session.h" />
     <ClInclude Include="Core\Snapshot.h" />

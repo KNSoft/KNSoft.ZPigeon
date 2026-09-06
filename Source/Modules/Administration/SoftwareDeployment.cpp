@@ -2,6 +2,7 @@
 
 #include "SoftwareDeployment.h"
 
+#include "../../KNSoft.ZPigeon.Client.SDK/Core/Json.h"
 #include "ProcessCapture.h"
 #include "../Execution/Runtime.h"
 
@@ -9,7 +10,6 @@
 #include <shlwapi.h>
 #include <wrl/wrappers/corewrappers.h>
 #include <winrt/Microsoft.Management.Deployment.h>
-#include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Management.Deployment.h>
 
@@ -778,7 +778,7 @@ namespace
 
     Json::IJsonValue ParseJson(const std::wstring& text)
     {
-        return Json::JsonValue::Parse(text);
+        return ZpJson::Parse(text);
     }
 
     void EnumeratePipPackages(

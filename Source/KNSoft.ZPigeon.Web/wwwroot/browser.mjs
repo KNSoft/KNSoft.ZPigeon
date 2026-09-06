@@ -50,6 +50,8 @@ export class BrowserManager {
     this.notify = notify;
     this.connected = false;
     this.cursorStack = ["0"];
+    this.documentSnapshotId = 0;
+    this.queryToken = 0;
     root.innerHTML = /* HTML */ `<div class="manager-toolbar">
         <select data-role="browser"></select
         ><select data-role="profile"></select
@@ -145,6 +147,7 @@ export class BrowserManager {
     else this.loadCdp();
   }
   disconnect() {
+    this.queryToken++;
     this.connected = false;
     this.loaded = false;
     this.reveal.checked = false;
@@ -235,10 +238,11 @@ export class BrowserManager {
     this.overview.append(title, list);
   }
   resetQuery() {
+    const token = ++this.queryToken;
     this.reveal.checked = false;
     this.syncReveal();
     this.renderOverview();
-    this.query("0");
+    this.query("0", token);
   }
   syncReveal() {
     this.reveal.parentElement.hidden = this.kind.value !== "cookies" && this.kind.value !== "passwords";
@@ -249,23 +253,24 @@ export class BrowserManager {
   documentKind() {
     return this.kind.value === "bookmarks" || this.kind.value === "settings";
   }
-  async closeDocument() {
-    const snapshotId = this.documentSnapshotId;
-    this.documentSnapshotId = 0;
+  async closeSnapshot(snapshotId) {
     if (snapshotId && this.connected)
       try {
         await this.call("/api/browser/document/close", { snapshotId });
       } catch {}
   }
-  async query(cursor) {
-    if (!this.connected || this.querying) return;
-    const profile = this.selectedProfile();
-    if (!profile) {
-      this.empty.hidden = false;
-      this.empty.textContent = this.browser.value ? "没有可读取的 Profile" : "未发现 Chrome 或 Edge";
-      return;
-    }
-    this.querying = true;
+  async closeDocument() {
+    const snapshotId = this.documentSnapshotId;
+    this.documentSnapshotId = 0;
+    await this.closeSnapshot(snapshotId);
+  }
+  async query(cursor, token = ++this.queryToken) {
+    if (!this.connected) return;
+    const profile = this.selectedProfile(),
+      browser = Number(this.browser.value),
+      kind = this.kind.value,
+      documentKind = kind === "bookmarks" || kind === "settings";
+    this.querying = token;
     this.page = null;
     this.body.replaceChildren();
     this.head.replaceChildren();
@@ -277,35 +282,34 @@ export class BrowserManager {
     this.empty.hidden = false;
     this.empty.textContent = "正在读取浏览器数据…";
     try {
-      if (this.documentKind()) {
-        await this.closeDocument();
-        this.page = await this.call("/api/browser/document/open", {
-          browser: Number(this.browser.value),
-          kind: kinds[this.kind.value],
-          profileKind: profile.kind,
-          profile: profile.name,
-        });
-        this.documentSnapshotId = this.page.snapshotId;
-        this.renderDocument();
+      await this.closeDocument();
+      if (token !== this.queryToken || !this.connected) return;
+      if (!profile) {
+        this.empty.textContent = this.browser.value ? "没有可读取的 Profile" : "未发现 Chrome 或 Edge";
+      } else if (documentKind) {
+        this.renderDocumentRoot({ browser, kind: kinds[kind], profile }, token);
       } else {
-        await this.closeDocument();
-        this.page = await this.call("/api/browser/query", {
-          browser: Number(this.browser.value),
-          kind: kinds[this.kind.value],
+        const page = await this.call("/api/browser/query", {
+          browser,
+          kind: kinds[kind],
           profileKind: profile.kind,
           profile: profile.name,
           cursor,
         });
+        if (token !== this.queryToken || !this.connected) return;
+        this.page = page;
         const existing = this.cursorStack.indexOf(cursor);
         if (existing >= 0) this.cursorStack.length = existing + 1;
         else this.cursorStack.push(cursor);
         this.render();
       }
     } catch (error) {
-      this.empty.textContent = error.message;
-      this.notify(error);
+      if (token === this.queryToken) {
+        this.empty.textContent = error.message;
+        this.notify(error);
+      }
     } finally {
-      this.querying = false;
+      if (this.querying === token) this.querying = 0;
     }
   }
   move(direction) {
@@ -315,11 +319,11 @@ export class BrowserManager {
     } else if (direction > 0 && this.page?.nextCursor !== "0") this.query(this.page.nextCursor);
   }
   render() {
-    if (!this.page) return;
     if (this.documentKind()) {
       this.filterDocument();
       return;
     }
+    if (!this.page) return;
     const query = this.filter.value.toLocaleLowerCase(),
       records = this.page.records.filter(
         (record) =>
@@ -347,17 +351,94 @@ export class BrowserManager {
       return value;
     }
   }
-  renderDocument() {
+  renderDocumentRoot(context, token) {
     this.document.hidden = false;
     this.body.parentElement.hidden = true;
     this.document.replaceChildren();
-    this.appendDocumentPage(this.document, this.page, 0, 1);
-    this.empty.hidden = this.page.nodes.length !== 0;
-    this.empty.textContent = "没有数据";
-    this.summary.textContent = "按需展开浏览器数据";
+    const item = document.createElement("div"),
+      row = document.createElement("div"),
+      toggle = document.createElement("button"),
+      name = document.createElement("span"),
+      value = document.createElement("span"),
+      children = document.createElement("div"),
+      collapsedValue = (type = 1) => (type === 2 ? "[…]" : "{…}");
+    let expanded = false,
+      rootType = 1;
+    item.className = "browser-document-node";
+    item.dataset.documentRoot = "";
+    row.className = "browser-document-row";
+    toggle.className = "browser-document-toggle";
+    toggle.textContent = "▸";
+    name.className = "browser-document-name";
+    name.textContent = this.kind.selectedOptions[0]?.text || "JSON";
+    value.className = "browser-document-value";
+    value.textContent = collapsedValue();
+    children.hidden = true;
+    row.append(toggle, name, value);
+    item.append(row, children);
+    toggle.onclick = async () => {
+      if (token !== this.queryToken || !this.connected) return;
+      toggle.disabled = true;
+      if (expanded) {
+        const snapshotId = this.documentSnapshotId;
+        expanded = false;
+        this.documentSnapshotId = 0;
+        this.page = null;
+        children.replaceChildren();
+        children.hidden = true;
+        toggle.textContent = "▸";
+        value.textContent = collapsedValue(rootType);
+        this.summary.textContent = "展开后读取浏览器数据";
+        await this.closeSnapshot(snapshotId);
+        if (token === this.queryToken && item.isConnected) toggle.disabled = false;
+        return;
+      }
+      value.textContent = "正在读取…";
+      let openedSnapshotId = 0;
+      try {
+        const page = await this.call("/api/browser/document/open", {
+          browser: context.browser,
+          kind: context.kind,
+          profileKind: context.profile.kind,
+          profile: context.profile.name,
+        });
+        openedSnapshotId = page.snapshotId;
+        if (token !== this.queryToken || !this.connected || !item.isConnected) {
+          await this.closeSnapshot(openedSnapshotId);
+          openedSnapshotId = 0;
+          return;
+        }
+        rootType = page.parentType;
+        this.page = page;
+        this.documentSnapshotId = page.snapshotId;
+        this.appendDocumentPage(children, page, 1, 1, page.snapshotId);
+        expanded = true;
+        children.hidden = false;
+        toggle.textContent = "▾";
+        value.textContent = page.nodes.length ? collapsedValue(rootType) : rootType === 2 ? "[]" : "{}";
+        this.summary.textContent = "按需展开浏览器数据；折叠根节点即释放";
+        this.filterDocument();
+        openedSnapshotId = 0;
+      } catch (error) {
+        if (openedSnapshotId) {
+          if (this.documentSnapshotId === openedSnapshotId) this.documentSnapshotId = 0;
+          this.page = null;
+          await this.closeSnapshot(openedSnapshotId);
+        }
+        if (token === this.queryToken && item.isConnected) {
+          value.textContent = "读取失败";
+          this.notify(error);
+        }
+      } finally {
+        if (token === this.queryToken && item.isConnected) toggle.disabled = false;
+      }
+    };
+    this.document.append(item);
+    this.empty.hidden = true;
+    this.summary.textContent = "展开后读取浏览器数据";
     this.filterDocument();
   }
-  appendDocumentPage(host, page, depth, parentNodeId) {
+  appendDocumentPage(host, page, depth, parentNodeId, snapshotId) {
     for (const node of page.nodes) {
       const item = document.createElement("div"),
         row = document.createElement("div"),
@@ -374,7 +455,16 @@ export class BrowserManager {
       name.className = "browser-document-name";
       name.textContent = node.name ? this.jsonToken(node.name) : `#${node.id}`;
       value.className = "browser-document-value";
-      value.textContent = node.hasChildren ? (node.type === 1 ? "{…}" : "[…]") : this.jsonToken(node.value, "null");
+      value.textContent =
+        node.type === 1
+          ? node.hasChildren
+            ? "{…}"
+            : "{}"
+          : node.type === 2
+            ? node.hasChildren
+              ? "[…]"
+              : "[]"
+            : this.jsonToken(node.value, "null");
       row.append(toggle, name, value);
       item.append(row, children);
       if (node.hasChildren)
@@ -387,18 +477,21 @@ export class BrowserManager {
           if (!children.childElementCount) {
             toggle.disabled = true;
             try {
+              if (snapshotId !== this.documentSnapshotId) return;
               const childPage = await this.call("/api/browser/document/node", {
-                snapshotId: this.documentSnapshotId,
+                snapshotId,
                 nodeId: node.id,
                 cursor: 0,
               });
-              this.appendDocumentPage(children, childPage, depth + 1, node.id);
+              if (snapshotId !== this.documentSnapshotId || !item.isConnected) return;
+              this.appendDocumentPage(children, childPage, depth + 1, node.id, snapshotId);
             } catch (error) {
-              this.notify(error);
+              if (snapshotId === this.documentSnapshotId) this.notify(error);
             } finally {
               toggle.disabled = false;
             }
           }
+          if (snapshotId !== this.documentSnapshotId) return;
           children.hidden = false;
           toggle.textContent = "▾";
         };
@@ -412,16 +505,18 @@ export class BrowserManager {
       more.onclick = async () => {
         more.disabled = true;
         try {
+          if (snapshotId !== this.documentSnapshotId) return;
           const next = await this.call("/api/browser/document/node", {
-            snapshotId: this.documentSnapshotId,
+            snapshotId,
             nodeId: parentNodeId,
             cursor: page.nextCursor,
           });
+          if (snapshotId !== this.documentSnapshotId || !more.isConnected) return;
           more.remove();
-          this.appendDocumentPage(host, next, depth, parentNodeId);
+          this.appendDocumentPage(host, next, depth, parentNodeId, snapshotId);
         } catch (error) {
           more.disabled = false;
-          this.notify(error);
+          if (snapshotId === this.documentSnapshotId) this.notify(error);
         }
       };
       host.append(more);
@@ -431,7 +526,10 @@ export class BrowserManager {
     if (!this.documentKind()) return;
     const query = this.filter.value.toLocaleLowerCase();
     for (const node of this.document.querySelectorAll(".browser-document-node"))
-      node.hidden = !!query && !node.firstElementChild.textContent.toLocaleLowerCase().includes(query);
+      node.hidden =
+        !node.hasAttribute("data-document-root") &&
+        !!query &&
+        !node.firstElementChild.textContent.toLocaleLowerCase().includes(query);
   }
   header() {
     const row = document.createElement("tr"),

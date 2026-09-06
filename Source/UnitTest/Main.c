@@ -14,6 +14,7 @@ TEST_DECL_FUNC(ProtocolPortable);
 TEST_DECL_FUNC(ProtocolFileOwners);
 TEST_DECL_FUNC(ProtocolFileDownload);
 TEST_DECL_FUNC(ProtocolMessage);
+TEST_DECL_FUNC(CoreJson);
 TEST_DECL_FUNC(NetworkConnection);
 TEST_DECL_FUNC(SDKContract);
 TEST_DECL_FUNC(SDKQuicIntegration);
@@ -34,6 +35,7 @@ CONST UNITTEST_ENTRY UnitTestList[] = {
     TEST_DECL_ENTRY(ProtocolFileOwners),
     TEST_DECL_ENTRY(ProtocolFileDownload),
     TEST_DECL_ENTRY(ProtocolMessage),
+    TEST_DECL_ENTRY(CoreJson),
     TEST_DECL_ENTRY(NetworkConnection),
     TEST_DECL_ENTRY(SDKContract),
     TEST_DECL_ENTRY(SDKQuicIntegration),

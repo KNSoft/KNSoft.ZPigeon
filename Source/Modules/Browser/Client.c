@@ -1,5 +1,6 @@
 ﻿#include "Client.h"
 
+#include "../../KNSoft.ZPigeon.Client.SDK/Core/Json.h"
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Snapshot.h"
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
@@ -930,9 +931,9 @@ ZpBrowser_ColumnText(
 
 static
 NTSTATUS
-ZpBrowser_ReadDocument(
+ZpBrowser_OpenJsonDocument(
     _In_ PCWSTR Path,
-    _Outptr_result_z_ PWSTR* Text);
+    _Outptr_ PZP_JSON_VALUE* Value);
 
 static
 NTSTATUS
@@ -967,9 +968,12 @@ ZpBrowser_LoadCookieKey(
 {
     DATA_BLOB Input, Output = { 0 };
     WCHAR Path[MAX_PATH];
-    PWSTR Text, Marker, End;
-    PBYTE Encoded;
-    DWORD EncodedLength = 0;
+    PZP_JSON_VALUE Root = NULL, OsCrypt = NULL, EncryptedKey = NULL;
+    HSTRING EncodedString = NULL;
+    PCWSTR EncodedText;
+    PBYTE Encoded = NULL;
+    UINT32 EncodedTextLength;
+    DWORD EncodedLength = 0, EncodedCapacity = 0;
     NTSTATUS Status;
 
     Key->Length = 0;
@@ -977,19 +981,26 @@ ZpBrowser_LoadCookieKey(
     Key->V20Attempted = FALSE;
     Status = StringCchPrintfW(Path, ARRAYSIZE(Path), L"%s\\Local State", UserData);
     if (!NT_SUCCESS(Status)) return Status;
-    Status = ZpBrowser_ReadDocument(Path, &Text);
-    if (!NT_SUCCESS(Status)) return Status;
-    Marker = wcsstr(Text, L"\"encrypted_key\"");
-    if (Marker != NULL) Marker = wcschr(Marker + ARRAYSIZE(L"\"encrypted_key\"") - 1, L':');
-    if (Marker != NULL) Marker = wcschr(Marker + 1, L'\"');
-    End = Marker != NULL ? wcschr(++Marker, L'\"') : NULL;
-    if (End == NULL)
+    Status = ZpBrowser_OpenJsonDocument(Path, &Root);
+    if (NT_SUCCESS(Status))
     {
-        Mem_Free(Text);
-        return STATUS_NOT_FOUND;
+        Status = ZpJson_GetNamedValue(Root,
+                                      L"os_crypt",
+                                      ARRAYSIZE(L"os_crypt") - 1,
+                                      &OsCrypt);
     }
-    if (!CryptStringToBinaryW(Marker,
-                              (DWORD)(End - Marker),
+    if (NT_SUCCESS(Status))
+    {
+        Status = ZpJson_GetNamedValue(OsCrypt,
+                                      L"encrypted_key",
+                                      ARRAYSIZE(L"encrypted_key") - 1,
+                                      &EncryptedKey);
+    }
+    if (NT_SUCCESS(Status)) Status = ZpJson_GetString(EncryptedKey, &EncodedString);
+    if (!NT_SUCCESS(Status)) goto Cleanup;
+    EncodedText = WindowsGetStringRawBuffer(EncodedString, &EncodedTextLength);
+    if (!CryptStringToBinaryW(EncodedText,
+                              EncodedTextLength,
                               CRYPT_STRING_BASE64,
                               NULL,
                               &EncodedLength,
@@ -997,17 +1008,17 @@ ZpBrowser_LoadCookieKey(
                               NULL))
     {
         Status = NTSTATUS_FROM_WIN32(GetLastError());
-        Mem_Free(Text);
-        return Status;
+        goto Cleanup;
     }
+    EncodedCapacity = EncodedLength;
     Encoded = Mem_Alloc(EncodedLength);
     if (Encoded == NULL)
     {
-        Mem_Free(Text);
-        return STATUS_NO_MEMORY;
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
     }
-    if (!CryptStringToBinaryW(Marker,
-                              (DWORD)(End - Marker),
+    if (!CryptStringToBinaryW(EncodedText,
+                              EncodedTextLength,
                               CRYPT_STRING_BASE64,
                               Encoded,
                               &EncodedLength,
@@ -1039,14 +1050,21 @@ ZpBrowser_LoadCookieKey(
             Status = STATUS_SUCCESS;
         }
     }
+Cleanup:
     if (Output.pbData != NULL)
     {
         RtlSecureZeroMemory(Output.pbData, Output.cbData);
         LocalFree(Output.pbData);
     }
-    RtlSecureZeroMemory(Encoded, EncodedLength);
-    Mem_Free(Encoded);
-    Mem_Free(Text);
+    if (Encoded != NULL)
+    {
+        RtlSecureZeroMemory(Encoded, EncodedCapacity);
+        Mem_Free(Encoded);
+    }
+    WindowsDeleteString(EncodedString);
+    ZpJson_CloseValue(EncryptedKey);
+    ZpJson_CloseValue(OsCrypt);
+    ZpJson_CloseValue(Root);
     return Status;
 }
 
@@ -1495,87 +1513,11 @@ ZpBrowser_QueryDatabase(
 
 static
 NTSTATUS
-ZpBrowser_ReadDocument(
+ZpBrowser_OpenJsonDocument(
     _In_ PCWSTR Path,
-    _Outptr_result_z_ PWSTR* Text)
+    _Outptr_ PZP_JSON_VALUE* Value)
 {
-    FILE_STANDARD_INFORMATION Information;
-    UNICODE_STRING NtPath;
-    IO_STATUS_BLOCK IoStatus;
-    OBJECT_ATTRIBUTES Object;
-    LARGE_INTEGER Offset = { 0 };
-    PBYTE Bytes;
-    PWSTR Value;
-    HANDLE File;
-    ULONG UnicodeBytes;
-    NTSTATUS Status;
-
-    Status = RtlDosPathNameToNtPathName_U_WithStatus(Path, &NtPath, NULL, NULL);
-    if (!NT_SUCCESS(Status)) return Status;
-    InitializeObjectAttributes(&Object, &NtPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
-    Status = NtOpenFile(&File,
-                        FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-                        &Object,
-                        &IoStatus,
-                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                        FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT);
-    RtlFreeUnicodeString(&NtPath);
-    if (!NT_SUCCESS(Status)) return Status;
-    Status = NtQueryInformationFile(File,
-                                    &IoStatus,
-                                    &Information,
-                                    sizeof(Information),
-                                    FileStandardInformation);
-    if (NT_SUCCESS(Status) && Information.EndOfFile.QuadPart > ZP_BROWSER_DOCUMENT_MAX_SIZE)
-    {
-        Status = STATUS_FILE_TOO_LARGE;
-    }
-    Bytes = NT_SUCCESS(Status) ? Mem_Alloc((SIZE_T)Information.EndOfFile.QuadPart) : NULL;
-    if (NT_SUCCESS(Status) && Bytes == NULL) Status = STATUS_NO_MEMORY;
-    if (NT_SUCCESS(Status))
-    {
-        Status = IO_ReadFile(File,
-                             &Offset,
-                             Bytes,
-                             (ULONG)Information.EndOfFile.QuadPart,
-                             NULL);
-    }
-    NtClose(File);
-    if (!NT_SUCCESS(Status))
-    {
-        Mem_Free(Bytes);
-        return Status;
-    }
-    Status = RtlUTF8ToUnicodeN(NULL,
-                               0,
-                               &UnicodeBytes,
-                               (PCCH)Bytes,
-                               (ULONG)Information.EndOfFile.QuadPart);
-    if (Status != STATUS_BUFFER_TOO_SMALL && !NT_SUCCESS(Status))
-    {
-        Mem_Free(Bytes);
-        return Status;
-    }
-    Value = Mem_Alloc((SIZE_T)UnicodeBytes + sizeof(WCHAR));
-    if (Value == NULL)
-    {
-        Mem_Free(Bytes);
-        return STATUS_NO_MEMORY;
-    }
-    Status = RtlUTF8ToUnicodeN(Value,
-                               UnicodeBytes,
-                               &UnicodeBytes,
-                               (PCCH)Bytes,
-                               (ULONG)Information.EndOfFile.QuadPart);
-    Mem_Free(Bytes);
-    if (!NT_SUCCESS(Status))
-    {
-        Mem_Free(Value);
-        return Status;
-    }
-    Value[UnicodeBytes / sizeof(WCHAR)] = UNICODE_NULL;
-    *Text = Value;
-    return STATUS_SUCCESS;
+    return ZpJson_ParseUtf8File(Path, ZP_BROWSER_DOCUMENT_MAX_SIZE, Value);
 }
 
 static
@@ -1590,30 +1532,22 @@ ZpBrowser_IsDocumentMissing(
 
 typedef struct _ZP_BROWSER_JSON_NODE
 {
-    ULONG FirstChild;
-    ULONG NextSibling;
-    ULONG NameOffset;
-    ULONG NameLength;
-    ULONG ValueOffset;
-    ULONG ValueLength;
+    PZP_JSON_VALUE Value;
+    ULONG ParentId;
+    ULONG ChildIndex;
     ZP_BROWSER_DOCUMENT_TYPE Type;
 } ZP_BROWSER_JSON_NODE, *PZP_BROWSER_JSON_NODE;
 
 typedef struct _ZP_BROWSER_DOCUMENT_SNAPSHOT
 {
     ZP_CLIENT_SNAPSHOT Header;
-    PWSTR Text;
+    RTL_SRWLOCK Lock;
     PZP_BROWSER_JSON_NODE Nodes;
-    ULONG TextLength;
+    PULONG NodeIndex;
     ULONG NodeCount;
     ULONG NodeCapacity;
+    ULONG NodeIndexCapacity;
 } ZP_BROWSER_DOCUMENT_SNAPSHOT, *PZP_BROWSER_DOCUMENT_SNAPSHOT;
-
-typedef struct _ZP_BROWSER_JSON_PARSER
-{
-    PZP_BROWSER_DOCUMENT_SNAPSHOT Snapshot;
-    ULONG Position;
-} ZP_BROWSER_JSON_PARSER, *PZP_BROWSER_JSON_PARSER;
 
 static
 VOID
@@ -1624,323 +1558,171 @@ ZpBrowser_DeleteDocumentSnapshot(
     PZP_BROWSER_DOCUMENT_SNAPSHOT Snapshot = CONTAINING_RECORD(Header,
                                                                 ZP_BROWSER_DOCUMENT_SNAPSHOT,
                                                                 Header);
+    ULONG Index;
 
+    for (Index = 0; Index < Snapshot->NodeCount; Index++)
+    {
+        ZpJson_CloseValue(Snapshot->Nodes[Index].Value);
+    }
+    Mem_Free(Snapshot->NodeIndex);
     Mem_Free(Snapshot->Nodes);
-    Mem_Free(Snapshot->Text);
     Mem_Free(Snapshot);
 }
 
 static
-VOID
-ZpBrowser_JsonSkipWhitespace(
-    _Inout_ PZP_BROWSER_JSON_PARSER Parser)
-{
-    while (Parser->Position < Parser->Snapshot->TextLength)
-    {
-        WCHAR Character = Parser->Snapshot->Text[Parser->Position];
-
-        if (Character != L' ' && Character != L'\t' && Character != L'\r' && Character != L'\n') break;
-        Parser->Position++;
-    }
-}
-
-static
-LOGICAL
-ZpBrowser_JsonIsHex(
-    _In_ WCHAR Character)
-{
-    return (Character >= L'0' && Character <= L'9') ||
-           (Character >= L'a' && Character <= L'f') ||
-           (Character >= L'A' && Character <= L'F');
-}
-
-static
 NTSTATUS
-ZpBrowser_JsonReadString(
-    _Inout_ PZP_BROWSER_JSON_PARSER Parser,
-    _Out_ PULONG Offset,
-    _Out_ PULONG Length)
+ZpBrowser_GetDocumentType(
+    _In_ PZP_JSON_VALUE Value,
+    _Out_ ZP_BROWSER_DOCUMENT_TYPE* Type)
 {
-    ULONG Start = Parser->Position, Index;
+    ZP_JSON_TYPE JsonType;
+    NTSTATUS Status = ZpJson_GetType(Value, &JsonType);
 
-    if (Start >= Parser->Snapshot->TextLength || Parser->Snapshot->Text[Start] != L'"')
+    if (!NT_SUCCESS(Status)) return Status;
+    switch (JsonType)
     {
+    case ZpJsonObject:
+        *Type = ZpBrowserDocumentObject;
+        break;
+    case ZpJsonArray:
+        *Type = ZpBrowserDocumentArray;
+        break;
+    case ZpJsonString:
+        *Type = ZpBrowserDocumentString;
+        break;
+    case ZpJsonNumber:
+        *Type = ZpBrowserDocumentNumber;
+        break;
+    case ZpJsonBoolean:
+        *Type = ZpBrowserDocumentBoolean;
+        break;
+    case ZpJsonNull:
+        *Type = ZpBrowserDocumentNull;
+        break;
+    default:
         return STATUS_DATA_ERROR;
     }
-    Parser->Position++;
-    while (Parser->Position < Parser->Snapshot->TextLength)
-    {
-        WCHAR Character = Parser->Snapshot->Text[Parser->Position++];
+    return STATUS_SUCCESS;
+}
 
-        if (Character == L'"')
-        {
-            *Offset = Start;
-            *Length = Parser->Position - Start;
-            return STATUS_SUCCESS;
-        }
-        if (Character < 0x20) return STATUS_DATA_ERROR;
-        if (Character != L'\\') continue;
-        if (Parser->Position == Parser->Snapshot->TextLength) return STATUS_DATA_ERROR;
-        Character = Parser->Snapshot->Text[Parser->Position++];
-        if (Character == L'u')
-        {
-            if (Parser->Snapshot->TextLength - Parser->Position < 4) return STATUS_DATA_ERROR;
-            for (Index = 0; Index < 4; Index++)
-            {
-                if (!ZpBrowser_JsonIsHex(Parser->Snapshot->Text[Parser->Position++]))
-                {
-                    return STATUS_DATA_ERROR;
-                }
-            }
-        }
-        else if (wcschr(L"\"\\/bfnrt", Character) == NULL)
-        {
-            return STATUS_DATA_ERROR;
-        }
+static
+ULONG
+ZpBrowser_HashDocumentChild(
+    _In_ ULONG ParentId,
+    _In_ ULONG ChildIndex,
+    _In_ ULONG Capacity)
+{
+    ULONGLONG Value = ((ULONGLONG)ParentId << 32) | ChildIndex;
+
+    Value ^= Value >> 33;
+    Value *= 0xff51afd7ed558ccdULL;
+    Value ^= Value >> 33;
+    Value *= 0xc4ceb9fe1a85ec53ULL;
+    Value ^= Value >> 33;
+    return (ULONG)Value & (Capacity - 1);
+}
+
+static
+VOID
+ZpBrowser_InsertDocumentNodeIndex(
+    _Inout_ PZP_BROWSER_DOCUMENT_SNAPSHOT Snapshot,
+    _In_ ULONG NodeId)
+{
+    PZP_BROWSER_JSON_NODE Node = &Snapshot->Nodes[NodeId - 1];
+    ULONG Slot = ZpBrowser_HashDocumentChild(Node->ParentId,
+                                             Node->ChildIndex,
+                                             Snapshot->NodeIndexCapacity);
+
+    while (Snapshot->NodeIndex[Slot] != 0)
+    {
+        Slot = (Slot + 1) & (Snapshot->NodeIndexCapacity - 1);
     }
-    return STATUS_DATA_ERROR;
+    Snapshot->NodeIndex[Slot] = NodeId;
 }
 
 static
 NTSTATUS
-ZpBrowser_JsonAddNode(
+ZpBrowser_GrowDocumentNodeIndex(
+    _Inout_ PZP_BROWSER_DOCUMENT_SNAPSHOT Snapshot)
+{
+    ULONG Capacity = Snapshot->NodeIndexCapacity == 0 ? 256 : Snapshot->NodeIndexCapacity * 2;
+    PULONG NodeIndex;
+    ULONG NodeId;
+
+    if (Capacity > ZP_CODEC_MAX_ELEMENT_COUNT * 2) return STATUS_QUOTA_EXCEEDED;
+    NodeIndex = Mem_Alloc((SIZE_T)Capacity * sizeof(*NodeIndex));
+    if (NodeIndex == NULL) return STATUS_NO_MEMORY;
+    RtlZeroMemory(NodeIndex, (SIZE_T)Capacity * sizeof(*NodeIndex));
+    Mem_Free(Snapshot->NodeIndex);
+    Snapshot->NodeIndex = NodeIndex;
+    Snapshot->NodeIndexCapacity = Capacity;
+    for (NodeId = 2; NodeId <= Snapshot->NodeCount; NodeId++)
+    {
+        ZpBrowser_InsertDocumentNodeIndex(Snapshot, NodeId);
+    }
+    return STATUS_SUCCESS;
+}
+
+static
+ULONG
+ZpBrowser_FindDocumentNode(
+    _In_ PZP_BROWSER_DOCUMENT_SNAPSHOT Snapshot,
+    _In_ ULONG ParentId,
+    _In_ ULONG ChildIndex)
+{
+    PZP_BROWSER_JSON_NODE Node;
+    ULONG NodeId, Slot;
+
+    if (Snapshot->NodeIndexCapacity == 0) return 0;
+    Slot = ZpBrowser_HashDocumentChild(ParentId, ChildIndex, Snapshot->NodeIndexCapacity);
+    for (;;)
+    {
+        NodeId = Snapshot->NodeIndex[Slot];
+        if (NodeId == 0) return 0;
+        Node = &Snapshot->Nodes[NodeId - 1];
+        if (Node->ParentId == ParentId && Node->ChildIndex == ChildIndex) return NodeId;
+        Slot = (Slot + 1) & (Snapshot->NodeIndexCapacity - 1);
+    }
+}
+
+static
+NTSTATUS
+ZpBrowser_AddDocumentNode(
     _Inout_ PZP_BROWSER_DOCUMENT_SNAPSHOT Snapshot,
+    _In_ PZP_JSON_VALUE Value,
     _In_ ZP_BROWSER_DOCUMENT_TYPE Type,
+    _In_ ULONG ParentId,
+    _In_ ULONG ChildIndex,
     _Out_ PULONG NodeId)
 {
     PZP_BROWSER_JSON_NODE Nodes;
+    ULONG Capacity;
+    NTSTATUS Status;
 
     if (Snapshot->NodeCount == ZP_CODEC_MAX_ELEMENT_COUNT) return STATUS_QUOTA_EXCEEDED;
+    if (ParentId != 0 &&
+        (Snapshot->NodeIndexCapacity == 0 ||
+         Snapshot->NodeCount * 2 >= Snapshot->NodeIndexCapacity))
+    {
+        Status = ZpBrowser_GrowDocumentNodeIndex(Snapshot);
+        if (!NT_SUCCESS(Status)) return Status;
+    }
     if (Snapshot->NodeCount == Snapshot->NodeCapacity)
     {
-        Snapshot->NodeCapacity = Snapshot->NodeCapacity == 0 ? 256 : Snapshot->NodeCapacity * 2;
-        Nodes = Mem_ReAlloc(Snapshot->Nodes,
-                            (SIZE_T)Snapshot->NodeCapacity * sizeof(*Snapshot->Nodes));
+        Capacity = Snapshot->NodeCapacity == 0 ? 256 : Snapshot->NodeCapacity * 2;
+        if (Capacity > ZP_CODEC_MAX_ELEMENT_COUNT) Capacity = ZP_CODEC_MAX_ELEMENT_COUNT;
+        Nodes = Mem_ReAlloc(Snapshot->Nodes, (SIZE_T)Capacity * sizeof(*Snapshot->Nodes));
         if (Nodes == NULL) return STATUS_NO_MEMORY;
         Snapshot->Nodes = Nodes;
+        Snapshot->NodeCapacity = Capacity;
     }
-    RtlZeroMemory(&Snapshot->Nodes[Snapshot->NodeCount], sizeof(*Snapshot->Nodes));
+    *NodeId = Snapshot->NodeCount + 1;
+    Snapshot->Nodes[Snapshot->NodeCount].Value = Value;
+    Snapshot->Nodes[Snapshot->NodeCount].ParentId = ParentId;
+    Snapshot->Nodes[Snapshot->NodeCount].ChildIndex = ChildIndex;
     Snapshot->Nodes[Snapshot->NodeCount].Type = Type;
-    *NodeId = ++Snapshot->NodeCount;
-    return STATUS_SUCCESS;
-}
-
-static
-NTSTATUS
-ZpBrowser_JsonParseValue(
-    _Inout_ PZP_BROWSER_JSON_PARSER Parser,
-    _In_ ULONG Depth,
-    _In_ ULONG NameOffset,
-    _In_ ULONG NameLength,
-    _Out_ PULONG NodeId);
-
-static
-NTSTATUS
-ZpBrowser_JsonAppendChild(
-    _Inout_ PZP_BROWSER_DOCUMENT_SNAPSHOT Snapshot,
-    _In_ ULONG ParentId,
-    _Inout_ PULONG LastChildId,
-    _In_ ULONG ChildId)
-{
-    if (*LastChildId == 0) Snapshot->Nodes[ParentId - 1].FirstChild = ChildId;
-    else Snapshot->Nodes[*LastChildId - 1].NextSibling = ChildId;
-    *LastChildId = ChildId;
-    return STATUS_SUCCESS;
-}
-
-static
-NTSTATUS
-ZpBrowser_JsonParseContainer(
-    _Inout_ PZP_BROWSER_JSON_PARSER Parser,
-    _In_ ULONG Depth,
-    _In_ ULONG NodeId,
-    _In_ WCHAR Closing)
-{
-    ULONG ChildId, LastChildId = 0, NameOffset, NameLength;
-    NTSTATUS Status;
-
-    ZpBrowser_JsonSkipWhitespace(Parser);
-    if (Parser->Position < Parser->Snapshot->TextLength &&
-        Parser->Snapshot->Text[Parser->Position] == Closing)
-    {
-        Parser->Position++;
-        return STATUS_SUCCESS;
-    }
-    while (Parser->Position < Parser->Snapshot->TextLength)
-    {
-        NameOffset = NameLength = 0;
-        if (Closing == L'}')
-        {
-            Status = ZpBrowser_JsonReadString(Parser, &NameOffset, &NameLength);
-            if (!NT_SUCCESS(Status)) return Status;
-            ZpBrowser_JsonSkipWhitespace(Parser);
-            if (Parser->Position == Parser->Snapshot->TextLength ||
-                Parser->Snapshot->Text[Parser->Position++] != L':')
-            {
-                return STATUS_DATA_ERROR;
-            }
-        }
-        Status = ZpBrowser_JsonParseValue(Parser,
-                                          Depth + 1,
-                                          NameOffset,
-                                          NameLength,
-                                          &ChildId);
-        if (!NT_SUCCESS(Status)) return Status;
-        ZpBrowser_JsonAppendChild(Parser->Snapshot, NodeId, &LastChildId, ChildId);
-        ZpBrowser_JsonSkipWhitespace(Parser);
-        if (Parser->Position == Parser->Snapshot->TextLength) return STATUS_DATA_ERROR;
-        if (Parser->Snapshot->Text[Parser->Position] == Closing)
-        {
-            Parser->Position++;
-            return STATUS_SUCCESS;
-        }
-        if (Parser->Snapshot->Text[Parser->Position++] != L',') return STATUS_DATA_ERROR;
-        ZpBrowser_JsonSkipWhitespace(Parser);
-    }
-    return STATUS_DATA_ERROR;
-}
-
-static
-NTSTATUS
-ZpBrowser_JsonReadNumber(
-    _Inout_ PZP_BROWSER_JSON_PARSER Parser,
-    _Out_ PULONG Offset,
-    _Out_ PULONG Length)
-{
-    ULONG Start = Parser->Position;
-    PWSTR Text = Parser->Snapshot->Text;
-    ULONG TextLength = Parser->Snapshot->TextLength;
-
-    if (Parser->Position < TextLength && Text[Parser->Position] == L'-') Parser->Position++;
-    if (Parser->Position == TextLength) return STATUS_DATA_ERROR;
-    if (Text[Parser->Position] == L'0') Parser->Position++;
-    else
-    {
-        if (Text[Parser->Position] < L'1' || Text[Parser->Position] > L'9') return STATUS_DATA_ERROR;
-        while (Parser->Position < TextLength &&
-               Text[Parser->Position] >= L'0' && Text[Parser->Position] <= L'9')
-        {
-            Parser->Position++;
-        }
-    }
-    if (Parser->Position < TextLength && Text[Parser->Position] == L'.')
-    {
-        Parser->Position++;
-        if (Parser->Position == TextLength || Text[Parser->Position] < L'0' || Text[Parser->Position] > L'9')
-        {
-            return STATUS_DATA_ERROR;
-        }
-        while (Parser->Position < TextLength &&
-               Text[Parser->Position] >= L'0' && Text[Parser->Position] <= L'9')
-        {
-            Parser->Position++;
-        }
-    }
-    if (Parser->Position < TextLength && (Text[Parser->Position] == L'e' || Text[Parser->Position] == L'E'))
-    {
-        Parser->Position++;
-        if (Parser->Position < TextLength &&
-            (Text[Parser->Position] == L'+' || Text[Parser->Position] == L'-'))
-        {
-            Parser->Position++;
-        }
-        if (Parser->Position == TextLength || Text[Parser->Position] < L'0' || Text[Parser->Position] > L'9')
-        {
-            return STATUS_DATA_ERROR;
-        }
-        while (Parser->Position < TextLength &&
-               Text[Parser->Position] >= L'0' && Text[Parser->Position] <= L'9')
-        {
-            Parser->Position++;
-        }
-    }
-    *Offset = Start;
-    *Length = Parser->Position - Start;
-    return STATUS_SUCCESS;
-}
-
-static
-NTSTATUS
-ZpBrowser_JsonParseValue(
-    _Inout_ PZP_BROWSER_JSON_PARSER Parser,
-    _In_ ULONG Depth,
-    _In_ ULONG NameOffset,
-    _In_ ULONG NameLength,
-    _Out_ PULONG NodeId)
-{
-    PZP_BROWSER_JSON_NODE Node;
-    ULONG Offset, Length;
-    NTSTATUS Status;
-    WCHAR Character;
-
-    if (Depth > 128) return STATUS_STACK_OVERFLOW;
-    ZpBrowser_JsonSkipWhitespace(Parser);
-    if (Parser->Position == Parser->Snapshot->TextLength) return STATUS_DATA_ERROR;
-    Character = Parser->Snapshot->Text[Parser->Position];
-    if (Character == L'{')
-    {
-        Status = ZpBrowser_JsonAddNode(Parser->Snapshot, ZpBrowserDocumentObject, NodeId);
-        Parser->Position++;
-    }
-    else if (Character == L'[')
-    {
-        Status = ZpBrowser_JsonAddNode(Parser->Snapshot, ZpBrowserDocumentArray, NodeId);
-        Parser->Position++;
-    }
-    else if (Character == L'"')
-    {
-        Status = ZpBrowser_JsonAddNode(Parser->Snapshot, ZpBrowserDocumentString, NodeId);
-        if (NT_SUCCESS(Status)) Status = ZpBrowser_JsonReadString(Parser, &Offset, &Length);
-    }
-    else if (Character == L't' && Parser->Snapshot->TextLength - Parser->Position >= 4 &&
-             RtlCompareMemory(Parser->Snapshot->Text + Parser->Position,
-                              L"true",
-                              4 * sizeof(WCHAR)) == 4 * sizeof(WCHAR))
-    {
-        Status = ZpBrowser_JsonAddNode(Parser->Snapshot, ZpBrowserDocumentBoolean, NodeId);
-        Offset = Parser->Position;
-        Length = 4;
-        Parser->Position += 4;
-    }
-    else if (Character == L'f' && Parser->Snapshot->TextLength - Parser->Position >= 5 &&
-             RtlCompareMemory(Parser->Snapshot->Text + Parser->Position,
-                              L"false",
-                              5 * sizeof(WCHAR)) == 5 * sizeof(WCHAR))
-    {
-        Status = ZpBrowser_JsonAddNode(Parser->Snapshot, ZpBrowserDocumentBoolean, NodeId);
-        Offset = Parser->Position;
-        Length = 5;
-        Parser->Position += 5;
-    }
-    else if (Character == L'n' && Parser->Snapshot->TextLength - Parser->Position >= 4 &&
-             RtlCompareMemory(Parser->Snapshot->Text + Parser->Position,
-                              L"null",
-                              4 * sizeof(WCHAR)) == 4 * sizeof(WCHAR))
-    {
-        Status = ZpBrowser_JsonAddNode(Parser->Snapshot, ZpBrowserDocumentNull, NodeId);
-        Offset = Parser->Position;
-        Length = 4;
-        Parser->Position += 4;
-    }
-    else
-    {
-        Status = ZpBrowser_JsonAddNode(Parser->Snapshot, ZpBrowserDocumentNumber, NodeId);
-        if (NT_SUCCESS(Status)) Status = ZpBrowser_JsonReadNumber(Parser, &Offset, &Length);
-    }
-    if (!NT_SUCCESS(Status)) return Status;
-    Node = &Parser->Snapshot->Nodes[*NodeId - 1];
-    Node->NameOffset = NameOffset;
-    Node->NameLength = NameLength;
-    if (Node->Type == ZpBrowserDocumentObject)
-    {
-        return ZpBrowser_JsonParseContainer(Parser, Depth, *NodeId, L'}');
-    }
-    if (Node->Type == ZpBrowserDocumentArray)
-    {
-        return ZpBrowser_JsonParseContainer(Parser, Depth, *NodeId, L']');
-    }
-    Node->ValueOffset = Offset;
-    Node->ValueLength = Length;
+    Snapshot->NodeCount++;
+    if (ParentId != 0) ZpBrowser_InsertDocumentNodeIndex(Snapshot, *NodeId);
     return STATUS_SUCCESS;
 }
 
@@ -1954,29 +1736,89 @@ ZpBrowser_EncodeDocumentSnapshotPage(
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
 {
-    ZP_BROWSER_DOCUMENT_NODE Records[ZP_BROWSER_DOCUMENT_PAGE_SIZE];
+    ZP_BROWSER_DOCUMENT_NODE Records[ZP_BROWSER_DOCUMENT_PAGE_SIZE] = { 0 };
+    HSTRING Names[ZP_BROWSER_DOCUMENT_PAGE_SIZE] = { 0 };
+    HSTRING Values[ZP_BROWSER_DOCUMENT_PAGE_SIZE] = { 0 };
+    PZP_JSON_ITERATOR Iterator = NULL;
+    PZP_JSON_VALUE Child;
     PZP_BROWSER_JSON_NODE Parent, Node;
-    ULONG ChildId, Index = 0, Count = 0, EncodedLength, NextCursor = 0;
+    PBYTE Buffer;
+    HSTRING Name;
+    ZP_BROWSER_DOCUMENT_TYPE Type;
+    UINT32 NameLength, ValueLength;
+    ULONG ChildCount, ChildSize, ChildIndex;
+    ULONG Count, Index, PageCount, EncodedLength, NextCursor = 0;
     NTSTATUS Status;
 
-    if (NodeId == 0 || NodeId > Snapshot->NodeCount) return STATUS_INVALID_PARAMETER;
-    Parent = &Snapshot->Nodes[NodeId - 1];
-    ChildId = Parent->FirstChild;
-    while (ChildId != 0 && Index++ < Cursor) ChildId = Snapshot->Nodes[ChildId - 1].NextSibling;
-    while (ChildId != 0 && Count < Limit)
+    RtlAcquireSRWLockExclusive(&Snapshot->Lock);
+    if (NodeId == 0 || NodeId > Snapshot->NodeCount)
     {
-        Node = &Snapshot->Nodes[ChildId - 1];
-        Records[Count].Id = ChildId;
-        Records[Count].Type = Node->Type;
-        Records[Count].Flags = Node->FirstChild != 0 ? ZP_BROWSER_DOCUMENT_NODE_HAS_CHILDREN : 0;
-        Records[Count].Name = Node->NameLength != 0 ? Snapshot->Text + Node->NameOffset : NULL;
-        Records[Count].NameLength = Node->NameLength;
-        Records[Count].Value = Node->ValueLength != 0 ? Snapshot->Text + Node->ValueOffset : NULL;
-        Records[Count].ValueLength = Node->ValueLength;
-        Count++;
-        ChildId = Node->NextSibling;
+        Status = STATUS_INVALID_PARAMETER;
+        goto Cleanup;
     }
-    if (ChildId != 0) NextCursor = Cursor + Count;
+    Parent = &Snapshot->Nodes[NodeId - 1];
+    Status = ZpJson_GetSize(Parent->Value, &ChildCount);
+    if (!NT_SUCCESS(Status)) goto Cleanup;
+    if (Cursor > ChildCount)
+    {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Cleanup;
+    }
+    PageCount = min(Limit, ChildCount - Cursor);
+    Status = ZpJson_CreateIterator(Parent->Value, Cursor, &Iterator);
+    if (!NT_SUCCESS(Status)) goto Cleanup;
+    for (Count = 0; Count < PageCount; Count++)
+    {
+        Status = ZpJson_IteratorNext(Iterator, &Name, &Child);
+        if (!NT_SUCCESS(Status))
+        {
+            if (Status == STATUS_NO_MORE_ENTRIES) Status = STATUS_DATA_ERROR;
+            goto Cleanup;
+        }
+        Names[Count] = Name;
+        ChildIndex = Cursor + Count;
+        Records[Count].Id = ZpBrowser_FindDocumentNode(Snapshot, NodeId, ChildIndex);
+        if (Records[Count].Id == 0)
+        {
+            Status = ZpBrowser_GetDocumentType(Child, &Type);
+            if (NT_SUCCESS(Status))
+            {
+                Status = ZpBrowser_AddDocumentNode(Snapshot,
+                                                   Child,
+                                                   Type,
+                                                   NodeId,
+                                                   ChildIndex,
+                                                   &Records[Count].Id);
+            }
+            if (!NT_SUCCESS(Status))
+            {
+                ZpJson_CloseValue(Child);
+                goto Cleanup;
+            }
+        }
+        else
+        {
+            ZpJson_CloseValue(Child);
+        }
+        Node = &Snapshot->Nodes[Records[Count].Id - 1];
+        Records[Count].Type = Node->Type;
+        Records[Count].Name = WindowsGetStringRawBuffer(Names[Count], &NameLength);
+        Records[Count].NameLength = NameLength;
+        if (Node->Type == ZpBrowserDocumentObject || Node->Type == ZpBrowserDocumentArray)
+        {
+            Status = ZpJson_GetSize(Node->Value, &ChildSize);
+            if (!NT_SUCCESS(Status)) goto Cleanup;
+            Records[Count].Flags = ChildSize != 0 ? ZP_BROWSER_DOCUMENT_NODE_HAS_CHILDREN : 0;
+        }
+        else
+        {
+            Status = ZpJson_Stringify(Node->Value, &Values[Count]);
+            if (!NT_SUCCESS(Status)) goto Cleanup;
+            Records[Count].Value = WindowsGetStringRawBuffer(Values[Count], &ValueLength);
+            Records[Count].ValueLength = ValueLength;
+        }
+    }
+    if (Cursor + Count < ChildCount) NextCursor = Cursor + Count;
     Status = ZpBrowser_EncodeDocumentPage(Snapshot->Header.Id,
                                          Parent->Type,
                                          NextCursor,
@@ -1985,18 +1827,31 @@ ZpBrowser_EncodeDocumentSnapshotPage(
                                          NULL,
                                          0,
                                          &EncodedLength);
-    if (!NT_SUCCESS(Status)) return Status;
-    *Response = Mem_Alloc(EncodedLength);
-    if (*Response == NULL) return STATUS_NO_MEMORY;
+    if (!NT_SUCCESS(Status)) goto Cleanup;
+    Buffer = Mem_Alloc(EncodedLength);
+    if (Buffer == NULL)
+    {
+        Status = STATUS_NO_MEMORY;
+        goto Cleanup;
+    }
     Status = ZpBrowser_EncodeDocumentPage(Snapshot->Header.Id,
                                          Parent->Type,
                                          NextCursor,
                                          Records,
                                          Count,
-                                         *Response,
+                                         Buffer,
                                          EncodedLength,
                                          ResponseLength);
-    if (!NT_SUCCESS(Status)) Mem_Free(*Response);
+    if (NT_SUCCESS(Status)) *Response = Buffer;
+    else Mem_Free(Buffer);
+Cleanup:
+    ZpJson_CloseIterator(Iterator);
+    for (Index = 0; Index < ZP_BROWSER_DOCUMENT_PAGE_SIZE; Index++)
+    {
+        WindowsDeleteString(Values[Index]);
+        WindowsDeleteString(Names[Index]);
+    }
+    RtlReleaseSRWLockExclusive(&Snapshot->Lock);
     return Status;
 }
 
@@ -2009,39 +1864,35 @@ ZpBrowser_OpenDocument(
     _Outptr_result_bytebuffer_(*ResponseLength) PBYTE* Response,
     _Out_ PULONG ResponseLength)
 {
+    static const BYTE EmptyObject[] = "{}";
     PZP_BROWSER_DOCUMENT_SNAPSHOT Snapshot;
-    ZP_BROWSER_JSON_PARSER Parser;
+    PZP_JSON_VALUE Root = NULL;
+    ZP_BROWSER_DOCUMENT_TYPE RootType;
     ULONG RootId;
     NTSTATUS Status;
 
     Snapshot = Mem_Alloc(sizeof(*Snapshot));
     if (Snapshot == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
     RtlZeroMemory(Snapshot, sizeof(*Snapshot));
-    Status = ZpBrowser_ReadDocument(Path, &Snapshot->Text);
+    Status = ZpBrowser_OpenJsonDocument(Path, &Root);
     if (MissingAllowed && ZpBrowser_IsDocumentMissing(Status))
     {
-        Snapshot->Text = Mem_Alloc(sizeof(L"{}"));
-        if (Snapshot->Text == NULL) Status = STATUS_NO_MEMORY;
-        else
-        {
-            RtlCopyMemory(Snapshot->Text, L"{}", sizeof(L"{}"));
-            Status = STATUS_SUCCESS;
-        }
+        Status = ZpJson_ParseUtf8(EmptyObject, sizeof(EmptyObject) - 1, &Root);
+    }
+    if (NT_SUCCESS(Status)) Status = ZpBrowser_GetDocumentType(Root, &RootType);
+    if (NT_SUCCESS(Status) &&
+        RootType != ZpBrowserDocumentObject && RootType != ZpBrowserDocumentArray)
+    {
+        Status = STATUS_OBJECT_TYPE_MISMATCH;
     }
     if (NT_SUCCESS(Status))
     {
-        Snapshot->TextLength = (ULONG)wcslen(Snapshot->Text);
-        Parser.Snapshot = Snapshot;
-        Parser.Position = 0;
-        Status = ZpBrowser_JsonParseValue(&Parser, 0, 0, 0, &RootId);
-        ZpBrowser_JsonSkipWhitespace(&Parser);
-        if (NT_SUCCESS(Status) && (RootId != 1 || Parser.Position != Snapshot->TextLength))
-        {
-            Status = STATUS_DATA_ERROR;
-        }
+        Status = ZpBrowser_AddDocumentNode(Snapshot, Root, RootType, 0, 0, &RootId);
+        if (NT_SUCCESS(Status)) Root = NULL;
     }
     if (!NT_SUCCESS(Status))
     {
+        ZpJson_CloseValue(Root);
         ZpBrowser_DeleteDocumentSnapshot(&Snapshot->Header);
         return ZpStatus_FromNtStatus(Status);
     }
@@ -2097,24 +1948,30 @@ ZpBrowser_QueryDocument(
     _Out_ PULONG ResponseLength)
 {
     ZP_BROWSER_BUILDER Builder = { 0 };
-    PWSTR Text;
+    PZP_JSON_VALUE Root = NULL;
+    HSTRING Text = NULL;
     NTSTATUS Status;
 
-    Status = ZpBrowser_ReadDocument(Path, &Text);
+    Status = ZpBrowser_OpenJsonDocument(Path, &Root);
     if (Query->Kind == ZpBrowserKindBookmark && ZpBrowser_IsDocumentMissing(Status)) Status = STATUS_SUCCESS;
     else if (NT_SUCCESS(Status))
     {
-        Status = ZpBrowser_AddRecord(&Builder,
-                                     Query->Kind,
-                                     Query->Browser,
-                                     0,
-                                     NULL,
-                                     L"",
-                                     NULL,
-                                     Path,
-                                     Text);
-        Mem_Free(Text);
+        Status = ZpJson_Stringify(Root, &Text);
+        if (NT_SUCCESS(Status))
+        {
+            Status = ZpBrowser_AddRecord(&Builder,
+                                         Query->Kind,
+                                         Query->Browser,
+                                         0,
+                                         NULL,
+                                         L"",
+                                         NULL,
+                                         Path,
+                                         WindowsGetStringRawBuffer(Text, NULL));
+        }
     }
+    WindowsDeleteString(Text);
+    ZpJson_CloseValue(Root);
     if (NT_SUCCESS(Status)) Status = ZpBrowser_EncodeBuilder(&Builder, 0, Response, ResponseLength);
     ZpBrowser_FreeBuilder(&Builder);
     return ZpStatus_FromNtStatus(Status);
