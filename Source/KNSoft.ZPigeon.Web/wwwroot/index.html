@@ -149,7 +149,7 @@
               online = document.createElement("span"),
               details = document.createElement("div");
             header.className = "client-header";
-            name.textContent = `Client ${value.fingerprint.slice(0, 12)}`;
+            name.textContent = `Client ${value.id} · ${value.fingerprint.slice(0, 12)}`;
             online.className = "online";
             online.textContent = `● ${t("common.connected")}`;
             header.append(name, online);
