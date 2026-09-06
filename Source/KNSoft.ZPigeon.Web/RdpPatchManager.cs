@@ -6,8 +6,7 @@ namespace KNSoft.ZPigeon.Web;
 internal sealed class RdpPatchManager(NativeServer server, string catalogPath) : IDisposable
 {
     private const uint ConfigurationEnabled = 0x00010000;
-    private const uint ConfigurationNla = 0x00020000;
-    private const uint ConfigurationSameUserMultipleSessions = 0x00040000;
+    private const uint ConfigurationSameUserMultipleSessions = 0x00020000;
     private const uint EnablePatch = 1;
     private const uint ServiceStopped = 1;
     private const uint StatusNotFound = 0xC0000225;
@@ -55,11 +54,10 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
         }
     }
 
-    internal async Task ConfigureAsync(bool enabled, ushort port, bool nla, bool sameUserMultipleSessions)
+    internal async Task ConfigureAsync(bool enabled, ushort port, bool sameUserMultipleSessions)
     {
         var flags = (uint)port |
                     (enabled ? ConfigurationEnabled : 0) |
-                    (nla ? ConfigurationNla : 0) |
                     (sameUserMultipleSessions ? ConfigurationSameUserMultipleSessions : 0);
         await gate.WaitAsync().ConfigureAwait(false);
         try
@@ -103,7 +101,6 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
                                   .ConfigureAwait(false);
         return new(GetBoolean(records, "remoteDesktopEnabled"),
                    checked((ushort)GetValue(records, "remoteDesktopPort")),
-                   GetBoolean(records, "remoteDesktopNla"),
                    GetBoolean(records, "remoteDesktopSameUserMultipleSessions"),
                    checked((uint)GetValue(records, "remoteDesktopServiceState")),
                    GetValue(records, "remoteDesktopVersion"));
@@ -130,7 +127,6 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
     private sealed record RdpConfiguration(
         bool Enabled,
         ushort Port,
-        bool Nla,
         bool SameUserMultipleSessions,
         uint ServiceState,
         ulong VersionValue)
@@ -138,7 +134,6 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
         internal RdpStatus ToStatus(bool supported, bool? applied, ZpStatus? error) =>
             new(Enabled,
                 Port,
-                Nla,
                 SameUserMultipleSessions,
                 ServiceState,
                 RdpPatchCatalog.FormatVersion(VersionValue),
@@ -151,7 +146,6 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
 internal sealed record RdpStatus(
     bool Enabled,
     ushort Port,
-    bool Nla,
     bool SameUserMultipleSessions,
     uint ServiceState,
     string Version,

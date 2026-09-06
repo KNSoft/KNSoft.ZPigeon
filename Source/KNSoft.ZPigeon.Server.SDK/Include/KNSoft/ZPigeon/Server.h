@@ -365,7 +365,7 @@ NTSTATUS
 NTAPI
 ZpServer_QueryConnectionClientVersion(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _Out_ PBYTE ClientVersion);
+    _Out_ PUSHORT ClientVersion);
 
 NTSTATUS
 NTAPI

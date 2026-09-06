@@ -33,9 +33,12 @@ ZpServerSession_MessageCallback(
             if (NT_SUCCESS(Status))
             {
                 Session->ClientVersion = Hello.ClientVersion;
-                if (Hello.ClientVersion < ZP_MIN_CLIENT_VERSION)
+                if (Hello.ClientVersion < ZP_MIN_CLIENT_VERSION ||
+                    Hello.ClientVersion > ZP_MAX_CLIENT_VERSION)
                 {
-                    ZP_SERVER_REJECT_REASON Reason = ZpServerRejectClientVersionTooOld;
+                    ZP_SERVER_REJECT_REASON Reason = Hello.ClientVersion < ZP_MIN_CLIENT_VERSION ?
+                                                         ZpServerRejectClientVersionTooOld :
+                                                         ZpServerRejectClientVersionTooNew;
 
                     return Session->Public->Send(Session->Public,
                                                   0,
@@ -199,7 +202,7 @@ NTSTATUS
 NTAPI
 ZpServer_QueryConnectionClientVersion(
     _In_ ZP_CONNECTION_HANDLE Connection,
-    _Out_ PBYTE ClientVersion)
+    _Out_ PUSHORT ClientVersion)
 {
     PZP_CONNECTION_OBJECT ConnectionObject = Connection;
     PZP_SERVER_SESSION Session;

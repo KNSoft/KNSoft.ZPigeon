@@ -474,23 +474,25 @@ TEST_FUNC(ProtocolFrame)
             View.MessageType == ZpMessageClientHello);
 
     ClientHello[0] = 0;
+    ClientHello[1] = 0;
     TEST_OK(NT_SUCCESS(ZpMessage_DecodeClientHello(ClientHello,
                                                    ClientHelloLength,
                                                    &Hello)) &&
             Hello.ClientVersion == 0);
-    ClientHello[0] = ZP_CLIENT_VERSION + 1;
+    ClientHello[0] = 0x02;
+    ClientHello[1] = 0x01;
     TEST_OK(NT_SUCCESS(ZpMessage_DecodeClientHello(ClientHello,
                                                    ClientHelloLength,
                                                    &Hello)) &&
-            Hello.ClientVersion == ZP_CLIENT_VERSION + 1);
-    ClientHello[sizeof(BYTE)] = 0;
+            Hello.ClientVersion == 0x0102);
+    ClientHello[sizeof(USHORT)] = 0;
     TEST_OK(ZpFrame_Encode(ZpMessageClientHello,
                           ClientHello,
                           ClientHelloLength,
                           Frame,
                           sizeof(Frame),
                           &FrameSize) == STATUS_DATA_ERROR);
-    ClientHello[sizeof(BYTE)] = 0x04;
+    ClientHello[sizeof(USHORT)] = 0x04;
     ClientHello[ClientHelloLength] = 0;
     TEST_OK(ZpFrame_Encode(ZpMessageClientHello,
                           ClientHello,

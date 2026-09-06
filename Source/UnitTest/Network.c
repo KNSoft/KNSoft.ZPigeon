@@ -121,6 +121,13 @@ TEST_FUNC(NetworkConnection)
                                       sizeof(ReadyFrame),
                                       &ReadyFrameLength)));
     TEST_OK(NT_SUCCESS(ZpFrame_Encode(ZpMessageServerReject,
+                                       &RejectReason,
+                                       sizeof(RejectReason),
+                                       RejectFrame,
+                                       sizeof(RejectFrame),
+                                       &RejectFrameLength)));
+    RejectReason = ZpServerRejectClientVersionTooNew;
+    TEST_OK(NT_SUCCESS(ZpFrame_Encode(ZpMessageServerReject,
                                       &RejectReason,
                                       sizeof(RejectReason),
                                       RejectFrame,

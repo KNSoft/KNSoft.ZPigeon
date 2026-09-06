@@ -49,7 +49,7 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ZP_STATUS ClientStoppedStatus;
     ZP_STATUS ServerReadyStatus;
     ZP_STATUS ServerStoppedStatus;
-    BYTE ClientVersion;
+    USHORT ClientVersion;
     ZP_STATUS SystemInfoStatus;
     ZP_SYSTEM_ARCHITECTURE SystemArchitecture;
     ULONG SystemProcessorCount;

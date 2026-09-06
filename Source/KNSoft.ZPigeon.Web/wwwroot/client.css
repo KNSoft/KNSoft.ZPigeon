@@ -3119,21 +3119,6 @@ th[aria-sort="descending"]::before {
 .remote-control-card {
   min-width: 0;
 }
-.rdp-sections {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 12px;
-}
-.rdp-section {
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-}
-.rdp-section h3 {
-  margin: 0 0 12px;
-  font-size: 14px;
-}
 .remote-control-card > header,
 .remote-control-card > footer {
   display: flex;

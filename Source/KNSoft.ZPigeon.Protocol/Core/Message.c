@@ -145,7 +145,7 @@ ZpMessage_ValidateBody(
             {
                 return STATUS_DATA_ERROR;
             }
-            return Body[sizeof(BYTE)] == 0x04 ? STATUS_SUCCESS : STATUS_DATA_ERROR;
+            return Body[sizeof(USHORT)] == 0x04 ? STATUS_SUCCESS : STATUS_DATA_ERROR;
 
         case ZpMessageServerChallenge:
             return BodyLength == ZP_SERVER_CHALLENGE_SIZE ? STATUS_SUCCESS : STATUS_DATA_ERROR;
@@ -158,7 +158,8 @@ ZpMessage_ValidateBody(
 
         case ZpMessageServerReject:
             return BodyLength == sizeof(BYTE) &&
-                   Body[0] == ZpServerRejectClientVersionTooOld ?
+                   (Body[0] == ZpServerRejectClientVersionTooOld ||
+                    Body[0] == ZpServerRejectClientVersionTooNew) ?
                        STATUS_SUCCESS : STATUS_DATA_ERROR;
 
         case ZpMessageRequest:
@@ -255,7 +256,7 @@ ZpMessage_EncodeClientHello(
     }
 
     Cursor = Buffer;
-    ZpWire_WriteByte(&Cursor, ZP_CLIENT_VERSION);
+    ZpWire_WriteUInt16(&Cursor, ZP_CLIENT_VERSION);
     ZpWire_WriteData(&Cursor, ClientPublicKey, ZP_CLIENT_PUBLIC_KEY_SIZE);
     return STATUS_SUCCESS;
 }
@@ -272,8 +273,8 @@ ZpMessage_DecodeClientHello(
     Status = ZpMessage_ValidateBody(ZpMessageClientHello, Buffer, BodyLength);
     if (NT_SUCCESS(Status))
     {
-        View->ClientVersion = Buffer[0];
-        View->ClientPublicKey = Buffer + sizeof(BYTE);
+        View->ClientVersion = ZpReadUInt16(Buffer);
+        View->ClientPublicKey = Buffer + sizeof(USHORT);
     }
     return Status;
 }

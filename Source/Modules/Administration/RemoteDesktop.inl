@@ -5,9 +5,8 @@
 #define ZP_RDP_PATCH_MAX_PLAN_LENGTH 1024
 #define ZP_RDP_CONFIGURATION_PORT_MASK 0x0000FFFF
 #define ZP_RDP_CONFIGURATION_ENABLED 0x00010000
-#define ZP_RDP_CONFIGURATION_NLA 0x00020000
-#define ZP_RDP_CONFIGURATION_SAME_USER_MULTIPLE_SESSIONS 0x00040000
-#define ZP_RDP_CONFIGURATION_MASK 0x0007FFFF
+#define ZP_RDP_CONFIGURATION_SAME_USER_MULTIPLE_SESSIONS 0x00020000
+#define ZP_RDP_CONFIGURATION_MASK 0x0003FFFF
 
 typedef struct _ZP_RDP_PATCH
 {
@@ -58,7 +57,6 @@ static const UNICODE_STRING ZpRemoteDesktopEnabledValue = RTL_CONSTANT_STRING(L"
 static const UNICODE_STRING ZpRemoteDesktopSameUserMultipleSessionsValue =
     RTL_CONSTANT_STRING(L"fSingleSessionPerUser");
 static const UNICODE_STRING ZpRemoteDesktopPortValue = RTL_CONSTANT_STRING(L"PortNumber");
-static const UNICODE_STRING ZpRemoteDesktopNlaValue = RTL_CONSTANT_STRING(L"UserAuthentication");
 
 static
 NTSTATUS
@@ -313,15 +311,6 @@ ZpAdministration_AddRemoteDesktop(
                                                      ZP_SYSTEM_INFORMATION_RESTART_REQUIRED,
                                                  Value);
     }
-    if (NT_SUCCESS(Status)) Status = ZpRdp_QueryDword(&ZpRemoteDesktopPortKey, &ZpRemoteDesktopNlaValue, &Value);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpAdministration_AddSystemValue(Builder,
-                                                 L"remoteDesktopNla",
-                                                 NULL,
-                                                 ZP_SYSTEM_INFORMATION_EDITABLE,
-                                                 Value != 0);
-    }
     if (NT_SUCCESS(Status))
     {
         Status = ZpRdp_QueryDword(&ZpRemoteDesktopKey, &ZpRemoteDesktopSameUserMultipleSessionsValue, &Value);
@@ -416,11 +405,6 @@ ZpAdministration_ConfigureRemoteDesktop(
     if (NT_SUCCESS(Status))
     {
         Status = ZpRdp_SetDword(Key, &ZpRemoteDesktopPortValue, Port);
-        if (NT_SUCCESS(Status))
-        {
-            Value = !!FlagOn(Control->Flags, ZP_RDP_CONFIGURATION_NLA);
-            Status = ZpRdp_SetDword(Key, &ZpRemoteDesktopNlaValue, Value);
-        }
         NtClose(Key);
     }
     return ZpStatus_FromNtStatus(Status);

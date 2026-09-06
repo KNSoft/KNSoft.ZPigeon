@@ -323,11 +323,11 @@ BYTE[] Type-specific body
 
 | 值 | 名称 | 方向 | 类型专用 Body |
 |---:|---|---|---|
-| `0x01` | `ClientHello` | C -> S | `BYTE ClientVersion`、65 字节客户端公钥 |
+| `0x01` | `ClientHello` | C -> S | little-endian `UINT16 ClientVersion`、65 字节客户端公钥 |
 | `0x02` | `ServerChallenge` | S -> C | 32 字节随机 Challenge |
 | `0x03` | `ClientAuthenticate` | C -> S | 64 字节 ECDSA P-256 `r || s` 签名 |
 | `0x04` | `Ready` | S -> C | 空 |
-| `0x05` | `ServerReject` | S -> C | `BYTE Reason`：1 表示 Client 版本过旧 |
+| `0x05` | `ServerReject` | S -> C | `BYTE Reason`：1 表示 Client 版本过旧，2 表示 Client 版本过新 |
 | `0x10` | `Request` | S -> C | `UINT32 RequestId`、`BYTE ModuleId`、`BYTE OperationId`、`UINT32 TimeoutMilliseconds`、Payload |
 | `0x11` | `Response` | C -> S | `UINT32 RequestId`、`BYTE StatusType`、`StatusType != None` 时的 `UINT32 StatusCode`、Payload |
 | `0x12` | `Cancel` | S -> C | `UINT32 RequestId` |
@@ -338,7 +338,9 @@ BYTE[] Type-specific body
 
 其他值在 Client Version 1 中非法。消息类型的最小 Body 长度由 Protocol 解码器校验。`ChannelData` 单帧数据最大为 1 MiB，单次 `ChannelWindow` Credit 最大为 16 MiB，避免大块传输长期占用连接发送队列；其他消息仍受 16 MiB Frame 上限约束。
 
-`ClientVersion` 是 Client EXE 单调递增的线上兼容版本。Client 的模块随 EXE 同步编译和发布，因此不发送模块清单、能力位图或模块版本。Server 保存每条连接的 Client 版本；当前 Client 版本和最低可接受版本均为 1。低于最低版本时，Server 在认证前以 `ServerReject` Reason 1 拒绝，Client 以上报 `STATUS_REVISION_MISMATCH` 后断开；高于当前版本的 Client 不在握手层被拒绝。未来只有 Client 已无法由任何模块正确处理时才提高最低版本；存在格式差异的模块按连接的 Client 版本选择 Codec。任一不兼容的线上变化必须提升 Client 版本。
+`ClientVersion` 是 Client EXE 单调递增的已发布兼容版本。首次发布前，当前、最低和最高 Client 版本均固定为 1，协议变更直接替换现有定义，不兼容中间开发构建。发布后，`ZP_CLIENT_VERSION` 表示 Server 生成的新 Client 版本，`ZP_MIN_CLIENT_VERSION` 和 `ZP_MAX_CLIENT_VERSION` 表示 Server 接受的版本范围；低于或高于该范围时，Server 在认证前分别以 `ServerReject` Reason 1 或 2 拒绝，Client 以上报 `STATUS_REVISION_MISMATCH` 后断开。新 Client 不兼容旧 Server，不发送 Server 版本，也不进行反向协商。
+
+Server 保存每条连接的 Client 版本。接受范围内存在格式或语义差异时，对应模块通过 `ZpServer_QueryConnectionClientVersion` 选择 Codec、处理逻辑或返回 `STATUS_NOT_SUPPORTED`；不发送模块清单、能力位图或模块版本。只有发布新 Client 时才提高当前和最高版本，只有 Server 已无法正确服务更旧 Client 时才提高最低版本；提高最低版本后删除不再可达的兼容分支。
 
 初始业务消息语义限制为：
 
@@ -552,7 +554,7 @@ URL 下载是 Client 本机后台作业，不把文件内容经 Server 或 Web �
 
 ModuleId 9、20–46 共用 `Administration` 的固定记录 Codec 和执行框架，但仍保留独立的 ModuleId 和请求路由；目录复用不改变协议模块数量。
 
-远程桌面补丁定义来自 `Source/3rdParty/rdpwrap.ini` 子模块。Client 上报 `termsrv.dll` 文件版本，Server 仅下发该精确版本所需的 RVA、属性和值；Client 校验文件版本、已加载映像和原始代码后，通过 `NtReadVirtualMemory`、`NtProtectVirtualMemory` 与 `NtWriteVirtualMemory` 检查或修改 `TermService` 进程。操作要求 Client 具有调试特权，不替换磁盘文件、不修改服务配置。Client 应用补丁时在进程内保存原字节，关闭补丁时原位恢复；Client 重启导致备份丢失时，通过重启 `TermService` 恢复。服务或系统重启后补丁失效。
+远程桌面补丁定义来自 `Source/3rdParty/rdpwrap.ini` 子模块。Client 上报 `termsrv.dll` 文件版本，Server 仅下发该精确版本所需的 RVA、属性和值；Client 校验文件版本、已加载映像和原始代码后，通过 `NtReadVirtualMemory`、`NtProtectVirtualMemory` 与 `NtWriteVirtualMemory` 检查或修改 `TermService` 进程。操作要求 Client 具有调试特权，不替换磁盘文件、不修改服务配置。Client 应用补丁时在进程内保存原字节，关闭补丁时原位恢复；Client 重启导致备份丢失时，通过重启 `TermService` 恢复。服务或系统重启后补丁失效。远程桌面配置沿用系统 NLA 策略，不读取或修改该设置。
 
 输入法清单和控制均在 Client 进程当前账户下执行。Client 返回当前账户（用户名）与交互式桌面状态，Web
 也统一使用这一表述。清单由 `input.dll` 的当前用户设置与 TSF profile 合并生成，控制使用
@@ -633,7 +635,7 @@ CDP `Page.startScreencast` 按 Chromium 协议产生 JSON 内 Base64 JPEG。Tunn
 - S 的 Challenge 使用系统 CSPRNG 生成 32 字节，每条连接只使用一次；
 - 客户端签名摘要为 `SHA-256("KNSoft.ZPigeon.ClientAuth.v1" || 0x00 || Challenge[32] || PublicKey[65])`；
 - `ClientAuthenticate` 使用 IEEE P1363 编码的 ECDSA P-256 签名，即 32 字节大端 `r` 后跟 32 字节大端 `s`；
-- `ClientHello` 之后只接受 `ServerChallenge` 或版本过旧的 `ServerReject`，`ServerChallenge` 之后只接受 `ClientAuthenticate`，认证成功后 S 发送空 Body 的 `Ready`；任何越序、重复或握手阶段业务消息均以 `STATUS_PROTOCOL_UNREACHABLE` 关闭连接；
+- `ClientHello` 之后只接受 `ServerChallenge` 或版本不兼容的 `ServerReject`，`ServerChallenge` 之后只接受 `ClientAuthenticate`，认证成功后 S 发送空 Body 的 `Ready`；任何越序、重复或握手阶段业务消息均以 `STATUS_PROTOCOL_UNREACHABLE` 关闭连接；
 - QUIC/TLS 关闭、无法重同步的 Frame 前缀错误、身份验证失败、内部不变量错误和持续违规触发的断开均终止所有未完成请求、订阅和通道，不尝试在新连接上透明续接；可恢复的完整 Frame 错误和瞬时资源不足按 6.1 节处理。
 
 Client 未配置 `ClientKeyName` 时使用持久化 CNG 密钥名 `KNSoft.ZPigeon.Client`。`ClientKeyScope` 显式选择当前用户或本地计算机作用域，不在两者之间回退或复制身份；当前交互式原型选择用户作用域，管理员、非管理员和 SYSTEM 服务可按宿主配置选择其作用域。SDK 通过 Microsoft Software Key Storage Provider 打开或创建 `ECDSA_P256` 密钥，只导出 `BCRYPT_ECCPUBLIC_BLOB` 并转换为线上 SEC1 格式；私钥签名由 `NCryptSignHash` 在 Provider 内完成。Server 使用系统首选 CSPRNG 生成 Challenge，把 SEC1 公钥转换为 `BCRYPT_ECCPUBLIC_BLOB` 后通过 `BCryptVerifySignature` 验证 P1363 签名。签名验证成功前不会发送 `Ready` 或进入 Ready 阶段。

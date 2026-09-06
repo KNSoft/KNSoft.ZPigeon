@@ -34,7 +34,6 @@ internal static class RemoteAccessWebApi
             if (request.Port == 0) return Results.BadRequest();
             await rdpPatches.ConfigureAsync(request.Enabled,
                                             request.Port,
-                                            request.Nla,
                                             request.SameUserMultipleSessions);
             return Results.NoContent();
         });
@@ -425,7 +424,7 @@ internal sealed record CdpCreateProfileRequest(string Browser, string Name);
 internal sealed record CdpCreateTargetRequest(Guid Id, string Url);
 internal sealed record CdpTargetRequest(Guid Id, string Target);
 internal sealed record RdpForwardRequest(ushort Port);
-internal sealed record RdpSettingsRequest(bool Enabled, ushort Port, bool Nla, bool SameUserMultipleSessions);
+internal sealed record RdpSettingsRequest(bool Enabled, ushort Port, bool SameUserMultipleSessions);
 internal sealed record RdpPatchRequest(bool Enabled);
 internal sealed record DesktopCaptureRequest(
     bool CaptureCursor,

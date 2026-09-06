@@ -1,5 +1,5 @@
 import { CaptureFrameDecoder, configureCaptureEncoding, captureEncodingOptions } from "./capture-frames.mjs";
-import { apiUrl } from "./client-context.mjs";
+import { apiUrl, clientId, getJson } from "./client-context.mjs";
 import { t } from "./i18n.mjs";
 
 const CURRENT_SESSION = 4294967295,
@@ -767,49 +767,35 @@ export class RemoteDesktopManager {
       <div class="tools remote-desktop">
         <section class="card rdp-card">
           <h2>RDP</h2>
-          <div class="rdp-sections">
-            <section class="rdp-section">
-              <h3>${t("rdp.statusTitle")}</h3>
-              <dl class="details-grid">
-                <dt>${t("rdp.version")}</dt><dd data-role="rdp-version">—</dd>
-                <dt>${t("rdp.service")}</dt><dd data-role="rdp-service">—</dd>
-                <dt>${t("rdp.patchStatus")}</dt><dd data-role="rdp-patch-status">—</dd>
-              </dl>
-              <p class="property-note">${t("rdp.patchSource")}</p>
-              <p class="property-note">${t("rdp.patchVolatile")}</p>
-            </section>
-            <section class="rdp-section">
-              <h3>${t("rdp.settingsTitle")}</h3>
-              <label class="property-choice"
-                ><input type="checkbox" data-field="enabled" />${t("rdp.enabled")}</label
-              ><label>${t("rdp.port")}<input type="number" data-field="port" min="1" max="65535" required /></label
-              ><label class="property-choice"><input type="checkbox" data-field="nla" />${t("rdp.nla")}</label
-              ><label class="property-choice"
-                ><input type="checkbox" data-field="multipleSessions" />${t("rdp.multipleSessions")}</label
-              ><label class="property-choice"
-                ><input type="checkbox" data-field="sameUserMultipleSessions" />${t(
-                  "rdp.sameUserMultipleSessions",
-                )}</label
-              >
-              <p class="property-note">${t("rdp.multipleSessionsNote")}</p>
-              <p class="property-note">${t("rdp.portNote")}</p>
-              <div class="dialog-actions">
-                <button data-action="save">${t("rdp.saveSettings")}</button
-                ><button data-action="refresh">${t("rdp.refreshSettings")}</button>
-              </div>
-            </section>
-            <section class="rdp-section">
-              <h3>${t("rdp.connectionTitle")}</h3>
-              <p class="muted">创建临时入口，目标系统仍使用 Windows NLA 登录。</p>
-              <button data-action="create">创建 RDP 入口</button>
-              <div data-role="lease" hidden>
-                <p><code data-role="address"></code></p>
-                <p data-role="state" class="muted"></p>
-                <div class="dialog-actions">
-                  <button data-action="copy">复制地址</button><button data-action="download">下载 .rdp</button>
-                </div>
-              </div>
-            </section>
+          <label class="property-choice"
+            ><input type="checkbox" data-field="enabled" />${t("rdp.enabled")}</label
+          ><label>${t("rdp.port")}<input type="number" data-field="port" min="1" max="65535" required /></label>
+          <p class="property-note">${t("rdp.portNote")}</p>
+          <label class="property-choice"
+            ><input type="checkbox" data-field="multipleSessions" />${t("rdp.multipleSessions")}</label
+          ><label class="property-choice"
+            ><input type="checkbox" data-field="sameUserMultipleSessions" />${t(
+              "rdp.sameUserMultipleSessions",
+            )}</label
+          >
+          <p class="property-note">${t("rdp.multipleSessionsNote")}</p>
+          <dl class="details-grid">
+            <dt>${t("rdp.version")}</dt><dd data-role="rdp-version">—</dd>
+            <dt>${t("rdp.service")}</dt><dd data-role="rdp-service">—</dd>
+            <dt>${t("rdp.patchStatus")}</dt><dd data-role="rdp-patch-status">—</dd>
+          </dl>
+          <p class="property-note">${t("rdp.patchNote")}</p>
+          <div class="dialog-actions">
+            <button data-action="create">创建 RDP 入口</button
+            ><button data-action="save">${t("rdp.saveSettings")}</button
+            ><button data-action="refresh">${t("rdp.refreshSettings")}</button>
+          </div>
+          <div data-role="lease" hidden>
+            <p><code data-role="address"></code></p>
+            <p data-role="state" class="muted"></p>
+            <div class="dialog-actions">
+              <button data-action="copy">复制地址</button><button data-action="download">下载 .rdp</button>
+            </div>
           </div>
         </section>
         <section class="card remote-control-card">
@@ -858,7 +844,6 @@ export class RemoteDesktopManager {
       </div>`;
     this.create = host.querySelector("[data-action=create]");
     this.enabled = host.querySelector("[data-field=enabled]");
-    this.nla = host.querySelector("[data-field=nla]");
     this.multipleSessions = host.querySelector("[data-field=multipleSessions]");
     this.sameUserMultipleSessions = host.querySelector("[data-field=sameUserMultipleSessions]");
     this.port = host.querySelector("[data-field=port]");
@@ -950,7 +935,7 @@ export class RemoteDesktopManager {
   }
   updateConfigurationState() {
     const disabled = !this.connected || this.configurationBusy;
-    for (const field of [this.enabled, this.port, this.nla]) field.disabled = disabled;
+    for (const field of [this.enabled, this.port]) field.disabled = disabled;
     this.multipleSessions.disabled = this.sameUserMultipleSessions.disabled = disabled || !this.patchAvailable;
     this.save.disabled = disabled || !this.configuration;
     this.refresh.disabled = disabled;
@@ -986,13 +971,11 @@ export class RemoteDesktopManager {
     try {
       const status = await this.call("/api/remote/rdp/status");
       this.enabled.checked = status.enabled;
-      this.nla.checked = status.nla;
       this.multipleSessions.checked = status.applied === true;
       this.sameUserMultipleSessions.checked = status.sameUserMultipleSessions;
       this.port.value = status.port;
       this.configuration = {
         enabled: status.enabled,
-        nla: status.nla,
         multipleSessions: status.applied === true,
         sameUserMultipleSessions: status.sameUserMultipleSessions,
         port: status.port,
@@ -1031,7 +1014,6 @@ export class RemoteDesktopManager {
         this.sameUserMultipleSessions.checked !== this.configuration?.sameUserMultipleSessions,
       settingsChanged =
         this.enabled.checked !== this.configuration?.enabled ||
-        this.nla.checked !== this.configuration?.nla ||
         sameUserChanged ||
         port !== this.configuration?.port;
     if (
@@ -1049,7 +1031,6 @@ export class RemoteDesktopManager {
         await this.call("/api/remote/rdp/settings", {
           enabled: this.enabled.checked,
           port,
-          nla: this.nla.checked,
           sameUserMultipleSessions: this.sameUserMultipleSessions.checked,
         });
       if (patchChanged && !this.multipleSessions.checked)
@@ -1095,18 +1076,24 @@ export class RemoteDesktopManager {
       this.notify(error);
     }
   }
-  download() {
-    const content =
-        `full address:s:${this.address}\r\n` +
-        "prompt for credentials:i:1\r\n" +
-        "authentication level:i:2\r\n" +
-        "enablecredsspsupport:i:1\r\n",
-      url = URL.createObjectURL(new Blob([content], { type: "application/x-rdp" })),
-      link = document.createElement("a");
-    link.href = url;
-    link.download = "ZPigeon.rdp";
-    link.click();
-    URL.revokeObjectURL(url);
+  async download() {
+    try {
+      const fingerprint = (await getJson("/api/clients")).find(({ id }) => String(id) === clientId)?.fingerprint;
+      if (!fingerprint) throw new Error(t("common.clientDisconnected"));
+      const content =
+          `full address:s:${this.address}\r\n` +
+          "prompt for credentials:i:1\r\n" +
+          "authentication level:i:2\r\n" +
+          "enablecredsspsupport:i:1\r\n",
+        url = URL.createObjectURL(new Blob([content], { type: "application/x-rdp" })),
+        link = document.createElement("a");
+      link.href = url;
+      link.download = `ZPigeon-Client-${fingerprint.slice(0, 12)}.rdp`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      this.notify(error);
+    }
   }
   ensureMonitorPicker() {
     if (this.monitor) return;
