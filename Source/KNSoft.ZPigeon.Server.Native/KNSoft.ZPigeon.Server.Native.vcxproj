@@ -27,8 +27,16 @@
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
     </ClCompile>
-    <Link><SubSystem>Windows</SubSystem></Link>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+    </Link>
     <Manifest><EnableSegmentHeap>true</EnableSegmentHeap></Manifest>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
   </ItemDefinitionGroup>
   <ItemGroup><ClCompile Include="Bridge.c" /></ItemGroup>
   <ItemGroup>
