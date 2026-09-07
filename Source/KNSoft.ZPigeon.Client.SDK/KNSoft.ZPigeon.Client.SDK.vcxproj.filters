@@ -27,6 +27,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Modules\Administration\Client.c"><Filter>Modules\Administration</Filter></ClCompile>
+    <ClCompile Include="..\Modules\Administration\ChildSession.cpp"><Filter>Modules\Administration</Filter></ClCompile>
     <ClCompile Include="..\Modules\Administration\ProcessCapture.c"><Filter>Modules\Administration</Filter></ClCompile>
     <ClCompile Include="..\Modules\Administration\SoftwareDeployment.cpp"><Filter>Modules\Administration</Filter></ClCompile>
     <ClCompile Include="..\Modules\Browser\Client.c"><Filter>Modules\Browser</Filter></ClCompile>
@@ -72,6 +73,7 @@
   <ItemGroup>
     <ClInclude Include="Core\Snapshot.h"><Filter>Core</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\Client.h"><Filter>Modules\Administration</Filter></ClInclude>
+    <ClInclude Include="..\Modules\Administration\ChildSession.h"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\ProcessCapture.h"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Administration\SoftwareDeployment.h"><Filter>Modules\Administration</Filter></ClInclude>
     <ClInclude Include="..\Modules\Browser\Client.h"><Filter>Modules\Browser</Filter></ClInclude>

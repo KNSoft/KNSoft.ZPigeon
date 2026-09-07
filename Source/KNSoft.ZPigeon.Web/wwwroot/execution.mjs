@@ -760,6 +760,8 @@ export class RemoteDesktopManager {
     this.rtc = rtc;
     this.connected = false;
     this.configurationBusy = false;
+    this.childSessionBusy = false;
+    this.childSessionState = 0;
     this.patchAvailable = false;
     this.pressedKeys = new Map();
     this.pressedButtons = 0;
@@ -783,10 +785,13 @@ export class RemoteDesktopManager {
             <dt>${t("rdp.version")}</dt><dd data-role="rdp-version">—</dd>
             <dt>${t("rdp.service")}</dt><dd data-role="rdp-service">—</dd>
             <dt>${t("rdp.patchStatus")}</dt><dd data-role="rdp-patch-status">—</dd>
+            <dt>${t("rdp.childSession")}</dt><dd data-role="rdp-child-session">—</dd>
           </dl>
           <p class="property-note">${t("rdp.patchNote")}</p>
+          <p class="property-note">${t("rdp.childSessionNote")}</p>
           <div class="dialog-actions rdp-actions">
             <button data-action="forward">${t("rdp.openForward")}</button
+            ><button data-action="child-session">${t("rdp.startChildSession")}</button
             ><button data-action="save">${t("rdp.saveSettings")}</button
             ><button data-action="refresh">${t("rdp.refreshSettings")}</button>
           </div>
@@ -856,6 +861,7 @@ export class RemoteDesktopManager {
         </section>
       </div>`;
     this.forward = host.querySelector("[data-action=forward]");
+    this.childSession = host.querySelector("[data-action=child-session]");
     this.enabled = host.querySelector("[data-field=enabled]");
     this.multipleSessions = host.querySelector("[data-field=multipleSessions]");
     this.sameUserMultipleSessions = host.querySelector("[data-field=sameUserMultipleSessions]");
@@ -890,6 +896,7 @@ export class RemoteDesktopManager {
         this.forward.disabled = !this.connected;
       }
     };
+    this.childSession.onclick = () => this.setChildSession();
     this.save.onclick = () => this.saveConfiguration();
     this.refresh.onclick = () => this.loadConfiguration();
     host.querySelector("[data-action=download]").onclick = () => this.download();
@@ -945,9 +952,11 @@ export class RemoteDesktopManager {
   }
   disconnect() {
     this.connected = false;
+    clearTimeout(this.childSessionTimer);
     this.stopStream(true);
     this.patchAvailable = false;
     this.configuration = null;
+    this.childSessionState = 0;
     this.forward.disabled = this.toggle.disabled = this.startButton.disabled = true;
     this.updateConfigurationState();
     this.clearForward();
@@ -955,8 +964,9 @@ export class RemoteDesktopManager {
     this.startButton.hidden = false;
     this.desktopStatus.hidden = false;
     this.desktopStatus.textContent = "Client 未连接";
-    for (const role of ["rdp-version", "rdp-service", "rdp-patch-status"])
+    for (const role of ["rdp-version", "rdp-service", "rdp-patch-status", "rdp-child-session"])
       this.host.querySelector(`[data-role=${role}]`).textContent = "—";
+    this.updateChildSessionButton();
   }
   updateConfigurationState() {
     const disabled = !this.connected || this.configurationBusy;
@@ -964,6 +974,7 @@ export class RemoteDesktopManager {
     this.multipleSessions.disabled = this.sameUserMultipleSessions.disabled = disabled || !this.patchAvailable;
     this.save.disabled = disabled || !this.configuration;
     this.refresh.disabled = disabled;
+    this.childSession.disabled = disabled || this.childSessionBusy;
   }
   async openForward() {
     const port = Number(this.port.value);
@@ -1051,6 +1062,12 @@ export class RemoteDesktopManager {
                 code: (status.error?.code ?? 0).toString(16).padStart(8, "0").toUpperCase(),
               });
       this.patchAvailable = status.supported && status.applied !== null && !status.error && status.serviceState === 4;
+      this.renderChildSession({
+        enabled: status.childSessionsEnabled,
+        state: status.childSessionState,
+        sessionId: status.childSessionId,
+        error: status.childSessionError,
+      });
     } catch (error) {
       this.patchAvailable = false;
       this.notify(error);
@@ -1058,6 +1075,54 @@ export class RemoteDesktopManager {
       this.configurationBusy = false;
       this.updateConfigurationState();
     }
+  }
+  async setChildSession() {
+    if (!this.connected || this.childSessionBusy) return;
+    this.childSessionBusy = true;
+    this.updateConfigurationState();
+    try {
+      await this.call("/api/remote/rdp/child-session", { enabled: this.childSessionState === 0 });
+      await this.loadChildSession();
+    } catch (error) {
+      this.notify(error);
+    } finally {
+      this.childSessionBusy = false;
+      this.updateConfigurationState();
+    }
+  }
+  async loadChildSession(notify = true) {
+    if (!this.connected) return;
+    try {
+      const status = await this.call("/api/remote/rdp/child-session/status");
+      if (this.connected) this.renderChildSession(status);
+    } catch (error) {
+      if (notify && this.connected) this.notify(error);
+    }
+  }
+  renderChildSession(status) {
+    clearTimeout(this.childSessionTimer);
+    this.childSessionState = status.state;
+    const state = !status.enabled
+        ? t("rdp.childSessionState.disabled")
+        : {
+            0: t("rdp.childSessionState.stopped"),
+            1: t("rdp.childSessionState.starting"),
+            2: t("rdp.childSessionState.connecting"),
+            3: t("rdp.childSessionState.active"),
+            4: t("rdp.childSessionState.disconnected"),
+          }[status.state] || String(status.state),
+      session = status.sessionId === 0xffffffff ? "" : ` · ID ${status.sessionId}`,
+      error = status.error ? ` · RDP ${status.error}` : "";
+    this.host.querySelector("[data-role=rdp-child-session]").textContent = `${state}${session}${error}`;
+    this.updateChildSessionButton();
+    if ([1, 2].includes(status.state))
+      this.childSessionTimer = setTimeout(() => this.loadChildSession(false), 1000);
+  }
+  updateChildSessionButton() {
+    this.childSession.textContent = t(
+      this.childSessionState === 0 ? "rdp.startChildSession" : "rdp.stopChildSession",
+    );
+    this.childSession.classList.toggle("danger", this.childSessionState !== 0);
   }
   async saveConfiguration() {
     const port = Number(this.port.value);

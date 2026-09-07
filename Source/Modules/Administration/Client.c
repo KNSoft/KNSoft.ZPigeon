@@ -1,5 +1,6 @@
 ﻿#include "Client.h"
 
+#include "ChildSession.h"
 #include "ShadowCopy.h"
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
@@ -457,6 +458,9 @@ static const ZP_CONTROL_OPERATION ZpControlOperations[] = {
     { ZP_SYSTEM_ADMINISTRATION_MODULE_ID,
       ZP_ADMINISTRATION_OPERATION_CONTROL_SYSTEM,
       ZpAdministration_ControlSystem },
+    { ZP_SYSTEM_ADMINISTRATION_MODULE_ID,
+      ZP_ADMINISTRATION_OPERATION_CONTROL_REMOTE_DESKTOP_CHILD_SESSION,
+      ZpAdministration_ControlRemoteDesktopChildSession },
     { ZP_WLAN_MODULE_ID, ZP_ADMINISTRATION_OPERATION_CONTROL_WLAN, ZpAdministration_ControlWlan },
     { ZP_CLIPBOARD_MODULE_ID,
       ZP_ADMINISTRATION_OPERATION_CONTROL_CLIPBOARD,

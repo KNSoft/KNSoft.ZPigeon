@@ -401,6 +401,7 @@ public enum AdministrationOperation : ushort
     EnumerateRemoteDesktop = 26 << 8 | 3,
     ConfigureRemoteDesktop = 26 << 8 | 4,
     ControlRemoteDesktopPatch = 26 << 8 | 5,
+    ControlRemoteDesktopChildSession = 26 << 8 | 6,
     EnumerateWlan = 27 << 8 | 1,
     ControlWlan = 27 << 8 | 2,
     QueryWlanProfile = 27 << 8 | 3,

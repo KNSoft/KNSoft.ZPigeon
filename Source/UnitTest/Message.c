@@ -1322,6 +1322,38 @@ TEST_FUNC(ProtocolMessage)
                                                        &AdministrationControl)) &&
             AdministrationControl.Action == ZpAdministrationActionSetDefault &&
             AdministrationControl.Identity.Length == 3);
+    TEST_OK(NT_SUCCESS(ZpAdministration_EncodeControl(ZpAdministrationActionRun,
+                                                       NULL,
+                                                       0,
+                                                       NULL,
+                                                       0,
+                                                       NULL,
+                                                       0,
+                                                       Buffer,
+                                                       sizeof(Buffer),
+                                                       &Length)) &&
+            Length == 2 &&
+            NT_SUCCESS(ZpAdministration_DecodeControl(Buffer,
+                                                       Length,
+                                                       &AdministrationControl)) &&
+            AdministrationControl.Action == ZpAdministrationActionRun &&
+            AdministrationControl.Identity.Length == 0 &&
+            AdministrationControl.Argument.Length == 0 &&
+            AdministrationControl.Secret.Length == 0);
+    TEST_OK(ZpAdministration_EncodeControl(ZpAdministrationActionSetDefault,
+                                            NULL,
+                                            0,
+                                            NULL,
+                                            0,
+                                            NULL,
+                                            0,
+                                            Buffer,
+                                            sizeof(Buffer),
+                                            &Length) == STATUS_INVALID_PARAMETER);
+    Buffer[0] = ZpAdministrationActionSetDefault;
+    TEST_OK(ZpAdministration_DecodeControl(Buffer,
+                                            2,
+                                            &AdministrationControl) == STATUS_DATA_ERROR);
     TEST_OK(NT_SUCCESS(ZpAdministration_EncodeQuery(L"machine\nRoot\n0123",
                                                      17,
                                                      Buffer,

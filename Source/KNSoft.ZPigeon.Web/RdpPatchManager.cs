@@ -7,6 +7,7 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
 {
     private const uint ConfigurationEnabled = 0x00010000;
     private const uint ConfigurationSameUserMultipleSessions = 0x00020000;
+    private const uint ChildSessionsEnabled = 0x00000001;
     private const uint EnablePatch = 1;
     private const uint ServiceStopped = 1;
     private const uint StatusNotFound = 0xC0000225;
@@ -95,15 +96,38 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
         }
     }
 
+    internal async Task<RdpChildSessionStatus> GetChildSessionStatusAsync()
+    {
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            return (await GetConfigurationAsync().ConfigureAwait(false)).ChildSession;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    internal Task SetChildSessionAsync(bool enabled) =>
+        server.ControlAdministrationAsync(AdministrationOperation.ControlRemoteDesktopChildSession,
+                                          enabled ? AdministrationAction.Run : AdministrationAction.Stop);
+
     private async Task<RdpConfiguration> GetConfigurationAsync()
     {
         var records = await server.EnumerateAdministrationAsync(AdministrationOperation.EnumerateRemoteDesktop)
                                   .ConfigureAwait(false);
+        var childSession = GetRecord(records, "remoteDesktopChildSession");
+        var childValue = ParseValue(childSession);
         return new(GetBoolean(records, "remoteDesktopEnabled"),
                    checked((ushort)GetValue(records, "remoteDesktopPort")),
                    GetBoolean(records, "remoteDesktopSameUserMultipleSessions"),
                    checked((uint)GetValue(records, "remoteDesktopServiceState")),
-                   GetValue(records, "remoteDesktopVersion"));
+                   GetValue(records, "remoteDesktopVersion"),
+                   new((childSession.Flags & ChildSessionsEnabled) != 0,
+                       childSession.State,
+                       (uint)childValue,
+                       (uint)(childValue >> 32)));
     }
 
     private static bool GetBoolean(AdministrationRecord[] records, string identity) =>
@@ -114,12 +138,17 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
             _ => throw new InvalidDataException($"Invalid {identity} value.")
         };
 
+    private static AdministrationRecord GetRecord(AdministrationRecord[] records, string identity) =>
+        Array.Find(records, record => record.Identity == identity) ??
+        throw new InvalidDataException($"Missing {identity} value.");
+
+    private static ulong ParseValue(AdministrationRecord record) =>
+        ulong.TryParse(record.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var value) ? value :
+        throw new InvalidDataException($"Invalid {record.Identity} value.");
+
     private static ulong GetValue(AdministrationRecord[] records, string identity)
     {
-        var record = Array.Find(records, record => record.Identity == identity) ??
-                     throw new InvalidDataException($"Missing {identity} value.");
-        return ulong.TryParse(record.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var value) ? value :
-            throw new InvalidDataException($"Invalid {identity} value.");
+        return ParseValue(GetRecord(records, identity));
     }
 
     public void Dispose() => gate.Dispose();
@@ -129,7 +158,8 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
         ushort Port,
         bool SameUserMultipleSessions,
         uint ServiceState,
-        ulong VersionValue)
+        ulong VersionValue,
+        RdpChildSessionStatus ChildSession)
     {
         internal RdpStatus ToStatus(bool supported, bool? applied, ZpStatus? error) =>
             new(Enabled,
@@ -139,7 +169,11 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
                 RdpPatchCatalog.FormatVersion(VersionValue),
                 supported,
                 applied,
-                error);
+                error,
+                ChildSession.Enabled,
+                ChildSession.State,
+                ChildSession.SessionId,
+                ChildSession.Error);
     }
 }
 
@@ -151,4 +185,14 @@ internal sealed record RdpStatus(
     string Version,
     bool Supported,
     bool? Applied,
-    ZpStatus? Error);
+    ZpStatus? Error,
+    bool ChildSessionsEnabled,
+    uint ChildSessionState,
+    uint ChildSessionId,
+    uint ChildSessionError);
+
+internal sealed record RdpChildSessionStatus(
+    bool Enabled,
+    uint State,
+    uint SessionId,
+    uint Error);

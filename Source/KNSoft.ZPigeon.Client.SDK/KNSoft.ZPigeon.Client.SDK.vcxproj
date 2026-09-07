@@ -85,6 +85,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\Modules\Administration\Client.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
+    <ClCompile Include="..\Modules\Administration\ChildSession.cpp"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Administration\ProcessCapture.c"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Administration\ShadowCopy.cpp"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
     <ClCompile Include="..\Modules\Administration\SoftwareDeployment.cpp"><ObjectFileName>$(IntDir)Modules\Administration\</ObjectFileName></ClCompile>
@@ -145,6 +146,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Modules\Administration\Client.h" />
+    <ClInclude Include="..\Modules\Administration\ChildSession.h" />
     <ClInclude Include="..\Modules\Administration\ProcessCapture.h" />
     <ClInclude Include="..\Modules\Administration\ShadowCopy.h" />
     <ClInclude Include="..\Modules\Administration\SoftwareDeployment.h" />

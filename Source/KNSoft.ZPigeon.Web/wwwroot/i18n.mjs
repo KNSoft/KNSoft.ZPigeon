@@ -862,6 +862,17 @@ const zh = {
   "rdp.service": "远程桌面服务",
   "rdp.patchStatus": "补丁状态",
   "rdp.patchNote": "补丁按精确 termsrv.dll 版本匹配且仅驻留内存；关闭时恢复原字节，原字节备份丢失时重启服务。",
+  "rdp.childSession": "子会话",
+  "rdp.childSessionNote":
+    "基于 Client 当前活动用户会话；首次启用后可能需要重启 Windows。子会话 Worker 会作为独立 Client 连接。",
+  "rdp.startChildSession": "启动子会话",
+  "rdp.stopChildSession": "关闭子会话",
+  "rdp.childSessionState.disabled": "未启用",
+  "rdp.childSessionState.stopped": "未运行",
+  "rdp.childSessionState.starting": "正在启动",
+  "rdp.childSessionState.connecting": "正在连接",
+  "rdp.childSessionState.active": "活动",
+  "rdp.childSessionState.disconnected": "已断开",
   "rdp.unsupported": "当前版本不受支持",
   "rdp.applied": "已应用",
   "rdp.notApplied": "未应用",
@@ -1758,6 +1769,18 @@ const en = {
   "rdp.patchNote":
     "The memory-only patch requires an exact termsrv.dll version match. Disabling restores the original bytes; " +
     "if their backup is lost, the service restarts.",
+  "rdp.childSession": "Child session",
+  "rdp.childSessionNote":
+    "Uses the Client's current active user session. The first enable may require a Windows restart. " +
+    "The child-session worker connects as a separate Client.",
+  "rdp.startChildSession": "Start child session",
+  "rdp.stopChildSession": "Stop child session",
+  "rdp.childSessionState.disabled": "Disabled",
+  "rdp.childSessionState.stopped": "Stopped",
+  "rdp.childSessionState.starting": "Starting",
+  "rdp.childSessionState.connecting": "Connecting",
+  "rdp.childSessionState.active": "Active",
+  "rdp.childSessionState.disconnected": "Disconnected",
   "rdp.unsupported": "The current version is unsupported",
   "rdp.applied": "Applied",
   "rdp.notApplied": "Not applied",

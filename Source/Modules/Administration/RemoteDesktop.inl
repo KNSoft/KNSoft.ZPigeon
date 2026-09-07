@@ -288,8 +288,10 @@ ZpAdministration_AddRemoteDesktop(
     _Inout_ PZP_ADMINISTRATION_BUILDER Builder)
 {
     SERVICE_STATUS_PROCESS ServiceStatus;
-    ULONGLONG Version;
-    ULONG Value;
+    ZP_STATUS ChildStatus;
+    ULONGLONG Version, ChildValue;
+    ULONG Value, ChildState, ChildSessionId, ChildError;
+    BOOLEAN ChildSessionsEnabled;
     NTSTATUS Status;
 
     Status = ZpRdp_QueryDword(&ZpRemoteDesktopKey, &ZpRemoteDesktopEnabledValue, &Value);
@@ -340,6 +342,35 @@ ZpAdministration_AddRemoteDesktop(
                                                  NULL,
                                                  0,
                                                  ServiceStatus.dwCurrentState);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        ChildStatus = ZpRdpChildSession_Query(&ChildSessionsEnabled,
+                                              &ChildState,
+                                              &ChildSessionId,
+                                              &ChildError);
+        if (!ZpStatus_IsSuccess(ChildStatus))
+        {
+            Status = ChildStatus.Type == ZpStatusWin32 ?
+                         NTSTATUS_FROM_WIN32(ChildStatus.Code) :
+                         (NTSTATUS)ChildStatus.Code;
+        }
+    }
+    if (NT_SUCCESS(Status))
+    {
+        ChildValue = ((ULONGLONG)ChildError << 32) | ChildSessionId;
+        Status = ZpAdministration_AddRecordData(
+            Builder,
+            ZpAdministrationKindSystemInformation,
+            ChildState,
+            ChildSessionsEnabled ? ZP_ADMINISTRATION_REMOTE_DESKTOP_CHILD_SESSION_ENABLED : 0,
+            ChildValue,
+            L"remoteDesktopChildSession",
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0);
     }
     return Status;
 }
@@ -408,6 +439,23 @@ ZpAdministration_ConfigureRemoteDesktop(
         NtClose(Key);
     }
     return ZpStatus_FromNtStatus(Status);
+}
+
+static
+ZP_STATUS
+ZpAdministration_ControlRemoteDesktopChildSession(
+    _In_ PCZP_ADMINISTRATION_CONTROL_VIEW Control)
+{
+    if ((Control->Action != ZpAdministrationActionRun &&
+         Control->Action != ZpAdministrationActionStop) ||
+        Control->Identity.Length != 0 || Control->Argument.Length != 0 ||
+        Control->Secret.Length != 0)
+    {
+        return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
+    }
+    return Control->Action == ZpAdministrationActionRun ?
+               ZpRdpChildSession_Start() :
+               ZpRdpChildSession_Stop();
 }
 
 static

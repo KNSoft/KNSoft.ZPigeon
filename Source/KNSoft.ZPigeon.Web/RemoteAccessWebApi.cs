@@ -50,6 +50,18 @@ internal static class RemoteAccessWebApi
                 return Results.BadRequest(new { exception.Message });
             }
         });
+        app.MapPost("/api/remote/rdp/child-session", async (
+            HttpContext context,
+            RdpChildSessionRequest request) =>
+        {
+            if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
+            await rdpPatches.SetChildSessionAsync(request.Enabled);
+            return Results.NoContent();
+        });
+        app.MapPost("/api/remote/rdp/child-session/status", async (HttpContext context) =>
+            IsAuthenticated(context, proxyUserHeader) ?
+                Results.Ok(await rdpPatches.GetChildSessionStatusAsync()) :
+                Results.Unauthorized());
         app.MapPost("/api/remote/desktop/image", async (HttpContext context, DesktopCaptureRequest request) =>
         {
             if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
@@ -426,6 +438,7 @@ internal sealed record CdpTargetRequest(Guid Id, string Target);
 internal sealed record RdpForwardRequest(ushort Port);
 internal sealed record RdpSettingsRequest(bool Enabled, ushort Port, bool SameUserMultipleSessions);
 internal sealed record RdpPatchRequest(bool Enabled);
+internal sealed record RdpChildSessionRequest(bool Enabled);
 internal sealed record DesktopCaptureRequest(
     bool CaptureCursor,
     uint MaxDimension,

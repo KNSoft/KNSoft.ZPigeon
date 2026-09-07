@@ -6,6 +6,8 @@
 
 #define ZP_CLIENT_PORT 4433
 #define ZP_CLIENT_LOG_CACHE_SIZE 32
+#define ZP_CLIENT_SESSION_WORKER_ARGUMENT L"--session-worker"
+#define ZP_CLIENT_SESSION_WORKER_KEY_NAME L"KNSoft.ZPigeon.Client.SessionWorker"
 
 typedef struct _ZP_CLIENT_LOG
 {
@@ -380,7 +382,9 @@ ZpClient_LoadRootCertificate(
 }
 
 int
-wmain(VOID)
+wmain(
+    _In_ int ArgumentCount,
+    _In_reads_(ArgumentCount) _Pre_z_ PWSTR* Arguments)
 {
     static const ZP_ENDPOINT Endpoint = {
         ZpTransportQuic,
@@ -393,6 +397,11 @@ wmain(VOID)
     PBYTE RootCertificate;
     ULONG RootCertificateLength;
     NTSTATUS Status;
+    BOOLEAN SessionWorker;
+
+    SessionWorker = ArgumentCount == 2 &&
+                    wcscmp(Arguments[1], ZP_CLIENT_SESSION_WORKER_ARGUMENT) == 0;
+    if (ArgumentCount != 1 && !SessionWorker) return (int)STATUS_INVALID_PARAMETER;
 
     Status = ZpClient_InitializeDirectory();
     if (!NT_SUCCESS(Status))
@@ -420,6 +429,7 @@ wmain(VOID)
     Config.DeploymentRootCertificateLength = RootCertificateLength;
     Config.StateCallback = ZpClient_StateCallback;
     Config.OperationCallback = ZpClient_OperationCallback;
+    Config.ClientKeyName = SessionWorker ? ZP_CLIENT_SESSION_WORKER_KEY_NAME : NULL;
     Config.ClientKeyScope = ZpClientKeyUser;
     Status = ZpClient_Create(&Config, &Client);
     Mem_Free(RootCertificate);

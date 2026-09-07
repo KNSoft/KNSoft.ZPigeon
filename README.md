@@ -71,7 +71,8 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
     - 可运行本机或下发的程序与脚本
     - 支持 NodeJS、Python 和 Go 等脚本（如 Client 端存在对应运行时）
     - 支持自定义 Token 执行（NtCreateToken），支持 SYSTEM、TrustedInstaller 等预设以及 AppContainer Profile
-  - 远程桌面：管理启用状态、端口及同一用户多会话策略；按精确 `termsrv.dll` 版本启用或关闭仅驻留内存的多会话补丁；通过受控端口转发建立 RDP 连接，或由用户明确点击开始后使用 Web 交互式远控
+  - 远程桌面：管理启用状态、端口及同一用户多会话策略；按精确 `termsrv.dll` 版本启用或关闭仅驻留内存的多会话补丁；
+    基于 Client 当前活动用户会话创建独立 Child Session；通过受控端口转发建立 RDP 连接，或由用户明确点击开始后使用 Web 交互式远控
 
 - 智能体
   - MCP：通过 Streamable HTTP 向外部智能体提供有界、结构化的管理工具；目标由瞬时 `ClientId` 显式指定

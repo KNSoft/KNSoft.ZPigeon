@@ -1,6 +1,7 @@
 ﻿#include "../Client.inl"
 #include "../Core/Channel.h"
 #include "../Core/Snapshot.h"
+#include "../../Modules/Administration/ChildSession.h"
 #include "../../Modules/Execution/Client.h"
 #include "../../Modules/File/Client.h"
 #include "../../Modules/Rtc/Client.h"
@@ -677,6 +678,7 @@ ZpClient_Close(
     }
     ZpExecution_Cleanup(Object);
     ZpRecording_Cleanup(Object);
+    ZpRdpChildSession_Close();
     Mem_Free(Object);
     return STATUS_SUCCESS;
 }
