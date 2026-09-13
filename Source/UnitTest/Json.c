@@ -1,158 +1,168 @@
 ﻿#include "UnitTest.h"
 
-#include "../KNSoft.ZPigeon.Client.SDK/Core/Json.h"
+#include "../KNSoft.ZPigeon.Client.SDK/Core/Snapshot.h"
+#include "../Modules/Browser/Client.h"
 
-TEST_FUNC(CoreJson)
+#include <strsafe.h>
+
+static
+VOID
+TestBrowserJson(
+    PUNITTEST_RESULT TEST_PARAMETER_RESULT)
 {
-    static const BYTE JsonText[] =
-        "{\"text\":\"\xE4\xB8\xAD\",\"items\":[true,null,12.5],\"empty\":{}}!";
-    static const BYTE InvalidUtf8[] = { '"', 0xC0, 0xAF, '"' };
-    static const BYTE InvalidJson[] = { '{', '}', 'x' };
-    static const BYTE ObjectText[] = "{\"key\":true}ignored";
-    PZP_JSON_VALUE Root = NULL, Container = NULL, Element = NULL;
-    PZP_JSON_ITERATOR Iterator = NULL;
-    ZP_JSON_TYPE Type;
-    WCHAR TempPath[MAX_PATH], FilePath[MAX_PATH];
-    HSTRING String = NULL;
-    PCWSTR Text = NULL;
-    HANDLE File;
+    ZP_CLIENT_OBJECT Client = { 0 };
+    WCHAR TempPath[MAX_PATH], UserData[MAX_PATH], ProfilePath[MAX_PATH], FilePath[MAX_PATH];
+    CHAR Text[32768];
+    BYTE Request[MAX_PATH * sizeof(WCHAR) + 128];
+    PBYTE Response = NULL;
+    ULONG RequestLength, ResponseLength, Length, Index, PageIndex, Offset, SnapshotId, FirstId = 0, ArrayId;
     DWORD Written;
-    UINT TempResult;
-    UINT32 Length;
-    ULONG Size;
-    NTSTATUS Status;
+    HANDLE File;
+    ZP_STATUS Status;
+    ZP_BROWSER_DOCUMENT_PAGE_VIEW Page;
+    ZP_BROWSER_DOCUMENT_NODE_VIEW Node;
+    ZP_BROWSER_KIND Kind;
+    UINT TempLength;
 
+    InitializeListHead(&Client.Snapshots);
+    TempLength = GetTempPathW(ARRAYSIZE(TempPath), TempPath);
+    TEST_OK(TempLength != 0 && TempLength < ARRAYSIZE(TempPath));
+    if (TempLength == 0 || TempLength >= ARRAYSIZE(TempPath)) return;
+    if (GetTempFileNameW(TempPath, L"ZPJ", 0, UserData) == 0)
+    {
+        TEST_OK(FALSE);
+        return;
+    }
+    TEST_OK(DeleteFileW(UserData));
+    if (!CreateDirectoryW(UserData, NULL))
+    {
+        TEST_OK(FALSE);
+        return;
+    }
+    StringCchPrintfW(ProfilePath, ARRAYSIZE(ProfilePath), L"%s\\Fixture", UserData);
+    if (!CreateDirectoryW(ProfilePath, NULL))
+    {
+        TEST_OK(FALSE);
+        TEST_OK(RemoveDirectoryW(UserData));
+        return;
+    }
+    for (Kind = ZpBrowserKindBookmark; Kind <= ZpBrowserKindSetting; Kind++)
+    {
+        // More than 256 nodes exercises snapshot storage growth and subsequent ID reuse.
+        Text[0] = Kind == ZpBrowserKindBookmark ? '[' : '{';
+        Length = 1;
+        for (Index = 0; Index < 300; Index++)
+        {
+            if (Index != 0) Text[Length++] = ',';
+            if (Kind == ZpBrowserKindSetting)
+            {
+                StringCchPrintfA(Text + Length, ARRAYSIZE(Text) - Length, "\"k%lu\":", Index);
+                Length += (ULONG)strlen(Text + Length);
+            }
+            RtlCopyMemory(Text + Length, "{\"items\":[true,null,\"x\"],\"empty\":{},\"number\":1}",
+                          sizeof("{\"items\":[true,null,\"x\"],\"empty\":{},\"number\":1}") - 1);
+            Length += sizeof("{\"items\":[true,null,\"x\"],\"empty\":{},\"number\":1}") - 1;
+        }
+        Text[Length++] = Kind == ZpBrowserKindBookmark ? ']' : '}';
+        StringCchPrintfW(FilePath, ARRAYSIZE(FilePath), L"%s\\%s", ProfilePath,
+                         Kind == ZpBrowserKindBookmark ? L"Bookmarks" : L"Preferences");
+        File = CreateFileW(FilePath, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY, NULL);
+        TEST_OK(File != INVALID_HANDLE_VALUE);
+        if (File == INVALID_HANDLE_VALUE) break;
+        TEST_OK(WriteFile(File, Text, Length, &Written, NULL) && Written == Length);
+        NtClose(File);
+        TEST_OK(NT_SUCCESS(ZpBrowser_EncodeQuery(ZpBrowserChrome, Kind, L"Fixture", _STR_LEN(L"Fixture"),
+                    UserData, (ULONG)wcslen(UserData), 0, 100, Request, sizeof(Request), &RequestLength)));
+        Status = ZpBrowser_Execute(&Client, ZP_BROWSER_OPERATION_OPEN_DOCUMENT, Request, RequestLength,
+                                   &Response, &ResponseLength);
+        TEST_OK(ZpStatus_IsSuccess(Status));
+        if (!ZpStatus_IsSuccess(Status)) goto FileCleanup;
+        SnapshotId = 0;
+        for (PageIndex = 0; PageIndex < 3; PageIndex++)
+        {
+            if (PageIndex != 0)
+            {
+                TEST_OK(NT_SUCCESS(ZpBrowser_EncodeDocumentQuery(SnapshotId, 1, PageIndex * 100, 100,
+                                    Request, sizeof(Request), &RequestLength)));
+                Status = ZpBrowser_Execute(&Client, ZP_BROWSER_OPERATION_QUERY_DOCUMENT_NODE,
+                                           Request, RequestLength, &Response, &ResponseLength);
+                TEST_OK(ZpStatus_IsSuccess(Status));
+                if (!ZpStatus_IsSuccess(Status)) goto FileCleanup;
+            }
+            TEST_OK(NT_SUCCESS(ZpBrowser_DecodeDocumentPage(Response, ResponseLength, &Page)));
+            TEST_OK(Page.Count == 100 && Page.NextCursor == (PageIndex == 2 ? 0 : (PageIndex + 1) * 100));
+            TEST_OK(Page.ParentType == (Kind == ZpBrowserKindBookmark ?
+                                         ZpBrowserDocumentArray : ZpBrowserDocumentObject));
+            SnapshotId = Page.SnapshotId;
+            Offset = 0;
+            TEST_OK(NT_SUCCESS(ZpBrowser_GetNextDocumentNode(&Page, &Offset, &Node)));
+            TEST_OK(Node.Type == ZpBrowserDocumentObject && FlagOn(Node.Flags, ZP_BROWSER_DOCUMENT_NODE_HAS_CHILDREN));
+            if (PageIndex == 0) FirstId = Node.Id;
+            Mem_Free(Response);
+            Response = NULL;
+        }
+        TEST_OK(NT_SUCCESS(ZpBrowser_EncodeDocumentQuery(SnapshotId, 1, 0, 1,
+                            Request, sizeof(Request), &RequestLength)));
+        Status = ZpBrowser_Execute(&Client, ZP_BROWSER_OPERATION_QUERY_DOCUMENT_NODE,
+                                   Request, RequestLength, &Response, &ResponseLength);
+        TEST_OK(ZpStatus_IsSuccess(Status));
+        if (!ZpStatus_IsSuccess(Status)) goto FileCleanup;
+        TEST_OK(NT_SUCCESS(ZpBrowser_DecodeDocumentPage(Response, ResponseLength, &Page)));
+        Offset = 0;
+        TEST_OK(NT_SUCCESS(ZpBrowser_GetNextDocumentNode(&Page, &Offset, &Node)) && Node.Id == FirstId);
+        Mem_Free(Response);
+        Response = NULL;
+        TEST_OK(NT_SUCCESS(ZpBrowser_EncodeDocumentQuery(SnapshotId, FirstId, 0, 100,
+                            Request, sizeof(Request), &RequestLength)));
+        Status = ZpBrowser_Execute(&Client, ZP_BROWSER_OPERATION_QUERY_DOCUMENT_NODE,
+                                   Request, RequestLength, &Response, &ResponseLength);
+        TEST_OK(ZpStatus_IsSuccess(Status));
+        if (!ZpStatus_IsSuccess(Status)) goto FileCleanup;
+        TEST_OK(NT_SUCCESS(ZpBrowser_DecodeDocumentPage(Response, ResponseLength, &Page)) && Page.Count == 3);
+        Offset = 0;
+        ArrayId = 0;
+        for (Index = 0; Index < Page.Count; Index++)
+        {
+            TEST_OK(NT_SUCCESS(ZpBrowser_GetNextDocumentNode(&Page, &Offset, &Node)));
+            if (Node.Type == ZpBrowserDocumentArray) ArrayId = Node.Id;
+            else if (Node.Type == ZpBrowserDocumentObject) TEST_OK(Node.Flags == 0);
+            else TEST_OK(Node.Type == ZpBrowserDocumentNumber && Node.Value.Length == 1);
+        }
+        TEST_OK(ArrayId != 0);
+        Mem_Free(Response);
+        Response = NULL;
+        TEST_OK(NT_SUCCESS(ZpBrowser_EncodeDocumentQuery(SnapshotId, ArrayId, 0, 100,
+                            Request, sizeof(Request), &RequestLength)));
+        Status = ZpBrowser_Execute(&Client, ZP_BROWSER_OPERATION_QUERY_DOCUMENT_NODE,
+                                   Request, RequestLength, &Response, &ResponseLength);
+        TEST_OK(ZpStatus_IsSuccess(Status));
+        if (!ZpStatus_IsSuccess(Status)) goto FileCleanup;
+        TEST_OK(NT_SUCCESS(ZpBrowser_DecodeDocumentPage(Response, ResponseLength, &Page)) && Page.Count == 3);
+        Offset = 0;
+        TEST_OK(NT_SUCCESS(ZpBrowser_GetNextDocumentNode(&Page, &Offset, &Node)) &&
+                Node.Type == ZpBrowserDocumentBoolean);
+        TEST_OK(NT_SUCCESS(ZpBrowser_GetNextDocumentNode(&Page, &Offset, &Node)) && Node.Type == ZpBrowserDocumentNull);
+        TEST_OK(NT_SUCCESS(ZpBrowser_GetNextDocumentNode(&Page, &Offset, &Node)) &&
+                Node.Type == ZpBrowserDocumentString);
+        Mem_Free(Response);
+        Response = NULL;
+        TEST_OK(NT_SUCCESS(ZpBrowser_EncodeDocumentClose(SnapshotId, Request, sizeof(Request), &RequestLength)));
+        Status = ZpBrowser_Execute(&Client, ZP_BROWSER_OPERATION_CLOSE_DOCUMENT,
+                                   Request, RequestLength, &Response, &ResponseLength);
+        TEST_OK(ZpStatus_IsSuccess(Status) && IsListEmpty(&Client.Snapshots));
+FileCleanup:
+        Mem_Free(Response);
+        Response = NULL;
+        ZpClientSnapshot_CloseAll(&Client);
+        TEST_OK(DeleteFileW(FilePath));
+    }
+    TEST_OK(RemoveDirectoryW(ProfilePath));
+    TEST_OK(RemoveDirectoryW(UserData));
+}
+
+TEST_FUNC(BrowserJson)
+{
     UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGC);
     UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGV);
-
-    Status = ZpJson_ParseUtf8(JsonText, sizeof(JsonText) - 2, &Root);
-    TEST_OK(NT_SUCCESS(Status));
-    if (NT_SUCCESS(Status))
-    {
-        TEST_OK(NT_SUCCESS(ZpJson_GetType(Root, &Type)) && Type == ZpJsonObject);
-        TEST_OK(NT_SUCCESS(ZpJson_GetSize(Root, &Size)) && Size == 3);
-        Status = ZpJson_GetNamedValue(Root, L"text", ARRAYSIZE(L"text") - 1, &Element);
-        TEST_OK(NT_SUCCESS(Status));
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpJson_GetString(Element, &String);
-            if (NT_SUCCESS(Status)) Text = WindowsGetStringRawBuffer(String, &Length);
-            TEST_OK(NT_SUCCESS(Status) && Length == 1 && Text[0] == L'\x4E2D' && Text[1] == UNICODE_NULL);
-            WindowsDeleteString(String);
-            String = NULL;
-            ZpJson_CloseValue(Element);
-            Element = NULL;
-        }
-        TEST_OK(ZpJson_GetNamedValue(Root,
-                                     L"missing",
-                                     ARRAYSIZE(L"missing") - 1,
-                                     &Element) == STATUS_NOT_FOUND);
-        Status = ZpJson_GetNamedValue(Root, L"items", ARRAYSIZE(L"items") - 1, &Container);
-        TEST_OK(NT_SUCCESS(Status));
-        if (NT_SUCCESS(Status))
-        {
-            TEST_OK(NT_SUCCESS(ZpJson_GetSize(Container, &Size)) && Size == 3);
-            Status = ZpJson_CreateIterator(Container, 1, &Iterator);
-            TEST_OK(NT_SUCCESS(Status));
-            if (NT_SUCCESS(Status))
-            {
-                Status = ZpJson_IteratorNext(Iterator, &String, &Element);
-                TEST_OK(NT_SUCCESS(Status) && String == NULL &&
-                        NT_SUCCESS(ZpJson_GetType(Element, &Type)) && Type == ZpJsonNull);
-                if (NT_SUCCESS(Status))
-                {
-                    ZpJson_CloseValue(Element);
-                    Element = NULL;
-                }
-                Status = ZpJson_IteratorNext(Iterator, &String, &Element);
-                TEST_OK(NT_SUCCESS(Status) && String == NULL);
-                if (NT_SUCCESS(Status))
-                {
-                    Status = ZpJson_Stringify(Element, &String);
-                    if (NT_SUCCESS(Status)) Text = WindowsGetStringRawBuffer(String, &Length);
-                    TEST_OK(NT_SUCCESS(Status) && Length == ARRAYSIZE(L"12.5") - 1 &&
-                            wcscmp(Text, L"12.5") == 0);
-                    WindowsDeleteString(String);
-                    String = NULL;
-                    ZpJson_CloseValue(Element);
-                    Element = NULL;
-                }
-                TEST_OK(ZpJson_IteratorNext(Iterator, &String, &Element) == STATUS_NO_MORE_ENTRIES);
-                ZpJson_CloseIterator(Iterator);
-                Iterator = NULL;
-            }
-            ZpJson_CloseValue(Container);
-            Container = NULL;
-        }
-        ZpJson_CloseValue(Root);
-        Root = NULL;
-    }
-    TEST_OK(!NT_SUCCESS(ZpJson_ParseUtf8(InvalidUtf8, sizeof(InvalidUtf8), &Root)));
-    TEST_OK(ZpJson_ParseUtf8(InvalidJson, sizeof(InvalidJson), &Root) == STATUS_DATA_ERROR);
-    TEST_OK(ZpJson_ParseUtf8(JsonText, 0, &Root) == STATUS_DATA_ERROR);
-    Status = ZpJson_ParseUtf8(ObjectText, sizeof("{\"key\":true}") - 1, &Root);
-    TEST_OK(NT_SUCCESS(Status));
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpJson_CreateIterator(Root, 0, &Iterator);
-        TEST_OK(NT_SUCCESS(Status));
-        if (NT_SUCCESS(Status))
-        {
-            Status = ZpJson_IteratorNext(Iterator, &String, &Element);
-            if (NT_SUCCESS(Status)) Text = WindowsGetStringRawBuffer(String, &Length);
-            TEST_OK(NT_SUCCESS(Status) && Length == ARRAYSIZE(L"key") - 1 && wcscmp(Text, L"key") == 0 &&
-                    NT_SUCCESS(ZpJson_GetType(Element, &Type)) && Type == ZpJsonBoolean);
-            if (NT_SUCCESS(Status))
-            {
-                WindowsDeleteString(String);
-                String = NULL;
-                ZpJson_CloseValue(Element);
-            }
-            TEST_OK(ZpJson_IteratorNext(Iterator, &String, &Element) == STATUS_NO_MORE_ENTRIES);
-            ZpJson_CloseIterator(Iterator);
-        }
-    }
-    ZpJson_CloseValue(Root);
-    Root = NULL;
-
-    Length = GetTempPathW(ARRAYSIZE(TempPath), TempPath);
-    TEST_OK(Length != 0 && Length < ARRAYSIZE(TempPath));
-    if (Length != 0 && Length < ARRAYSIZE(TempPath))
-    {
-        TempResult = GetTempFileNameW(TempPath, L"ZPJ", 0, FilePath);
-        TEST_OK(TempResult != 0);
-        if (TempResult != 0)
-        {
-            File = CreateFileW(FilePath,
-                               GENERIC_WRITE,
-                               0,
-                               NULL,
-                               CREATE_ALWAYS,
-                               FILE_ATTRIBUTE_TEMPORARY,
-                               NULL);
-            TEST_OK(File != INVALID_HANDLE_VALUE);
-            if (File != INVALID_HANDLE_VALUE)
-            {
-                Status = WriteFile(File, JsonText, sizeof(JsonText) - 2, &Written, NULL) &&
-                         Written == sizeof(JsonText) - 2 ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
-                NtClose(File);
-                TEST_OK(NT_SUCCESS(Status));
-                if (NT_SUCCESS(Status))
-                {
-                    Status = ZpJson_ParseUtf8File(FilePath, sizeof(JsonText) - 2, &Root);
-                    TEST_OK(NT_SUCCESS(Status) &&
-                            NT_SUCCESS(ZpJson_GetType(Root, &Type)) && Type == ZpJsonObject);
-                    if (NT_SUCCESS(Status))
-                    {
-                        ZpJson_CloseValue(Root);
-                        Root = NULL;
-                    }
-                    TEST_OK(ZpJson_ParseUtf8File(FilePath,
-                                                 sizeof(JsonText) - 3,
-                                                 &Root) == STATUS_FILE_TOO_LARGE);
-                }
-            }
-            TEST_OK(DeleteFileW(FilePath));
-        }
-    }
+    TestBrowserJson(TEST_PARAMETER_RESULT);
 }

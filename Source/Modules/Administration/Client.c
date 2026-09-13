@@ -1,10 +1,11 @@
-﻿#include "Client.h"
+﻿#define COBJMACROS
+
+#include "Client.h"
 
 #include "ChildSession.h"
 #include "ShadowCopy.h"
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
-#define COBJMACROS
 #include <ws2ipdef.h>
 #include <netfw.h>
 #include <netcon.h>

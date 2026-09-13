@@ -3,7 +3,7 @@
 #include <sddl.h>
 #include <userenv.h>
 
-#include <KNSoft/NDK/Win32/API/WinSta.h>
+#include <KNSoft/NDK/Win32/WinSta/WinSta.h>
 
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Account.h"
 

