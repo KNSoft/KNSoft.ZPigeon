@@ -865,6 +865,7 @@ function showView(name, historyMode = "replace") {
   for (const [view] of views) $(`${view}View`).hidden = name !== view;
   for (const button of document.querySelectorAll(".app-nav button"))
     button.classList.toggle("active", button.dataset.category === category);
+  moduleNav.hidden = name === "agent";
   moduleNav.replaceChildren(
     ...categories[category].map(([view, title]) => {
       const button = document.createElement("button");

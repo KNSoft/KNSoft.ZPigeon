@@ -238,13 +238,12 @@ public sealed class ZPigeonAgent(
         store.SetItemState(message.SessionId, message.Sequence, SessionItemState.Running);
         Notify(message.SessionId);
         var session = store.GetSession(message.SessionId);
-        var agent = store.GetAgent(session.AgentId);
-        var model = store.GetModel(agent.ModelId, true);
+        var profile = store.GetProfile();
+        var model = store.GetModel(session.ModelId, true);
         var clientId = ResolveClientId(session.ClientFingerprint);
-        var tools = SelectTools(agent, clientId);
-        var systemPrompt = BuildSystemPrompt(agent, session.ClientFingerprint, tools);
+        var tools = SelectTools(profile, clientId);
+        var systemPrompt = BuildSystemPrompt(profile, session.ClientFingerprint, tools);
         await CompactIfNeededAsync(session,
-                                   agent,
                                    model,
                                    tools,
                                    systemPrompt,
@@ -345,7 +344,6 @@ public sealed class ZPigeonAgent(
 
     private async Task CompactIfNeededAsync(
         AgentSession session,
-        AgentConfiguration agent,
         ModelConfiguration model,
         IReadOnlyList<ZPigeonTool> tools,
         string systemPrompt,
@@ -356,7 +354,6 @@ public sealed class ZPigeonAgent(
         var available = model.ContextWindow - model.MaximumOutputTokens;
         if (available < 1 || EstimateTokens(prompt, items, tools) < available * 4L / 5L) return;
         await CompactAsync(session,
-                           agent,
                            model,
                            throughSequence,
                            cancellationToken).ConfigureAwait(false);
@@ -365,8 +362,7 @@ public sealed class ZPigeonAgent(
     private async Task CompactCurrentAsync(Guid sessionId, CancellationToken cancellationToken)
     {
         var session = store.GetSession(sessionId);
-        var agent = store.GetAgent(session.AgentId);
-        var model = store.GetModel(agent.ModelId, true);
+        var model = store.GetModel(session.ModelId, true);
         _ = ResolveClientId(session.ClientFingerprint);
         var through = store.GetItems(sessionId)
                            .Where(item => item.State != SessionItemState.Queued &&
@@ -375,12 +371,11 @@ public sealed class ZPigeonAgent(
                            .DefaultIfEmpty()
                            .Max();
         if (through == 0) return;
-        await CompactAsync(session, agent, model, through, cancellationToken).ConfigureAwait(false);
+        await CompactAsync(session, model, through, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task CompactAsync(
         AgentSession session,
-        AgentConfiguration agent,
         ModelConfiguration model,
         long throughSequence,
         CancellationToken cancellationToken)
@@ -461,30 +456,28 @@ public sealed class ZPigeonAgent(
                                                          item.State != SessionItemState.Queued)));
     }
 
-    private IReadOnlyList<ZPigeonTool> SelectTools(AgentConfiguration agent, ulong clientId)
+    private IReadOnlyList<ZPigeonTool> SelectTools(AgentProfile profile, ulong clientId)
     {
-        var selected = agent.ToolNames.ToHashSet(StringComparer.Ordinal);
+        var selected = profile.ToolNames.ToHashSet(StringComparer.Ordinal);
         var tools = toolCatalog.CreateBuiltInTools(clientId)
                                .Where(tool => selected.Contains(tool.Function.Name))
                                .ToArray();
         if (tools.Length != selected.Count)
         {
-            throw new InvalidDataException("The agent references an unavailable tool.");
+            throw new InvalidDataException("The profile references an unavailable tool.");
         }
         return tools;
     }
 
     private static string BuildSystemPrompt(
-        AgentConfiguration agent,
+        AgentProfile profile,
         string clientFingerprint,
         IReadOnlyList<ZPigeonTool> tools)
     {
         var sensitive = string.Join(", ", tools.Where(tool => tool.Sensitive)
                                                   .Select(tool => tool.Function.Name));
         var result = new StringBuilder()
-            .Append("You are the ZPigeon management agent named ")
-            .Append(agent.Name)
-            .Append(" for the authorized client with public-key fingerprint ")
+            .Append("You are the ZPigeon management assistant for the authorized client with public-key fingerprint ")
             .Append(clientFingerprint)
             .Append(". Use tools for facts and actions, inspect state before changing it, and never claim an ")
             .Append("action succeeded unless a tool confirms it. Perform a destructive action only when the user ")
@@ -497,11 +490,11 @@ public sealed class ZPigeonAgent(
                   .Append(sensitive)
                   .Append(") may be used only when the user explicitly requested that exact data.");
         }
-        AppendDocument(result, "System prompt", agent.SystemPrompt);
-        AppendDocument(result, "AGENTS.md", agent.AgentsMd);
-        AppendDocument(result, "TOOLS.md", agent.ToolsMd);
-        AppendDocument(result, "MEMORY.md", agent.MemoryMd);
-        foreach (var document in agent.Documents) AppendDocument(result, document.Name, document.Content);
+        AppendDocument(result, "System prompt", profile.SystemPrompt);
+        AppendDocument(result, "AGENTS.md", profile.AgentsMd);
+        AppendDocument(result, "TOOLS.md", profile.ToolsMd);
+        AppendDocument(result, "MEMORY.md", profile.MemoryMd);
+        foreach (var document in profile.Documents) AppendDocument(result, document.Name, document.Content);
         return result.ToString();
     }
 

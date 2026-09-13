@@ -142,7 +142,7 @@ REST / UI 适配器 -----------> Application | Server.Managed
 - `Server.Managed` 是可复用的 .NET SDK，忠实封装 Native 能力、原始状态和流式对象；
 - `Application` 组合适合自动化的管理用例，显式接收 `ClientId` 和取消令牌，并统一参数与结果边界；它不依赖 ASP.NET、MCP SDK、模型 Provider 或 UI；
 - `Tools` 以 `AIFunction` 定义唯一的模型工具目录、参数 Schema、只读/破坏性语义和敏感性；同一函数分别用于外部 MCP 与内置智能体；
-- `Agent` 负责模型、Agent 与会话持久化、模型协议、上下文和函数调用循环，不经 HTTP 回调本机 REST，也不复制工具执行逻辑；
+- `Agent` 负责模型、会话及全局 Profile 持久化、模型协议、上下文和函数调用循环，不经 HTTP 回调本机 REST，也不复制工具执行逻辑；
 - `Web` 是组合根，显式映射 REST，托管 MCP，并提供模型配置和对话 UI。REST 在语义完全相同时复用 Application；UI 专用分页、二进制传输、WebSocket 和长生命周期会话等适配器可直接使用 Managed SDK，不强行改写成模型工具。
 
 REST、MCP 和内置智能体是三种入口，不是三套业务实现。REST 路由按 UI 和传输需求显式映射；`ToolAudience.ExternalMcp` 与 `ToolAudience.BuiltInAgent` 只决定一个工具面向哪类智能体。模型 Provider 与暴露范围正交，不能以 Provider 类型决定工具权限或目标。
@@ -153,7 +153,7 @@ REST、MCP 和内置智能体是三种入口，不是三套业务实现。REST �
 
 模型目录使用仓库内 `Source/3rdParty/models.dev/api.json` 的静态快照，保留上游 Provider ID，并在进程启动时解析一次。`Update.cmd` 只供维护者手动覆盖快照；运行时不联网更新、不引入 npm 包或第二套缓存。模型配置显式保存 Provider、接口协议、Base URL、认证、模型 ID、上下文窗口、最大输出、Reasoning、超时和高级 JSON；高级 JSON 原样合并，但不能覆盖消息、工具等结构字段。
 
-模型、Agent、会话及按序事件保存在 Server 的 SQLite 数据库。Agent 只包含名称、模型、System Prompt、工具白名单、`AGENTS.md`、`TOOLS.md`、`MEMORY.md` 和自定义 Markdown。会话绑定 Client 公钥指纹，保存用户、助手、Tool Call、Tool Result、压缩摘要、错误及归一化和原始 Usage；支持历史搜索、分支和 JSON 导出。每个会话最多一个运行循环；新消息默认排队，Steer 取消当前请求并优先执行，Stop 取消当前请求和未运行队列。上下文达到阈值时自动压缩，也可手动触发；执行顺序独立于消息提交顺序，终止的 Tool Call 会写入错误结果，保证后续协议历史完整。
+模型、会话及按序事件保存在 Server 的 SQLite 数据库。会话直接关联模型，所有会话共用唯一一份全局 Profile，包含 System Prompt、工具白名单、`AGENTS.md`、`TOOLS.md`、`MEMORY.md` 和自定义 Markdown；每轮请求读取会话的模型与全局 Profile。修改 Profile 从下一轮消息开始生效，正在执行的一轮沿用开始时读取的内容；新会话和分支都不保存 Profile 副本，不维护独立 Agent 配置实体。会话绑定 Client 公钥指纹，保存用户、助手、Tool Call、Tool Result、压缩摘要、错误及归一化和原始 Usage；支持历史搜索、分支和 JSON 导出。每个会话最多一个运行循环；新消息默认排队，Steer 取消当前请求并优先执行，Stop 取消当前请求和未运行队列。上下文达到阈值时自动压缩，也可手动触发；执行顺序独立于消息提交顺序，终止的 Tool Call 会写入错误结果，保证后续协议历史完整。
 
 ## 4. Deployment、S 与 C 身份
 

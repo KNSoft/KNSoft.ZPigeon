@@ -12,10 +12,11 @@ public sealed class AgentStore
     private readonly ISecretProtector protector;
     private readonly Lock sync = new();
 
-    public AgentStore(string path, ISecretProtector protector)
+    public AgentStore(string path, ISecretProtector protector, AgentProfile defaultProfile)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(protector);
+        ArgumentNullException.ThrowIfNull(defaultProfile);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         connectionString = new SqliteConnectionStringBuilder
         {
@@ -25,7 +26,7 @@ public sealed class AgentStore
             ForeignKeys = true
         }.ToString();
         this.protector = protector;
-        Initialize();
+        Initialize(defaultProfile);
     }
 
     public ModelConfiguration[] GetModels()
@@ -117,104 +118,7 @@ public sealed class AgentStore
             }
             catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
             {
-                throw new InvalidOperationException("The model configuration is used by an agent.", exception);
-            }
-        }
-    }
-
-    public AgentConfiguration[] GetAgents()
-    {
-        lock (sync)
-        {
-            using var connection = Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = "SELECT * FROM Agent ORDER BY Name COLLATE NOCASE, Id";
-            using var reader = command.ExecuteReader();
-            var result = new List<AgentConfiguration>();
-            while (reader.Read()) result.Add(ReadAgent(reader));
-            return [.. result];
-        }
-    }
-
-    public AgentConfiguration GetAgent(Guid id)
-    {
-        ValidateId(id, nameof(id));
-        lock (sync)
-        {
-            using var connection = Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = "SELECT * FROM Agent WHERE Id = $id";
-            command.Parameters.AddWithValue("$id", id.ToString("D"));
-            using var reader = command.ExecuteReader();
-            return reader.Read() ? ReadAgent(reader) :
-                throw new KeyNotFoundException("The agent does not exist.");
-        }
-    }
-
-    public AgentConfiguration SaveAgent(AgentConfiguration value, bool create)
-    {
-        ArgumentNullException.ThrowIfNull(value);
-        ValidateId(value.Id, nameof(value));
-        lock (sync)
-        {
-            using var connection = Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = create ?
-                """
-                INSERT INTO Agent
-                    (Id, Name, ModelId, SystemPrompt, ToolNames, AgentsMd, ToolsMd, MemoryMd, Documents)
-                VALUES
-                    ($id, $name, $modelId, $systemPrompt, $toolNames, $agentsMd, $toolsMd, $memoryMd,
-                     $documents)
-                """ :
-                """
-                UPDATE Agent SET
-                    Name = $name, ModelId = $modelId, SystemPrompt = $systemPrompt,
-                    ToolNames = $toolNames, AgentsMd = $agentsMd, ToolsMd = $toolsMd,
-                    MemoryMd = $memoryMd, Documents = $documents
-                WHERE Id = $id
-                """;
-            command.Parameters.AddWithValue("$id", value.Id.ToString("D"));
-            command.Parameters.AddWithValue("$name", value.Name);
-            command.Parameters.AddWithValue("$modelId", value.ModelId.ToString("D"));
-            command.Parameters.AddWithValue("$systemPrompt", value.SystemPrompt);
-            command.Parameters.AddWithValue("$toolNames", JsonSerializer.Serialize(value.ToolNames, JsonOptions));
-            command.Parameters.AddWithValue("$agentsMd", value.AgentsMd);
-            command.Parameters.AddWithValue("$toolsMd", value.ToolsMd);
-            command.Parameters.AddWithValue("$memoryMd", value.MemoryMd);
-            command.Parameters.AddWithValue("$documents", JsonSerializer.Serialize(value.Documents, JsonOptions));
-            try
-            {
-                if (command.ExecuteNonQuery() != 1)
-                {
-                    throw new KeyNotFoundException("The agent does not exist.");
-                }
-            }
-            catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
-            {
-                throw new InvalidOperationException("The agent references an unavailable model configuration.",
-                                                    exception);
-            }
-            return value;
-        }
-    }
-
-    public void DeleteAgent(Guid id)
-    {
-        ValidateId(id, nameof(id));
-        lock (sync)
-        {
-            using var connection = Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM Agent WHERE Id = $id";
-            command.Parameters.AddWithValue("$id", id.ToString("D"));
-            try
-            {
-                if (command.ExecuteNonQuery() != 1) throw new KeyNotFoundException("The agent does not exist.");
-            }
-            catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
-            {
-                throw new InvalidOperationException("The agent is used by a session.", exception);
+                throw new InvalidOperationException("The model configuration is used by a session.", exception);
             }
         }
     }
@@ -229,9 +133,9 @@ public sealed class AgentStore
             using var connection = Open();
             using var command = connection.CreateCommand();
             command.CommandText = """
-                SELECT Session.Id, Session.AgentId, Agent.Name, Session.Title,
+                SELECT Session.Id, Session.ModelId, Model.Name, Session.Title,
                        Session.CreatedAt, Session.UpdatedAt
-                FROM Session JOIN Agent ON Agent.Id = Session.AgentId
+                FROM Session JOIN Model ON Model.Id = Session.ModelId
                 WHERE Session.ClientFingerprint = $fingerprint
                   AND ($query IS NULL OR instr(lower(Session.Title), lower($query)) > 0 OR EXISTS (
                       SELECT 1 FROM SessionItem
@@ -272,9 +176,9 @@ public sealed class AgentStore
         }
     }
 
-    public AgentSession CreateSession(Guid agentId, string clientFingerprint, string title)
+    public AgentSession CreateSession(Guid modelId, string clientFingerprint, string title)
     {
-        ValidateId(agentId, nameof(agentId));
+        ValidateId(modelId, nameof(modelId));
         ValidateFingerprint(clientFingerprint);
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
         var id = Guid.NewGuid();
@@ -284,11 +188,11 @@ public sealed class AgentStore
             using var connection = Open();
             using var command = connection.CreateCommand();
             command.CommandText = """
-                INSERT INTO Session (Id, AgentId, ClientFingerprint, Title, CreatedAt, UpdatedAt)
-                VALUES ($id, $agentId, $clientFingerprint, $title, $createdAt, $updatedAt)
+                INSERT INTO Session (Id, ModelId, ClientFingerprint, Title, CreatedAt, UpdatedAt)
+                VALUES ($id, $modelId, $clientFingerprint, $title, $createdAt, $updatedAt)
                 """;
             command.Parameters.AddWithValue("$id", id.ToString("D"));
-            command.Parameters.AddWithValue("$agentId", agentId.ToString("D"));
+            command.Parameters.AddWithValue("$modelId", modelId.ToString("D"));
             command.Parameters.AddWithValue("$clientFingerprint", clientFingerprint);
             command.Parameters.AddWithValue("$title", title);
             command.Parameters.AddWithValue("$createdAt", FormatTime(now));
@@ -299,10 +203,35 @@ public sealed class AgentStore
             }
             catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
             {
-                throw new InvalidOperationException("The selected agent does not exist.", exception);
+                throw new InvalidOperationException("The selected model does not exist.", exception);
             }
         }
-        return new(id, agentId, clientFingerprint, title, now, now);
+        return new(id, modelId, clientFingerprint, title, now, now);
+    }
+
+    public AgentProfile GetProfile()
+    {
+        lock (sync)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT Configuration FROM Profile WHERE Id = 1";
+            return JsonSerializer.Deserialize<AgentProfile>((string)command.ExecuteScalar()!, JsonOptions) ??
+                throw new InvalidDataException("The profile is invalid.");
+        }
+    }
+
+    public void SaveProfile(AgentProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        lock (sync)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE Profile SET Configuration = $profile WHERE Id = 1";
+            command.Parameters.AddWithValue("$profile", JsonSerializer.Serialize(profile, JsonOptions));
+            command.ExecuteNonQuery();
+        }
     }
 
     public AgentSession RenameSession(Guid id, string title)
@@ -354,7 +283,7 @@ public sealed class AgentStore
             var through = throughSequence ?? maximum;
             if (through < 0 || through > maximum) throw new ArgumentOutOfRangeException(nameof(throughSequence));
             var result = new AgentSession(Guid.NewGuid(),
-                                          source.AgentId,
+                                          source.ModelId,
                                           source.ClientFingerprint,
                                           source.Title,
                                           DateTimeOffset.UtcNow,
@@ -363,11 +292,11 @@ public sealed class AgentStore
             {
                 command.Transaction = transaction;
                 command.CommandText = """
-                    INSERT INTO Session (Id, AgentId, ClientFingerprint, Title, CreatedAt, UpdatedAt)
-                    VALUES ($id, $agentId, $fingerprint, $title, $createdAt, $updatedAt)
+                    INSERT INTO Session (Id, ModelId, ClientFingerprint, Title, CreatedAt, UpdatedAt)
+                    VALUES ($id, $modelId, $fingerprint, $title, $createdAt, $updatedAt)
                     """;
                 command.Parameters.AddWithValue("$id", result.Id.ToString("D"));
-                command.Parameters.AddWithValue("$agentId", result.AgentId.ToString("D"));
+                command.Parameters.AddWithValue("$modelId", result.ModelId.ToString("D"));
                 command.Parameters.AddWithValue("$fingerprint", result.ClientFingerprint);
                 command.Parameters.AddWithValue("$title", result.Title);
                 command.Parameters.AddWithValue("$createdAt", FormatTime(result.CreatedAt));
@@ -664,7 +593,7 @@ public sealed class AgentStore
         }
     }
 
-    private void Initialize()
+    private void Initialize(AgentProfile defaultProfile)
     {
         lock (sync)
         {
@@ -701,20 +630,13 @@ public sealed class AgentStore
                         RequestTimeoutSeconds INTEGER NOT NULL,
                         AdvancedJson TEXT NOT NULL
                     );
-                    CREATE TABLE IF NOT EXISTS Agent (
-                        Id TEXT PRIMARY KEY,
-                        Name TEXT NOT NULL,
-                        ModelId TEXT NOT NULL REFERENCES Model(Id) ON DELETE RESTRICT,
-                        SystemPrompt TEXT NOT NULL,
-                        ToolNames TEXT NOT NULL,
-                        AgentsMd TEXT NOT NULL,
-                        ToolsMd TEXT NOT NULL,
-                        MemoryMd TEXT NOT NULL,
-                        Documents TEXT NOT NULL
+                    CREATE TABLE IF NOT EXISTS Profile (
+                        Id INTEGER PRIMARY KEY CHECK (Id = 1),
+                        Configuration TEXT NOT NULL
                     );
                     CREATE TABLE IF NOT EXISTS Session (
                         Id TEXT PRIMARY KEY,
-                        AgentId TEXT NOT NULL REFERENCES Agent(Id) ON DELETE RESTRICT,
+                        ModelId TEXT NOT NULL REFERENCES Model(Id) ON DELETE RESTRICT,
                         ClientFingerprint TEXT NOT NULL,
                         Title TEXT NOT NULL,
                         CreatedAt TEXT NOT NULL,
@@ -747,6 +669,12 @@ public sealed class AgentStore
                     );
                     PRAGMA user_version = 1;
                     """;
+                command.ExecuteNonQuery();
+            }
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "INSERT OR IGNORE INTO Profile (Id, Configuration) VALUES (1, $profile)";
+                command.Parameters.AddWithValue("$profile", JsonSerializer.Serialize(defaultProfile, JsonOptions));
                 command.ExecuteNonQuery();
             }
             using (var command = connection.CreateCommand())
@@ -845,20 +773,9 @@ public sealed class AgentStore
             Convert.ToInt32(reader["RequestTimeoutSeconds"], CultureInfo.InvariantCulture),
             reader["AdvancedJson"].ToString()!);
 
-    private static AgentConfiguration ReadAgent(SqliteDataReader reader) =>
-        new(ParseGuid(reader["Id"].ToString()!),
-            reader["Name"].ToString()!,
-            ParseGuid(reader["ModelId"].ToString()!),
-            reader["SystemPrompt"].ToString()!,
-            JsonSerializer.Deserialize<string[]>(reader["ToolNames"].ToString()!, JsonOptions) ?? [],
-            reader["AgentsMd"].ToString()!,
-            reader["ToolsMd"].ToString()!,
-            reader["MemoryMd"].ToString()!,
-            JsonSerializer.Deserialize<AgentDocument[]>(reader["Documents"].ToString()!, JsonOptions) ?? []);
-
     private static AgentSession ReadSession(SqliteDataReader reader) =>
         new(ParseGuid(reader["Id"].ToString()!),
-            ParseGuid(reader["AgentId"].ToString()!),
+            ParseGuid(reader["ModelId"].ToString()!),
             reader["ClientFingerprint"].ToString()!,
             reader["Title"].ToString()!,
             ParseTime(reader["CreatedAt"].ToString()!),

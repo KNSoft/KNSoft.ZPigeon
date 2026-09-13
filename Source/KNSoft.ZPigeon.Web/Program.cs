@@ -54,7 +54,9 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 var app = builder.Build();
 var secretProtector = new DataProtectionSecretProtector(
     app.Services.GetRequiredService<IDataProtectionProvider>());
-var agentStore = new AgentStore(Path.Combine(applicationData, "agent.db"), secretProtector);
+var agentStore = new AgentStore(Path.Combine(applicationData, "agent.db"),
+                                secretProtector,
+                                AgentWebApi.CreateProfile(null, toolCatalog));
 var agent = new ZPigeonAgent(zpigeonApplication, toolCatalog, agentStore);
 var modelsDevCatalog = new ModelsDevCatalog(Path.Combine(AppContext.BaseDirectory,
                                                          "3rdParty",

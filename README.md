@@ -11,7 +11,7 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
 - 安全部署：严格验证 Server 身份，Client 使用持久化 CNG 实例密钥
 - 极简高效：核心使用纯 C，并优先调用 NT 层接口。不仅功能更多更强，运行效率也更佳。不背负旧系统和历史兼容路径，直接使用 Windows 10 及以上系统能力，带来当下最佳体验
 - 功能全面：系统管理能力覆盖广泛，包含 文件数据、系统软硬件、网络及端口转发、远程桌面/终端 等功能，详见 [功能模块](#功能模块)
-- AI 赋能：同一工具目录同时提供标准 MCP 入口和管理端内置智能体，支持 OpenAI Responses、OpenAI-compatible Chat Completions 和 Anthropic Messages
+- AI 赋能：同一工具目录同时提供标准 MCP 入口和管理端 Agent，支持 OpenAI Responses、OpenAI-compatible Chat Completions 和 Anthropic Messages
 
 ## 功能模块
 
@@ -74,11 +74,10 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
   - 远程桌面：管理启用状态、端口及同一用户多会话策略；按精确 `termsrv.dll` 版本启用或关闭仅驻留内存的多会话补丁；
     管理 Child Sessions 系统功能、Hello-only 登录和仅限 localhost 的凭据委派，并基于 Client 当前活动用户会话创建独立 Child Session；通过受控端口转发建立 RDP 连接，或由用户明确点击开始后使用 Web 交互式远控
 
-- 智能体
+- Agent
   - MCP：通过 Streamable HTTP 向外部智能体提供有界、结构化的管理工具；目标由瞬时 `ClientId` 显式指定
   - 模型：从仓库内的 models.dev 快照选择 Provider 和模型，或手动配置接口协议、Base URL、认证、上下文、输出、Reasoning、超时及高级 JSON；凭据使用当前 Windows 账户加密后保存在本机
-  - Agent：绑定模型、System Prompt、工具以及 `AGENTS.md`、`TOOLS.md`、`MEMORY.md` 和自定义 Markdown
-  - 会话：历史保存在 Server，支持搜索、分支和导出；运行时支持 Tool Call 时间线、Token 用量、上下文压缩、终止、消息排队和插队
+  - 会话：直接选择模型；所有会话共用唯一一份全局 Profile，配置 System Prompt、工具以及 `AGENTS.md`、`TOOLS.md`、`MEMORY.md` 和自定义 Markdown，每次发送消息时提供给模型。历史保存在 Server，支持搜索、分支和导出；运行时支持 Tool Call 时间线、Token 用量、上下文压缩、终止、消息排队和插队
 
 ## 架构与本地运行
 
@@ -90,8 +89,8 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
 - Server Managed：封装可复用的 .NET 管理能力
 - Application：把 Server Managed 能力组合为显式目标、受边界约束的管理用例
 - Tools：定义 MCP 与内置智能体共用的唯一工具目录及读写语义
-- Agent：持久化模型、Agent 与会话，并通过 OpenAI Responses、Chat Completions 或 Anthropic Messages 执行工具循环
-- Web：承载本地回环 REST、MCP、模型与 Agent 配置、会话界面、已连接 Client 首页和按 Client 隔离的可视化控制界面
+- Agent：持久化模型、会话及全局 Profile，并通过 OpenAI Responses、Chat Completions 或 Anthropic Messages 执行工具循环
+- Web：承载本地回环 REST、MCP、模型配置、会话及全局 Profile 界面、已连接 Client 首页和按 Client 隔离的可视化控制界面
 - Transport：支持 QUIC、TLS/TCP 和 DTLS/UDP，默认使用 QUIC
 
 首次获取源码时需初始化 `Source/3rdParty/rdpwrap.ini` 子模块。
@@ -101,7 +100,7 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
 2. 启动一个或多个 `KNSoft.ZPigeon.Client.exe`
 3. 打开 `http://127.0.0.1:9983`，再从首页选择 Client
 
-MCP Streamable HTTP 端点为 `http://127.0.0.1:9983/mcp`。外部调用方先使用 `list_clients` 获取本次 Server 进程内有效的 `ClientId`，再把该值传给其他工具。MCP 无会话目标状态，不会隐式沿用上一次选择的 Client。管理端“智能体”页面则把当前页面的 Client 固定绑定到工具调用，模型无法改选目标。
+MCP Streamable HTTP 端点为 `http://127.0.0.1:9983/mcp`。外部调用方先使用 `list_clients` 获取本次 Server 进程内有效的 `ClientId`，再把该值传给其他工具。MCP 无会话目标状态，不会隐式沿用上一次选择的 Client。管理端“Agent”页面则把当前页面的 Client 固定绑定到工具调用，模型无法改选目标。
 
 AI 工具按用途显式列入目录，不会因底层 SDK 新增 API 或枚举值而自动暴露。Cookie、密码等敏感浏览器数据使用独立工具和敏感性标记，并提示模型仅在用户明确要求时调用。OpenAI 请求显式关闭 Provider 端存储；所有模型服务的实际数据处理和保留策略仍由所选 Provider 决定。
 

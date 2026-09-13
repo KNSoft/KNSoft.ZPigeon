@@ -68,30 +68,27 @@ public sealed record ModelConfiguration(
     int RequestTimeoutSeconds,
     string AdvancedJson);
 
-public sealed record AgentDocument(string Name, string Content);
+public sealed record ProfileDocument(string Name, string Content);
 
-public sealed record AgentConfiguration(
-    Guid Id,
-    string Name,
-    Guid ModelId,
+public sealed record AgentProfile(
     string SystemPrompt,
     string[] ToolNames,
     string AgentsMd,
     string ToolsMd,
     string MemoryMd,
-    AgentDocument[] Documents);
+    ProfileDocument[] Documents);
 
 public sealed record AgentSessionSummary(
     Guid Id,
-    Guid AgentId,
-    string AgentName,
+    Guid ModelId,
+    string ModelName,
     string Title,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
 public sealed record AgentSession(
     Guid Id,
-    Guid AgentId,
+    Guid ModelId,
     string ClientFingerprint,
     string Title,
     DateTimeOffset CreatedAt,

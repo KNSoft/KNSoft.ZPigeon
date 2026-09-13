@@ -37,13 +37,10 @@ public static class AgentValidation
         ModelProtocolClient.ValidateAdvanced(value.Protocol, value.AdvancedJson);
     }
 
-    public static void ValidateAgent(AgentConfiguration value, IReadOnlySet<string> knownTools)
+    public static void ValidateProfile(AgentProfile value, IReadOnlySet<string> knownTools)
     {
         ArgumentNullException.ThrowIfNull(value);
         ArgumentNullException.ThrowIfNull(knownTools);
-        ValidateId(value.Id, nameof(value));
-        ValidateId(value.ModelId, nameof(value.ModelId));
-        ValidateText(value.Name, 128, nameof(value.Name), true);
         ValidateText(value.SystemPrompt, 65536, nameof(value.SystemPrompt), false);
         ValidateText(value.AgentsMd, 262144, nameof(value.AgentsMd), false);
         ValidateText(value.ToolsMd, 262144, nameof(value.ToolsMd), false);
@@ -53,14 +50,14 @@ public static class AgentValidation
             value.ToolNames.Any(name => !knownTools.Contains(name)) ||
             value.Documents.Length > 16)
         {
-            throw new ArgumentException("The agent configuration is invalid.", nameof(value));
+            throw new ArgumentException("The profile is invalid.", nameof(value));
         }
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var document in value.Documents)
         {
             if (document is null)
             {
-                throw new ArgumentException("The agent configuration is invalid.", nameof(value));
+                throw new ArgumentException("The profile is invalid.", nameof(value));
             }
             ValidateText(document.Name, 128, nameof(value.Documents), true);
             ValidateText(document.Content, 262144, nameof(value.Documents), false);

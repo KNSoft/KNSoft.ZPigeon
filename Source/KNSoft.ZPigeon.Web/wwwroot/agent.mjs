@@ -34,14 +34,13 @@ export class AgentManager {
     this.deleteSessionButton = root.querySelector('[data-action="delete-session"]');
     this.modelDialog = document.querySelector("#agentModelDialog");
     this.modelForm = this.modelDialog.querySelector("form");
-    this.agentDialog = document.querySelector("#agentConfigurationDialog");
-    this.agentForm = this.agentDialog.querySelector("form");
+    this.profileDialog = document.querySelector("#agentProfileDialog");
+    this.profileForm = this.profileDialog.querySelector("form");
     this.newSessionDialog = document.querySelector("#agentNewSessionDialog");
     this.newSessionForm = this.newSessionDialog.querySelector("form");
     this.renameDialog = document.querySelector("#agentRenameSessionDialog");
     this.renameForm = this.renameDialog.querySelector("form");
     this.models = [];
-    this.agents = [];
     this.tools = [];
     this.providers = [];
     this.catalogModels = [];
@@ -49,7 +48,6 @@ export class AgentManager {
     this.session = null;
     this.selectedSessionId = null;
     this.modelEditingId = null;
-    this.agentEditingId = null;
     this.eventSource = null;
     this.connected = false;
     this.loaded = false;
@@ -57,6 +55,8 @@ export class AgentManager {
     this.refreshing = false;
     this.refreshPending = false;
     this.searchTimer = null;
+    this.profileDocuments = [];
+    this.selectedDocument = 0;
     this.bindEvents();
     this.renderSessions();
     this.renderSession();
@@ -65,7 +65,8 @@ export class AgentManager {
   bindEvents() {
     this.root.querySelector('[data-action="new-session"]').onclick = () => this.openNewSession();
     this.root.querySelector('[data-action="models"]').onclick = () => this.openModels();
-    this.root.querySelector('[data-action="agents"]').onclick = () => this.openAgents();
+    this.profileButton = this.root.querySelector('[data-action="profile"]');
+    this.profileButton.onclick = () => this.openProfile();
     this.titleButton.onclick = () => this.openRename();
     this.compactButton.onclick = () => this.compact();
     this.forkButton.onclick = () => this.fork();
@@ -76,6 +77,14 @@ export class AgentManager {
     this.root.querySelector("form.agent-composer").onsubmit = (event) => {
       event.preventDefault();
       this.send(Disposition.queue);
+    };
+    this.input.oninput = () => this.resizeComposer();
+    this.input.onkeydown = (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.altKey &&
+          !event.metaKey && !event.isComposing) {
+        event.preventDefault();
+        this.send(Disposition.queue);
+      }
     };
     this.searchInput.oninput = () => {
       clearTimeout(this.searchTimer);
@@ -101,15 +110,20 @@ export class AgentManager {
       event.submitter?.value === "cancel" ? this.modelDialog.close() : this.saveModel();
     };
 
-    const agentList = this.agentDialog.querySelector('[data-role="agent-list"]');
-    agentList.onchange = () => this.selectAgent(agentList.value || null).catch((error) => this.notify(error));
-    this.agentDialog.querySelector('[data-action="new-agent"]').onclick = () =>
-      this.selectAgent(null).catch((error) => this.notify(error));
-    this.agentDialog.querySelector('[data-action="delete-agent"]').onclick = () => this.deleteAgent();
-    this.agentDialog.querySelector('[data-action="add-document"]').onclick = () => this.addDocument();
-    this.agentForm.onsubmit = (event) => {
+    this.profileDialog.querySelector('[data-action="add-document"]').onclick = () => this.addDocument();
+    this.profileDialog.querySelector('[data-action="delete-document"]').onclick = () => this.deleteDocument();
+    this.profileForm.elements.documentName.oninput = () => {
+      this.profileDocuments[this.selectedDocument].name = this.profileForm.elements.documentName.value;
+      this.renderDocumentList();
+    };
+    this.profileForm.elements.documentContent.oninput = () => {
+      this.profileDocuments[this.selectedDocument].content = this.profileForm.elements.documentContent.value;
+    };
+    for (const input of this.profileForm.querySelectorAll('[name="toolMode"]'))
+      input.onchange = () => this.changeToolSelection();
+    this.profileForm.onsubmit = (event) => {
       event.preventDefault();
-      event.submitter?.value === "cancel" ? this.agentDialog.close() : this.saveAgent();
+      event.submitter?.value === "cancel" ? this.profileDialog.close() : this.saveProfile();
     };
 
     this.newSessionForm.onsubmit = (event) => {
@@ -146,9 +160,8 @@ export class AgentManager {
   }
 
   async loadConfiguration() {
-    [this.models, this.agents, this.tools, this.providers] = await Promise.all([
+    [this.models, this.tools, this.providers] = await Promise.all([
       this.get("/api/agent/models"),
-      this.get("/api/agent/agents"),
       this.get("/api/agent/tools"),
       this.get("/api/agent/catalog/providers"),
     ]);
@@ -188,7 +201,7 @@ export class AgentManager {
         details = document.createElement("small");
       button.className = `agent-session-entry${session.id === this.selectedSessionId ? " selected" : ""}`;
       title.textContent = session.title;
-      details.textContent = `${session.agentName} · ${this.formatDate(session.updatedAt)}`;
+      details.textContent = `${session.modelName} · ${this.formatDate(session.updatedAt)}`;
       button.append(title, details);
       button.onclick = () => this.selectSession(session.id);
       return button;
@@ -258,7 +271,7 @@ export class AgentManager {
   renderSession() {
     const value = this.session;
     this.titleButton.textContent = value?.session.title ?? t("agent.noSessionSelected");
-    this.subtitle.textContent = value ? `${value.agent.name} · ${value.model.name}` : "";
+    this.subtitle.textContent = value ? value.model.name : "";
     this.renderUsage(value?.usage);
     this.renderMessages(value?.items ?? []);
     this.updateState();
@@ -384,6 +397,11 @@ export class AgentManager {
     return details;
   }
 
+  resizeComposer() {
+    this.input.style.height = "auto";
+    this.input.style.height = `${Math.min(160, this.input.scrollHeight + 2)}px`;
+  }
+
   async send(disposition) {
     const content = this.input.value.trim();
     if (!this.connected || !this.selectedSessionId || !content) return;
@@ -393,6 +411,7 @@ export class AgentManager {
         disposition,
       });
       this.input.value = "";
+      this.resizeComposer();
       await this.refreshSession();
       this.input.focus();
     } catch (error) {
@@ -448,13 +467,13 @@ export class AgentManager {
   }
 
   openNewSession() {
-    if (!this.agents.length) {
-      this.notify(new Error(t("agent.agentRequired")));
-      this.openAgents();
+    if (!this.models.length) {
+      this.notify(new Error(t("agent.modelRequired")));
+      this.openModels();
       return;
     }
-    this.newSessionForm.elements.agentId.replaceChildren(
-      ...this.agents.map((agent) => new Option(agent.name, agent.id)),
+    this.newSessionForm.elements.modelId.replaceChildren(
+      ...this.models.map((model) => new Option(model.name, model.id)),
     );
     this.newSessionForm.elements.title.value = t("agent.newSessionTitle");
     this.newSessionDialog.showModal();
@@ -464,7 +483,7 @@ export class AgentManager {
     if (!this.newSessionForm.reportValidity()) return;
     try {
       const value = await this.post("/api/agent/sessions", {
-        agentId: this.newSessionForm.elements.agentId.value,
+        modelId: this.newSessionForm.elements.modelId.value,
         title: this.newSessionForm.elements.title.value.trim(),
       });
       this.newSessionDialog.close();
@@ -667,7 +686,6 @@ export class AgentManager {
           ? await this.put(`/api/agent/models/${this.modelEditingId}`, body)
           : await this.post("/api/agent/models", body);
       this.models = await this.get("/api/agent/models");
-      this.agents = await this.get("/api/agent/agents");
       await this.renderModelList(value.id);
       if (this.selectedSessionId) await this.refreshSession();
     } catch (error) {
@@ -724,53 +742,31 @@ export class AgentManager {
     }
   }
 
-  async openAgents() {
+  async openProfile() {
     try {
       if (!this.loaded) await this.loadConfiguration();
-      await this.renderAgentList(this.agents[0]?.id ?? null);
-      this.agentDialog.showModal();
+      const profile = await this.get("/api/agent/profile"),
+        form = this.profileForm;
+      const selected = new Set(profile.toolNames),
+        reads = this.tools.filter((tool) => tool.readOnly);
+      form.elements.toolMode.value = selected.size === reads.length &&
+        reads.every((tool) => selected.has(tool.name)) ? "read" :
+        selected.size === this.tools.length && this.tools.every((tool) => selected.has(tool.name)) ? "all" : "custom";
+      this.renderTools(selected);
+      this.updateToolSelection();
+      this.profileDialog.querySelector('[data-role="tool-details"]').open = false;
+      this.profileDocuments = [
+        { key: "systemPrompt", name: t("agent.systemPrompt"), content: profile.systemPrompt },
+        { key: "agentsMd", name: "AGENTS.md", content: profile.agentsMd },
+        { key: "toolsMd", name: "TOOLS.md", content: profile.toolsMd },
+        { key: "memoryMd", name: "MEMORY.md", content: profile.memoryMd },
+        ...profile.documents.map((document) => ({ ...document })),
+      ];
+      this.selectDocument(0);
+      this.profileDialog.showModal();
     } catch (error) {
       this.notify(error);
     }
-  }
-
-  async renderAgentList(selectedId = this.agentEditingId) {
-    const select = this.agentDialog.querySelector('[data-role="agent-list"]');
-    select.replaceChildren(
-      new Option(t("agent.newAgent"), ""),
-      ...this.agents.map((agent) => new Option(agent.name, agent.id)),
-    );
-    if (selectedId && this.agents.some((agent) => agent.id === selectedId)) select.value = selectedId;
-    await this.selectAgent(select.value || null);
-  }
-
-  async selectAgent(id) {
-    this.agentEditingId = id;
-    let agent = null;
-    try {
-      if (id) agent = await this.get(`/api/agent/agents/${id}`);
-    } catch (error) {
-      this.notify(error);
-      return;
-    }
-    if (id !== this.agentEditingId) return;
-    const form = this.agentForm;
-    this.agentDialog.querySelector('[data-action="delete-agent"]').disabled = !agent;
-    form.elements.name.value = agent?.name ?? "";
-    form.elements.modelId.replaceChildren(
-      ...this.models.map((model) => new Option(model.name, model.id)),
-    );
-    if (agent) form.elements.modelId.value = agent.modelId;
-    form.elements.systemPrompt.value = agent?.systemPrompt ?? "";
-    form.elements.agentsMd.value = agent?.agentsMd ?? "";
-    form.elements.toolsMd.value = agent?.toolsMd ?? "";
-    form.elements.memoryMd.value = agent?.memoryMd ?? "";
-    const selected = new Set(
-      agent?.toolNames ?? this.tools.filter((tool) => tool.readOnly && !tool.sensitive).map((tool) => tool.name),
-    );
-    this.renderTools(selected);
-    this.agentDialog.querySelector('[data-role="documents"]').replaceChildren();
-    for (const document of agent?.documents ?? []) this.addDocument(document);
   }
 
   renderTools(selected) {
@@ -783,6 +779,7 @@ export class AgentManager {
       input.type = "checkbox";
       input.value = tool.name;
       input.checked = selected.has(tool.name);
+      input.onchange = () => this.updateToolSummary();
       name.textContent = tool.name +
         (tool.sensitive ? t("agent.sensitiveSuffix") : tool.destructive ? t("agent.destructiveSuffix") : "");
       description.textContent = tool.description;
@@ -790,75 +787,108 @@ export class AgentManager {
       label.append(input, text);
       return label;
     });
-    this.agentDialog.querySelector('[data-role="tools"]').replaceChildren(...nodes);
+    this.profileDialog.querySelector('[data-role="tools"]').replaceChildren(...nodes);
   }
 
-  addDocument(document = { name: "", content: "" }) {
-    const row = documentNode("div"),
-      name = documentNode("input"),
-      content = documentNode("textarea"),
-      remove = documentNode("button");
-    row.className = "agent-document-row";
-    name.name = "documentName";
-    name.maxLength = 128;
-    name.placeholder = t("agent.documentName");
-    name.value = document.name;
-    content.name = "documentContent";
-    content.maxLength = 262144;
-    content.placeholder = t("agent.markdownContent");
-    content.value = document.content;
-    remove.type = "button";
-    remove.textContent = t("common.delete");
-    remove.onclick = () => row.remove();
-    row.append(name, content, remove);
-    this.agentDialog.querySelector('[data-role="documents"]').append(row);
+  presetToolNames() {
+    const mode = this.profileForm.elements.toolMode.value;
+    return new Set(this.tools.filter((tool) => mode === "all" || tool.readOnly).map((tool) => tool.name));
   }
 
-  agentRequest() {
-    const form = this.agentForm,
-      documentRows = this.agentDialog.querySelectorAll(".agent-document-row");
-    return {
-      name: form.elements.name.value.trim(),
-      modelId: form.elements.modelId.value,
-      systemPrompt: form.elements.systemPrompt.value,
-      toolNames: [...this.agentDialog.querySelectorAll('[data-role="tools"] input:checked')].map(
+  changeToolSelection() {
+    const custom = this.profileForm.elements.toolMode.value === "custom";
+    if (custom)
+      this.profileDialog.querySelector('[data-role="tool-details"]').open = true;
+    if (!custom) {
+      const selected = this.presetToolNames();
+      for (const input of this.profileDialog.querySelectorAll('[data-role="tools"] input'))
+        input.checked = selected.has(input.value);
+    }
+    this.updateToolSelection();
+  }
+
+  updateToolSelection() {
+    const custom = this.profileForm.elements.toolMode.value === "custom";
+    for (const input of this.profileDialog.querySelectorAll('[data-role="tools"] input'))
+      input.disabled = !custom;
+    this.updateToolSummary();
+  }
+
+  updateToolSummary() {
+    this.profileDialog.querySelector('[data-role="tool-summary"]').textContent = t("agent.toolDetails", {
+      selected: this.profileDialog.querySelectorAll('[data-role="tools"] input:checked').length,
+      total: this.tools.length,
+    });
+  }
+
+  renderDocumentList() {
+    this.profileDialog.querySelector('[data-role="documents"]').replaceChildren(
+      ...this.profileDocuments.map((document, index) => {
+        const button = documentNode("button");
+        button.type = "button";
+        button.textContent = document.name || t("agent.documentName");
+        button.title = button.textContent;
+        button.setAttribute("role", "option");
+        button.setAttribute("aria-selected", String(index === this.selectedDocument));
+        button.onclick = () => this.selectDocument(index);
+        return button;
+      }),
+    );
+    this.profileDialog.querySelector('[data-action="add-document"]').disabled =
+      this.profileDocuments.filter((document) => !document.key).length >= 16;
+  }
+
+  selectDocument(index) {
+    this.selectedDocument = index;
+    const document = this.profileDocuments[index], form = this.profileForm;
+    form.elements.documentName.value = document.name;
+    form.elements.documentName.readOnly = !!document.key;
+    form.elements.documentContent.value = document.content;
+    form.elements.documentContent.maxLength = document.key === "systemPrompt" ? 65536 : 262144;
+    this.profileDialog.querySelector('[data-action="delete-document"]').disabled = !!document.key;
+    this.renderDocumentList();
+  }
+
+  addDocument() {
+    if (this.profileDocuments.filter((document) => !document.key).length >= 16) return;
+    const names = new Set(this.profileDocuments.map((document) => document.name.toLowerCase()));
+    let name = "NOTES.md", suffix = 2;
+    while (names.has(name.toLowerCase())) name = `NOTES-${suffix++}.md`;
+    this.profileDocuments.push({ name, content: "" });
+    this.selectDocument(this.profileDocuments.length - 1);
+    this.profileForm.elements.documentName.focus();
+    this.profileForm.elements.documentName.select();
+  }
+
+  deleteDocument() {
+    if (this.profileDocuments[this.selectedDocument].key) return;
+    this.profileDocuments.splice(this.selectedDocument, 1);
+    this.selectDocument(Math.min(this.selectedDocument, this.profileDocuments.length - 1));
+  }
+
+  profileRequest() {
+    const request = {
+      toolNames: [...this.profileDialog.querySelectorAll('[data-role="tools"] input:checked')].map(
         (input) => input.value,
       ),
-      agentsMd: form.elements.agentsMd.value,
-      toolsMd: form.elements.toolsMd.value,
-      memoryMd: form.elements.memoryMd.value,
-      documents: [...documentRows]
-        .map((row) => ({
-          name: row.querySelector('[name="documentName"]').value.trim(),
-          content: row.querySelector('[name="documentContent"]').value,
-        }))
-        .filter((document) => document.name || document.content),
+      documents: [],
     };
-  }
-
-  async saveAgent() {
-    if (!this.agentForm.reportValidity()) return;
-    try {
-      const body = this.agentRequest(),
-        value = this.agentEditingId
-          ? await this.put(`/api/agent/agents/${this.agentEditingId}`, body)
-          : await this.post("/api/agent/agents", body);
-      this.agents = await this.get("/api/agent/agents");
-      await this.renderAgentList(value.id);
-      await this.refreshSessionList();
-      if (this.selectedSessionId) await this.refreshSession();
-    } catch (error) {
-      this.notify(error);
+    const names = new Set();
+    for (const document of this.profileDocuments) {
+      const name = document.name.trim();
+      if (!name || names.has(name.toLowerCase())) throw new Error(t("agent.uniqueDocumentName"));
+      names.add(name.toLowerCase());
+      if (document.key) request[document.key] = document.content;
+      else request.documents.push({ name, content: document.content });
     }
+    return request;
   }
 
-  async deleteAgent() {
-    const agent = this.agents.find((value) => value.id === this.agentEditingId);
-    if (!agent || !confirm(t("agent.confirmDeleteAgent", { name: agent.name }))) return;
+  async saveProfile() {
+    if (!this.profileForm.reportValidity()) return;
     try {
-      await this.remove(`/api/agent/agents/${agent.id}`);
-      this.agents = await this.get("/api/agent/agents");
-      await this.renderAgentList(this.agents[0]?.id ?? null);
+      await this.put("/api/agent/profile", this.profileRequest());
+      this.profileDialog.close();
     } catch (error) {
       this.notify(error);
     }

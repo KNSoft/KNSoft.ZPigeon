@@ -67,7 +67,16 @@ static void TestAgentStore()
     var directory = Path.Combine(Path.GetTempPath(), $"KNSoft.ZPigeon.AgentTest-{Guid.NewGuid():N}");
     try
     {
-        var store = new AgentStore(Path.Combine(directory, "agent.db"), new TestProtector());
+        var profile = new AgentProfile("Answer concisely.",
+                                         [],
+                                         "Follow the session instructions.",
+                                         string.Empty,
+                                         "Remember the selected task.",
+                                         [new("NOTES.md", "Session context")]);
+        AgentValidation.ValidateProfile(profile, new HashSet<string>());
+        var store = new AgentStore(Path.Combine(directory, "agent.db"), new TestProtector(), profile);
+        Assert(store.GetProfile().Documents.Single() == profile.Documents.Single(),
+               "The global profile must exist before any sessions are created.");
         var model = new ModelConfiguration(Guid.NewGuid(),
                                            "Test model",
                                            "openai",
@@ -89,17 +98,29 @@ static void TestAgentStore()
         Assert(store.GetModel(model.Id, false).Credential.Length == 0,
                "Model metadata reads must not decrypt credentials.");
 
-        var configuration = new AgentConfiguration(Guid.NewGuid(),
-                                                    "Test agent",
-                                                    model.Id,
-                                                    string.Empty,
-                                                    [],
-                                                    string.Empty,
-                                                    string.Empty,
-                                                    string.Empty,
-                                                    []);
-        store.SaveAgent(configuration, true);
-        var session = store.CreateSession(configuration.Id, "test-fingerprint", "New session");
+        var session = store.CreateSession(model.Id, "test-fingerprint", "New session");
+        var stored = store.GetSession(session.Id);
+        Assert(stored.ModelId == model.Id,
+               "Sessions must persist their model without an agent configuration.");
+        Assert(store.GetSessions("test-fingerprint", null).Single().ModelName == model.Name,
+               "Session lists must display the selected model.");
+        var secondModel = model with { Id = Guid.NewGuid(), Name = "Second model" };
+        store.SaveModel(secondModel, true);
+        var secondSession = store.CreateSession(secondModel.Id, "other-client", "Other session");
+        Assert(store.GetModels().Length == 2 &&
+               store.GetSessions("test-fingerprint", null).Single().Id == session.Id &&
+               store.GetSession(secondSession.Id).ModelId == secondModel.Id,
+               "Multiple models must remain selectable and sessions isolated by client.");
+        try
+        {
+            store.DeleteModel(model.Id);
+            throw new InvalidOperationException("A model used by a session must not be deleted.");
+        }
+        catch (InvalidOperationException exception) when (exception.InnerException is Microsoft.Data.Sqlite.SqliteException)
+        {
+        }
+        store.DeleteSession(secondSession.Id);
+        store.DeleteModel(secondModel.Id);
         var queued = store.AddUserMessage(session.Id, "queued message", MessageDisposition.Queue);
         store.SetInitialTitle(session.Id, queued.Content);
         var steer = store.AddUserMessage(session.Id, "steer message", MessageDisposition.Steer);
@@ -129,13 +150,36 @@ static void TestAgentStore()
                "Normalized token usage must be persisted.");
 
         var fork = store.ForkSession(session.Id, null);
+        Assert(fork.ModelId == model.Id, "Forks must preserve the selected model.");
+        store.SaveProfile(profile with { SystemPrompt = "Updated instructions" });
+        var reopened = new AgentStore(Path.Combine(directory, "agent.db"), new TestProtector(), profile);
+        Assert(reopened.GetProfile().SystemPrompt == "Updated instructions" &&
+               reopened.GetProfile().Documents.Single() == profile.Documents.Single(),
+               "Restarting must preserve the global profile instead of restoring its defaults.");
+        reopened.SaveProfile(profile with { AgentsMd = "Shared updated instructions" });
+        var laterSession = store.CreateSession(model.Id, "other-client", "Later session");
+        var laterFork = store.ForkSession(session.Id, null);
+        Assert(store.GetProfile().AgentsMd == "Shared updated instructions",
+               "All store instances must read the same profile; new sessions and forks must not replace it.");
+        using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={directory}/agent.db"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM Profile";
+            Assert((long)command.ExecuteScalar()! == 1, "There must be exactly one stored profile.");
+            command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Session') WHERE name = 'Profile'";
+            Assert((long)command.ExecuteScalar()! == 0, "Sessions must not store profile copies.");
+        }
+        store.DeleteSession(laterSession.Id);
+        store.DeleteSession(laterFork.Id);
         Assert(store.GetItems(fork.Id).Where(item => item.Kind == SessionItemKind.User)
                     .All(item => item.State == SessionItemState.Canceled),
                "Forks must not resume queued or running work.");
         store.DeleteSession(fork.Id);
         store.DeleteSession(session.Id);
-        store.DeleteAgent(configuration.Id);
         store.DeleteModel(model.Id);
+        Assert(store.GetProfile().AgentsMd == "Shared updated instructions",
+               "Deleting every session and model must preserve the global profile.");
     }
     finally
     {

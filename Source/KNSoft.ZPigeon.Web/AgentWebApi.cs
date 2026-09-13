@@ -71,20 +71,10 @@ internal static class AgentWebApi
             }
         });
 
-        app.MapGet("/api/agent/agents", () => store.GetAgents()
-            .Select(value => new AgentConfigurationView(value.Id, value.Name, value.ModelId))
-            .ToArray());
-        app.MapGet("/api/agent/agents/{id:guid}", store.GetAgent);
-        app.MapPost("/api/agent/agents", (AgentConfigurationRequest request) =>
+        app.MapGet("/api/agent/profile", store.GetProfile);
+        app.MapPut("/api/agent/profile", (ProfileRequest request) =>
         {
-            var value = CreateAgent(Guid.NewGuid(), request, tools);
-            return Results.Created($"/api/agent/agents/{value.Id:D}", store.SaveAgent(value, true));
-        });
-        app.MapPut("/api/agent/agents/{id:guid}", (Guid id, AgentConfigurationRequest request) =>
-            Results.Ok(store.SaveAgent(CreateAgent(id, request, tools), false)));
-        app.MapDelete("/api/agent/agents/{id:guid}", (Guid id) =>
-        {
-            store.DeleteAgent(id);
+            store.SaveProfile(CreateProfile(request, tools));
             return Results.NoContent();
         });
 
@@ -93,7 +83,9 @@ internal static class AgentWebApi
         app.MapPost("/api/agent/sessions", (HttpContext context, SessionCreateRequest request) =>
         {
             var title = AgentValidation.ValidateTitle(request.Title);
-            var value = store.CreateSession(request.AgentId, GetClientFingerprint(context, server), title);
+            var value = store.CreateSession(request.ModelId,
+                                            GetClientFingerprint(context, server),
+                                            title);
             return Results.Created($"/api/agent/sessions/{value.Id:D}", CreateSessionView(value, agent, store));
         });
         app.MapGet("/api/agent/sessions/{id:guid}", (HttpContext context, Guid id) =>
@@ -192,37 +184,31 @@ internal static class AgentWebApi
         return result;
     }
 
-    private static AgentConfiguration CreateAgent(
-        Guid id,
-        AgentConfigurationRequest request,
-        ZPigeonToolCatalog tools)
+    internal static AgentProfile CreateProfile(ProfileRequest? request, ZPigeonToolCatalog tools)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        var toolNames = request.ToolNames ?? [];
-        var knownTools = tools.CreateBuiltInTools(1)
-                              .Select(tool => tool.Function.Name)
-                              .ToHashSet(StringComparer.Ordinal);
-        var result = new AgentConfiguration(id,
-                                            request.Name?.Trim() ?? string.Empty,
-                                            request.ModelId,
-                                            request.SystemPrompt ?? string.Empty,
-                                            toolNames,
-                                            request.AgentsMd ?? string.Empty,
-                                            request.ToolsMd ?? string.Empty,
-                                            request.MemoryMd ?? string.Empty,
-                                            request.Documents ?? []);
-        AgentValidation.ValidateAgent(result, knownTools);
+        var availableTools = tools.CreateBuiltInTools(1);
+        var knownTools = availableTools.Select(tool => tool.Function.Name).ToHashSet(StringComparer.Ordinal);
+        var result = new AgentProfile(request?.SystemPrompt ?? string.Empty,
+                                        request?.ToolNames ?? availableTools
+                                            .Where(tool => tool.ReadOnly)
+                                            .Select(tool => tool.Function.Name).ToArray(),
+                                        request?.AgentsMd ?? string.Empty,
+                                        request?.ToolsMd ?? string.Empty,
+                                        request?.MemoryMd ?? string.Empty,
+                                        request?.Documents ?? []);
+        AgentValidation.ValidateProfile(result, knownTools);
         return result;
     }
 
-    private static object CreateSessionView(AgentSession session, ZPigeonAgent agent, AgentStore store)
+    private static object CreateSessionView(
+        AgentSession session,
+        ZPigeonAgent agent,
+        AgentStore store)
     {
-        var configuration = store.GetAgent(session.AgentId);
-        var model = store.GetModel(configuration.ModelId, false);
+        var model = store.GetModel(session.ModelId, false);
         return new
         {
             Session = session,
-            Agent = new { configuration.Id, configuration.Name },
             Model = new { model.Id, model.Name, model.Provider, model.ModelId, model.ContextWindow },
             Items = store.GetItems(session.Id).Select(ToItemView).ToArray(),
             State = agent.GetState(session.Id),
@@ -403,18 +389,15 @@ internal sealed record ModelConfigurationDetail(
     int RequestTimeoutSeconds,
     string AdvancedJson);
 
-internal sealed record AgentConfigurationRequest(
-    string Name,
-    Guid ModelId,
+internal sealed record ProfileRequest(
     string? SystemPrompt,
     string[]? ToolNames,
     string? AgentsMd,
     string? ToolsMd,
     string? MemoryMd,
-    AgentDocument[]? Documents);
+    ProfileDocument[]? Documents);
 
-internal sealed record AgentConfigurationView(Guid Id, string Name, Guid ModelId);
-internal sealed record SessionCreateRequest(Guid AgentId, string Title);
+internal sealed record SessionCreateRequest(Guid ModelId, string Title);
 internal sealed record SessionRenameRequest(string Title);
 internal sealed record SessionMessageRequest(string Content, MessageDisposition Disposition);
 internal sealed record SessionForkRequest(long? ThroughSequence);

@@ -20,7 +20,7 @@
         ><button data-category="hardware" data-i18n="nav.hardware">硬件管理</button
         ><button data-category="software" data-i18n="nav.software">软件管理</button
         ><button class="active" data-category="remote" data-i18n="nav.remote">远程访问</button
-        ><button data-category="agent" data-i18n="nav.agent">智能体</button>
+        ><button data-category="agent" data-i18n="nav.agent">Agent</button>
       </nav>
       <div class="status">
         <span id="serverDot" class="dot"></span>Server
@@ -237,8 +237,8 @@
           />
           <div class="agent-session-list" data-role="sessions"></div>
           <div class="agent-sidebar-settings">
-            <button data-action="models" data-i18n="agent.models">模型</button
-            ><button data-action="agents" data-i18n="agent.agents">Agent</button>
+            <button data-action="models" data-i18n="agent.models">模型</button>
+            <button data-action="profile" data-i18n="agent.profile">Profile</button>
           </div>
         </aside>
         <section class="agent-chat">
@@ -260,7 +260,8 @@
           <div class="agent-messages" data-role="messages" aria-live="polite"></div>
           <form class="agent-composer">
             <div class="agent-run-state muted" data-role="run-state"></div>
-            <textarea data-role="input" rows="3" maxlength="65536"></textarea>
+            <textarea data-role="input" rows="2" maxlength="65536" data-i18n-aria-label="agent.messageInput"
+              aria-label="消息"></textarea>
             <div class="agent-composer-actions">
               <button data-action="send" data-i18n="common.send">发送</button
               ><button type="button" data-action="steer" data-i18n="agent.steer">插队</button
@@ -387,43 +388,41 @@
       </form>
     </dialog>
 
-    <dialog id="agentConfigurationDialog" class="agent-settings-dialog">
-      <form method="dialog" class="agent-settings-form agent-editor-form">
-        <header>
-          <h2 data-i18n="agent.agents">Agent</h2>
-          <select data-role="agent-list" data-i18n-aria-label="agent.agents" aria-label="Agent"></select>
-          <button type="button" data-action="new-agent" data-i18n="common.create">新建</button
-          ><button type="button" data-action="delete-agent" class="danger" data-i18n="common.delete"
-            >删除</button
-          >
-        </header>
-        <div class="agent-settings-body">
-          <label><span data-i18n="common.name">名称</span><input name="name" maxlength="128" required /></label>
-          <label
-            ><span data-i18n="agent.model">模型</span><select name="modelId" required></select></label
-          >
-          <label class="agent-settings-wide"
-            ><span data-i18n="agent.systemPrompt">System Prompt</span
-            ><textarea name="systemPrompt" rows="5" maxlength="65536"></textarea></label
-          >
-          <fieldset class="agent-settings-wide">
+    <dialog id="agentProfileDialog" class="agent-settings-dialog">
+      <form method="dialog" class="agent-settings-form">
+        <header><h2 data-i18n="agent.profile">Profile</h2></header>
+        <div class="agent-profile-body">
+          <p class="muted" data-i18n="agent.profileHint">
+            所有会话共用这一份 Profile；修改后从下一轮消息开始生效。
+          </p>
+          <fieldset class="agent-tool-settings">
             <legend data-i18n="agent.tools">工具</legend>
-            <div class="agent-tool-list" data-role="tools"></div>
+            <div class="agent-tool-presets">
+              <label><input type="radio" name="toolMode" value="read" checked /><span data-i18n="agent.readOnlyTools">只读</span></label>
+              <label><input type="radio" name="toolMode" value="all" /><span data-i18n="agent.allTools">全部</span></label>
+              <label><input type="radio" name="toolMode" value="custom" /><span data-i18n="agent.customTools">自定义</span></label>
+            </div>
+            <details data-role="tool-details">
+              <summary data-role="tool-summary"></summary>
+              <div class="agent-tool-list" data-role="tools"></div>
+            </details>
           </fieldset>
-          <label class="agent-settings-wide"
-            ><span>AGENTS.md</span><textarea name="agentsMd" rows="5" maxlength="262144"></textarea></label
-          >
-          <label class="agent-settings-wide"
-            ><span>TOOLS.md</span><textarea name="toolsMd" rows="5" maxlength="262144"></textarea></label
-          >
-          <label class="agent-settings-wide"
-            ><span>MEMORY.md</span><textarea name="memoryMd" rows="5" maxlength="262144"></textarea></label
-          >
-          <fieldset class="agent-settings-wide">
-            <legend data-i18n="agent.customDocuments">自定义 Markdown</legend>
-            <div data-role="documents"></div>
-            <button type="button" data-action="add-document" data-i18n="common.create">新建</button>
-          </fieldset>
+          <section class="agent-document-editor">
+            <aside class="agent-document-sidebar">
+              <div class="agent-document-list" data-role="documents" role="listbox"
+                data-i18n-aria-label="agent.profileDocuments" aria-label="提示词与 Markdown"></div>
+              <button type="button" data-action="add-document" data-i18n="agent.addDocument">新建 Markdown</button>
+            </aside>
+            <div class="agent-document-content">
+              <div class="agent-document-toolbar">
+                <input name="documentName" maxlength="128" required
+                  data-i18n-aria-label="agent.documentName" aria-label="文档名" />
+                <button type="button" data-action="delete-document" class="danger" data-i18n="common.delete">删除</button>
+              </div>
+              <textarea name="documentContent" spellcheck="false"
+                data-i18n-aria-label="agent.markdownContent" aria-label="Markdown 内容"></textarea>
+            </div>
+          </section>
         </div>
         <div class="dialog-actions">
           <button value="cancel" formnovalidate data-i18n="common.cancel">取消</button
@@ -436,7 +435,7 @@
       <form method="dialog">
         <h2 data-i18n="agent.newSession">新建会话</h2>
         <label
-          ><span data-i18n="agent.agent">Agent</span><select name="agentId" required></select></label
+          ><span data-i18n="agent.model">模型</span><select name="modelId" required></select></label
         >
         <label
           ><span data-i18n="common.name">名称</span><input name="title" maxlength="128" required /></label
