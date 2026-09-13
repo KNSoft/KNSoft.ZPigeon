@@ -2,11 +2,12 @@
 #include <KNSoft/ZPigeon/Client.h>
 #include <KNSoft/ZPigeon/Operations.h>
 
+#include "../Modules/Administration/ChildSession.h"
+
 #include <stdio.h>
 
 #define ZP_CLIENT_PORT 4433
 #define ZP_CLIENT_LOG_CACHE_SIZE 32
-#define ZP_CLIENT_SESSION_WORKER_ARGUMENT L"--session-worker"
 #define ZP_CLIENT_SESSION_WORKER_KEY_NAME L"KNSoft.ZPigeon.Client.SessionWorker"
 
 typedef struct _ZP_CLIENT_LOG
@@ -400,8 +401,32 @@ wmain(
     BOOLEAN SessionWorker;
 
     SessionWorker = ArgumentCount == 2 &&
-                    wcscmp(Arguments[1], ZP_CLIENT_SESSION_WORKER_ARGUMENT) == 0;
-    if (ArgumentCount != 1 && !SessionWorker) return (int)STATUS_INVALID_PARAMETER;
+                    wcscmp(Arguments[1], ZP_RDP_CHILD_SESSION_WORKER_ARGUMENT) == 0;
+    if (ArgumentCount != 1 && !SessionWorker)
+    {
+        return (int)STATUS_INVALID_PARAMETER;
+    }
+    if (SessionWorker)
+    {
+        TOKEN_ELEVATION Elevation;
+        DWORD Length;
+        HWND Console = GetConsoleWindow();
+
+        if (Console != NULL) ShowWindow(Console, SW_HIDE);
+        FreeConsole();
+        if (!GetTokenInformation(NtCurrentProcessToken(),
+                                 TokenElevation,
+                                 &Elevation,
+                                 sizeof(Elevation),
+                                 &Length))
+        {
+            return (int)NTSTATUS_FROM_WIN32(GetLastError());
+        }
+        if (!Elevation.TokenIsElevated)
+        {
+            return (int)NTSTATUS_FROM_WIN32(ERROR_ELEVATION_REQUIRED);
+        }
+    }
 
     Status = ZpClient_InitializeDirectory();
     if (!NT_SUCCESS(Status))

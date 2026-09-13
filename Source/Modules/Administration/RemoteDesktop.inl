@@ -291,7 +291,7 @@ ZpAdministration_AddRemoteDesktop(
     ZP_STATUS ChildStatus;
     ULONGLONG Version, ChildValue;
     ULONG Value, ChildState, ChildSessionId, ChildError;
-    BOOLEAN ChildSessionsEnabled;
+    BOOLEAN ChildSessionsEnabled, ChildSessionCredentialDelegation, ChildSessionHelloOnly;
     NTSTATUS Status;
 
     Status = ZpRdp_QueryDword(&ZpRemoteDesktopKey, &ZpRemoteDesktopEnabledValue, &Value);
@@ -346,6 +346,8 @@ ZpAdministration_AddRemoteDesktop(
     if (NT_SUCCESS(Status))
     {
         ChildStatus = ZpRdpChildSession_Query(&ChildSessionsEnabled,
+                                              &ChildSessionCredentialDelegation,
+                                              &ChildSessionHelloOnly,
                                               &ChildState,
                                               &ChildSessionId,
                                               &ChildError);
@@ -363,7 +365,13 @@ ZpAdministration_AddRemoteDesktop(
             Builder,
             ZpAdministrationKindSystemInformation,
             ChildState,
-            ChildSessionsEnabled ? ZP_ADMINISTRATION_REMOTE_DESKTOP_CHILD_SESSION_ENABLED : 0,
+            (ChildSessionsEnabled ? ZP_ADMINISTRATION_REMOTE_DESKTOP_CHILD_SESSION_ENABLED : 0) |
+                (ChildSessionCredentialDelegation ?
+                     ZP_ADMINISTRATION_REMOTE_DESKTOP_CHILD_SESSION_CREDENTIAL_DELEGATION :
+                     0) |
+                (ChildSessionHelloOnly ?
+                     ZP_ADMINISTRATION_REMOTE_DESKTOP_CHILD_SESSION_HELLO_ONLY :
+                     0),
             ChildValue,
             L"remoteDesktopChildSession",
             NULL,
@@ -446,16 +454,35 @@ ZP_STATUS
 ZpAdministration_ControlRemoteDesktopChildSession(
     _In_ PCZP_ADMINISTRATION_CONTROL_VIEW Control)
 {
-    if ((Control->Action != ZpAdministrationActionRun &&
-         Control->Action != ZpAdministrationActionStop) ||
+    if ((Control->Action != ZpAdministrationActionEnable &&
+         Control->Action != ZpAdministrationActionDisable &&
+         Control->Action != ZpAdministrationActionRun &&
+         Control->Action != ZpAdministrationActionStop &&
+         Control->Action != ZpAdministrationActionAllow &&
+         Control->Action != ZpAdministrationActionBlock &&
+         Control->Action != ZpAdministrationActionLock &&
+         Control->Action != ZpAdministrationActionUnlock) ||
         Control->Identity.Length != 0 || Control->Argument.Length != 0 ||
         Control->Secret.Length != 0)
     {
         return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
-    return Control->Action == ZpAdministrationActionRun ?
-               ZpRdpChildSession_Start() :
-               ZpRdpChildSession_Stop();
+    switch (Control->Action)
+    {
+    case ZpAdministrationActionEnable:
+    case ZpAdministrationActionDisable:
+        return ZpRdpChildSession_SetEnabled(Control->Action == ZpAdministrationActionEnable);
+    case ZpAdministrationActionRun:
+        return ZpRdpChildSession_Start();
+    case ZpAdministrationActionAllow:
+    case ZpAdministrationActionBlock:
+        return ZpRdpChildSession_SetCredentialDelegation(Control->Action == ZpAdministrationActionAllow);
+    case ZpAdministrationActionLock:
+    case ZpAdministrationActionUnlock:
+        return ZpRdpChildSession_SetHelloOnly(Control->Action == ZpAdministrationActionLock);
+    default:
+        return ZpRdpChildSession_Stop();
+    }
 }
 
 static

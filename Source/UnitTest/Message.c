@@ -1340,6 +1340,24 @@ TEST_FUNC(ProtocolMessage)
             AdministrationControl.Identity.Length == 0 &&
             AdministrationControl.Argument.Length == 0 &&
             AdministrationControl.Secret.Length == 0);
+    TEST_OK(NT_SUCCESS(ZpAdministration_EncodeControl(ZpAdministrationActionEnable,
+                                                       NULL,
+                                                       0,
+                                                       NULL,
+                                                       0,
+                                                       NULL,
+                                                       0,
+                                                       Buffer,
+                                                       sizeof(Buffer),
+                                                       &Length)) &&
+            Length == 2 &&
+            NT_SUCCESS(ZpAdministration_DecodeControl(Buffer,
+                                                       Length,
+                                                       &AdministrationControl)) &&
+            AdministrationControl.Action == ZpAdministrationActionEnable &&
+            AdministrationControl.Identity.Length == 0 &&
+            AdministrationControl.Argument.Length == 0 &&
+            AdministrationControl.Secret.Length == 0);
     TEST_OK(ZpAdministration_EncodeControl(ZpAdministrationActionSetDefault,
                                             NULL,
                                             0,

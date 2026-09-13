@@ -37,7 +37,7 @@ internal static class RemoteAccessWebApi
                                             request.SameUserMultipleSessions);
             return Results.NoContent();
         });
-        app.MapPost("/api/remote/rdp/patch", async (HttpContext context, RdpPatchRequest request) =>
+        app.MapPost("/api/remote/rdp/patch", async (HttpContext context, RdpEnabledRequest request) =>
         {
             if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
             try
@@ -50,12 +50,36 @@ internal static class RemoteAccessWebApi
                 return Results.BadRequest(new { exception.Message });
             }
         });
+        app.MapPost("/api/remote/rdp/child-sessions", async (
+            HttpContext context,
+            RdpEnabledRequest request) =>
+        {
+            if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
+            await rdpPatches.SetChildSessionsEnabledAsync(request.Enabled);
+            return Results.NoContent();
+        });
         app.MapPost("/api/remote/rdp/child-session", async (
             HttpContext context,
             RdpChildSessionRequest request) =>
         {
             if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
-            await rdpPatches.SetChildSessionAsync(request.Enabled);
+            await rdpPatches.SetChildSessionRunningAsync(request.Running);
+            return Results.NoContent();
+        });
+        app.MapPost("/api/remote/rdp/child-session/credential-delegation", async (
+            HttpContext context,
+            RdpEnabledRequest request) =>
+        {
+            if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
+            await rdpPatches.SetChildSessionCredentialDelegationAsync(request.Enabled);
+            return Results.NoContent();
+        });
+        app.MapPost("/api/remote/rdp/child-session/hello-only", async (
+            HttpContext context,
+            RdpEnabledRequest request) =>
+        {
+            if (!IsAuthenticated(context, proxyUserHeader)) return Results.Unauthorized();
+            await rdpPatches.SetChildSessionHelloOnlyAsync(request.Enabled);
             return Results.NoContent();
         });
         app.MapPost("/api/remote/rdp/child-session/status", async (HttpContext context) =>
@@ -437,8 +461,8 @@ internal sealed record CdpCreateTargetRequest(Guid Id, string Url);
 internal sealed record CdpTargetRequest(Guid Id, string Target);
 internal sealed record RdpForwardRequest(ushort Port);
 internal sealed record RdpSettingsRequest(bool Enabled, ushort Port, bool SameUserMultipleSessions);
-internal sealed record RdpPatchRequest(bool Enabled);
-internal sealed record RdpChildSessionRequest(bool Enabled);
+internal sealed record RdpEnabledRequest(bool Enabled);
+internal sealed record RdpChildSessionRequest(bool Running);
 internal sealed record DesktopCaptureRequest(
     bool CaptureCursor,
     uint MaxDimension,

@@ -8,6 +8,8 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
     private const uint ConfigurationEnabled = 0x00010000;
     private const uint ConfigurationSameUserMultipleSessions = 0x00020000;
     private const uint ChildSessionsEnabled = 0x00000001;
+    private const uint ChildSessionCredentialDelegation = 0x00000002;
+    private const uint ChildSessionHelloOnly = 0x00000004;
     private const uint EnablePatch = 1;
     private const uint ServiceStopped = 1;
     private const uint StatusNotFound = 0xC0000225;
@@ -109,9 +111,21 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
         }
     }
 
-    internal Task SetChildSessionAsync(bool enabled) =>
+    internal Task SetChildSessionsEnabledAsync(bool enabled) =>
         server.ControlAdministrationAsync(AdministrationOperation.ControlRemoteDesktopChildSession,
-                                          enabled ? AdministrationAction.Run : AdministrationAction.Stop);
+                                          enabled ? AdministrationAction.Enable : AdministrationAction.Disable);
+
+    internal Task SetChildSessionRunningAsync(bool running) =>
+        server.ControlAdministrationAsync(AdministrationOperation.ControlRemoteDesktopChildSession,
+                                          running ? AdministrationAction.Run : AdministrationAction.Stop);
+
+    internal Task SetChildSessionCredentialDelegationAsync(bool enabled) =>
+        server.ControlAdministrationAsync(AdministrationOperation.ControlRemoteDesktopChildSession,
+                                          enabled ? AdministrationAction.Allow : AdministrationAction.Block);
+
+    internal Task SetChildSessionHelloOnlyAsync(bool enabled) =>
+        server.ControlAdministrationAsync(AdministrationOperation.ControlRemoteDesktopChildSession,
+                                          enabled ? AdministrationAction.Lock : AdministrationAction.Unlock);
 
     private async Task<RdpConfiguration> GetConfigurationAsync()
     {
@@ -125,6 +139,8 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
                    checked((uint)GetValue(records, "remoteDesktopServiceState")),
                    GetValue(records, "remoteDesktopVersion"),
                    new((childSession.Flags & ChildSessionsEnabled) != 0,
+                       (childSession.Flags & ChildSessionCredentialDelegation) != 0,
+                       (childSession.Flags & ChildSessionHelloOnly) != 0,
                        childSession.State,
                        (uint)childValue,
                        (uint)(childValue >> 32)));
@@ -171,6 +187,8 @@ internal sealed class RdpPatchManager(NativeServer server, string catalogPath) :
                 applied,
                 error,
                 ChildSession.Enabled,
+                ChildSession.CredentialDelegation,
+                ChildSession.HelloOnly,
                 ChildSession.State,
                 ChildSession.SessionId,
                 ChildSession.Error);
@@ -187,12 +205,16 @@ internal sealed record RdpStatus(
     bool? Applied,
     ZpStatus? Error,
     bool ChildSessionsEnabled,
+    bool ChildSessionCredentialDelegation,
+    bool ChildSessionHelloOnly,
     uint ChildSessionState,
     uint ChildSessionId,
     uint ChildSessionError);
 
 internal sealed record RdpChildSessionStatus(
     bool Enabled,
+    bool CredentialDelegation,
+    bool HelloOnly,
     uint State,
     uint SessionId,
     uint Error);

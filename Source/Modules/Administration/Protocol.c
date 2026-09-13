@@ -309,9 +309,12 @@ ZpAdministration_EncodeControl(
     NTSTATUS Status;
 
     if (!ZpAdministration_IsActionValid(Action) ||
-        (IdentityLength == 0 && Action != ZpAdministrationActionRefresh &&
+        (IdentityLength == 0 && Action != ZpAdministrationActionEnable &&
+         Action != ZpAdministrationActionDisable && Action != ZpAdministrationActionRefresh &&
          Action != ZpAdministrationActionCheck && Action != ZpAdministrationActionRun &&
-         Action != ZpAdministrationActionStop) ||
+         Action != ZpAdministrationActionStop && Action != ZpAdministrationActionAllow &&
+         Action != ZpAdministrationActionBlock && Action != ZpAdministrationActionLock &&
+         Action != ZpAdministrationActionUnlock) ||
         !ZpAdministration_IsStringValid(Identity, IdentityLength) ||
         !ZpAdministration_IsStringValid(Argument, ArgumentLength) ||
         !ZpAdministration_IsStringValid(Secret, SecretLength))
@@ -380,9 +383,12 @@ ZpAdministration_DecodeControl(
     }
     if (!NT_SUCCESS(Status) || Reader.Offset != PayloadLength ||
         !ZpAdministration_IsActionValid(Local.Action) ||
-        (Local.Identity.Length == 0 && Local.Action != ZpAdministrationActionRefresh &&
+        (Local.Identity.Length == 0 && Local.Action != ZpAdministrationActionEnable &&
+         Local.Action != ZpAdministrationActionDisable && Local.Action != ZpAdministrationActionRefresh &&
          Local.Action != ZpAdministrationActionCheck && Local.Action != ZpAdministrationActionRun &&
-         Local.Action != ZpAdministrationActionStop))
+         Local.Action != ZpAdministrationActionStop && Local.Action != ZpAdministrationActionAllow &&
+         Local.Action != ZpAdministrationActionBlock && Local.Action != ZpAdministrationActionLock &&
+         Local.Action != ZpAdministrationActionUnlock))
     {
         return NT_SUCCESS(Status) ? STATUS_DATA_ERROR : Status;
     }

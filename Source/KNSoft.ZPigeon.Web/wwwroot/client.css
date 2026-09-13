@@ -3127,6 +3127,14 @@ th[aria-sort="descending"]::before {
 .rdp-forward-table {
   margin-top: 14px;
 }
+.rdp-child-session {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.rdp-child-session h3 {
+  margin: 0 0 12px;
+}
 .rdp-forward-table th:nth-child(1),
 .rdp-forward-table th:nth-child(2) {
   width: 24%;

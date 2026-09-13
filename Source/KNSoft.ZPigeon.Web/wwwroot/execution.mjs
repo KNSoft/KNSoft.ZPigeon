@@ -761,6 +761,9 @@ export class RemoteDesktopManager {
     this.connected = false;
     this.configurationBusy = false;
     this.childSessionBusy = false;
+    this.childSessionsEnabled = false;
+    this.childSessionCredentialDelegation = false;
+    this.childSessionHelloOnly = false;
     this.childSessionState = 0;
     this.patchAvailable = false;
     this.pressedKeys = new Map();
@@ -785,13 +788,10 @@ export class RemoteDesktopManager {
             <dt>${t("rdp.version")}</dt><dd data-role="rdp-version">—</dd>
             <dt>${t("rdp.service")}</dt><dd data-role="rdp-service">—</dd>
             <dt>${t("rdp.patchStatus")}</dt><dd data-role="rdp-patch-status">—</dd>
-            <dt>${t("rdp.childSession")}</dt><dd data-role="rdp-child-session">—</dd>
           </dl>
           <p class="property-note">${t("rdp.patchNote")}</p>
-          <p class="property-note">${t("rdp.childSessionNote")}</p>
           <div class="dialog-actions rdp-actions">
             <button data-action="forward">${t("rdp.openForward")}</button
-            ><button data-action="child-session">${t("rdp.startChildSession")}</button
             ><button data-action="save">${t("rdp.saveSettings")}</button
             ><button data-action="refresh">${t("rdp.refreshSettings")}</button>
           </div>
@@ -814,6 +814,23 @@ export class RemoteDesktopManager {
                 </tr>
               </tbody>
             </table>
+          </div>
+          <div class="rdp-child-session">
+            <h3>${t("rdp.childSessionSection")}</h3>
+            <dl class="details-grid">
+              <dt>${t("rdp.childSessions")}</dt><dd data-role="rdp-child-sessions">—</dd>
+              <dt>${t("rdp.credentialDelegation")}</dt><dd data-role="rdp-credential-delegation">—</dd>
+              <dt>${t("rdp.helloOnly")}</dt><dd data-role="rdp-hello-only">—</dd>
+              <dt>${t("rdp.childSession")}</dt><dd data-role="rdp-child-session">—</dd>
+            </dl>
+            <p class="property-note">${t("rdp.childSessionNote")}</p>
+            <p class="property-note">${t("rdp.childSessionCredentialNote")}</p>
+            <div class="dialog-actions rdp-actions">
+              <button data-action="child-sessions">${t("rdp.enableChildSessions")}</button
+              ><button data-action="hello-only">${t("rdp.allowPasswordSignIn")}</button
+              ><button data-action="credential-delegation">${t("rdp.enableCredentialDelegation")}</button
+              ><button data-action="child-session">${t("rdp.startChildSession")}</button>
+            </div>
           </div>
         </section>
         <section class="card remote-control-card">
@@ -861,6 +878,9 @@ export class RemoteDesktopManager {
         </section>
       </div>`;
     this.forward = host.querySelector("[data-action=forward]");
+    this.childSessions = host.querySelector("[data-action=child-sessions]");
+    this.childSessionCredential = host.querySelector("[data-action=credential-delegation]");
+    this.helloOnly = host.querySelector("[data-action=hello-only]");
     this.childSession = host.querySelector("[data-action=child-session]");
     this.enabled = host.querySelector("[data-field=enabled]");
     this.multipleSessions = host.querySelector("[data-field=multipleSessions]");
@@ -896,7 +916,16 @@ export class RemoteDesktopManager {
         this.forward.disabled = !this.connected;
       }
     };
-    this.childSession.onclick = () => this.setChildSession();
+    this.childSessions.onclick = () => this.setChildSessionsEnabled();
+    this.childSessionCredential.onclick = () =>
+      this.setChildSessionOption("/api/remote/rdp/child-session/credential-delegation", {
+        enabled: !this.childSessionCredentialDelegation,
+      });
+    this.helloOnly.onclick = () =>
+      this.setChildSessionOption("/api/remote/rdp/child-session/hello-only", {
+        enabled: !this.childSessionHelloOnly,
+      });
+    this.childSession.onclick = () => this.setChildSessionRunning();
     this.save.onclick = () => this.saveConfiguration();
     this.refresh.onclick = () => this.loadConfiguration();
     host.querySelector("[data-action=download]").onclick = () => this.download();
@@ -956,6 +985,9 @@ export class RemoteDesktopManager {
     this.stopStream(true);
     this.patchAvailable = false;
     this.configuration = null;
+    this.childSessionsEnabled = false;
+    this.childSessionCredentialDelegation = false;
+    this.childSessionHelloOnly = false;
     this.childSessionState = 0;
     this.forward.disabled = this.toggle.disabled = this.startButton.disabled = true;
     this.updateConfigurationState();
@@ -964,9 +996,17 @@ export class RemoteDesktopManager {
     this.startButton.hidden = false;
     this.desktopStatus.hidden = false;
     this.desktopStatus.textContent = "Client 未连接";
-    for (const role of ["rdp-version", "rdp-service", "rdp-patch-status", "rdp-child-session"])
+    for (const role of [
+      "rdp-version",
+      "rdp-service",
+      "rdp-patch-status",
+      "rdp-child-sessions",
+      "rdp-credential-delegation",
+      "rdp-hello-only",
+      "rdp-child-session",
+    ])
       this.host.querySelector(`[data-role=${role}]`).textContent = "—";
-    this.updateChildSessionButton();
+    this.updateChildSessionButtons();
   }
   updateConfigurationState() {
     const disabled = !this.connected || this.configurationBusy;
@@ -974,7 +1014,15 @@ export class RemoteDesktopManager {
     this.multipleSessions.disabled = this.sameUserMultipleSessions.disabled = disabled || !this.patchAvailable;
     this.save.disabled = disabled || !this.configuration;
     this.refresh.disabled = disabled;
-    this.childSession.disabled = disabled || this.childSessionBusy;
+    this.childSessions.disabled = disabled || this.childSessionBusy || this.childSessionState !== 0;
+    this.childSessionCredential.disabled = this.helloOnly.disabled = disabled || this.childSessionBusy;
+    this.childSession.disabled =
+      disabled ||
+      this.childSessionBusy ||
+      (this.childSessionState === 0 &&
+        (!this.childSessionsEnabled ||
+          !this.childSessionCredentialDelegation ||
+          this.childSessionHelloOnly));
   }
   async openForward() {
     const port = Number(this.port.value);
@@ -1064,6 +1112,8 @@ export class RemoteDesktopManager {
       this.patchAvailable = status.supported && status.applied !== null && !status.error && status.serviceState === 4;
       this.renderChildSession({
         enabled: status.childSessionsEnabled,
+        credentialDelegation: status.childSessionCredentialDelegation,
+        helloOnly: status.childSessionHelloOnly,
         state: status.childSessionState,
         sessionId: status.childSessionId,
         error: status.childSessionError,
@@ -1076,12 +1126,23 @@ export class RemoteDesktopManager {
       this.updateConfigurationState();
     }
   }
-  async setChildSession() {
+  async setChildSessionsEnabled() {
+    if (!this.connected || this.childSessionBusy || this.childSessionState !== 0) return;
+    await this.setChildSessionOption("/api/remote/rdp/child-sessions", {
+      enabled: !this.childSessionsEnabled,
+    });
+  }
+  async setChildSessionRunning() {
+    await this.setChildSessionOption("/api/remote/rdp/child-session", {
+      running: this.childSessionState === 0,
+    });
+  }
+  async setChildSessionOption(path, value) {
     if (!this.connected || this.childSessionBusy) return;
     this.childSessionBusy = true;
     this.updateConfigurationState();
     try {
-      await this.call("/api/remote/rdp/child-session", { enabled: this.childSessionState === 0 });
+      await this.call(path, value);
       await this.loadChildSession();
     } catch (error) {
       this.notify(error);
@@ -1101,24 +1162,48 @@ export class RemoteDesktopManager {
   }
   renderChildSession(status) {
     clearTimeout(this.childSessionTimer);
+    this.childSessionsEnabled = status.enabled;
+    this.childSessionCredentialDelegation = status.credentialDelegation;
+    this.childSessionHelloOnly = status.helloOnly;
     this.childSessionState = status.state;
-    const state = !status.enabled
-        ? t("rdp.childSessionState.disabled")
-        : {
-            0: t("rdp.childSessionState.stopped"),
-            1: t("rdp.childSessionState.starting"),
-            2: t("rdp.childSessionState.connecting"),
-            3: t("rdp.childSessionState.active"),
-            4: t("rdp.childSessionState.disconnected"),
-          }[status.state] || String(status.state),
+    const state = {
+        0: t("rdp.childSessionState.stopped"),
+        1: t("rdp.childSessionState.starting"),
+        2: t("rdp.childSessionState.connecting"),
+        3: t("rdp.childSessionState.active"),
+        4: t("rdp.childSessionState.disconnected"),
+      }[status.state] || String(status.state),
       session = status.sessionId === 0xffffffff ? "" : ` · ID ${status.sessionId}`,
       error = status.error ? ` · RDP ${status.error}` : "";
+    this.host.querySelector("[data-role=rdp-child-sessions]").textContent = t(
+      status.enabled ? "rdp.settingState.enabled" : "rdp.settingState.disabled",
+    );
+    this.host.querySelector("[data-role=rdp-credential-delegation]").textContent = t(
+      status.credentialDelegation ? "rdp.settingState.enabled" : "rdp.settingState.disabled",
+    );
+    this.host.querySelector("[data-role=rdp-hello-only]").textContent = t(
+      status.helloOnly ? "rdp.settingState.enabled" : "rdp.settingState.disabled",
+    );
     this.host.querySelector("[data-role=rdp-child-session]").textContent = `${state}${session}${error}`;
-    this.updateChildSessionButton();
+    this.updateChildSessionButtons();
     if ([1, 2].includes(status.state))
       this.childSessionTimer = setTimeout(() => this.loadChildSession(false), 1000);
   }
-  updateChildSessionButton() {
+  updateChildSessionButtons() {
+    this.childSessions.textContent = t(
+      this.childSessionsEnabled ? "rdp.disableChildSessions" : "rdp.enableChildSessions",
+    );
+    this.childSessions.classList.toggle("danger", this.childSessionsEnabled);
+    this.childSessionCredential.textContent = t(
+      this.childSessionCredentialDelegation
+        ? "rdp.disableCredentialDelegation"
+        : "rdp.enableCredentialDelegation",
+    );
+    this.childSessionCredential.classList.toggle("danger", this.childSessionCredentialDelegation);
+    this.helloOnly.textContent = t(
+      this.childSessionHelloOnly ? "rdp.allowPasswordSignIn" : "rdp.requireHelloSignIn",
+    );
+    this.helloOnly.classList.toggle("danger", this.childSessionHelloOnly);
     this.childSession.textContent = t(
       this.childSessionState === 0 ? "rdp.startChildSession" : "rdp.stopChildSession",
     );

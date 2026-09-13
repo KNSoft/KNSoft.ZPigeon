@@ -10,12 +10,28 @@ EXTERN_C_START
 #define ZP_RDP_CHILD_SESSION_STATE_ACTIVE 3
 #define ZP_RDP_CHILD_SESSION_STATE_DISCONNECTED 4
 
+#define ZP_RDP_CHILD_SESSION_WORKER_ARGUMENT L"--session-worker"
+
 ZP_STATUS
 ZpRdpChildSession_Query(
     _Out_ PBOOLEAN Enabled,
+    _Out_ PBOOLEAN CredentialDelegation,
+    _Out_ PBOOLEAN HelloOnly,
     _Out_ PULONG State,
     _Out_ PULONG SessionId,
     _Out_ PULONG Error);
+
+ZP_STATUS
+ZpRdpChildSession_SetEnabled(
+    _In_ BOOLEAN Enabled);
+
+ZP_STATUS
+ZpRdpChildSession_SetCredentialDelegation(
+    _In_ BOOLEAN Enabled);
+
+ZP_STATUS
+ZpRdpChildSession_SetHelloOnly(
+    _In_ BOOLEAN Enabled);
 
 ZP_STATUS
 ZpRdpChildSession_Start(VOID);

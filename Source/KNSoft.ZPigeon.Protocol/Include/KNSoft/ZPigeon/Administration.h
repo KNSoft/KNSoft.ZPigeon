@@ -84,6 +84,8 @@ EXTERN_C_START
 #define ZP_ADMINISTRATION_OPERATION_CONTROL_REMOTE_DESKTOP_CHILD_SESSION 6
 
 #define ZP_ADMINISTRATION_REMOTE_DESKTOP_CHILD_SESSION_ENABLED 0x00000001
+#define ZP_ADMINISTRATION_REMOTE_DESKTOP_CHILD_SESSION_CREDENTIAL_DELEGATION 0x00000002
+#define ZP_ADMINISTRATION_REMOTE_DESKTOP_CHILD_SESSION_HELLO_ONLY 0x00000004
 
 #define ZP_ADMINISTRATION_OPERATION_ENUMERATE_WLAN 1
 #define ZP_ADMINISTRATION_OPERATION_CONTROL_WLAN 2
@@ -238,7 +240,7 @@ typedef BYTE ZP_ADMINISTRATION_KIND, *PZP_ADMINISTRATION_KIND;
 // SoftwareDeployment uses Data for its 16-byte GUID.
 // BitLockerVolume uses State for conversion status, Flags for volume status, and Value for converted percent.
 // BitLockerProtector uses State for protector type, Value for creation FILETIME, and Description for its label.
-// remoteDesktopChildSession uses State for lifecycle, Flags for enabled, and Value high/low DWORD for error/session ID.
+// remoteDesktopChildSession uses State for lifecycle, Flags for settings, and Value high/low DWORD for error/session ID.
 #define ZP_ADMINISTRATION_WSL_FLAG_DEFAULT 0x80000000
 #define ZP_ADMINISTRATION_APP_CONTAINER_FLAG_LOOPBACK 0x00000001
 #define ZP_ADMINISTRATION_APP_CONTAINER_FLAG_PACKAGED 0x00000002
