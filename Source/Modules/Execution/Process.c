@@ -247,7 +247,7 @@ ZpProcess_QueryToken(
             return ZpStatus_FromCode(ZpStatusWin32, GetLastError());
         }
     }
-    else if ((Error = NT_GetSessionToken(&UserToken, SessionId)) != ERROR_SUCCESS)
+    else if ((Error = Sys_GetSessionToken(SessionId, &UserToken)) != ERROR_SUCCESS)
     {
         return ZpStatus_FromCode(ZpStatusWin32, Error);
     }
@@ -411,7 +411,7 @@ ZpProcess_CreateCustomToken(
     GroupIndex++;
     if (FlagOn(Flags, ZP_EXECUTION_CUSTOM_TOKEN_FLAG_ADD_LOGON_SID))
     {
-        const W32ERROR Error = NT_GetSessionToken(&SessionToken, SessionId);
+        const W32ERROR Error = Sys_GetSessionToken(SessionId, &SessionToken);
 
         if (Error != ERROR_SUCCESS)
         {

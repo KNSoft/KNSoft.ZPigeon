@@ -1292,7 +1292,7 @@ Cleanup:
     {
         CloseServiceHandle(Manager);
     }
-    PS_FreeCommandLineArgv(Arguments);
+    PS_FreeCommandLineBuffer(Arguments);
     Mem_Free(ArgumentBuffer);
     Mem_Free(ServiceName);
     return Status;

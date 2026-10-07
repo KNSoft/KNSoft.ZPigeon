@@ -870,8 +870,8 @@ namespace
         ComPtr<IJsonObject> root;
         ComPtr<IJsonObjectWithDefaultValues> defaults;
         ComPtr<IJsonObject> dependencies;
-        ComPtr<IJsonIterable> iterable;
-        ComPtr<IJsonIterator> iterator;
+        ComPtr<IJsonPairIterable> iterable;
+        ComPtr<IJsonPairIterator> iterator;
         HSTRING_HEADER dependenciesHeader, versionHeader;
         HSTRING dependenciesKey, versionKey;
         boolean hasCurrent;

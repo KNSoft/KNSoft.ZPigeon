@@ -677,7 +677,7 @@ ZpRdpChildSession_CreateWorker(
     }
     for (Retry = 0;; Retry++)
     {
-        Error = NT_GetSessionToken(&SessionToken, SessionId);
+        Error = Sys_GetSessionToken(SessionId, &SessionToken);
         if (Error != ERROR_NO_TOKEN ||
             Retry == ZP_RDP_CHILD_SESSION_TOKEN_RETRY_COUNT)
         {

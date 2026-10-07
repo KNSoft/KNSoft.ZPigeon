@@ -166,3 +166,172 @@ TEST_FUNC(BrowserJson)
     UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGV);
     TestBrowserJson(TEST_PARAMETER_RESULT);
 }
+
+static
+LOGICAL
+BrowserProfileStringEquals(
+    _In_ PCZP_STRING_VIEW View,
+    _In_ PCWSTR Text)
+{
+    SIZE_T Length = wcslen(Text);
+
+    return View->Length == Length && memcmp(View->Buffer, Text, Length * sizeof(WCHAR)) == 0;
+}
+
+TEST_FUNC(BrowserProfiles)
+{
+    static const PCWSTR Directories[] = {
+        L"Google",
+        L"Google\\Chrome",
+        L"Google\\Chrome\\Application",
+        L"Google\\Chrome\\User Data",
+        L"Google\\Chrome\\User Data\\Default",
+        L"Google\\Chrome\\User Data\\Profile 1",
+        L"Google\\Chrome\\User Data\\NotProfile"
+    };
+    static const struct
+    {
+        PCWSTR Path;
+        PCSTR Content;
+    } Files[] = {
+        { L"Google\\Chrome\\Application\\chrome.exe", "" },
+        { L"Google\\Chrome\\User Data\\Local State",
+          "{\"profile\":{\"info_cache\":{\"Default\":{\"name\":\"Main\"},"
+          "\"Profile 1\":{\"name\":\"\\u5DE5\\u4F5C\"}}}}" },
+        { L"Google\\Chrome\\User Data\\Default\\Preferences", "{}" },
+        { L"Google\\Chrome\\User Data\\Profile 1\\Preferences", "{}" }
+    };
+    static const PCWSTR ProfileNames[] = { L"Default", L"Profile 1" };
+    static const PCWSTR DisplayNames[] = { L"Default (Main)", L"Profile 1 (\x5DE5\x4F5C)" };
+    ZP_CLIENT_OBJECT Client = { 0 };
+    WCHAR TempPath[MAX_PATH], Root[MAX_PATH], Path[MAX_PATH];
+    PWSTR OriginalLocalAppData = NULL;
+    PBYTE Response = NULL;
+    ZP_BROWSER_PAGE_VIEW Page;
+    ZP_BROWSER_RECORD_VIEW Record;
+    ZP_STATUS Status;
+    ULONG ResponseLength, Offset, Index, RecordIndex, CreatedDirectories = 0, CreatedFiles = 0, Found = 0;
+    DWORD OriginalLength, TempLength, Written, Length;
+    HANDLE File;
+    BOOL EnvironmentChanged = FALSE;
+
+    UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGC);
+    UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGV);
+    OriginalLength = GetEnvironmentVariableW(L"LOCALAPPDATA", NULL, 0);
+    if (OriginalLength != 0)
+    {
+        OriginalLocalAppData = Mem_Alloc(OriginalLength * sizeof(WCHAR));
+        TEST_OK(OriginalLocalAppData != NULL);
+        if (OriginalLocalAppData == NULL) return;
+        if (GetEnvironmentVariableW(L"LOCALAPPDATA", OriginalLocalAppData, OriginalLength) != OriginalLength - 1)
+        {
+            TEST_OK(FALSE);
+            Mem_Free(OriginalLocalAppData);
+            return;
+        }
+    }
+    TempLength = GetTempPathW(ARRAYSIZE(TempPath), TempPath);
+    if (TempLength == 0 || TempLength >= ARRAYSIZE(TempPath) ||
+        GetTempFileNameW(TempPath, L"ZPB", 0, Root) == 0)
+    {
+        TEST_OK(FALSE);
+        Mem_Free(OriginalLocalAppData);
+        return;
+    }
+    TEST_OK(DeleteFileW(Root));
+    if (!CreateDirectoryW(Root, NULL))
+    {
+        TEST_OK(FALSE);
+        Mem_Free(OriginalLocalAppData);
+        return;
+    }
+    // Redirect profile discovery for this process; no real browser user data is read.
+    EnvironmentChanged = SetEnvironmentVariableW(L"LOCALAPPDATA", Root);
+    TEST_OK(EnvironmentChanged);
+    if (!EnvironmentChanged) goto Cleanup;
+    Status = ZpBrowser_Execute(&Client, ZP_BROWSER_OPERATION_ENUMERATE, NULL, 0,
+                               &Response, &ResponseLength);
+    TEST_OK(ZpStatus_IsSuccess(Status));
+    if (!ZpStatus_IsSuccess(Status)) goto Cleanup;
+    TEST_OK(NT_SUCCESS(ZpBrowser_DecodePage(Response, ResponseLength, &Page)) && Page.Count == 0);
+    Mem_Free(Response);
+    Response = NULL;
+    for (Index = 0; Index < ARRAYSIZE(Directories); Index++)
+    {
+        if (FAILED(StringCchPrintfW(Path, ARRAYSIZE(Path), L"%s\\%s", Root, Directories[Index])) ||
+            !CreateDirectoryW(Path, NULL))
+        {
+            TEST_OK(FALSE);
+            goto Cleanup;
+        }
+        CreatedDirectories++;
+    }
+    for (Index = 0; Index < ARRAYSIZE(Files); Index++)
+    {
+        if (FAILED(StringCchPrintfW(Path, ARRAYSIZE(Path), L"%s\\%s", Root, Files[Index].Path)))
+        {
+            TEST_OK(FALSE);
+            goto Cleanup;
+        }
+        File = CreateFileW(Path, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY, NULL);
+        TEST_OK(File != INVALID_HANDLE_VALUE);
+        if (File == INVALID_HANDLE_VALUE) goto Cleanup;
+        CreatedFiles++;
+        Length = (DWORD)strlen(Files[Index].Content);
+        TEST_OK(WriteFile(File, Files[Index].Content, Length, &Written, NULL) && Written == Length);
+        NtClose(File);
+    }
+    Status = ZpBrowser_Execute(&Client, ZP_BROWSER_OPERATION_ENUMERATE, NULL, 0,
+                               &Response, &ResponseLength);
+    TEST_OK(ZpStatus_IsSuccess(Status));
+    if (!ZpStatus_IsSuccess(Status)) goto Cleanup;
+    if (!NT_SUCCESS(ZpBrowser_DecodePage(Response, ResponseLength, &Page)))
+    {
+        TEST_OK(FALSE);
+        goto Cleanup;
+    }
+    TEST_OK(Page.Count == 3 && Page.NextCursor == 0);
+    Offset = 0;
+    for (RecordIndex = 0; RecordIndex < Page.Count; RecordIndex++)
+    {
+        if (!NT_SUCCESS(ZpBrowser_GetNextRecord(&Page, &Offset, &Record)))
+        {
+            TEST_OK(FALSE);
+            goto Cleanup;
+        }
+        TEST_OK(Record.Browser == ZpBrowserChrome);
+        if (Record.Kind == ZpBrowserKindBrowser)
+        {
+            TEST_OK(Record.Identity.Length == 0 && Record.Location.Length != 0);
+            Found |= 1;
+            continue;
+        }
+        TEST_OK(Record.Kind == ZpBrowserKindProfile);
+        for (Index = 0; Index < ARRAYSIZE(ProfileNames); Index++)
+        {
+            if (BrowserProfileStringEquals(&Record.Identity, ProfileNames[Index])) break;
+        }
+        TEST_OK(Index < ARRAYSIZE(ProfileNames));
+        if (Index == ARRAYSIZE(ProfileNames)) continue;
+        TEST_OK(BrowserProfileStringEquals(&Record.Name, DisplayNames[Index]));
+        StringCchPrintfW(Path, ARRAYSIZE(Path), L"%s\\Google\\Chrome\\User Data\\%s", Root, ProfileNames[Index]);
+        TEST_OK(BrowserProfileStringEquals(&Record.Location, Path));
+        Found |= 2 << Index;
+    }
+    TEST_OK(Found == 7);
+Cleanup:
+    if (EnvironmentChanged) TEST_OK(SetEnvironmentVariableW(L"LOCALAPPDATA", OriginalLocalAppData));
+    Mem_Free(OriginalLocalAppData);
+    Mem_Free(Response);
+    while (CreatedFiles != 0)
+    {
+        StringCchPrintfW(Path, ARRAYSIZE(Path), L"%s\\%s", Root, Files[--CreatedFiles].Path);
+        TEST_OK(DeleteFileW(Path));
+    }
+    while (CreatedDirectories != 0)
+    {
+        StringCchPrintfW(Path, ARRAYSIZE(Path), L"%s\\%s", Root, Directories[--CreatedDirectories]);
+        TEST_OK(RemoveDirectoryW(Path));
+    }
+    TEST_OK(RemoveDirectoryW(Root));
+}
