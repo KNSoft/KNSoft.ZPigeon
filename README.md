@@ -90,7 +90,7 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
 - Application：把 Server Managed 能力组合为显式目标、受边界约束的管理用例
 - Tools：定义 MCP 与内置智能体共用的唯一工具目录及读写语义
 - Agent：持久化模型、会话及全局 Profile，并通过 OpenAI Responses、Chat Completions 或 Anthropic Messages 执行工具循环
-- Web：承载本地回环 REST、MCP、模型配置、会话及全局 Profile 界面、已连接 Client 首页和按 Client 隔离的可视化控制界面
+- Web：承载本地回环 REST、MCP、连接分组控制台、系统设置、Client EXE 生成、Agent 会话和按 Client 隔离的可视化控制界面
 - Transport：支持 QUIC、TLS/TCP 和 DTLS/UDP，默认使用 QUIC
 
 首次获取源码时需初始化 `Source/3rdParty/rdpwrap.ini` 子模块。
@@ -98,17 +98,29 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
 本地运行：
 1. 启动 `KNSoft.ZPigeon.Web.exe`
 2. 启动一个或多个 `KNSoft.ZPigeon.Client.exe`
-3. 打开 `http://127.0.0.1:9983`，再从首页选择 Client
+3. 打开 `http://127.0.0.1:9983`，在首页控制台按分组选择 Client，进入其控制面板
+
+首页控制台显示多个连接分组、传输方式、往返延迟、收发字节和请求状态，并支持搜索及按客户端公钥指纹保存分组调整。系统设置提供浅色、深色、跟随系统主题及蓝色、青色、紫色主题颜色，外观在当前浏览器内保存并应用到客户端控制面板。Agent 的模型、认证、工具、System Prompt 和全局 Profile 文档统一在系统设置中配置，无需 Client 在线；客户端 Agent 页面继续负责绑定该 Client 的会话和对话。
+
+“生成客户端”支持任意选择 46 个逻辑模块、6 个远程执行扩展以及 TCP、UDP、QUIC 传输。C# 直接调用 VS 2026 的 MSBuild 18 子进程，通过该进程的 `CL=/D...` 传入模块宏，在独立源码快照中构建整个解决方案的 Release x64 版本；页面显示实时编译输出、状态、取消按钮和最终 EXE 大小。相同源码、依赖内容、工具链和宏集合复用缓存模板。首次构建需要本机具备源码、已还原的依赖与 VS 2026；构建失败会显示日志。
+
+连接目标当前固定为 `127.0.0.1`，TCP 与 QUIC 默认使用端口 `21943`，UDP/DTLS 使用下一端口 `21944`，TLS 名称为 `localhost`。Server 可用 `Transport:Port`（命令行 `--Transport:Port=22943`）显式配置基础端口，范围为 1–65534；生成客户端使用当前 Server 的端口。端口占用或系统保留时需要显式选定可用端口，不自动换端口。传输复选框决定编译支持和有序连接候选；同一实例保持一条活动连接。TCP 默认 TLS 1.2 或更高，可要求 TLS 1.3；当前 QUIC 包与严格 TLS 1.3 要求 Windows 11 / Server 2022，Windows 10 宿主开放 TCP/UDP。所有路径保留加密和 Server 证书验证。
+
+生成器在模板副本中写入默认分组、连接顺序、TLS 策略、实例标识和当前 Server 根证书。“新实例”分配独立 ID；“更新已有实例”保留 ID，生成记录按部署持久化。CNG 密钥名固定为 `KNSoft.ZPigeon.Client.<部署根公钥 SHA-256>.<实例 ID>`，不提供任意名称输入。私钥由目标机器的当前用户 CNG 首次创建，EXE 不包含实例或 Server 私钥；同机同账户两个独立实例使用不同密钥，同一实例重复运行由按用户和角色区分的 NT 互斥对象拒绝。
+
+命令执行基础模块与 TCP 的实测 EXE 为 212,992 字节（208 KiB），仅需一个 EXE；完整版本为 1,341,952 字节（约 1.28 MiB），比原动态 Loader 的 1,320,448 字节基线增加 21,504 字节（21 KiB），同时省去 164,704 字节的 Loader DLL。当前生成器仍为选中的 WinGet 提供 `Microsoft.Management.Deployment.dll` 和 `.winmd` 旁文件；`.winmd` 用于构建期投影，其分发策略待确认。RTC/P2P 的 WebView2 Loader 静态链接进 EXE，无需 `WebView2Loader.dll` 旁文件，目标系统仍需安装 WebView2 Runtime。Client 握手签名覆盖编译能力和实例元数据；Web 页面、内置 Agent 工具及 MCP 目录按已认证能力过滤。编译宏和构建细节见 [Client 可选编译与 Web 构建](Docs/ClientBuildProfiles.md)。
 
 MCP Streamable HTTP 端点为 `http://127.0.0.1:9983/mcp`。外部调用方先使用 `list_clients` 获取本次 Server 进程内有效的 `ClientId`，再把该值传给其他工具。MCP 无会话目标状态，不会隐式沿用上一次选择的 Client。管理端“Agent”页面则把当前页面的 Client 固定绑定到工具调用，模型无法改选目标。
 
 AI 工具按用途显式列入目录，不会因底层 SDK 新增 API 或枚举值而自动暴露。Cookie、密码等敏感浏览器数据使用独立工具和敏感性标记，并提示模型仅在用户明确要求时调用。OpenAI 请求显式关闭 Provider 端存储；所有模型服务的实际数据处理和保留策略仍由所选 Provider 决定。
 
-当前 Web 是本机闭环原型，仅接受 `127.0.0.1` 的规范 Host 和同源浏览器请求；HTTP、WebSocket 与 MCP 都会经过同一 Host 边界，浏览器请求还会拒绝跨站来源。没有浏览器来源信息的本机原生程序仍视为可信，本阶段不把任意本机进程纳入安全边界。对外访问应通过本机反向代理，并重新设计 HTTPS、身份验证和可信代理边界。多个 Client 可同时主动连接一个 Server，并接受 Server 的统一管理。首页按客户端公钥指纹列出当前连接，选择后进入该 Client 的独立管理上下文。
+当前 Web 是本机闭环原型，仅接受 `127.0.0.1` 的规范 Host 和同源浏览器请求；HTTP、WebSocket 与 MCP 都会经过同一 Host 边界，浏览器请求还会拒绝跨站来源。没有浏览器来源信息的本机原生程序仍视为可信，本阶段不把任意本机进程纳入安全边界。对外访问应通过本机反向代理，并重新设计 HTTPS、身份验证和可信代理边界。多个 Client 可同时主动连接一个 Server，并接受 Server 的统一管理。首页按分组及客户端公钥指纹列出当前连接，选择后进入该 Client 的独立管理上下文。当前分组仅用于控制台组织，不提供独立 Deployment 信任根或入组授权。
 
 ## 文档
 
 - [Design.md](Design.md)：架构、协议与安全模型。
+- [ClientBuildProfiles.md](Docs/ClientBuildProfiles.md)：Client 功能与传输的可选编译方案。
+- [RemoteMedia.md](Docs/RemoteMedia.md)：远控画面流、P2P 路由恢复和 WebRTC 视频轨实验。
 - [Release.md](Release.md)：发布前检查清单。
 
 ## 许可协议

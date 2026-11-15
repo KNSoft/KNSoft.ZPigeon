@@ -147,13 +147,15 @@ REST / UI 适配器 -----------> Application | Server.Managed
 
 REST、MCP 和内置智能体是三种入口，不是三套业务实现。REST 路由按 UI 和传输需求显式映射；`ToolAudience.ExternalMcp` 与 `ToolAudience.BuiltInAgent` 只决定一个工具面向哪类智能体。模型 Provider 与暴露范围正交，不能以 Provider 类型决定工具权限或目标。
 
-外部 MCP 使用无状态 Streamable HTTP，直接支持 2026-07-28 无握手请求。除 `list_clients` 外，工具都要求显式传入字符串形式的瞬时 `ClientId`，不得依赖服务器端“当前 Client”。内置智能体在创建工具 Schema 时绑定当前页面 Client，并从 Schema 中移除 `clientId`；模型无法选择其他目标。需要由调用方回传的 64 位身份、游标和进程创建时间以十进制字符串跨 JSON 边界传递，避免 JavaScript 数字精度损失。
+外部 MCP 使用无状态 Streamable HTTP，直接支持 2026-07-28 无握手请求。除 `list_clients` 外，工具都要求显式传入字符串形式的瞬时 `ClientId`，不得依赖服务器端“当前 Client”。内置智能体在创建工具 Schema 时绑定当前页面 Client，并从 Schema 中移除 `clientId`；模型无法选择其他目标。 内置工具按该 Client 的已认证模块能力过滤；MCP 动态列出当前连接支持的工具并集，调用仍显式选择 Client。通用 Administration 操作名单按目标能力过滤，缺失的枚举、查询或控制类工具不会通告；系统设置的全局 Profile 使用完整工具目录，不依赖在线目标。需要由调用方回传的 64 位身份、游标和进程创建时间以十进制字符串跨 JSON 边界传递，避免 JavaScript 数字精度损失。
 
 新增 SDK API 或枚举值不自动成为 REST 或 AI 能力。先按产品语义决定是否增加 Application 用例；需要 AI 调用时只在 Tools 中增加一次定义，MCP 与内置智能体自动同步；需要 Web UI 时再显式增加 REST、流或页面适配。Administration 等聚合入口使用显式操作白名单、固定控制操作与动作组合并限制结果数；需要 Flags、二进制或专用结构载荷的操作不进入通用字符串工具。这样不会把底层面过度暴露，也不会维护两套 MCP/Agent 映射。
 
 模型目录使用仓库内 `Source/3rdParty/models.dev/api.json` 的静态快照，保留上游 Provider ID，并在进程启动时解析一次。`Update.cmd` 只供维护者手动覆盖快照；运行时不联网更新、不引入 npm 包或第二套缓存。模型配置显式保存 Provider、接口协议、Base URL、认证、模型 ID、上下文窗口、最大输出、Reasoning、超时和高级 JSON；高级 JSON 原样合并，但不能覆盖消息、工具等结构字段。
 
 模型、会话及按序事件保存在 Server 的 SQLite 数据库。会话直接关联模型，所有会话共用唯一一份全局 Profile，包含 System Prompt、工具白名单、`AGENTS.md`、`TOOLS.md`、`MEMORY.md` 和自定义 Markdown；每轮请求读取会话的模型与全局 Profile。修改 Profile 从下一轮消息开始生效，正在执行的一轮沿用开始时读取的内容；新会话和分支都不保存 Profile 副本，不维护独立 Agent 配置实体。会话绑定 Client 公钥指纹，保存用户、助手、Tool Call、Tool Result、压缩摘要、错误及归一化和原始 Usage；支持历史搜索、分支和 JSON 导出。每个会话最多一个运行循环；新消息默认排队，Steer 取消当前请求并优先执行，Stop 取消当前请求和未运行队列。上下文达到阈值时自动压缩，也可手动触发；执行顺序独立于消息提交顺序，终止的 Tool Call 会写入错误结果，保证后续协议历史完整。
+
+Web 首页为连接分组控制台，系统设置集中管理模型和全局 Profile，配置入口不依赖 Client 在线；Client Agent 页面保留目标绑定和会话操作。浅色、深色、跟随系统和主题颜色使用浏览器本地设置，在首页及各 Client 控制面板间共用。
 
 ## 4. Deployment、S 与 C 身份
 
@@ -187,6 +189,20 @@ REST、MCP 和内置智能体是三种入口，不是三套业务实现。REST �
 - 未知公钥完成客户端密钥签名握手后即可由 S 操作。
 
 当前模型只证明“后续连接仍持有同一客户端私钥”，不额外证明该实例经过入组审批。如果以后需要受控入组，应另行增加一次性 Enrollment 凭据，不能把客户端自签名误当作部署授权。
+
+### 4.4 本机控制台与 Client 生成
+
+本机原型共用 `localhost` Deployment 根和 Server 证书。Client 的 `Group` 是受实例签名保护的控制台分组标签，不选择 Deployment，不替代 SNI、信任根或入组授权。Web 保存分组列表和按客户端公钥 SHA-256 指纹指定的分组覆盖；存在覆盖时优先使用 Server 保存的值，否则使用 Client 的默认标签。
+
+Web 生成器以 46 个模块宏、6 个 Execution 扩展宏和 TCP/UDP/QUIC 传输宏表示实际编译选择。C# 直接用 `ProcessStartInfo.ArgumentList` 启动经 `vswhere` 解析的 VS 2026 / MSBuild 18，在子进程环境设置 `CL`，不经过 PowerShell，不生成配置头文件或 `.props`。每次缓存未命中均复制独立源码及当前 Native 包快照，以 Release x64 重建完整解决方案；单个 worker 串行构建，最多 4 个待处理任务，任务限时 20 分钟，可取消整个进程树。标准输出和错误输出合并为有界日志，通过 SSE 显示。
+
+模板缓存键覆盖实际源码、Native 依赖内容、工具链版本及规范化宏集合；分组、连接顺序、TLS 策略、Deployment 根和 InstanceId 在下载时写入模板副本，不改变编译缓存。生成器验证未签名 AMD64 PE 和唯一 `.zpcfg` 配置节，配置版本为 1、固定大小 4580 字节、根证书容量 4096 字节；24 字节偏移保存最多三个有序传输字节，28 字节偏移保存基础端口和 TCP TLS 1.3 策略，分组、固定身份名称及根 DER 分别位于 32、162 和 484 字节偏移。原始模板不被覆盖，下载响应禁止缓存。
+
+当前 Endpoint 固定为 `127.0.0.1` 和 `localhost`，TCP/QUIC 默认端口为 21943，UDP 为 21944，避免两个 UDP Listener 占用同一端口。TCP/UDP Listener 在 Windows 10 开放；当前 Schannel QUIC 后端及严格 TLS 1.3 要求 Windows 11 / Server 2022。至少编译一种传输，候选顺序在生成器中明确指定，每个实例只有一条活动连接。TLS 1.3 是 TCP 策略及 QUIC 的固定安全要求，不是第四种 Transport。
+
+生成实例的密钥名固定为 `KNSoft.ZPigeon.Client.<DeploymentId>.<InstanceId>`。DeploymentId 是根 SubjectPublicKeyInfo 的 SHA-256（64 个十六进制字符），InstanceId 是随机 GUID 的 N 格式（32 个字符），完整名称为 119 个字符。目标机器在当前用户 CNG 中创建和持久化私钥；同账户两个新实例使用不同名称，更新保持原 InstanceId；同一实例重复运行由包含用户 SID 和角色的 NT Mutant 拒绝。生成记录按部署持久化，离线实例也可更新。两项 ID 都不授予授权，实际身份继续使用 CNG 公钥指纹。
+
+未配置内置根证书的原始开发 Client 从同目录读取根证书；生成的 Client 使用配置节 DER，不需要根证书旁文件。当前生成器仍为选中的 WinGet 提供 DLL 和 `.winmd` 旁文件；`.winmd` 用于构建期投影，其分发策略待确认。RTC/P2P 的 WebView2 Loader 静态链接进 EXE，不分发 `WebView2Loader.dll`，目标系统仍需安装 WebView2 Runtime。普通声明头、静态库输入和原项目文件列表继续保留，宏裁剪实现及其引用。具体构建与依赖规则见 [ClientBuildProfiles.md](Docs/ClientBuildProfiles.md)。
 
 ## 5. Transport 与 Endpoint
 
@@ -240,6 +256,9 @@ C 按配置顺序尝试 Endpoint；连接超时、失败后的轮次推进、重
 
 - C 的 Client 版本；
 - 客户端公钥；
+- 已编译模块、传输与 Execution 扩展能力位图；
+- 客户端实例 GUID；
+- 可选的控制台分组标签；
 - Challenge、签名以及必要的防重放数据。
 
 Deployment 已由当前连接的 SNI 和证书上下文确定，握手中不重复传输 DeploymentKeyId。
@@ -323,7 +342,7 @@ BYTE[] Type-specific body
 
 | 值 | 名称 | 方向 | 类型专用 Body |
 |---:|---|---|---|
-| `0x01` | `ClientHello` | C -> S | little-endian `UINT16 ClientVersion`、65 字节客户端公钥 |
+| `0x01` | `ClientHello` | C -> S | little-endian `UINT16 ClientVersion`、65 字节公钥、`UINT64 Modules`、`UINT32 Transports`、`UINT32 Execution`、16 字节 Instance GUID、`UINT16 GroupLength`、UTF-16LE 分组 |
 | `0x02` | `ServerChallenge` | S -> C | 32 字节随机 Challenge |
 | `0x03` | `ClientAuthenticate` | C -> S | 64 字节 ECDSA P-256 `r || s` 签名 |
 | `0x04` | `Ready` | S -> C | 空 |
@@ -338,9 +357,11 @@ BYTE[] Type-specific body
 
 其他值在 Client Version 1 中非法。消息类型的最小 Body 长度由 Protocol 解码器校验。`ChannelData` 单帧数据最大为 1 MiB，单次 `ChannelWindow` Credit 最大为 16 MiB，避免大块传输长期占用连接发送队列；其他消息仍受 16 MiB Frame 上限约束。
 
+`ClientHello` 的 Body 长度为 `101 + GroupLength * 2` 字节；`GroupLength` 最大为 64，线上不传终止符，长度为 0 表示未分组。分组中禁止 U+0000–U+001F 和 U+007F–U+009F 控制字符。Server 保存标签并在持钥签名验证成功后提供给管理端；标签不改变协议模块、授权或连接身份。
+
 `ClientVersion` 是 Client EXE 单调递增的已发布兼容版本。首次发布前，当前、最低和最高 Client 版本均固定为 1，协议变更直接替换现有定义，不兼容中间开发构建。发布后，`ZP_CLIENT_VERSION` 表示 Server 生成的新 Client 版本，`ZP_MIN_CLIENT_VERSION` 和 `ZP_MAX_CLIENT_VERSION` 表示 Server 接受的版本范围；低于或高于该范围时，Server 在认证前分别以 `ServerReject` Reason 1 或 2 拒绝，Client 以上报 `STATUS_REVISION_MISMATCH` 后断开。新 Client 不兼容旧 Server，不发送 Server 版本，也不进行反向协商。
 
-Server 保存每条连接的 Client 版本。接受范围内存在格式或语义差异时，对应模块通过 `ZpServer_QueryConnectionClientVersion` 选择 Codec、处理逻辑或返回 `STATUS_NOT_SUPPORTED`；不发送模块清单、能力位图或模块版本。只有发布新 Client 时才提高当前和最高版本，只有 Server 已无法正确服务更旧 Client 时才提高最低版本；提高最低版本后删除不再可达的兼容分支。
+Server 保存每条连接的 Client 版本。接受范围内存在格式或语义差异时，对应模块通过 `ZpServer_QueryConnectionClientVersion` 选择 Codec、处理逻辑或返回 `STATUS_NOT_SUPPORTED`；发送由实际编译宏导出的模块、传输和 Execution 扩展能力位图，不发送模块独立版本。能力与 Instance GUID 纳入持钥签名；Server 只在 Ready 后向上层提供，缺失模块的请求在 Server 和 Client 返回 `STATUS_NOT_SUPPORTED`，固定核心 Probe 不依赖 System 模块。只有发布新 Client 时才提高当前和最高版本，只有 Server 已无法正确服务更旧 Client 时才提高最低版本；提高最低版本后删除不再可达的兼容分支。
 
 初始业务消息语义限制为：
 
@@ -444,12 +465,12 @@ Protocol 第一阶段公开 `ZpFrame_*` 与 `ZpCodec_*` 纯函数；它们不分
 
 Endpoint 记录由 `Transport`、`Host`、`Port` 和 `ServerName` 构成。`Host` 是实际连接目标；`ServerName` 必须为非空 DNS 名称，用于 SNI 和证书名称验证，即使 `Host` 是 IP 也不省略。
 
-第一版默认策略：
+第一版默认策略（Debug 与 Release 一致）：
 
 - 单个 Endpoint 的连接建立超时为 10 秒；
-- 按配置顺序尝试全部 Endpoint，一轮内不重复；
-- 一轮全部失败后等待 1 秒，之后指数退避为 2、4、8、16、32、60 秒，上限保持 60 秒；
-- 每次等待加入正负 20% 随机抖动；连接连续稳定 60 秒后重置退避；
+- 按配置顺序尝试全部 Endpoint，一轮内不重复；同步失败立即继续，异步失败后以 1 ms 定时器调度下一候选；
+- 一轮全部失败后，退避基数依次为 1、2、4、8、16、32、60 秒，基数上限为 60 秒；
+- 每次整轮退避加入正负 20% 随机抖动；连接连续稳定 60 秒后重置退避；
 - 已建立连接异常断开后从列表第一项重新开始；不在存活连接之间主动迁移；
 - 没有 Endpoint 时 `Start` 返回 `STATUS_INVALID_PARAMETER`；所有失败通过状态回调上报，不静默切换到未配置或不安全的 Transport。
 
@@ -462,6 +483,8 @@ Client 配置包含：
 - 按尝试顺序排列的 Endpoint 数组；
 - Deployment 根证书 DER；
 - 可选的 CNG 客户端持久化密钥名；为空时由 SDK 使用默认名称；默认使用机器范围，也可明确选择当前用户范围；
+- 安装实例 `InstanceId`；由宿主提供并纳入握手签名，原始开发配置允许零 GUID；
+- 可选的 `Group` 分组标签；`NULL` 或空字符串表示未分组，最多 64 个 UTF-16 代码单元，禁止控制字符；
 - 连接超时，0 使用 10 秒默认值；
 - 单连接入站 Request 数量和 Payload 总量上限，以及本机 Channel 上限；
 - 状态回调、操作回调和调用方 Context。
@@ -495,7 +518,7 @@ Client 完整收到 Request 后检查方向、字段和配额，随后复制 Pay
 
 Client 的 `MaxRequestsPerConnection` 和 `MaxRequestPayloadBytesPerConnection` 限制已投递且尚未完成的入站 Request 及其深拷贝 Payload；`MaxChannelsPerConnection` 限制正在创建或已经激活的本机 Channel。Server 使用同名对象上限约束每连接的调用方 Handle。名额在执行业务或创建 OS 资源前预留，达到上限返回 `STATUS_QUOTA_EXCEEDED`，并在创建失败、响应失败、取消、关闭或完成后立即归还。
 
-Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多 64 项；Deployment 根证书 DER 最大 1 MiB。非空数组与源指针必须成对提供；可选字符串使用 `NULL` 表示缺省，提供空字符串视为无效配置。ServerName 在同一 Server 配置中按不区分大小写方式保持唯一。所有深拷贝使用单块对象内存，Server 额外持有通过 `CertDuplicateCertificateContext` 获得的证书引用，并在 `Close` 时逐项释放。
+Client Endpoint、Server Listener 和 Server Deployment 数组第一版各最多 64 项；Deployment 根证书 DER 最大 1 MiB。非空数组与源指针必须成对提供；除 `Group` 允许空字符串表示未分组外，可选字符串使用 `NULL` 表示缺省，提供空字符串视为无效配置。ServerName 在同一 Server 配置中按不区分大小写方式保持唯一。所有深拷贝使用单块对象内存，Server 额外持有通过 `CertDuplicateCertificateContext` 获得的证书引用，并在 `Close` 时逐项释放。`ZpServer_QueryConnectionClientGroup` 仅在连接 Ready 时复制已认证标签至调用方 Buffer。
 
 ## 9. 功能模块
 
@@ -520,7 +543,7 @@ URL 下载是 Client 本机后台作业，不把文件内容经 Server 或 Web �
 - `Wmi`（ModuleId 13）：命名空间、类、实例和 WQL 查询。
 - `Audio`（ModuleId 14）：音频设备、会话、音量及输入输出流。
 - `Video`（ModuleId 15）：摄像头枚举、Media Foundation 采集、JPEG 编码和带背压的实时画面流。
-- `Rtc`（ModuleId 16）：WebRTC 数据通道建立和流量转发。
+- `Rtc`（ModuleId 16）：WebRTC 数据通道建立和流量转发。窗口/桌面先从 Server 中转起播，后台建立 P2P，直连失效时重开中转流并请求全量画面。原生发送分块共享有界队列，支持流级取消；详细画面反馈和实验边界见 [RemoteMedia.md](Docs/RemoteMedia.md)。
 - `Serial`（ModuleId 17）：串口枚举、配置和双向流式数据。
 - `Recording`（ModuleId 18）：窗口、摄像头和音频录制任务。
 - `PortableDevice`（ModuleId 19）：MTP 设备和对象的浏览、传输与管理。
@@ -603,7 +626,7 @@ CDP `Page.startScreencast` 按 Chromium 协议产生 JSON 内 Base64 JPEG。Tunn
 - 浏览器请求的 `Origin` 必须与规范本机 Origin 完全相同，`Sec-Fetch-Site: cross-site` 直接拒绝，WebSocket 也只接受该 Origin；
 - 没有 `Origin` 和 Fetch Metadata 的本机原生程序仍被视为可信；当前边界只解决恶意网页跨站访问和 DNS rebinding，不试图隔离任意本机进程；
 - `/mcp` 与 REST 共用相同的规范 Host 边界；MCP 调用方属于上述受信任本机原生程序，当前不额外建立认证会话；
-- `/api/clients` 返回当前连接及公钥 SHA-256 指纹；其余 API 必须显式携带瞬时 `ClientId`，长生命周期 Web 状态按该 ID 隔离；Native 在连接增删时触发事件，Managed/Web 据此立即释放离线 Client 的状态，不依赖后续 HTTP 流量；
+- `/api/clients` 返回当前连接、公钥 SHA-256 指纹和分组；Client 管理操作必须显式携带瞬时 `ClientId`，全局控制台、Client 生成和 Agent 配置不依赖选定 Client；长生命周期 Web 状态按该 ID 隔离。Native 在连接增删时触发事件，Managed/Web 据此立即释放离线 Client 的状态，不依赖后续 HTTP 流量；
 - MCP 不保存目标状态，每次工具调用都验证显式 `ClientId`；内置智能体的目标由 Web 当前 Client 上下文绑定，模型工具参数中不存在目标字段；
 - 模型凭据使用 ASP.NET Core Data Protection 和当前 Windows 账户 DPAPI 加密后写入 `%LOCALAPPDATA%\KNSoft\ZPigeon`。批量列表不返回凭据；具备当前 Web 管理权限的详情接口可按项返回解密值，以支持显示和复制，但响应禁止缓存且不得写入日志；
 - 对话、工具参数和工具结果会发送给所选模型 Provider。OpenAI Responses 请求显式设置 `store: false`，并保存加密推理内容以支持无状态工具续传；Chat Completions 不发送非通用存储参数，Anthropic 保存带签名的 Thinking 内容。实际数据处理与保留仍由 Provider 决定，页面必须明确提示；
@@ -633,7 +656,7 @@ CDP `Page.startScreencast` 按 Chromium 协议产生 JSON 内 Base64 JPEG。Tunn
 - C 实例密钥为 CNG `ECDSA_P256` 持久化密钥，由宿主明确选择当前用户或本地计算机作用域；私钥不可导出；
 - 客户端公钥在线上使用 SEC1 非压缩格式 `0x04 || X[32] || Y[32]`，该公钥本身作为实例身份；
 - S 的 Challenge 使用系统 CSPRNG 生成 32 字节，每条连接只使用一次；
-- 客户端签名摘要为 `SHA-256("KNSoft.ZPigeon.ClientAuth.v1" || 0x00 || Challenge[32] || PublicKey[65])`；
+- 客户端签名摘要为 `SHA-256("KNSoft.ZPigeon.ClientAuth.v1" || 0x00 || Challenge[32] || CanonicalClientHello)`；`CanonicalClientHello` 是版本为 1 的完整规范线编码，包含公钥、实际编译能力、Instance GUID 和带长度分组；
 - `ClientAuthenticate` 使用 IEEE P1363 编码的 ECDSA P-256 签名，即 32 字节大端 `r` 后跟 32 字节大端 `s`；
 - `ClientHello` 之后只接受 `ServerChallenge` 或版本不兼容的 `ServerReject`，`ServerChallenge` 之后只接受 `ClientAuthenticate`，认证成功后 S 发送空 Body 的 `Ready`；任何越序、重复或握手阶段业务消息均以 `STATUS_PROTOCOL_UNREACHABLE` 关闭连接；
 - QUIC/TLS 关闭、无法重同步的 Frame 前缀错误、身份验证失败、内部不变量错误和持续违规触发的断开均终止所有未完成请求、订阅和通道，不尝试在新连接上透明续接；可恢复的完整 Frame 错误和瞬时资源不足按 6.1 节处理。
