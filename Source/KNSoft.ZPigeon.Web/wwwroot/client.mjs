@@ -1,4 +1,5 @@
 import { Terminal } from "./vendor/xterm/xterm.mjs";
+import { terminalTheme } from "./theme.mjs";
 import { FitAddon } from "./vendor/xterm/addon-fit.mjs";
 import { bindTerminalInteractions, exportTerminal, pasteTerminal } from "./terminal-interactions.mjs";
 import { CertificateInstaller } from "./certificate-install.mjs";
@@ -81,6 +82,9 @@ document.querySelector("#clientTitle").textContent = `KNSoft ZPigeon · Client $
 const $ = (id) => document.getElementById(id),
   encoder = new TextEncoder(),
   sessions = new Map();
+window.addEventListener("themechange", () => {
+  for (const session of sessions.values()) session.terminal.options.theme = terminalTheme();
+});
 const shellSelect = $("shellSelect"),
   newShell = $("newShell"),
   emptyNew = $("emptyNew"),
@@ -166,6 +170,23 @@ const categories = {
   viewCategory = new Map(
     Object.entries(categories).flatMap(([category, items]) => items.map(([view]) => [view, category])),
   );
+const viewModules = {
+  clientStatus: [44], system: [1, 26], wsl: [41], pageFiles: [34], sandbox: [39], winobj: [40],
+  registry: [7], users: [9], wmi: [13], updates: [22], certificates: [28], credentials: [30], events: [6],
+  forwards: [11], proxyVpn: [43], networkShares: [32], networkAdapters: [33], networkRoutes: [33],
+  networkEndpoints: [33], wlan: [27], firewall: [24], files: [4], bitlocker: [46], shadowCopies: [45],
+  portableDevices: [19], clipboard: [29], processes: [2], windows: [8, 42], services: [3], tasks: [23],
+  hardwareInfo: [31, 26, 4, 33, 25], hardware: [21], bluetooth: [35], keyboard: [36], location: [37],
+  firmware: [31], video: [15], audio: [14], serial: [17], power: [25], software: [20], inputMethods: [20],
+  packages: [20], fonts: [38], browsers: [12], terminal: [5], execution: [10], remoteDesktop: [26, 8],
+};
+let capabilities = { modules: [], execution: 0 }, capabilityModules = new Set();
+const supportsModule = (id) => capabilityModules.has(id),
+  viewAvailable = (view) => view === "connection" || view === "agent" || viewModules[view]?.some(supportsModule),
+  firstAvailableView = () =>
+    views.find(([view]) => view !== "connection" && view !== "agent" && viewAvailable(view))?.[0] ||
+    "connection";
+const requestedView = location.hash.slice(1);
 let active = null,
   selectedShell = null,
   availableShells = null,
@@ -174,7 +195,7 @@ let active = null,
   shellsLoaded = false,
   shellsLoading = false,
   sessionsRestored = false,
-  currentView = views.some(([view]) => view === location.hash.slice(1)) ? location.hash.slice(1) : "terminal",
+  currentView = "connection",
   fitFrame = 0,
   contextSession = null,
   renameSession = null,
@@ -479,7 +500,7 @@ async function refresh() {
 }
 
 async function loadShells() {
-  if (!clientConnected || currentView !== "terminal" || shellsLoaded || shellsLoading) return;
+  if (!supportsModule(5) || !clientConnected || currentView !== "terminal" || shellsLoaded || shellsLoading) return;
   shellsLoading = true;
   shellSelect.replaceChildren(new Option(t("terminal.loadingShells")));
   try {
@@ -589,7 +610,7 @@ function resize(session) {
 }
 
 async function restoreSessions() {
-  if (sessionsRestored) return;
+  if (!supportsModule(5) || sessionsRestored) return;
   sessionsRestored = true;
   try {
     const values = await fetch(apiUrl("/api/terminal/sessions")).then(async (response) => {
@@ -675,12 +696,7 @@ function openSession(info, select) {
       scrollOnUserInput: true,
       fontFamily: "Cascadia Mono,Consolas,monospace",
       fontSize: 14,
-      theme: {
-        background: "#0b0f15",
-        foreground: "#d9e1ee",
-        cursor: "#b7c9e5",
-        selectionBackground: "#34517a88",
-      },
+      theme: terminalTheme(),
     }),
     fit = new FitAddon();
   terminal.loadAddon(fit);
@@ -856,20 +872,22 @@ function closeActive() {
 }
 
 function showView(name, historyMode = "replace") {
-  if (!viewCategory.has(name)) name = "terminal";
+  if (!viewCategory.has(name) || !viewAvailable(name)) name = firstAvailableView();
   if (name !== currentView)
     ({ execution, forwards, packages, updates, clientStatus, agent: agentManager })[currentView]?.deactivate?.();
   currentView = name;
   const category = viewCategory.get(name),
     moduleNav = $("moduleNav");
   for (const [view] of views) $(`${view}View`).hidden = name !== view;
-  for (const button of document.querySelectorAll(".app-nav button"))
+  for (const button of document.querySelectorAll(".app-nav button")) {
+    button.hidden = !categories[button.dataset.category].some(([view]) => viewAvailable(view));
     button.classList.toggle("active", button.dataset.category === category);
+  }
   moduleNav.hidden = name === "agent";
   moduleNav.replaceChildren(
-    ...categories[category].map(([view, title]) => {
+    ...categories[category].filter(([view]) => viewAvailable(view)).map(([view, title]) => {
       const button = document.createElement("button");
-      button.textContent = t(title);
+      button.textContent = t(view === "windows" && !supportsModule(8) ? "module.uiAutomation" : title);
       button.classList.toggle("active", view === name);
       button.onclick = () => showView(view, "push");
       return button;
@@ -931,6 +949,32 @@ function showView(name, historyMode = "replace") {
       networkEndpoints,
       power,
     })[name]?.activate(clientConnected);
+}
+
+async function loadCapabilities() {
+  capabilities = await getJson("/api/capabilities");
+  capabilityModules = new Set(capabilities.modules);
+  execution.setCapabilities(capabilities);
+  remoteDesktop.setCapabilities(capabilities);
+  files.setCapabilities(capabilities);
+  windows.setCapabilities(capabilities);
+  processes.setCapabilities(capabilities);
+  services.setCapabilities(capabilities);
+  for (const manager of administration) manager.setCapabilities?.(capabilities);
+  for (const [manager, selector, required] of [
+    ["hardwareManager", '[data-action="registry"]', [7]],
+    ["hardwareManager", '[data-action="service"]', [3, 7]],
+    ["firewallManager", '[data-action="events"]', [6]],
+    ["networkEndpointManager", '[data-action="process"]', [2]],
+    ["networkShareManager", '[data-action="browse"]', [4]],
+  ])
+    $(manager).querySelector(selector).hidden = !required.every(supportsModule);
+  rtc.enabled = supportsModule(16);
+  for (const manager of ["windowManager", "audioManager", "videoManager"])
+    for (const button of $(manager).querySelectorAll(
+      '[data-action="record"], [data-action="recordings"], ' +
+      '[data-action="output-record"], [data-action="input-record"]'))
+      button.hidden = !supportsModule(18);
 }
 
 async function call(url, body) {
@@ -1001,17 +1045,28 @@ document.addEventListener("keydown", (event) => {
 addEventListener("resize", hideTabMenu);
 tabs.addEventListener("scroll", hideTabMenu);
 for (const button of document.querySelectorAll(".app-nav button"))
-  button.onclick = () => showView(categories[button.dataset.category][0][0], "push");
+  button.onclick = () => showView(categories[button.dataset.category].find(([view]) => viewAvailable(view))[0], "push");
 addEventListener("hashchange", () => showView(location.hash.slice(1)));
 showView(currentView);
 new ResizeObserver(scheduleFit).observe(terminals);
 const connected = await refresh();
-showView(currentView);
-await restoreSessions();
-if (connected) await loadShells();
+if (connected) {
+  try {
+    await loadCapabilities();
+    showView(requestedView);
+    await restoreSessions();
+    await loadShells();
+  } catch (error) { notify(error); }
+}
 const statusEvents = new EventSource(apiUrl("/api/status/events"));
-statusEvents.onmessage = (event) => {
+statusEvents.onmessage = async (event) => {
   const wasConnected = clientConnected,
     connected = applyStatus(JSON.parse(event.data));
-  if (connected && !wasConnected) showView(currentView);
+  if (connected && !wasConnected) {
+    try {
+      await loadCapabilities();
+      showView(currentView);
+      await restoreSessions();
+    } catch (error) { notify(error); }
+  }
 };

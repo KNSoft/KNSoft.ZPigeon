@@ -602,6 +602,13 @@ export class FontManager extends SnapshotManager {
       if (!this.menu.contains(event.target)) this.menu.hidden = true;
     });
   }
+  setCapabilities(capabilities) {
+    const files = capabilities.modules.includes(4);
+    this.dialog.querySelector('[data-action="choose"]').hidden = !files;
+    this.dialog.querySelector('[data-action="upload"]').hidden =
+      !files || !capabilities.modules.includes(10) || !(capabilities.execution & 32);
+    this.dialog.querySelector('[data-field="path"]').readOnly = files;
+  }
   render() {
     const query = this.filter?.value.toLocaleLowerCase() || "",
       scope = this.scope?.value || "all",

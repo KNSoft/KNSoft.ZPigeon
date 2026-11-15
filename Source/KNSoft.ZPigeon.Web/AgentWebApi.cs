@@ -23,7 +23,7 @@ internal static class AgentWebApi
     {
         app.MapGet("/api/agent/catalog/providers", catalog.GetProviders);
         app.MapGet("/api/agent/catalog/providers/{provider}/models", catalog.GetModels);
-        app.MapGet("/api/agent/tools", () => tools.CreateBuiltInTools(1)
+        app.MapGet("/api/agent/tools", () => tools.CreateProfileTools()
             .Select(tool => new ToolView(tool.Function.Name,
                                          tool.Function.Description ?? string.Empty,
                                          tool.ReadOnly,
@@ -186,7 +186,7 @@ internal static class AgentWebApi
 
     internal static AgentProfile CreateProfile(ProfileRequest? request, ZPigeonToolCatalog tools)
     {
-        var availableTools = tools.CreateBuiltInTools(1);
+        var availableTools = tools.CreateProfileTools();
         var knownTools = availableTools.Select(tool => tool.Function.Name).ToHashSet(StringComparer.Ordinal);
         var result = new AgentProfile(request?.SystemPrompt ?? string.Empty,
                                         request?.ToolNames ?? availableTools

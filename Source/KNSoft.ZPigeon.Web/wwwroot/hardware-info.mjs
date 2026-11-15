@@ -8,6 +8,7 @@ const tabs = [
   ["power", "电源"],
 ];
 const smbiosTypes = { mainboard: new Set([0, 1, 2, 3]), memory: new Set([16, 17, 19, 20]) };
+const tabModules = { processor: 31, mainboard: 31, memory: 31, display: 26, storage: 4, network: 33, power: 25 };
 
 export class HardwareInformationManager {
   constructor(root, { call, notify }) {
@@ -45,6 +46,12 @@ export class HardwareInformationManager {
     this.connected = connected;
     if (connected && !this.cache.has(this.current)) this.load();
     else if (!connected) this.status.textContent = "Client 未连接";
+  }
+  setCapabilities(capabilities) {
+    const modules = new Set(capabilities.modules);
+    for (const tab of this.tabHost.children) tab.hidden = !modules.has(tabModules[tab.dataset.tab]);
+    const first = [...this.tabHost.children].find((tab) => !tab.hidden);
+    if (first && !modules.has(tabModules[this.current])) this.select(first.dataset.tab);
   }
   disconnect() {
     this.connected = false;

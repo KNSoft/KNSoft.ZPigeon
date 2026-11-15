@@ -9,7 +9,7 @@
   </head>
   <body>
     <header>
-      <a class="home" href="/">← Clients</a>
+      <a class="home" href="/" data-i18n="console.back">← 控制台</a>
       <strong id="clientTitle">KNSoft ZPigeon</strong>
       <nav class="app-nav">
         <button data-category="zpigeon">ZPigeon</button
@@ -237,8 +237,7 @@
           />
           <div class="agent-session-list" data-role="sessions"></div>
           <div class="agent-sidebar-settings">
-            <button data-action="models" data-i18n="agent.models">模型</button>
-            <button data-action="profile" data-i18n="agent.profile">Profile</button>
+            <a href="/#settings" data-i18n="console.settings">系统设置</a>
           </div>
         </aside>
         <section class="agent-chat">
@@ -288,145 +287,6 @@
         <div class="dialog-actions">
           <button value="run" data-i18n="terminal.run">运行</button
           ><button value="cancel" data-i18n="common.cancel">取消</button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog id="agentModelDialog" class="agent-settings-dialog">
-      <form method="dialog" class="agent-settings-form">
-        <header>
-          <h2 data-i18n="agent.models">模型</h2>
-          <select data-role="model-list" data-i18n-aria-label="agent.models" aria-label="模型"></select>
-          <button type="button" data-action="new-model" data-i18n="common.create">新建</button
-          ><button type="button" data-action="delete-model" class="danger" data-i18n="common.delete"
-            >删除</button
-          >
-        </header>
-        <div class="agent-settings-body">
-          <label><span data-i18n="common.name">名称</span><input name="name" maxlength="128" required /></label>
-          <label
-            ><span data-i18n="agent.provider">Provider</span
-            ><select name="provider" required></select>
-            <input name="customProvider" maxlength="128" hidden />
-          </label>
-          <label
-            ><span data-i18n="agent.protocol">接口协议</span
-            ><select name="protocol">
-              <option value="1">OpenAI Responses</option>
-              <option value="2">OpenAI Chat Completions</option>
-              <option value="3">Anthropic Messages</option>
-            </select></label
-          >
-          <label
-            ><span data-i18n="agent.baseUrl">Base URL</span
-            ><input name="baseUrl" type="url" maxlength="2048" required /></label
-          >
-          <label
-            ><span data-i18n="agent.authentication">认证</span
-            ><select name="authentication">
-              <option value="1" data-i18n="agent.auth.apiKey">API Key</option>
-              <option value="2" data-i18n="agent.auth.bearer">Bearer Token</option>
-              <option value="3" data-i18n="agent.auth.none">无认证</option>
-              <option value="4" data-i18n="agent.auth.oauth">OAuth Access Token</option>
-            </select></label
-          >
-          <label data-role="credential-row">
-            <span data-role="credential-label">API Key</span>
-            <span class="agent-secret-input"
-              ><input name="credential" type="password" maxlength="32768" autocomplete="off" />
-              <button type="button" data-action="reveal-credential" data-i18n="agent.reveal">显示</button
-              ><button type="button" data-action="copy-credential" data-i18n="common.copy">复制</button></span
-            >
-          </label>
-          <label
-            ><span data-i18n="agent.modelId">模型 ID</span
-            ><input name="modelId" list="agentCatalogModels" maxlength="256" required />
-            <datalist id="agentCatalogModels"></datalist>
-          </label>
-          <label
-            ><span data-i18n="agent.contextWindow">上下文窗口</span
-            ><input name="contextWindow" type="number" min="1" max="100000000" required /></label
-          >
-          <label
-            ><span data-i18n="agent.maximumOutput">最大输出 Token</span
-            ><input name="maximumOutputTokens" type="number" min="1" max="10000000" required /></label
-          >
-          <label
-            ><span data-i18n="agent.reasoning">Thinking / Reasoning</span
-            ><select name="reasoning">
-              <option value="0" data-i18n="common.none">无</option>
-              <option value="1">minimal</option>
-              <option value="2">low</option>
-              <option value="3">medium</option>
-              <option value="4">high</option>
-              <option value="5">xhigh</option>
-              <option value="6">max</option>
-            </select></label
-          >
-          <label
-            ><span data-i18n="agent.requestTimeout">请求超时（秒）</span
-            ><input name="requestTimeoutSeconds" type="number" min="1" max="600" value="60" required /></label
-          >
-          <label class="agent-settings-wide"
-            ><span data-i18n="agent.advancedJson">高级参数 JSON</span
-            ><textarea name="advancedJson" rows="6" maxlength="65536">{}</textarea></label
-          >
-          <p class="agent-model-description muted" data-role="model-description"></p>
-          <p class="muted" data-i18n="agent.secretStorage">凭据使用当前 Windows 账户加密后保存在本机。</p>
-          <p data-role="test-result" class="agent-test-result" hidden></p>
-        </div>
-        <div class="dialog-actions">
-          <span
-            ><button type="button" data-action="test-model" data-i18n="agent.testConnection"
-              >测试连接</button
-            ></span
-          >
-          <span class="spacer"></span>
-          <button value="cancel" formnovalidate data-i18n="common.cancel">取消</button
-          ><button value="save" data-i18n="common.save">保存</button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog id="agentProfileDialog" class="agent-settings-dialog">
-      <form method="dialog" class="agent-settings-form">
-        <header><h2 data-i18n="agent.profile">Profile</h2></header>
-        <div class="agent-profile-body">
-          <p class="muted" data-i18n="agent.profileHint">
-            所有会话共用这一份 Profile；修改后从下一轮消息开始生效。
-          </p>
-          <fieldset class="agent-tool-settings">
-            <legend data-i18n="agent.tools">工具</legend>
-            <div class="agent-tool-presets">
-              <label><input type="radio" name="toolMode" value="read" checked /><span data-i18n="agent.readOnlyTools">只读</span></label>
-              <label><input type="radio" name="toolMode" value="all" /><span data-i18n="agent.allTools">全部</span></label>
-              <label><input type="radio" name="toolMode" value="custom" /><span data-i18n="agent.customTools">自定义</span></label>
-            </div>
-            <details data-role="tool-details">
-              <summary data-role="tool-summary"></summary>
-              <div class="agent-tool-list" data-role="tools"></div>
-            </details>
-          </fieldset>
-          <section class="agent-document-editor">
-            <aside class="agent-document-sidebar">
-              <div class="agent-document-list" data-role="documents" role="listbox"
-                data-i18n-aria-label="agent.profileDocuments" aria-label="提示词与 Markdown"></div>
-              <button type="button" data-action="add-document" data-i18n="agent.addDocument">新建 Markdown</button>
-            </aside>
-            <div class="agent-document-content">
-              <div class="agent-document-toolbar">
-                <input name="documentName" maxlength="128" required
-                  data-i18n-aria-label="agent.documentName" aria-label="文档名" />
-                <button type="button" data-action="delete-document" class="danger" data-i18n="common.delete">删除</button>
-              </div>
-              <textarea name="documentContent" spellcheck="false"
-                data-i18n-aria-label="agent.markdownContent" aria-label="Markdown 内容"></textarea>
-            </div>
-          </section>
-        </div>
-        <div class="dialog-actions">
-          <button value="cancel" formnovalidate data-i18n="common.cancel">取消</button
-          ><button value="save" data-i18n="common.save">保存</button>
         </div>
       </form>
     </dialog>

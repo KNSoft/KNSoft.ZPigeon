@@ -1,192 +1,156 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>KNSoft ZPigeon</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --background: #0c1017;
-        --panel: #141a24;
-        --line: #283142;
-        --text: #d9e1ee;
-        --muted: #8491a5;
-        --accent: #70a5ff;
-        --good: #43d17d;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      body {
-        min-height: 100vh;
-        margin: 0;
-        padding: 48px 24px;
-        color: var(--text);
-        background: var(--background);
-        font:
-          14px system-ui,
-          sans-serif;
-      }
-
-      main {
-        width: min(960px, 100%);
-        margin: 0 auto;
-      }
-
-      header {
-        margin-bottom: 28px;
-      }
-
-      h1 {
-        margin: 0 0 8px;
-        font-size: 28px;
-      }
-
-      p {
-        margin: 0;
-        color: var(--muted);
-      }
-
-      #clients {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 14px;
-      }
-
-      .client {
-        display: grid;
-        gap: 14px;
-        padding: 18px;
-        color: inherit;
-        text-decoration: none;
-        border: 1px solid var(--line);
-        border-radius: 10px;
-        background: var(--panel);
-      }
-
-      .client:hover {
-        border-color: var(--accent);
-      }
-
-      .client-header,
-      .detail {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-      }
-
-      .client-header strong {
-        font-size: 16px;
-      }
-
-      .online {
-        color: var(--good);
-      }
-
-      .details {
-        display: grid;
-        gap: 7px;
-        color: var(--muted);
-      }
-
-      .detail span:last-child {
-        color: var(--text);
-        text-align: right;
-        overflow-wrap: anywhere;
-      }
-
-      .empty {
-        grid-column: 1 / -1;
-        padding: 48px 20px;
-        color: var(--muted);
-        text-align: center;
-        border: 1px dashed var(--line);
-        border-radius: 10px;
-      }
-    </style>
+    <link rel="stylesheet" href="client.css" />
+    <link rel="stylesheet" href="console.css" />
+    <script type="module" src="theme.mjs"></script>
   </head>
-  <body>
-    <main>
-      <header>
-        <h1>KNSoft ZPigeon</h1>
-        <p id="description"></p>
-      </header>
-      <section id="clients" aria-live="polite">
-        <div class="empty" id="loading"></div>
+  <body class="console">
+    <header>
+      <strong>KNSoft ZPigeon</strong>
+      <span class="console-label" data-i18n="console.title">控制台</span>
+      <div class="status" id="consoleStatus" role="status"></div>
+    </header>
+    <aside class="module-nav" aria-label="控制台" data-i18n-aria-label="console.title">
+      <button data-view="connections" class="active" data-i18n="console.connections">连接总览</button>
+      <div class="nav-heading">
+        <span data-i18n="console.groups">连接分组</span>
+        <button id="addGroup" title="新建分组" data-i18n-title="console.addGroup">+</button>
+      </div>
+      <nav id="groupNav" aria-label="连接分组" data-i18n-aria-label="console.groups"></nav>
+      <div class="nav-bottom">
+        <button data-view="build" data-i18n="console.build">生成客户端</button>
+        <button data-view="settings" data-i18n="console.settings">系统设置</button>
+      </div>
+      <small class="muted" data-i18n="console.loopback">本机回环 · Windows x64</small>
+    </aside>
+    <main class="console-main">
+      <section id="connectionsView" class="console-page">
+        <div class="page-heading">
+          <div><h1 id="connectionHeading" data-i18n="console.connections">连接总览</h1>
+            <p class="muted" data-i18n="console.connectionHint">按分组管理连接，选择客户端进入控制面板。</p></div>
+          <button id="refresh" data-i18n="common.refresh">刷新</button>
+        </div>
+        <div class="console-stats">
+          <div class="zpigeon-card"><span
+            data-i18n="console.online">在线客户端</span><strong id="onlineCount">0</strong></div>
+          <div class="zpigeon-card"><span data-i18n="console.groups">连接分组</span><strong id="groupCount">0</strong></div>
+          <div class="zpigeon-card"><span
+            data-i18n="console.averageRtt">平均往返延迟</span><strong id="averageRtt">—</strong></div>
+          <div class="zpigeon-card"><span data-i18n="console.traffic">累计收发数据</span><strong id="traffic">—</strong></div>
+        </div>
+        <div class="toolbar console-filters">
+          <input id="search" type="search" placeholder="搜索 ID、地址、指纹或分组" data-i18n-placeholder="console.search" />
+          <span class="spacer"></span><span id="resultCount" class="muted"></span>
+        </div>
+        <div id="clients" class="connection-groups" aria-live="polite"></div>
+      </section>
+      <section id="buildView" class="console-page" hidden>
+        <div class="page-heading"><div><h1 data-i18n="console.build">生成客户端</h1>
+          <p class="muted" data-i18n="console.buildHint">选择功能与传输方式，编译并生成客户端。</p></div></div>
+        <form id="buildForm" class="zpigeon-card settings-card">
+          <h2 data-i18n="console.connectionConfig">连接配置</h2>
+          <div class="settings-grid">
+            <label><span data-i18n="console.serverAddress">服务端地址（固定）</span><input id="buildHost" readonly /></label>
+            <label><span data-i18n="console.serverName">TLS 服务端名称（固定）</span><input
+              id="buildServerName" readonly /></label>
+            <label><span data-i18n="console.defaultGroup">默认分组</span>
+              <input id="buildGroup" list="groupNames" maxlength="64" placeholder="未分组"
+                data-i18n-placeholder="console.ungrouped" /></label>
+            <label><span data-i18n="console.instance">客户端实例</span><select id="buildInstance"></select></label>
+          </div>
+          <p class="muted" data-i18n="console.instanceHint">新实例创建独立身份；更新已有实例保留其 CNG 密钥和公钥指纹。同一电脑需要两个客户端时，分别生成两个新实例。</p>
+          <fieldset class="build-fieldset">
+            <legend data-i18n="console.transports">传输方式</legend>
+            <div id="buildTransports" class="build-transports"></div>
+            <div class="settings-grid build-transport-settings">
+              <label><span data-i18n="console.preferredTransport">优先连接方式</span><select
+                id="buildPreferredTransport" required></select></label>
+              <label class="build-check"><input id="buildTcpTls13" type="checkbox" />
+                <span data-i18n="console.tcpTls13">TCP 要求 TLS 1.3</span></label>
+            </div>
+            <p class="muted" data-i18n="console.transportHint"
+              >TCP 使用 TLS，UDP 使用 DTLS 1.2，QUIC 必须使用 TLS 1.3。依次尝试所选方式，同一实例只保持一条活动连接。</p>
+            <p id="buildTransportOrder" class="muted"></p>
+          </fieldset>
+          <fieldset class="build-fieldset">
+            <legend data-i18n="console.features">功能模块</legend>
+            <div class="build-shortcuts">
+              <button id="buildExecutionOnly" type="button" data-i18n="console.executionOnly">仅命令执行</button>
+              <button id="buildSelectAll" type="button" data-i18n="console.selectAll">全部功能</button>
+              <button id="buildSelectNone" type="button" data-i18n="console.selectNone">清空选择</button>
+              <span id="buildSelectedCount" class="muted"></span>
+            </div>
+            <div id="buildModules" class="build-module-groups"></div>
+            <div id="buildExecutionExtensions" class="build-execution-extensions">
+              <h3 data-i18n="console.executionExtensions">远程执行扩展</h3>
+              <div id="buildExecutionOptions" class="build-options"></div>
+            </div>
+          </fieldset>
+          <dl class="build-details">
+            <div><dt data-i18n="console.minimumOs">最低系统要求</dt><dd id="buildMinimumOs">—</dd></div>
+            <div><dt data-i18n="console.executableSize">EXE 大小</dt><dd id="buildSize">—</dd></div>
+            <div><dt data-i18n="console.keyName">CNG 身份密钥名称</dt><dd id="buildKeyName">—</dd></div>
+            <div><dt data-i18n="console.instanceId">实例标识</dt><dd id="buildInstanceId">—</dd></div>
+            <div><dt data-i18n="console.certificate">服务端根证书 SHA-256</dt><dd id="buildCertificate">—</dd></div>
+            <div><dt data-i18n="console.runtimeFiles">所选功能部署旁文件</dt><dd id="buildRuntimeFiles">—</dd></div>
+            <div><dt data-i18n="console.templateCache">编译模板缓存</dt><dd id="buildCache">—</dd></div>
+          </dl>
+          <p class="muted" data-i18n="console.buildLimit"
+            >连接目标固定为本机 127.0.0.1，QUIC 与 TCP 默认使用端口 21943，UDP 默认使用端口 21944。私钥在目标机器首次运行时由当前用户 CNG 创建，EXE 只包含服务端根证书公钥。</p>
+          <p id="buildRuntimeHint" class="muted" hidden data-i18n="console.wingetDependency"
+            >WinGet 当前附带 DLL 和构建期 .winmd；RTC 使用静态 Loader，仍需系统 WebView2 Runtime，无需 Loader DLL。</p>
+          <p id="buildError" class="danger" role="status" hidden></p>
+          <div class="dialog-actions">
+            <button id="buildDownload" type="submit" disabled data-i18n="console.startBuild">编译并生成</button>
+            <button id="buildCancel" type="button" hidden data-i18n="console.cancelBuild">取消构建</button>
+            <a id="buildResultDownload" class="control-link" hidden data-i18n="console.downloadResult">下载客户端</a>
+          </div>
+        </form>
+        <section id="buildLogSection" class="zpigeon-card settings-card build-log-section" hidden>
+          <div class="build-log-heading"><h2 data-i18n="console.buildOutput">编译控制台</h2>
+            <span id="buildState" class="muted" role="status"></span></div>
+          <pre id="buildOutput" class="build-output" tabindex="0" aria-label="编译控制台"
+            data-i18n-aria-label="console.buildOutput"></pre>
+        </section>
+      </section>
+      <section id="settingsView" class="console-page" hidden>
+        <div class="page-heading"><div><h1 data-i18n="console.settings">系统设置</h1>
+          <p class="muted" data-i18n="console.settingsHint">管理控制台外观和所有客户端共用的 Agent 配置。</p></div></div>
+        <section class="zpigeon-card settings-card">
+          <h2 data-i18n="console.appearance">外观</h2>
+          <div class="settings-grid">
+            <label><span data-i18n="console.theme">主题</span><select id="theme">
+              <option value="system" data-i18n="console.themeSystem">跟随系统</option>
+              <option value="light" data-i18n="console.themeLight">浅色</option>
+              <option value="dark" data-i18n="console.themeDark">深色</option>
+            </select></label>
+            <label><span data-i18n="console.accent">主题颜色</span><select id="accent">
+              <option value="blue" data-i18n="console.accentBlue">蓝色</option>
+              <option value="teal" data-i18n="console.accentTeal">青色</option>
+              <option value="violet" data-i18n="console.accentViolet">紫色</option>
+            </select></label>
+          </div><p class="muted" data-i18n="console.themeHint">外观设置保存在此浏览器，并同步应用到客户端控制面板。</p>
+        </section>
+        <section id="agentSettings" class="zpigeon-card settings-card">
+          <h2>Agent</h2><p class="muted" data-i18n="console.agentHint">模型、认证、工具、提示词和 Markdown 文档在服务端统一管理，无需客户端在线。</p>
+          <div class="settings-actions"><button data-action="models" data-i18n="agent.models">模型</button>
+            <button data-action="profile" data-i18n="agent.profile">Profile</button></div>
+        </section>
       </section>
     </main>
-    <script type="module">
-      import { t } from "./i18n.mjs";
-
-      const clients = document.querySelector("#clients");
-      const transports = { 1: "QUIC", 2: "TCP", 3: "UDP" };
-      document.querySelector("#description").textContent = t("home.description");
-      document.querySelector("#loading").textContent = t("home.loading");
-
-      function showMessage(message) {
-        const empty = document.createElement("div");
-        empty.className = "empty";
-        empty.textContent = message;
-        clients.replaceChildren(empty);
-      }
-
-      function render(values) {
-        if (!values.length) {
-          showMessage(t("home.empty"));
-          return;
-        }
-        clients.replaceChildren(
-          ...values.map((value) => {
-            const link = document.createElement("a");
-            link.className = "client";
-            link.href = `/client.html?client=${value.id}`;
-            const header = document.createElement("div"),
-              name = document.createElement("strong"),
-              online = document.createElement("span"),
-              details = document.createElement("div");
-            header.className = "client-header";
-            name.textContent = `Client ${value.id} · ${value.fingerprint.slice(0, 12)}`;
-            online.className = "online";
-            online.textContent = `● ${t("common.connected")}`;
-            header.append(name, online);
-            details.className = "details";
-            for (const [label, detail] of [
-              [t("home.address"), value.address],
-              [t("home.transport"), transports[value.transport] ?? value.transport],
-              [t("home.fingerprint"), value.fingerprint],
-            ]) {
-              const row = document.createElement("div"),
-                key = document.createElement("span"),
-                content = document.createElement("span");
-              row.className = "detail";
-              key.textContent = label;
-              content.textContent = detail;
-              row.append(key, content);
-              details.append(row);
-            }
-            link.append(header, details);
-            return link;
-          }),
-        );
-      }
-
-      async function refresh() {
-        try {
-          const response = await fetch("/api/clients");
-          if (!response.ok) throw new Error(await response.text());
-          render(await response.json());
-        } catch (error) {
-          showMessage(error.message);
-        }
-      }
-
-      await refresh();
-      const clientEvents = new EventSource("/api/clients/events");
-      clientEvents.addEventListener("clients", refresh);
-    </script>
+    <dialog id="groupDialog"><form id="groupForm">
+      <h2 data-i18n="console.addGroup">新建分组</h2>
+      <label for="groupName" data-i18n="console.groupName">分组名称</label>
+      <input id="groupName" class="dialog-input" maxlength="64" required />
+      <div class="dialog-actions"><button type="submit" data-i18n="common.save">保存</button>
+        <button type="button" data-action="cancel" data-i18n="common.cancel">取消</button></div>
+    </form></dialog>
+    <datalist id="groupNames"></datalist>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <script type="module" src="console.mjs"></script>
   </body>
 </html>

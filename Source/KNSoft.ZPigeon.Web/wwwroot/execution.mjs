@@ -1,3 +1,4 @@
+import { CaptureStream } from "./capture-stream.mjs";
 import { CaptureFrameDecoder, configureCaptureEncoding, captureEncodingOptions } from "./capture-frames.mjs";
 import { apiUrl, clientId, getJson } from "./client-context.mjs";
 import { t } from "./i18n.mjs";
@@ -21,6 +22,7 @@ export class ExecutionManager {
     this.templates = [];
     this.terminalTouched = false;
     this.currentAccountName = "";
+    this.capabilities = { modules: [], execution: 0 };
     this.render();
   }
   render() {
@@ -205,6 +207,23 @@ export class ExecutionManager {
   field(name) {
     return this.host.querySelector(`[data-field=${name}]`);
   }
+  setCapabilities(capabilities) {
+    this.capabilities = capabilities;
+    const flags = capabilities.execution, modules = capabilities.modules,
+      files = modules.includes(4);
+    for (const action of ["pick-program", "pick-directory"])
+      this.host.querySelector(`[data-action=${action}]`).hidden = !files;
+    this.host.querySelector("[data-action=upload-program]").hidden = !files || !(flags & 32);
+    this.terminal.closest("label").hidden = !modules.includes(5);
+    if (!modules.includes(5)) this.terminal.checked = false;
+    for (const option of this.identity.options) {
+      const identity = Number(option.value);
+      option.hidden = identity >= 2 && identity <= 6 ? !(flags & 4) :
+        identity === 7 ? !(flags & 8) : identity === 8 ? !(flags & 16) : false;
+    }
+    this.identity.options[7].disabled = !(flags & 16);
+    this.host.querySelector("[data-role=session]").hidden = !(flags & 4);
+  }
   addPathPicker() {
     const button = this.host.querySelector("[data-action=pick-directory]");
     if (!this.filePicker) {
@@ -288,7 +307,7 @@ export class ExecutionManager {
     if (this.dialog.open) this.dialog.close();
   }
   async loadSessions() {
-    if (!this.connected) return;
+    if (!this.connected || !(this.capabilities.execution & 4)) return;
     if (this.sessionsPromise) return this.sessionsPromise;
     this.sessionsPromise = this.querySessions();
     try {
@@ -324,12 +343,12 @@ export class ExecutionManager {
     this.sync();
   }
   async loadEnvironment(force = false) {
-    if (!this.connected) return null;
+    if (!this.connected || !(this.capabilities.execution & 1)) return null;
     if (this.environment && !force) return this.environment;
     if (this.environmentPromise) return this.environmentPromise;
     this.environmentPromise = this.call("/api/execution/environment").then((value) => {
       this.environment = value;
-      this.identity.options[7].disabled = !(value.flags & 1);
+      this.identity.options[7].disabled = !(this.capabilities.execution & 16) || !(value.flags & 1);
       return value;
     });
     try {
@@ -339,7 +358,7 @@ export class ExecutionManager {
     }
   }
   async loadProfiles() {
-    if (this.profilesLoaded || !this.connected) return;
+    if (this.profilesLoaded || !this.connected || !this.capabilities.modules.includes(39)) return;
     this.profile.disabled = true;
     this.profile.value = "";
     this.profile.placeholder = t("common.fetching");
@@ -382,7 +401,7 @@ export class ExecutionManager {
       other = identity === 6,
       appContainer = identity === 7,
       customToken = identity === 8;
-    this.host.querySelector("[data-role=session]").hidden = appContainer;
+    this.host.querySelector("[data-role=session]").hidden = appContainer || !(this.capabilities.execution & 4);
     this.host.querySelector("[data-role=app-container]").hidden = !appContainer;
     this.host.querySelector("[data-role=username]").hidden = this.host.querySelector("[data-role=password]").hidden =
       !other;
@@ -466,7 +485,7 @@ export class ExecutionManager {
         flags |= 2;
       }
       const start = {
-        engine: 1,
+        engine: this.mode.value === "shell" ? 2 : 1,
         identity,
         sessionId: appContainer ? CURRENT_SESSION : Number(this.session.value),
         flags,
@@ -578,7 +597,10 @@ export class ExecutionManager {
           directory: "",
           image: value.image,
         });
-    values.push({ id: "custom", label: t("execution.custom"), file: path, arguments: "", directory });
+    values.push({ id: "custom", label: t(this.capabilities.execution & 1 ? "execution.custom" : "execution.direct"),
+      file: path, arguments: "", directory });
+    if (this.capabilities.execution & 2)
+      values.push({ id: "shell", label: "ShellExecute", file: path, arguments: "", directory });
     this.templates = values;
     this.mode.replaceChildren(...values.map((value) => new Option(value.label, value.id, false, false)));
     values.forEach((value, index) => (this.mode.options[index].disabled = value.disabled));
@@ -587,7 +609,7 @@ export class ExecutionManager {
   selectTemplate() {
     const template = this.templates.find((value) => value.id === this.mode.value);
     if (!template || template.disabled) return;
-    if (template.id !== "custom") {
+    if (template.id !== "custom" && template.id !== "shell") {
       this.field("file").value = template.file;
       this.field("arguments").value = template.arguments;
       this.field("directory").value = template.directory;
@@ -603,7 +625,7 @@ export class ExecutionManager {
   }
   async inspectProgram() {
     const path = this.field("file").value.trim();
-    if (this.terminalTouched || !path) return;
+    if (!(this.capabilities.execution & 1) || this.terminalTouched || !path) return;
     try {
       const image = await this.call("/api/execution/image", { path });
       if (!this.terminalTouched && this.field("file").value.trim() === path && image.subsystem)
@@ -612,6 +634,8 @@ export class ExecutionManager {
     } catch {}
   }
   syncTerminal() {
+    if (!this.capabilities.modules.includes(5) || this.mode.value === "shell") this.terminal.checked = false;
+    this.terminal.disabled = !this.capabilities.modules.includes(5) || this.mode.value === "shell";
     if (this.terminal.checked) this.hidden.checked = true;
     this.hidden.disabled = this.terminal.checked;
   }
@@ -668,6 +692,8 @@ export class ExecutionManager {
   }
   resolveProfile() {
     const value = this.profile.value.trim().toLocaleLowerCase();
+    if (!this.capabilities.modules.includes(39))
+      return /^s-1-15-2-\d+(?:-\d+)+$/i.test(value) ? { sid: value } : null;
     return this.profiles?.find(
       (profile) =>
         profile.sid.toLocaleLowerCase() === value ||
@@ -758,6 +784,7 @@ export class RemoteDesktopManager {
     this.call = call;
     this.notify = notify;
     this.rtc = rtc;
+    this.modules = new Set();
     this.connected = false;
     this.configurationBusy = false;
     this.childSessionBusy = false;
@@ -864,6 +891,7 @@ export class RemoteDesktopManager {
                 >85</output
               ></label
             ><button data-action="desktop-refresh">截屏</button><button data-action="desktop-toggle">▶</button>
+            <a href="/rtc-media-lab.html" target="_blank" rel="noopener">视频轨实验</a>
           </header>
           <div class="remote-control-view" tabindex="0">
             <span data-role="desktop-status">点击“开始远控”后显示远程桌面</span
@@ -902,8 +930,15 @@ export class RemoteDesktopManager {
       this.canvas,
       this.desktopStatus,
       (socket) => this.socket === socket,
-      (sequence, keyframe, socket) => this.acknowledgeFrame(sequence, keyframe, socket),
+      (sequence, keyframe, socket, renderMilliseconds) =>
+        this.acknowledgeFrame(sequence, keyframe, socket, renderMilliseconds),
       (codecs, width, height, socket) => this.reportVideoCodecs(codecs, width, height, socket),
+      (stats) => (this.desktopStatus.title = t("capture.metrics", {
+        fps: stats.framesPerSecond,
+        mbps: stats.megabitsPerSecond.toFixed(2),
+        delay: stats.receiveToDrawP95Milliseconds.toFixed(1),
+        pending: stats.pendingFrames,
+      })),
     );
     this.forward.onclick = async () => {
       if (this.forwardBusy) return;
@@ -962,7 +997,8 @@ export class RemoteDesktopManager {
   activate(connected) {
     const reconnected = connected && !this.connected;
     this.connected = connected;
-    this.forward.disabled = this.toggle.disabled = this.startButton.disabled = !connected;
+    this.forward.disabled = !connected || !this.modules.has(11);
+    this.toggle.disabled = this.startButton.disabled = !connected || !this.modules.has(8);
     this.updateConfigurationState();
     if (connected) {
       if (reconnected) {
@@ -973,11 +1009,21 @@ export class RemoteDesktopManager {
         this.desktopStatus.hidden = false;
         this.desktopStatus.textContent = "点击“开始远控”后显示远程桌面";
       }
-      this.ensureMonitorPicker();
-      this.loadConfiguration();
-      this.loadForward();
-      this.loadMonitors();
+      if (this.modules.has(26)) this.loadConfiguration();
+      if (this.modules.has(11)) this.loadForward();
+      if (this.modules.has(8)) {
+        this.ensureMonitorPicker();
+        this.loadMonitors();
+      }
     }
+  }
+  setCapabilities(capabilities) {
+    this.modules = new Set(capabilities.modules);
+    this.host.querySelector(".rdp-card").hidden = !this.modules.has(26);
+    this.host.querySelector(".remote-control-card").hidden = !this.modules.has(8);
+    this.forward.hidden = !this.modules.has(11);
+    for (const action of ["clipboard-send", "clipboard-copy"])
+      this.host.querySelector(`[data-action=${action}]`).hidden = !this.modules.has(29);
   }
   disconnect() {
     this.connected = false;
@@ -1382,52 +1428,36 @@ export class RemoteDesktopManager {
     this.starting = true;
     this.startButton.hidden = true;
     this.toggle.disabled = true;
-    let socket, direct;
     try {
-      try {
-        direct = await this.rtc.open(
-          (data) => this.decoder.receive(data, socket),
-          (text) => (this.desktopStatus.textContent = text),
-        );
-      } catch (error) {
-        this.desktopStatus.textContent = "P2P 加速失败，继续使用 Server 中转";
-        console.warn(error);
-      }
       const query = new URLSearchParams({
-          handle: 0,
-          processId: 0,
-          threadId: 0,
-          desktop: true,
-          ...this.options(),
-          directStreamId: direct?.id || 0,
-        }),
-        url = new URL(`/api/remote/desktop?${query}`, location.href);
-      url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      socket = this.socket = new WebSocket(apiUrl(url));
-      this.direct = direct;
-      this.decoder.reset();
-      socket.binaryType = "arraybuffer";
-      socket.onopen = () => {
-        this.toggle.textContent = "■";
-        this.desktopStatus.textContent = direct ? "P2P 实时画面已连接" : "Server 中转实时画面已连接";
-      };
-      if (!direct) socket.onmessage = (event) => this.decoder.receive(new Uint8Array(event.data), socket);
-      socket.onclose = (event) => {
-        direct?.close();
-        if (this.socket !== socket) return;
-        this.clearInput();
-        this.socket = this.direct = null;
-        this.toggle.textContent = "▶";
-        this.startButton.hidden = false;
-        if (event.code !== 1000) {
-          const message = event.reason || `WebSocket: ${event.code}`;
-          this.desktopStatus.textContent = message;
-          this.notify(message);
-        }
-      };
-      socket.onerror = () => {
-        if (this.socket === socket) this.desktopStatus.textContent = "远控连接失败";
-      };
+        handle: 0,
+        processId: 0,
+        threadId: 0,
+        desktop: true,
+        ...this.options(),
+      });
+      this.captureStream = new CaptureStream({
+        rtc: this.rtc,
+        url: `/api/remote/desktop?${query}`,
+        decoder: this.decoder,
+        route: (socket, direct) => {
+          this.socket = socket;
+          this.direct = direct;
+          if (socket) this.toggle.textContent = "■";
+        },
+        releaseInput: (socket) => { if (socket) this.releaseInput(socket); },
+        status: (text) => (this.desktopStatus.textContent = text),
+        closed: (event) => {
+          this.clearInput();
+          this.toggle.textContent = "▶";
+          this.startButton.hidden = false;
+          if (event.code !== 1000) {
+            const message = event.reason || `WebSocket: ${event.code}`;
+            this.desktopStatus.textContent = message;
+            this.notify(message);
+          }
+        },
+      });
     } finally {
       this.starting = false;
       this.toggle.disabled = !this.connected;
@@ -1440,6 +1470,8 @@ export class RemoteDesktopManager {
     this.startStream();
   }
   stopStream(silent = false) {
+    this.captureStream?.stop();
+    this.captureStream = null;
     const socket = this.socket,
       direct = this.direct;
     this.releaseInput(socket);
@@ -1454,12 +1486,13 @@ export class RemoteDesktopManager {
   send(data, socket = this.socket) {
     if (socket?.readyState === WebSocket.OPEN) socket.send(data);
   }
-  acknowledgeFrame(sequence, keyframe, socket) {
-    const data = new ArrayBuffer(6),
+  acknowledgeFrame(sequence, keyframe, socket, renderMilliseconds) {
+    const data = new ArrayBuffer(8),
       view = new DataView(data);
     view.setUint8(0, 4);
     view.setUint8(1, keyframe ? 1 : 0);
     view.setUint32(2, sequence, true);
+    view.setUint16(6, renderMilliseconds, true);
     this.send(data, socket);
   }
   reportVideoCodecs(codecs, width, height, socket) {

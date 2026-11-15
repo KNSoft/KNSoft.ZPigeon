@@ -1,3 +1,4 @@
+import { CaptureStream } from "./capture-stream.mjs";
 import { CaptureFrameDecoder, configureCaptureEncoding, captureEncodingOptions } from "./capture-frames.mjs";
 import { apiUrl, postBinary, postData } from "./client-context.mjs";
 import { contextMenuItems, fileAssociation } from "./file-associations.mjs";
@@ -59,6 +60,7 @@ export class FileManager {
     this.revealServices = revealServices;
     this.revealFile = revealFile;
     this.openExecution = openExecution;
+    this.capabilities = { modules: [], execution: 0 };
     this.preview = new FilePreview(notify);
     this.path = "";
     this.records = [];
@@ -610,8 +612,9 @@ export class FileManager {
     const request = ++this.menuRequest,
       point = { clientX: event.clientX, clientY: event.clientY };
     this.contextTarget = target;
-    this.renderFolderMenu(target, this.getTerminalShells ? null : [], point);
-    this.getTerminalShells?.()
+    const getShells = this.capabilities.modules.includes(5) ? this.getTerminalShells : null;
+    this.renderFolderMenu(target, getShells ? null : [], point);
+    getShells?.()
       .then((shells) => {
         if (request === this.menuRequest && !this.menu.hidden) this.renderFolderMenu(target, shells, point);
       })
@@ -633,7 +636,7 @@ export class FileManager {
   renderContextMenu(groups, event) {
     this.menu.replaceChildren();
     for (const group of groups) {
-      const items = group.filter(Boolean);
+      const items = group.filter((item) => item && this.contextActionAvailable(item));
       if (!items.length) continue;
       if (this.menu.childElementCount) this.menu.append(document.createElement("hr"));
       for (const item of items) this.menu.append(this.contextMenuItem(item));
@@ -643,6 +646,17 @@ export class FileManager {
     const rect = this.menu.getBoundingClientRect();
     this.menu.style.left = `${Math.max(6, Math.min(event.clientX, innerWidth - rect.width - 6))}px`;
     this.menu.style.top = `${Math.max(6, Math.min(event.clientY, innerHeight - rect.height - 6))}px`;
+  }
+  setCapabilities(capabilities) {
+    this.capabilities = capabilities;
+    this.action("owner-process", this.ownerMenu).hidden = !capabilities.modules.includes(2);
+    this.action("owner-service", this.ownerMenu).hidden = !capabilities.modules.includes(3);
+  }
+  contextActionAvailable(action) {
+    const required = { run: 10, "install-inf": 10, "import-reg": 10, "install-package": 20,
+      "install-font": 38, "install-certificate": 28 }[action];
+    return (!required || this.capabilities.modules.includes(required)) &&
+      (action !== "install-inf" || !!(this.capabilities.execution & 2));
   }
   contextMenuItem(item) {
     if (item.type === "hash")
@@ -1284,6 +1298,7 @@ export class ProcessManager {
     this.revealFile = revealFile;
     this.revealServices = revealServices;
     this.active = false;
+    this.modules = new Set();
     this.refreshing = null;
     this.interval = 3000;
     host.innerHTML = /* HTML */ `<div class="manager-toolbar">
@@ -1565,6 +1580,12 @@ export class ProcessManager {
     this.active = value;
     this.update(true);
   }
+  setCapabilities(capabilities) {
+    this.modules = new Set(capabilities.modules);
+    for (const action of ["file", "module-file"])
+      this.host.querySelector(`[data-action=${action}]`).hidden = !this.modules.has(4);
+    this.host.querySelector('[data-action="service"]').hidden = !this.modules.has(3);
+  }
   async revealProcess(processId) {
     this.loadSystem();
     if (this.refreshing || !this.records?.length) await this.refresh();
@@ -1587,6 +1608,7 @@ export class ProcessManager {
     else if (this.interval) this.timer = setTimeout(() => this.refresh(), this.interval);
   }
   loadSystem() {
+    if (!this.modules.has(1)) return Promise.resolve(false);
     if (this.processorCount !== undefined) return Promise.resolve(this.processorCount !== null);
     if (!this.loadingSystem)
       this.loadingSystem = this.call("/api/system")
@@ -2130,7 +2152,7 @@ export class ProcessManager {
           row.append(cell);
         }
         row.ondblclick = () => {
-          if (module.path) {
+          if (module.path && this.modules.has(4)) {
             this.moduleDialog.close();
             this.revealFile?.(module.path);
           }
@@ -2543,6 +2565,10 @@ export class ServiceManager {
     };
     field.replaceWith(wrapper);
     wrapper.append(field, button);
+  }
+  setCapabilities(capabilities) {
+    for (const button of this.host.querySelectorAll(".remote-path-field button"))
+      button.hidden = !capabilities.modules.includes(4);
   }
   activate(connected) {
     if (connected && !this.loaded) this.load();
@@ -3055,6 +3081,7 @@ export class WindowManager {
       if (this.selected) this.revealProcess?.(this.selected.processId);
     };
     this.menu.insertBefore(processButton, this.action("refresh", this.menu));
+    this.processButton = processButton;
     this.dialog = host.querySelector("[data-role=details]");
     this.image = this.dialog.querySelector("[data-role=image]");
     this.canvas = this.dialog.querySelector("[data-role=canvas]");
@@ -3066,8 +3093,15 @@ export class WindowManager {
       this.canvas,
       this.imageStatus,
       (socket) => this.socket === socket,
-      (sequence, keyframe, socket) => this.acknowledgeFrame(sequence, keyframe, socket),
+      (sequence, keyframe, socket, renderMilliseconds) =>
+        this.acknowledgeFrame(sequence, keyframe, socket, renderMilliseconds),
       (codecs, width, height, socket) => this.reportVideoCodecs(codecs, width, height, socket),
+      (stats) => (this.imageStatus.title = t("capture.metrics", {
+        fps: stats.framesPerSecond,
+        mbps: stats.megabitsPerSecond.toFixed(2),
+        delay: stats.receiveToDrawP95Milliseconds.toFixed(1),
+        pending: stats.pendingFrames,
+      })),
     );
     this.filter.oninput = () => this.render();
     this.uiaFilter.oninput = () => this.filterUia();
@@ -3107,15 +3141,24 @@ export class WindowManager {
     return root.querySelector(`[data-action="${name}"]`);
   }
   showMode(mode) {
+    this.mode = mode;
     for (const tab of this.host.querySelectorAll("[data-window-tab]"))
       tab.classList.toggle("active", tab.dataset.windowTab === mode);
     for (const panel of this.host.querySelectorAll("[data-window-panel]"))
       panel.hidden = panel.dataset.windowPanel !== mode;
     if (mode === "uia" && this.connected && !this.uiaLoaded) this.loadUia();
+    if (mode === "windows" && this.connected && !this.loaded) this.load();
+  }
+  setCapabilities(capabilities) {
+    const windows = capabilities.modules.includes(8), uia = capabilities.modules.includes(42);
+    this.host.querySelector('[data-window-tab="windows"]').hidden = !windows;
+    this.host.querySelector('[data-window-tab="uia"]').hidden = !uia;
+    this.processButton.hidden = !capabilities.modules.includes(2);
+    if (windows || uia) this.showMode(windows ? "windows" : "uia");
   }
   activate(connected) {
     this.connected = connected;
-    if (connected && !this.loaded) this.load();
+    if (connected) this.showMode(this.mode || "windows");
   }
   disconnect() {
     this.request++;
@@ -3530,54 +3573,38 @@ export class WindowManager {
     this.streamStarting = true;
     this.play.textContent = "■";
     this.play.classList.add("playing");
-    let socket, direct;
     try {
-      try {
-        direct = await this.rtc.open(
-          (data) => this.decoder.receive(data, socket),
-          (text) => (this.imageStatus.textContent = text),
-        );
-      } catch (error) {
-        this.imageStatus.textContent = "P2P 加速失败";
-        console.warn(error);
-      }
-      if (request !== this.streamRequest) {
-        direct?.close();
-        return;
-      }
-      const query = new URLSearchParams({ ...this.identity(this.info), ...options, directStreamId: direct?.id || 0 }),
-        url = new URL(`/api/window/stream?${query}`, location.href);
-      url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      socket = this.socket = new WebSocket(apiUrl(url));
-      this.streamDirect = direct;
-      this.decoder.reset();
-      socket.binaryType = "arraybuffer";
-      socket.onopen = () => {
-        if (direct) this.imageStatus.textContent = "P2P 实时画面已连接";
-      };
-      if (!direct) socket.onmessage = (event) => this.decoder.receive(new Uint8Array(event.data), socket);
-      socket.onclose = (event) => {
-        direct?.close();
-        if (this.streamDirect === direct) this.streamDirect = null;
-        if (this.socket !== socket) return;
-        this.socket = null;
-        this.play.textContent = "▶";
-        this.play.classList.remove("playing");
-        this.play.hidden = false;
-        if (event.code !== 1000) {
-          const message = event.reason || `WebSocket: ${event.code}`;
-          this.imageStatus.textContent = message;
-          this.notify(message);
-        } else if (!this.canvas.hidden) this.imageStatus.textContent = `${this.canvas.width} × ${this.canvas.height}`;
-      };
-      socket.onerror = () => {
-        if (this.socket === socket) this.imageStatus.textContent = "实时画面连接失败";
-      };
+      const query = new URLSearchParams({ ...this.identity(this.info), ...options });
+      this.captureStream = new CaptureStream({
+        rtc: this.rtc,
+        url: `/api/window/stream?${query}`,
+        decoder: this.decoder,
+        route: (socket, direct) => {
+          this.socket = socket;
+          this.streamDirect = direct;
+        },
+        status: (text) => (this.imageStatus.textContent = text),
+        closed: (event) => {
+          if (request !== this.streamRequest) return;
+          this.play.textContent = "▶";
+          this.play.classList.remove("playing");
+          this.play.hidden = false;
+          if (event.code !== 1000) {
+            const message = event.reason || `WebSocket: ${event.code}`;
+            this.imageStatus.textContent = message;
+            this.notify(message);
+          } else if (!this.canvas.hidden) {
+            this.imageStatus.textContent = `${this.canvas.width} × ${this.canvas.height}`;
+          }
+        },
+      });
     } finally {
       this.streamStarting = false;
     }
   }
   stopStream(silent = false) {
+    this.captureStream?.stop();
+    this.captureStream = null;
     this.streamRequest = (this.streamRequest || 0) + 1;
     const socket = this.socket,
       direct = this.streamDirect;
@@ -3592,13 +3619,14 @@ export class WindowManager {
       if (!this.canvas.hidden) this.imageStatus.textContent = `${this.canvas.width} × ${this.canvas.height}`;
     }
   }
-  acknowledgeFrame(sequence, keyframe, socket) {
+  acknowledgeFrame(sequence, keyframe, socket, renderMilliseconds) {
     if (socket?.readyState !== WebSocket.OPEN) return;
-    const data = new ArrayBuffer(6),
+    const data = new ArrayBuffer(8),
       view = new DataView(data);
     view.setUint8(0, 4);
     view.setUint8(1, keyframe ? 1 : 0);
     view.setUint32(2, sequence, true);
+    view.setUint16(6, renderMilliseconds, true);
     socket.send(data);
   }
   reportVideoCodecs(codecs, width, height, socket) {

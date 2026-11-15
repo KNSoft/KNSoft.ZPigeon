@@ -32,22 +32,14 @@ export class AgentManager {
     this.forkButton = root.querySelector('[data-action="fork-session"]');
     this.exportButton = root.querySelector('[data-action="export"]');
     this.deleteSessionButton = root.querySelector('[data-action="delete-session"]');
-    this.modelDialog = document.querySelector("#agentModelDialog");
-    this.modelForm = this.modelDialog.querySelector("form");
-    this.profileDialog = document.querySelector("#agentProfileDialog");
-    this.profileForm = this.profileDialog.querySelector("form");
     this.newSessionDialog = document.querySelector("#agentNewSessionDialog");
     this.newSessionForm = this.newSessionDialog.querySelector("form");
     this.renameDialog = document.querySelector("#agentRenameSessionDialog");
     this.renameForm = this.renameDialog.querySelector("form");
     this.models = [];
-    this.tools = [];
-    this.providers = [];
-    this.catalogModels = [];
     this.sessions = [];
     this.session = null;
     this.selectedSessionId = null;
-    this.modelEditingId = null;
     this.eventSource = null;
     this.connected = false;
     this.loaded = false;
@@ -55,8 +47,6 @@ export class AgentManager {
     this.refreshing = false;
     this.refreshPending = false;
     this.searchTimer = null;
-    this.profileDocuments = [];
-    this.selectedDocument = 0;
     this.bindEvents();
     this.renderSessions();
     this.renderSession();
@@ -64,9 +54,6 @@ export class AgentManager {
 
   bindEvents() {
     this.root.querySelector('[data-action="new-session"]').onclick = () => this.openNewSession();
-    this.root.querySelector('[data-action="models"]').onclick = () => this.openModels();
-    this.profileButton = this.root.querySelector('[data-action="profile"]');
-    this.profileButton.onclick = () => this.openProfile();
     this.titleButton.onclick = () => this.openRename();
     this.compactButton.onclick = () => this.compact();
     this.forkButton.onclick = () => this.fork();
@@ -89,41 +76,6 @@ export class AgentManager {
     this.searchInput.oninput = () => {
       clearTimeout(this.searchTimer);
       this.searchTimer = setTimeout(() => this.loadSessions().catch((error) => this.notify(error)), 250);
-    };
-
-    const modelList = this.modelDialog.querySelector('[data-role="model-list"]');
-    modelList.onchange = () => this.selectModel(modelList.value || null).catch((error) => this.notify(error));
-    this.modelDialog.querySelector('[data-action="new-model"]').onclick = () =>
-      this.selectModel(null).catch((error) => this.notify(error));
-    this.modelDialog.querySelector('[data-action="delete-model"]').onclick = () => this.deleteModel();
-    this.modelDialog.querySelector('[data-action="test-model"]').onclick = () => this.testModel();
-    this.modelDialog.querySelector('[data-action="reveal-credential"]').onclick = () =>
-      this.toggleCredential();
-    this.modelDialog.querySelector('[data-action="copy-credential"]').onclick = () =>
-      this.copyCredential();
-    this.modelForm.elements.provider.onchange = () =>
-      this.providerChanged(true).catch((error) => this.notify(error));
-    this.modelForm.elements.modelId.onchange = () => this.catalogModelChanged();
-    this.modelForm.elements.authentication.onchange = () => this.updateAuthentication();
-    this.modelForm.onsubmit = (event) => {
-      event.preventDefault();
-      event.submitter?.value === "cancel" ? this.modelDialog.close() : this.saveModel();
-    };
-
-    this.profileDialog.querySelector('[data-action="add-document"]').onclick = () => this.addDocument();
-    this.profileDialog.querySelector('[data-action="delete-document"]').onclick = () => this.deleteDocument();
-    this.profileForm.elements.documentName.oninput = () => {
-      this.profileDocuments[this.selectedDocument].name = this.profileForm.elements.documentName.value;
-      this.renderDocumentList();
-    };
-    this.profileForm.elements.documentContent.oninput = () => {
-      this.profileDocuments[this.selectedDocument].content = this.profileForm.elements.documentContent.value;
-    };
-    for (const input of this.profileForm.querySelectorAll('[name="toolMode"]'))
-      input.onchange = () => this.changeToolSelection();
-    this.profileForm.onsubmit = (event) => {
-      event.preventDefault();
-      event.submitter?.value === "cancel" ? this.profileDialog.close() : this.saveProfile();
     };
 
     this.newSessionForm.onsubmit = (event) => {
@@ -160,11 +112,7 @@ export class AgentManager {
   }
 
   async loadConfiguration() {
-    [this.models, this.tools, this.providers] = await Promise.all([
-      this.get("/api/agent/models"),
-      this.get("/api/agent/tools"),
-      this.get("/api/agent/catalog/providers"),
-    ]);
+    this.models = await this.get("/api/agent/models");
     this.loaded = true;
   }
 
@@ -466,17 +414,21 @@ export class AgentManager {
     }
   }
 
-  openNewSession() {
-    if (!this.models.length) {
-      this.notify(new Error(t("agent.modelRequired")));
-      this.openModels();
-      return;
+  async openNewSession() {
+    try {
+      await this.loadConfiguration();
+      if (!this.models.length) {
+        this.notify(new Error(t("agent.modelRequired")));
+        return;
+      }
+      this.newSessionForm.elements.modelId.replaceChildren(
+        ...this.models.map((model) => new Option(model.name, model.id)),
+      );
+      this.newSessionForm.elements.title.value = t("agent.newSessionTitle");
+      this.newSessionDialog.showModal();
+    } catch (error) {
+      this.notify(error);
     }
-    this.newSessionForm.elements.modelId.replaceChildren(
-      ...this.models.map((model) => new Option(model.name, model.id)),
-    );
-    this.newSessionForm.elements.title.value = t("agent.newSessionTitle");
-    this.newSessionDialog.showModal();
   }
 
   async createSession() {
@@ -522,373 +474,6 @@ export class AgentManager {
       this.session = null;
       this.closeEvents();
       await this.loadSessions();
-    } catch (error) {
-      this.notify(error);
-    }
-  }
-
-  async openModels() {
-    try {
-      if (!this.loaded) await this.loadConfiguration();
-      await this.renderModelList(this.models[0]?.id ?? null);
-      this.modelDialog.showModal();
-    } catch (error) {
-      this.notify(error);
-    }
-  }
-
-  async renderModelList(selectedId = this.modelEditingId) {
-    const select = this.modelDialog.querySelector('[data-role="model-list"]');
-    select.replaceChildren(
-      new Option(t("agent.newModel"), ""),
-      ...this.models.map((model) => new Option(model.name, model.id)),
-    );
-    if (selectedId && this.models.some((model) => model.id === selectedId)) select.value = selectedId;
-    await this.selectModel(select.value || null);
-  }
-
-  async selectModel(id) {
-    this.modelEditingId = id;
-    this.modelDialog.querySelector('[data-action="delete-model"]').disabled = !id;
-    let model = null;
-    try {
-      if (id) model = await this.get(`/api/agent/models/${id}`);
-    } catch (error) {
-      this.notify(error);
-      return;
-    }
-    const form = this.modelForm;
-    form.elements.name.value = model?.name ?? "";
-    this.fillProviders(model?.provider ?? "openai");
-    form.elements.protocol.value = String(model?.protocol ?? 1);
-    form.elements.baseUrl.value = model?.baseUrl ?? "https://api.openai.com/v1";
-    form.elements.authentication.value = String(model?.authentication ?? 1);
-    form.elements.credential.value = model?.credential ?? "";
-    form.elements.credential.type = "password";
-    this.modelDialog.querySelector('[data-action="reveal-credential"]').textContent = t("agent.reveal");
-    form.elements.modelId.value = model?.modelId ?? "";
-    form.elements.contextWindow.value = String(model?.contextWindow ?? 128000);
-    form.elements.maximumOutputTokens.value = String(model?.maximumOutputTokens ?? 16384);
-    form.elements.reasoning.value = String(model?.reasoning ?? 0);
-    form.elements.requestTimeoutSeconds.value = String(model?.requestTimeoutSeconds ?? 60);
-    form.elements.advancedJson.value = model?.advancedJson ?? "{}";
-    this.modelDialog.querySelector('[data-role="test-result"]').hidden = true;
-    await this.providerChanged(false);
-    this.updateAuthentication();
-    this.catalogModelChanged(false);
-  }
-
-  fillProviders(provider) {
-    const select = this.modelForm.elements.provider,
-      known = this.providers.some((value) => value.id === provider);
-    select.replaceChildren(
-      ...this.providers.map((value) => new Option(`${value.name} (${value.id})`, value.id)),
-      new Option(t("agent.customProvider"), "__custom"),
-    );
-    select.value = known ? provider : "__custom";
-    this.modelForm.elements.customProvider.hidden = known;
-    this.modelForm.elements.customProvider.value = known ? "" : provider;
-    this.modelForm.elements.customProvider.placeholder = t("agent.providerId");
-  }
-
-  async providerChanged(applyDefaults) {
-    const select = this.modelForm.elements.provider,
-      custom = select.value === "__custom",
-      customInput = this.modelForm.elements.customProvider,
-      provider = this.providers.find((value) => value.id === select.value);
-    customInput.hidden = !custom;
-    customInput.required = custom;
-    if (applyDefaults && provider) {
-      if (provider.api) this.modelForm.elements.baseUrl.value = provider.api;
-      if (provider.protocol) this.modelForm.elements.protocol.value = String(provider.protocol);
-    }
-    this.catalogModels = provider
-      ? await this.get(`/api/agent/catalog/providers/${encodeURIComponent(provider.id)}/models`)
-      : [];
-    document.querySelector("#agentCatalogModels").replaceChildren(
-      ...this.catalogModels.map((model) => {
-        const option = document.createElement("option");
-        option.value = model.id;
-        option.label = model.name;
-        return option;
-      }),
-    );
-    if (applyDefaults && this.catalogModels.length) {
-      this.modelForm.elements.modelId.value = this.catalogModels[0].id;
-      this.catalogModelChanged(true);
-    } else {
-      this.catalogModelChanged(false);
-    }
-  }
-
-  catalogModelChanged(apply = true) {
-    const model = this.catalogModels.find((value) => value.id === this.modelForm.elements.modelId.value),
-      description = this.modelDialog.querySelector('[data-role="model-description"]');
-    if (!model) {
-      description.textContent = "";
-      return;
-    }
-    if (apply) {
-      this.modelForm.elements.contextWindow.value = String(model.contextWindow);
-      this.modelForm.elements.maximumOutputTokens.value = String(model.maximumOutputTokens);
-      if (!model.reasoning) this.modelForm.elements.reasoning.value = "0";
-    }
-    description.textContent = t("agent.catalogModelDescription", {
-      description: model.description ?? "",
-      input: model.inputModalities.join(", "),
-      output: model.outputModalities.join(", "),
-    });
-  }
-
-  updateAuthentication() {
-    const authentication = Number(this.modelForm.elements.authentication.value),
-      none = authentication === 3,
-      row = this.modelDialog.querySelector('[data-role="credential-row"]'),
-      label = this.modelDialog.querySelector('[data-role="credential-label"]');
-    row.hidden = none;
-    this.modelForm.elements.credential.required = !none;
-    label.textContent = t(
-      authentication === 1
-        ? "agent.auth.apiKey"
-        : authentication === 4
-          ? "agent.auth.oauth"
-          : "agent.auth.bearer",
-    );
-  }
-
-  modelRequest() {
-    const form = this.modelForm;
-    return {
-      id: this.modelEditingId,
-      name: form.elements.name.value.trim(),
-      provider:
-        form.elements.provider.value === "__custom"
-          ? form.elements.customProvider.value.trim()
-          : form.elements.provider.value,
-      protocol: Number(form.elements.protocol.value),
-      baseUrl: form.elements.baseUrl.value.trim(),
-      authentication: Number(form.elements.authentication.value),
-      credential: form.elements.credential.value,
-      modelId: form.elements.modelId.value.trim(),
-      contextWindow: Number(form.elements.contextWindow.value),
-      maximumOutputTokens: Number(form.elements.maximumOutputTokens.value),
-      reasoning: Number(form.elements.reasoning.value),
-      requestTimeoutSeconds: Number(form.elements.requestTimeoutSeconds.value),
-      advancedJson: form.elements.advancedJson.value.trim() || "{}",
-    };
-  }
-
-  async saveModel() {
-    if (!this.modelForm.reportValidity()) return;
-    try {
-      const body = this.modelRequest(),
-        value = this.modelEditingId
-          ? await this.put(`/api/agent/models/${this.modelEditingId}`, body)
-          : await this.post("/api/agent/models", body);
-      this.models = await this.get("/api/agent/models");
-      await this.renderModelList(value.id);
-      if (this.selectedSessionId) await this.refreshSession();
-    } catch (error) {
-      this.notify(error);
-    }
-  }
-
-  async testModel() {
-    if (!this.modelForm.reportValidity()) return;
-    const result = this.modelDialog.querySelector('[data-role="test-result"]'),
-      button = this.modelDialog.querySelector('[data-action="test-model"]');
-    button.disabled = true;
-    result.hidden = false;
-    result.className = "agent-test-result";
-    result.textContent = t("agent.testingConnection");
-    try {
-      const value = await this.post("/api/agent/models/test", this.modelRequest());
-      result.classList.add(value.success ? "success" : "failed");
-      result.textContent = value.success
-        ? t("agent.connectionSucceeded", { reply: value.message || "OK" })
-        : value.message;
-    } catch (error) {
-      result.classList.add("failed");
-      result.textContent = error.message;
-    } finally {
-      button.disabled = false;
-    }
-  }
-
-  async deleteModel() {
-    const model = this.models.find((value) => value.id === this.modelEditingId);
-    if (!model || !confirm(t("agent.confirmDeleteModel", { name: model.name }))) return;
-    try {
-      await this.remove(`/api/agent/models/${model.id}`);
-      this.models = await this.get("/api/agent/models");
-      await this.renderModelList(this.models[0]?.id ?? null);
-    } catch (error) {
-      this.notify(error);
-    }
-  }
-
-  toggleCredential() {
-    const input = this.modelForm.elements.credential,
-      button = this.modelDialog.querySelector('[data-action="reveal-credential"]');
-    input.type = input.type === "password" ? "text" : "password";
-    button.textContent = t(input.type === "password" ? "agent.reveal" : "agent.hide");
-  }
-
-  async copyCredential() {
-    try {
-      await navigator.clipboard.writeText(this.modelForm.elements.credential.value);
-    } catch (error) {
-      this.notify(error);
-    }
-  }
-
-  async openProfile() {
-    try {
-      if (!this.loaded) await this.loadConfiguration();
-      const profile = await this.get("/api/agent/profile"),
-        form = this.profileForm;
-      const selected = new Set(profile.toolNames),
-        reads = this.tools.filter((tool) => tool.readOnly);
-      form.elements.toolMode.value = selected.size === reads.length &&
-        reads.every((tool) => selected.has(tool.name)) ? "read" :
-        selected.size === this.tools.length && this.tools.every((tool) => selected.has(tool.name)) ? "all" : "custom";
-      this.renderTools(selected);
-      this.updateToolSelection();
-      this.profileDialog.querySelector('[data-role="tool-details"]').open = false;
-      this.profileDocuments = [
-        { key: "systemPrompt", name: t("agent.systemPrompt"), content: profile.systemPrompt },
-        { key: "agentsMd", name: "AGENTS.md", content: profile.agentsMd },
-        { key: "toolsMd", name: "TOOLS.md", content: profile.toolsMd },
-        { key: "memoryMd", name: "MEMORY.md", content: profile.memoryMd },
-        ...profile.documents.map((document) => ({ ...document })),
-      ];
-      this.selectDocument(0);
-      this.profileDialog.showModal();
-    } catch (error) {
-      this.notify(error);
-    }
-  }
-
-  renderTools(selected) {
-    const nodes = this.tools.map((tool) => {
-      const label = document.createElement("label"),
-        input = document.createElement("input"),
-        text = document.createElement("span"),
-        name = document.createElement("strong"),
-        description = document.createElement("small");
-      input.type = "checkbox";
-      input.value = tool.name;
-      input.checked = selected.has(tool.name);
-      input.onchange = () => this.updateToolSummary();
-      name.textContent = tool.name +
-        (tool.sensitive ? t("agent.sensitiveSuffix") : tool.destructive ? t("agent.destructiveSuffix") : "");
-      description.textContent = tool.description;
-      text.append(name, description);
-      label.append(input, text);
-      return label;
-    });
-    this.profileDialog.querySelector('[data-role="tools"]').replaceChildren(...nodes);
-  }
-
-  presetToolNames() {
-    const mode = this.profileForm.elements.toolMode.value;
-    return new Set(this.tools.filter((tool) => mode === "all" || tool.readOnly).map((tool) => tool.name));
-  }
-
-  changeToolSelection() {
-    const custom = this.profileForm.elements.toolMode.value === "custom";
-    if (custom)
-      this.profileDialog.querySelector('[data-role="tool-details"]').open = true;
-    if (!custom) {
-      const selected = this.presetToolNames();
-      for (const input of this.profileDialog.querySelectorAll('[data-role="tools"] input'))
-        input.checked = selected.has(input.value);
-    }
-    this.updateToolSelection();
-  }
-
-  updateToolSelection() {
-    const custom = this.profileForm.elements.toolMode.value === "custom";
-    for (const input of this.profileDialog.querySelectorAll('[data-role="tools"] input'))
-      input.disabled = !custom;
-    this.updateToolSummary();
-  }
-
-  updateToolSummary() {
-    this.profileDialog.querySelector('[data-role="tool-summary"]').textContent = t("agent.toolDetails", {
-      selected: this.profileDialog.querySelectorAll('[data-role="tools"] input:checked').length,
-      total: this.tools.length,
-    });
-  }
-
-  renderDocumentList() {
-    this.profileDialog.querySelector('[data-role="documents"]').replaceChildren(
-      ...this.profileDocuments.map((document, index) => {
-        const button = documentNode("button");
-        button.type = "button";
-        button.textContent = document.name || t("agent.documentName");
-        button.title = button.textContent;
-        button.setAttribute("role", "option");
-        button.setAttribute("aria-selected", String(index === this.selectedDocument));
-        button.onclick = () => this.selectDocument(index);
-        return button;
-      }),
-    );
-    this.profileDialog.querySelector('[data-action="add-document"]').disabled =
-      this.profileDocuments.filter((document) => !document.key).length >= 16;
-  }
-
-  selectDocument(index) {
-    this.selectedDocument = index;
-    const document = this.profileDocuments[index], form = this.profileForm;
-    form.elements.documentName.value = document.name;
-    form.elements.documentName.readOnly = !!document.key;
-    form.elements.documentContent.value = document.content;
-    form.elements.documentContent.maxLength = document.key === "systemPrompt" ? 65536 : 262144;
-    this.profileDialog.querySelector('[data-action="delete-document"]').disabled = !!document.key;
-    this.renderDocumentList();
-  }
-
-  addDocument() {
-    if (this.profileDocuments.filter((document) => !document.key).length >= 16) return;
-    const names = new Set(this.profileDocuments.map((document) => document.name.toLowerCase()));
-    let name = "NOTES.md", suffix = 2;
-    while (names.has(name.toLowerCase())) name = `NOTES-${suffix++}.md`;
-    this.profileDocuments.push({ name, content: "" });
-    this.selectDocument(this.profileDocuments.length - 1);
-    this.profileForm.elements.documentName.focus();
-    this.profileForm.elements.documentName.select();
-  }
-
-  deleteDocument() {
-    if (this.profileDocuments[this.selectedDocument].key) return;
-    this.profileDocuments.splice(this.selectedDocument, 1);
-    this.selectDocument(Math.min(this.selectedDocument, this.profileDocuments.length - 1));
-  }
-
-  profileRequest() {
-    const request = {
-      toolNames: [...this.profileDialog.querySelectorAll('[data-role="tools"] input:checked')].map(
-        (input) => input.value,
-      ),
-      documents: [],
-    };
-    const names = new Set();
-    for (const document of this.profileDocuments) {
-      const name = document.name.trim();
-      if (!name || names.has(name.toLowerCase())) throw new Error(t("agent.uniqueDocumentName"));
-      names.add(name.toLowerCase());
-      if (document.key) request[document.key] = document.content;
-      else request.documents.push({ name, content: document.content });
-    }
-    return request;
-  }
-
-  async saveProfile() {
-    if (!this.profileForm.reportValidity()) return;
-    try {
-      await this.put("/api/agent/profile", this.profileRequest());
-      this.profileDialog.close();
     } catch (error) {
       this.notify(error);
     }
@@ -949,8 +534,4 @@ export class AgentManager {
       new Date(value),
     );
   }
-}
-
-function documentNode(name) {
-  return document.createElement(name);
 }

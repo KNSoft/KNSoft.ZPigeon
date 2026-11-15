@@ -50,6 +50,7 @@ export class AdministrationManager {
     this.path = path;
     this.columns = columns;
     this.actions = actions;
+    this.capabilities = { modules: [], execution: 0 };
     this.records = [];
     this.loaded = false;
     this.connected = false;
@@ -92,6 +93,9 @@ export class AdministrationManager {
       return;
     }
     if (!this.loaded) this.load();
+  }
+  setCapabilities(capabilities) {
+    this.capabilities = capabilities;
   }
   disconnect() {
     this.connected = false;
@@ -837,7 +841,7 @@ export class SoftwareManager extends AdministrationManager {
   }
   openMenu(event, record) {
     this.menu.replaceChildren();
-    if (record.kind === 2) {
+    if (record.kind === 2 && this.capabilities.modules.includes(7)) {
       this.addMenuButton(t("software.openRegistry"), () => {
         const base =
           record.flags === 2
@@ -1201,6 +1205,7 @@ export class PackageManager extends AdministrationManager {
   syncActions() {
     const capabilities = this.provider?.flags || 0;
     this.uploadButton.disabled = !this.connected;
+    this.uploadButton.hidden = !this.capabilities.modules.includes(4);
     this.installButton.disabled = !this.connected || !(capabilities & 1);
     this.upgradeAllButton.hidden = !(capabilities & 4);
     this.upgradeAllButton.disabled = !this.connected;
@@ -3205,6 +3210,7 @@ export class WslManager {
     this.call = call;
     this.notify = notify;
     this.openFiles = openFiles;
+    this.modules = new Set();
     root.innerHTML = /* HTML */ `<div class="manager-toolbar">
         <input data-role="filter" /><span data-role="summary" class="status"></span><span class="spacer"></span
         ><button data-action="refresh"></button>
@@ -3235,6 +3241,9 @@ export class WslManager {
         },
       ),
     );
+  }
+  setCapabilities(capabilities) {
+    this.modules = new Set(capabilities.modules);
   }
   activate(connected) {
     this.connected = connected;
@@ -3326,7 +3335,7 @@ export class WslManager {
         this.notify(error);
       }
     };
-    actions.append(fileButton);
+    if (this.modules.has(4)) actions.append(fileButton);
     for (const [label, action, confirmAction] of buttons) {
       const button = document.createElement("button");
       button.textContent = label;
@@ -3385,6 +3394,7 @@ export class SystemInformationManager {
     this.notify = notify;
     this.filePicker = filePicker;
     this.hardwareOnly = hardwareOnly;
+    this.modules = new Set();
     this.connected = false;
     this.records = [];
     root.innerHTML = /* HTML */ `<div class="manager-toolbar">
@@ -3439,6 +3449,9 @@ export class SystemInformationManager {
       this.saveEnvironment();
     };
   }
+  setCapabilities(capabilities) {
+    this.modules = new Set(capabilities.modules);
+  }
   activate(connected) {
     this.connected = connected;
     if (!connected) {
@@ -3463,8 +3476,8 @@ export class SystemInformationManager {
     this.empty.textContent = "正在读取系统信息…";
     try {
       const [baseResult, recordsResult] = await Promise.allSettled([
-          this.call("/api/system"),
-          this.call("/api/system-details"),
+          this.modules.has(1) ? this.call("/api/system") : null,
+          this.modules.has(26) ? this.call("/api/system-details") : [],
         ]),
         base = baseResult.status === "fulfilled" ? baseResult.value : null,
         records = recordsResult.status === "fulfilled" ? recordsResult.value : [];
