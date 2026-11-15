@@ -67,13 +67,14 @@ internal static partial class ManagementWebApi
             HttpContext context,
             string deviceId,
             string objectId,
-            string name) =>
+            string name,
+            bool? inline) =>
         {
             ValidatePortable(deviceId, objectId, name);
             await using var transfer = await server.OpenPortableReadAsync(deviceId, objectId);
             context.Response.ContentLength = checked((long)transfer.FileSize);
-            context.Response.ContentType = "application/octet-stream";
-            context.Response.GetTypedHeaders().ContentDisposition = new ContentDispositionHeaderValue("attachment")
+            context.Response.ContentType = inline is true ? GetFileContentType(name) : "application/octet-stream";
+            context.Response.GetTypedHeaders().ContentDisposition = new ContentDispositionHeaderValue(inline is true ? "inline" : "attachment")
             {
                 FileNameStar = name
             };

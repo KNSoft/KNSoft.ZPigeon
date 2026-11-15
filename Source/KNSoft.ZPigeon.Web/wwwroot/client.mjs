@@ -129,9 +129,9 @@ const categories = {
     ],
     storage: [
       ["files", "module.files"],
+      ["portableDevices", "module.portableDevices"],
       ["bitlocker", "module.bitlocker"],
       ["shadowCopies", "module.shadowCopies"],
-      ["portableDevices", "module.portableDevices"],
       ["clipboard", "module.clipboard"],
     ],
     tasks: [
@@ -233,7 +233,7 @@ const files = new FileManager($("fileManager"), {
       await execution.openRun(values);
     },
   }),
-  portableDevices = new PortableDeviceManager($("portableDeviceManager"), { call, notify }),
+  portableDevices = new PortableDeviceManager($("portableDeviceManager"), { call, notify, preview: files.preview }),
   clipboard = new ClipboardManager($("clipboardManager"), { call, notify }),
   services = new ServiceManager($("serviceManager"), { call, notify, filePicker }),
   processes = new ProcessManager($("processManager"), {

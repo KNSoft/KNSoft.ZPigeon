@@ -1,4 +1,5 @@
 import { apiUrl } from "./client-context.mjs";
+import { FilePreview } from "./file-previews.mjs";
 
 const FOLDER = 1;
 const STORAGE = 2;
@@ -6,10 +7,11 @@ const CAN_DELETE = 4;
 const ROOT = "DEVICE";
 
 export class PortableDeviceManager {
-  constructor(host, { call, notify }) {
+  constructor(host, { call, notify, preview = new FilePreview(notify) }) {
     this.host = host;
     this.call = call;
     this.notify = notify;
+    this.previewDialog = preview;
     this.request = 0;
     this.devices = [];
     this.stack = [];
@@ -45,6 +47,8 @@ export class PortableDeviceManager {
       <div class="context-menu" data-role="menu" hidden>
         <button data-action="open">打开</button>
         <button data-action="download">下载</button>
+        <button data-action="preview">预览</button>
+        <button data-action="hash">计算 Hash</button>
         <hr />
         <button data-action="rename">重命名</button>
         <button data-action="delete" class="danger">删除</button>
@@ -219,6 +223,8 @@ export class PortableDeviceManager {
     this.select(row, item);
     this.action("open").hidden = !(item.flags & FOLDER);
     this.action("download").hidden = !!(item.flags & FOLDER);
+    this.action("preview").hidden = !!(item.flags & FOLDER) || !previewable(item.name);
+    this.action("hash").hidden = !!(item.flags & FOLDER);
     this.action("rename").disabled = false;
     this.action("delete").disabled = !(item.flags & CAN_DELETE);
     this.menu.hidden = false;
@@ -233,6 +239,8 @@ export class PortableDeviceManager {
     if (!item) return;
     if (action === "open") this.open(item);
     else if (action === "download") this.download(item);
+    else if (action === "preview") this.preview(item);
+    else if (action === "hash") this.hash(item);
     else if (action === "rename") this.rename(item);
     else if (action === "delete") this.remove(item);
     else if (action === "properties") this.properties(item);
@@ -300,6 +308,49 @@ export class PortableDeviceManager {
     link.click();
   }
 
+  async preview(item) {
+    if (item.flags & FOLDER) return;
+    const suffix = extension(item.name);
+    if (suffix === ".pdf") {
+      this.previewDialog.pdfUrl(this.objectUrl(item, true), item.name || "预览");
+      return;
+    }
+    try {
+      const response = await this.fetchObject(item);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const bytes = await response.arrayBuffer();
+      const type = ({
+        avif: "image/avif", bmp: "image/bmp", gif: "image/gif", jpeg: "image/jpeg",
+        jpg: "image/jpeg", png: "image/png", svg: "image/svg+xml", tif: "image/tiff",
+        tiff: "image/tiff", webp: "image/webp"
+      })[(item.name || "").split(".").pop()?.toLowerCase()];
+      if (!type) throw new Error("仅支持图片预览");
+      const blob = new Blob([bytes], { type });
+      await this.previewDialog.imageBlob(blob, item.name || "预览");
+    } catch (error) { this.notify(error); }
+  }
+
+  async hash(item) {
+    if (item.flags & FOLDER) return;
+    try {
+      const response = await this.fetchObject(item);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const digest = await crypto.subtle.digest("SHA-256", await response.arrayBuffer());
+      const value = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("").toUpperCase();
+      alert(`SHA-256：${value}`);
+    } catch (error) { this.notify(error); }
+  }
+
+  fetchObject(item) {
+    return fetch(this.objectUrl(item));
+  }
+
+  objectUrl(item, inline = false) {
+    const query = new URLSearchParams({ deviceId: this.device.id, objectId: item.id, name: item.name || "download" });
+    if (inline) query.set("inline", "true");
+    return apiUrl(`/api/portable/download?${query}`);
+  }
+
   async upload() {
     const file = this.uploadInput.files[0];
     this.uploadInput.value = "";
@@ -348,4 +399,16 @@ function bytes(value) {
 
 function date(value) {
   return new Date(Number(BigInt(value) / 10000n - 11644473600000n)).toLocaleString();
+}
+
+function extension(name) {
+  const value = String(name || "").toLowerCase();
+  const index = value.lastIndexOf(".");
+  return index < 0 ? "" : value.slice(index);
+}
+
+function previewable(name) {
+  return [".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".pdf", ".png", ".svg", ".tif", ".tiff", ".webp"].includes(
+    extension(name),
+  );
 }

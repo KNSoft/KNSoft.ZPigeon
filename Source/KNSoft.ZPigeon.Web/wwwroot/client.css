@@ -1527,6 +1527,14 @@ th[aria-sort="descending"]::before {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.file-preview-dialog header > .spacer {
+  flex: 1;
+}
+.file-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .file-preview-toolbar {
   min-height: 36px;
   margin: 8px 0;
@@ -1631,6 +1639,14 @@ th[aria-sort="descending"]::before {
 .file-submenu {
   position: relative;
   display: grid;
+}
+.file-submenu::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 100%;
+  width: 8px;
+  height: 100%;
 }
 .file-submenu > button::after {
   content: "›";

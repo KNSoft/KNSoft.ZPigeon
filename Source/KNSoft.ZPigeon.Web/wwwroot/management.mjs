@@ -260,6 +260,7 @@ export class FileManager {
     this.downloadBody = this.downloadDialog.querySelector("tbody");
     this.downloadEmpty = this.downloadDialog.querySelector(".manager-empty");
     this.downloadStates = new Map();
+    this.historyInitialized = false;
     this.ownerMenu = this.ownersDialog.querySelector("[data-role=owner-menu]");
     this.action("go").onclick = () => this.open(this.input.value);
     this.action("refresh").onclick = () => this.open(this.path, this.currentNode, true);
@@ -329,6 +330,10 @@ export class FileManager {
     });
     host.addEventListener("keydown", (event) => this.onKey(event));
     addEventListener("blur", () => this.hideMenus());
+    addEventListener("popstate", (event) => {
+      if (!this.loaded || !event.state?.filePath) return;
+      this.open(event.state.filePath, null, false, "none");
+    });
   }
   action(name, root = this.host) {
     return root.querySelector(`[data-action="${name}"]`);
@@ -392,9 +397,18 @@ export class FileManager {
       this.driveLoading = null;
     }
   }
-  async open(path, node = null, refresh = false) {
+  async open(path, node = null, refresh = false, historyMode = "push") {
     path = normalizePath(path);
     if (!path) return;
+    if (historyMode === "push") {
+      const state = { ...(history.state || {}), filePath: path };
+      if (!this.historyInitialized) {
+        history.replaceState(state, "", location.href);
+        this.historyInitialized = true;
+      } else if (history.state?.filePath !== path) {
+        history.pushState(state, "", location.href);
+      }
+    }
     if (!node || normalizePath(node.path) !== path)
       node = this.nodes.get(path.toLocaleLowerCase()) || this.addRoot(path);
     this.selectNode(node);
@@ -2579,6 +2593,7 @@ export class ServiceManager {
   }
   disconnect() {
     this.loaded = false;
+    this.historyInitialized = false;
     this.records = [];
     this.menu.hidden = true;
     this.dialog.close();

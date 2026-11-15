@@ -12,26 +12,28 @@ export class FilePreview {
     this.dialog = document.createElement("dialog");
     this.dialog.className = "file-preview-dialog";
     this.dialog.innerHTML = /* HTML */ `<form method="dialog">
-      <header><h2></h2><span class="spacer"></span><button value="close">${t("common.close")}</button></header>
+      <header><h2></h2><span class="spacer"></span><span class="file-preview-actions"></span><button value="close">${t("common.close")}</button></header>
       <div class="file-preview-toolbar"></div>
       <div class="file-preview-content"></div>
     </form>`;
     document.body.append(this.dialog);
     this.title = this.dialog.querySelector("h2");
+    this.actions = this.dialog.querySelector(".file-preview-actions");
     this.toolbar = this.dialog.querySelector(".file-preview-toolbar");
     this.content = this.dialog.querySelector(".file-preview-content");
     this.dialog.onclose = () => this.clear();
   }
 
   clear() {
-    this.media?.pause();
-    this.media = null;
+    if (typeof this.mediaElement?.pause === "function") this.mediaElement.pause();
+    this.mediaElement = null;
     if (this.font) document.fonts.delete(this.font);
     this.font = null;
     if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
     this.objectUrl = null;
     this.request++;
     this.toolbar.replaceChildren();
+    this.actions.replaceChildren();
     this.content.replaceChildren();
   }
 
@@ -139,6 +141,39 @@ export class FilePreview {
   }
 
   async image(path, name) {
+    return this.imageFromLoader(name, async (quality) => {
+      if (quality === "original") return { url: contentUrl(path), objectUrl: null };
+      const { data } = await postBinary("/api/file/image-preview", { path, quality: Number(quality) });
+      const objectUrl = URL.createObjectURL(new Blob([data], { type: "image/jpeg" }));
+      return { url: objectUrl, objectUrl };
+    }, false, contentUrl(path));
+  }
+
+  async imageBlob(blob, name) {
+    return this.imageFromLoader(name, async (quality) => {
+      const sourceUrl = URL.createObjectURL(blob);
+      if (quality === "original") return { url: sourceUrl, objectUrl: sourceUrl };
+      try {
+        const source = await createImageBitmap(blob);
+        const limit = { "1": 800, "2": 1600, "3": 3200 }[quality] || 1600;
+        const scale = Math.min(1, limit / Math.max(source.width, source.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(source.width * scale));
+        canvas.height = Math.max(1, Math.round(source.height * scale));
+        canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+        source.close();
+        const resized = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+        URL.revokeObjectURL(sourceUrl);
+        const objectUrl = URL.createObjectURL(resized);
+        return { url: objectUrl, objectUrl };
+      } catch (error) {
+        URL.revokeObjectURL(sourceUrl);
+        throw error;
+      }
+    });
+  }
+
+  async imageFromLoader(name, loadSource, originalOnly = false, fallbackUrl = null) {
     this.show(name);
     const request = ++this.request,
       quality = document.createElement("select"),
@@ -151,26 +186,45 @@ export class FilePreview {
       [t("file.preview.imageOriginal"), "original"],
     ])
       quality.add(new Option(label, value));
+    if (originalOnly) quality.hidden = true;
     if ([".gif", ".svg"].includes(extension(name))) quality.value = "original";
     status.className = "status";
     image.className = "file-image-preview";
     image.alt = name;
-    image.onerror = () => this.notify(t("file.preview.unsupportedImage"));
-    this.toolbar.append(quality, status);
+    image.onerror = () => {
+      if (request === this.request) {
+        status.textContent = t("file.preview.unsupportedImage");
+        this.notify(t("file.preview.unsupportedImage"));
+      }
+    };
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.textContent = "复制";
+    copy.onclick = async () => {
+      try {
+        if (!image.currentSrc) throw new Error("图像尚未加载");
+        const response = await fetch(image.currentSrc);
+        const imageBlob = await response.blob();
+        let clipboardBlob = imageBlob;
+        if (!clipboardBlob.type.startsWith("image/")) {
+          const canvas = document.createElement("canvas");
+          canvas.width = image.naturalWidth;
+          canvas.height = image.naturalHeight;
+          canvas.getContext("2d").drawImage(image, 0, 0);
+          clipboardBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+        }
+        await navigator.clipboard.write([new ClipboardItem({ [clipboardBlob.type]: clipboardBlob })]);
+        status.textContent = "已复制";
+      } catch (error) { this.notify(error); }
+    };
+    this.actions.append(quality, copy);
+    this.toolbar.append(status);
     this.content.append(image);
     const load = async () => {
       const current = quality.value;
       status.textContent = t("common.fetching");
       try {
-        let objectUrl = null,
-          url;
-        if (current === "original") url = contentUrl(path);
-        else {
-          const { data } = await postBinary("/api/file/image-preview", { path, quality: Number(current) });
-          if (request !== this.request || quality.value !== current) return;
-          objectUrl = URL.createObjectURL(new Blob([data], { type: "image/jpeg" }));
-          url = objectUrl;
-        }
+        const { url, objectUrl } = await loadSource(current);
         if (request !== this.request || quality.value !== current) {
           if (objectUrl) URL.revokeObjectURL(objectUrl);
           return;
@@ -181,8 +235,17 @@ export class FilePreview {
         status.textContent = "";
       } catch (error) {
         if (request === this.request && quality.value === current) {
-          status.textContent = error.message;
-          this.notify(error);
+          // Keep the preview usable when the optional server-side WIC resize
+          // cannot decode a particular image. The content endpoint streams
+          // the original bytes and lets the browser use its native decoder.
+          if (current !== "original" && !originalOnly && fallbackUrl) {
+            quality.value = "original";
+            status.textContent = "";
+            image.src = fallbackUrl;
+          } else {
+            status.textContent = error.message;
+            this.notify(error);
+          }
         }
       }
     };
@@ -199,6 +262,15 @@ export class FilePreview {
     this.content.append(frame);
   }
 
+  pdfUrl(url, name) {
+    this.show(name);
+    const frame = document.createElement("iframe");
+    frame.className = "file-pdf-preview";
+    frame.title = name;
+    frame.src = url;
+    this.content.append(frame);
+  }
+
   media(path, name, video) {
     this.show(name);
     const media = document.createElement(video ? "video" : "audio");
@@ -207,7 +279,7 @@ export class FilePreview {
     media.preload = "metadata";
     media.src = contentUrl(path);
     media.onerror = () => this.notify(t("file.preview.unsupportedMedia"));
-    this.media = media;
+    this.mediaElement = media;
     this.content.append(media);
   }
 
