@@ -10,6 +10,8 @@
 #include <PortableDevice.h>
 #include <propvarutil.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PORTABLE_DEVICE_)
+
 #pragma comment(lib, "OleAut32.lib")
 #pragma comment(lib, "PortableDeviceGuids.lib")
 
@@ -1334,3 +1336,5 @@ ZpPortable_CommitChannel(
     if (Removed) ZpClientLocalChannel_Release(&Channel->Header);
     if (SUCCEEDED(InitializeResult)) CoUninitialize();
 }
+
+#endif

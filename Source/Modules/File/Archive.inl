@@ -1,4 +1,6 @@
-﻿#define ZP_ARCHIVE_OK 0
+﻿
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
+#define ZP_ARCHIVE_OK 0
 #define ZP_ARCHIVE_EOF 1
 #define ZP_ARCHIVE_WARN (-20)
 #define ZP_ARCHIVE_DIRECTORY 0040000
@@ -402,3 +404,5 @@ ZpFile_EnumerateArchivePage(
     RtlReleaseSRWLockExclusive(&Client->ArchiveEnumerationLock);
     return Status;
 }
+
+#endif

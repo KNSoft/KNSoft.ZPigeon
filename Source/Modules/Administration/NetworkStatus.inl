@@ -1,5 +1,7 @@
 ﻿#include <iphlpapi.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_NETWORK_STATUS_)
+
 #pragma comment(lib, "Iphlpapi.lib")
 
 #define ZP_NETWORK_ADAPTER_HIDDEN 0x80000000
@@ -856,3 +858,5 @@ Cleanup:
                ZpStatus_FromNtStatus(Status) :
                ZpStatus_FromCode(ZpStatusWin32, Result);
 }
+
+#endif

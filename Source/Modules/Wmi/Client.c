@@ -6,6 +6,8 @@
 #include <wbemidl.h>
 #include <wctype.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WMI_)
+
 #pragma comment(lib, "Ole32.lib")
 #pragma comment(lib, "OleAut32.lib")
 #pragma comment(lib, "Wbemuuid.lib")
@@ -657,3 +659,5 @@ ZpWmi_Execute(
     }
     return ZpWmi_Run(OperationId, &View, Response, ResponseLength);
 }
+
+#endif

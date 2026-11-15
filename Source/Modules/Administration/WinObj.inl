@@ -1,5 +1,7 @@
 ﻿#include <KNSoft/NDK/NT/Ob/Misc.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WINOBJ_)
+
 static
 PWSTR
 ZpAdministration_QuerySymbolicLink(
@@ -165,3 +167,5 @@ ZpAdministration_QueryObjectDirectory(
     ZpAdministration_FreeBuilder(&Builder);
     return ZpStatus_FromNtStatus(Status);
 }
+
+#endif

@@ -5,6 +5,8 @@
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 #include "../Execution/Process.h"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_TERMINAL_)
+
 #define ZP_TERMINAL_CHANNEL_CHUNK_SIZE 0x00020000UL
 #define ZP_TERMINAL_INPUT_WINDOW_SIZE 0x00001000UL
 #define ZP_TERMINAL_PATH_BUFFER_SIZE 0x00010000UL
@@ -1093,3 +1095,5 @@ ZpTerminal_CommitChannel(
         ZpTerminal_StartWorker(Channel);
     }
 }
+
+#endif

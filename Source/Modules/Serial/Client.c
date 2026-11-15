@@ -5,6 +5,8 @@
 #include "../../KNSoft.ZPigeon.Client.SDK/Client.inl"
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Channel.h"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SERIAL_)
+
 #define ZP_SERIAL_CHUNK_SIZE 4096
 #define ZP_SERIAL_WINDOW_SIZE 0x00010000UL
 
@@ -564,3 +566,5 @@ ZpSerial_CommitChannel(
     if (NT_SUCCESS(Status)) Status = NtResumeThread(Channel->WorkerThread, NULL);
     if (!NT_SUCCESS(Status)) ZpSerial_FinishWorker(Channel, ZpStatus_FromNtStatus(Status), TRUE);
 }
+
+#endif

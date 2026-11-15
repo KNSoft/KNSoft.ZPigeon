@@ -49,6 +49,8 @@ struct _ZP_CONNECTION_OBJECT
     ULONGLONG FailedRequests;
     ULONGLONG SmoothedRequestMilliseconds;
     ULONG ConsecutiveFailures;
+    ZP_CLIENT_CAPABILITIES Capabilities;
+    GUID InstanceId;
     ZP_TRANSPORT_TYPE Transport;
     PZP_CONNECTION ProtocolConnection;
     ULONG ChannelCount;

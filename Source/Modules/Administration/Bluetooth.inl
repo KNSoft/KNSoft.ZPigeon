@@ -3,6 +3,8 @@
 #include <roapi.h>
 #include <windows.devices.radios.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BLUETOOTH_)
+
 #pragma comment(lib, "Bthprops.lib")
 #pragma comment(lib, "RuntimeObject.lib")
 
@@ -479,3 +481,5 @@ Win32Cleanup:
     Mem_Free(Identity);
     return ZpStatus_FromCode(ZpStatusWin32, Error);
 }
+
+#endif

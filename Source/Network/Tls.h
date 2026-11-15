@@ -38,7 +38,8 @@ typedef struct _ZP_TLS_CONTEXT
 
 ZP_STATUS
 ZpTls_AcquireClientCredentials(
-    _Out_ PCredHandle Credential);
+    _Out_ PCredHandle Credential,
+    _In_ BOOLEAN RequireTls13);
 
 ZP_STATUS
 ZpTls_AcquireServerCredentials(

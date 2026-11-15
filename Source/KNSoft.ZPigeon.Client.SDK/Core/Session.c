@@ -97,8 +97,15 @@ ZpClientSession_SignChallenge(
     BYTE Hash[32];
     ULONG SignatureSize;
     NTSTATUS Status;
+    ZP_CLIENT_CAPABILITIES Capabilities;
 
-    Status = ZpAuthentication_Hash(Challenge, Session->PublicKey, Hash);
+    ZpClient_QueryBuildCapabilities(&Capabilities);
+    Status = ZpAuthentication_Hash(Challenge,
+                                  Session->PublicKey,
+                                  Session->Owner->Config.Group,
+                                  &Capabilities,
+                                  &Session->Owner->Config.InstanceId,
+                                  Hash);
     if (!NT_SUCCESS(Status))
     {
         return ZpStatus_FromNtStatus(Status);
@@ -248,7 +255,8 @@ NTSTATUS
 ZpClientSession_Start(
     _Inout_ PZP_CLIENT_SESSION Session)
 {
-    BYTE Body[ZP_CLIENT_HELLO_WIRE_SIZE];
+    BYTE Body[ZP_CLIENT_HELLO_MAX_WIRE_SIZE];
+    ZP_CLIENT_CAPABILITIES Capabilities;
     ULONG BodyLength;
     NTSTATUS Status;
 
@@ -266,7 +274,11 @@ ZpClientSession_Start(
                                   ZpStatus_FromNtStatus(STATUS_SUCCESS));
     if (NT_SUCCESS(Status))
     {
+        ZpClient_QueryBuildCapabilities(&Capabilities);
         Status = ZpMessage_EncodeClientHello(Session->PublicKey,
+                                             Session->Owner->Config.Group,
+                                             &Capabilities,
+                                             &Session->Owner->Config.InstanceId,
                                              Body,
                                              sizeof(Body),
                                              &BodyLength);

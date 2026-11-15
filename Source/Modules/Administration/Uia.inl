@@ -1,5 +1,7 @@
 ﻿#include <UIAutomationClient.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_UI_AUTOMATION_)
+
 #pragma comment(lib, "Uiautomationcore.lib")
 
 #define ZP_UI_AUTOMATION_MAX_CHILDREN 4096
@@ -446,3 +448,5 @@ ZpAdministration_QueryUiAutomationProperties(
     ZpAdministration_FreeBuilder(&Builder);
     return FAILED(Result) ? ZpStatus_FromCode(ZpStatusHResult, Result) : ZpStatus_FromNtStatus(Status);
 }
+
+#endif

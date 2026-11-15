@@ -36,6 +36,7 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
+    <WebView2LoaderPreference>Static</WebView2LoaderPreference>
     <WinGetProjectionDir>$(IntDir)WinGetProjection</WinGetProjectionDir>
     <WinGetWinMD>..\packages\Microsoft.WindowsPackageManager.ComInterop.1.29.290\lib\uap10.0\Microsoft.Management.Deployment.winmd</WinGetWinMD>
   </PropertyGroup>
@@ -44,6 +45,9 @@
       <AdditionalIncludeDirectories>$(WinGetProjectionDir);Include;..\Include;..\KNSoft.ZPigeon.Protocol\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>MLE_API=;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <Lib>
+      <AdditionalDependencies>..\packages\Microsoft.Web.WebView2.1.0.4129.50\build\native\$(Platform)\WebView2LoaderStatic.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Lib>
   </ItemDefinitionGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <KNSoftQuicIntegration>Static</KNSoftQuicIntegration>

@@ -1,5 +1,7 @@
 ﻿#include <Wincodec.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
+
 #pragma comment(lib, "WindowsCodecs.lib")
 
 #define ZP_FILE_IMAGE_MAX_SOURCE_PIXELS 0x04000000ULL
@@ -204,3 +206,5 @@ Cleanup:
     }
     return STATUS_SUCCESS;
 }
+
+#endif

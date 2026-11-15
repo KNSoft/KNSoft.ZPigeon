@@ -10,6 +10,8 @@
 #include <Bcrypt.h>
 #include <Winsvc.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
+
 #pragma comment(lib, "Bcrypt.lib")
 
 #define ZP_FILE_HASH_BUFFER_SIZE 0x00100000UL
@@ -2624,9 +2626,14 @@ ZpFile_EnumerateDownloads(
     return Status;
 }
 
+
+#endif
+
 #include "Archive.inl"
 #include "Image.inl"
 #include "Shortcut.inl"
+
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
 
 NTSTATUS
 ZpFile_Execute(
@@ -2882,3 +2889,5 @@ ZpFile_Execute(
     }
     return STATUS_NOT_SUPPORTED;
 }
+
+#endif

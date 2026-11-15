@@ -2,6 +2,8 @@
 #include <wuapi.h>
 #include <stdio.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_UPDATE_)
+
 #pragma comment(lib, "Ole32.lib")
 #pragma comment(lib, "OleAut32.lib")
 #pragma comment(lib, "Wuguid.lib")
@@ -181,3 +183,5 @@ ZpAdministration_ControlUpdate(
     if (ZpStatus_IsSuccess(Status)) Mem_Free(Response);
     return Status;
 }
+
+#endif

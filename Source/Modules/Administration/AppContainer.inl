@@ -5,6 +5,8 @@
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Account.h"
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/AppContainer.h"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_APP_CONTAINER_)
+
 #pragma comment(lib, "Userenv.lib")
 
 static
@@ -373,3 +375,5 @@ ZpAdministration_ControlAppContainer(
     Mem_Free(Identity);
     return Status;
 }
+
+#endif

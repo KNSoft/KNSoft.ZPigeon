@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
+
 #pragma comment(lib, "Bits.lib")
 #pragma comment(lib, "Ole32.lib")
 #pragma comment(lib, "Winhttp.lib")
@@ -661,3 +663,5 @@ VOID ZpFileDownload_DestroySnapshot(_In_ PZP_FILE_DOWNLOAD_SNAPSHOT Snapshot)
 {
     delete Snapshot;
 }
+
+#endif

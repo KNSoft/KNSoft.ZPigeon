@@ -14,6 +14,11 @@
 #include <KNSoft/ZPigeon/Window.h>
 #include <KNSoft/ZPigeon/Wmi.h>
 
+static const ZP_CLIENT_CAPABILITIES TestCapabilities = {
+    ZP_CLIENT_MODULE_MASK, ZP_CLIENT_TRANSPORT_MASK, ZP_CLIENT_EXECUTION_FEATURE_MASK
+};
+static const GUID TestInstanceId = { 1 };
+
 TEST_FUNC(ProtocolMessage)
 {
     static const WCHAR EventChannel[] = L"System";
@@ -348,21 +353,40 @@ TEST_FUNC(ProtocolMessage)
         FileDigest[Index] = (BYTE)(Index + 1);
     }
 
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey, NULL, 0, &Length)) &&
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey, NULL, &TestCapabilities, &TestInstanceId,
+                                                   NULL, 0, &Length)) &&
             Length == ZP_CLIENT_HELLO_WIRE_SIZE);
-    TEST_OK(ZpMessage_EncodeClientHello(PublicKey, Buffer, Length - 1, &Index) == STATUS_BUFFER_TOO_SMALL &&
+    TEST_OK(ZpMessage_EncodeClientHello(PublicKey, NULL, &TestCapabilities, &TestInstanceId,
+                                        Buffer, Length - 1, &Index) == STATUS_BUFFER_TOO_SMALL &&
             Index == Length);
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey, Buffer, sizeof(Buffer), &Length)) &&
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey, NULL, &TestCapabilities, &TestInstanceId,
+                                                   Buffer, sizeof(Buffer), &Length)) &&
             Length == ZP_CLIENT_HELLO_WIRE_SIZE);
     TEST_OK(NT_SUCCESS(ZpMessage_DecodeClientHello(Buffer, Length, &ClientHelloView)) &&
             ClientHelloView.ClientVersion == ZP_CLIENT_VERSION &&
             RtlCompareMemory(ClientHelloView.ClientPublicKey,
                              PublicKey,
                              sizeof(PublicKey)) == sizeof(PublicKey));
-    TEST_OK(ZpMessage_EncodeClientHello(NULL, NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(ZpMessage_EncodeClientHello(NULL, NULL, &TestCapabilities, &TestInstanceId,
+                                        NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
     PublicKey[0] = 0x03;
-    TEST_OK(ZpMessage_EncodeClientHello(PublicKey, NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(ZpMessage_EncodeClientHello(PublicKey, NULL, &TestCapabilities, &TestInstanceId,
+                                        NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
     PublicKey[0] = 0x04;
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey, L"Lab", &TestCapabilities, &TestInstanceId,
+                                                   Buffer, sizeof(Buffer), &Length)) &&
+            NT_SUCCESS(ZpMessage_DecodeClientHello(Buffer, Length, &ClientHelloView)) &&
+            ClientHelloView.Group.Length == 3 &&
+            RtlCompareMemory(ClientHelloView.Group.Buffer, L"Lab", 3 * sizeof(WCHAR)) == 3 * sizeof(WCHAR));
+    Buffer[ZP_CLIENT_HELLO_WIRE_SIZE] = 0;
+    Buffer[ZP_CLIENT_HELLO_WIRE_SIZE + 1] = 0;
+    TEST_OK(ZpMessage_DecodeClientHello(Buffer, Length, &ClientHelloView) == STATUS_DATA_ERROR);
+    TEST_OK(ZpMessage_EncodeClientHello(PublicKey, L"Bad\nGroup", &TestCapabilities, &TestInstanceId,
+                                        NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
+    TEST_OK(ZpMessage_EncodeClientHello(PublicKey,
+                                       L"01234567890123456789012345678901234567890123456789012345678901234",
+                                       &TestCapabilities, &TestInstanceId,
+                                       NULL, 0, &Length) == STATUS_INVALID_PARAMETER);
 
     TEST_OK(NT_SUCCESS(ZpMessage_EncodeServerChallenge(Challenge, Buffer, sizeof(Buffer), &Length)) &&
             Length == sizeof(Challenge));

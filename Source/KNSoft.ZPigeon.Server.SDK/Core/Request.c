@@ -298,6 +298,14 @@ ZpServer_SendRequest(
         Mem_Free(RequestObject);
         return Status;
     }
+    if ((ModuleId > 46 || (ConnectionObject->Capabilities.Modules & ZP_MODULE_BIT(ModuleId)) == 0) &&
+        !(ModuleId == ZP_SYSTEM_MODULE_ID && OperationId == ZP_SYSTEM_OPERATION_PROBE))
+    {
+        RtlReleaseSRWLockExclusive(&ConnectionObject->Lock);
+        RtlLeaveCriticalSection(&ConnectionObject->RequestSendLock);
+        Mem_Free(RequestObject);
+        return STATUS_NOT_SUPPORTED;
+    }
     if (ConnectionObject->RequestCount == ConnectionObject->MaxRequests)
     {
         RtlReleaseSRWLockExclusive(&ConnectionObject->Lock);

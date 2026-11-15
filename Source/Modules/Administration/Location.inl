@@ -3,6 +3,8 @@
 #pragma warning(disable: 4995)
 #include <locationapi.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_LOCATION_)
+
 #pragma comment(lib, "LocationApi.lib")
 
 typedef struct _ZP_LOCATION_EVENTS
@@ -242,5 +244,7 @@ ZpAdministration_QueryLocation(
     ZpAdministration_FreeBuilder(&Builder);
     return FAILED(Result) ? ZpStatus_FromCode(ZpStatusHResult, Result) : ZpStatus_FromNtStatus(Status);
 }
+
+#endif
 
 #pragma warning(pop)

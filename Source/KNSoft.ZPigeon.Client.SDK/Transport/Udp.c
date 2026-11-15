@@ -4,6 +4,8 @@
 
 #include <Bcrypt.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_UDP_)
+
 static
 VOID
 ZpClientUdp_UninitializeAttempt(
@@ -406,3 +408,5 @@ ZpClientUdp_Uninitialize(
         Transport->StopEvent = NULL;
     }
 }
+
+#endif

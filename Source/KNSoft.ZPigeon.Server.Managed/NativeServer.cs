@@ -27,9 +27,8 @@ public readonly record struct ConnectionStatistics(
     byte SpeedClass,
     byte LatencyClass);
 
-public sealed partial class NativeServer(string directory) : IDisposable
+public sealed partial class NativeServer(string directory, ushort port = 21943) : IDisposable
 {
-    private const ushort Port = 4433;
     private const int StatusBufferTooSmall = unchecked((int)0xC0000023);
     private const int StatusInvalidDeviceState = unchecked((int)0xC0000184);
     // AsyncLocal keeps concurrent Web requests and the work they start bound to the selected Client.
@@ -48,10 +47,16 @@ public sealed partial class NativeServer(string directory) : IDisposable
     private EventWaitHandle? clientChangeEvent;
     private RegisteredWaitHandle? clientChangeRegistration;
     private X509Certificate2? certificate;
+    private byte[]? deploymentRootCertificate;
 
     public event EventHandler? ClientsChanged;
 
+    public ushort Port { get; } = port is > 0 and < ushort.MaxValue ? port :
+        throw new ArgumentOutOfRangeException(nameof(port));
+
     public static int State => NativeMethods.GetState();
+    public static IReadOnlyList<int> AvailableTransports { get; } =
+        OperatingSystem.IsWindowsVersionAtLeast(10, 0, 20348) ? [1, 2, 3] : [2, 3];
     public bool ClientConnected => IsClientConnected(ClientId);
     public ulong ClientId => selectedClientId.Value;
 
@@ -79,6 +84,7 @@ public sealed partial class NativeServer(string directory) : IDisposable
             {
                 fixed (byte* publicKey = clients[index].PublicKey)
                 fixed (byte* address = clients[index].Address.Value)
+                fixed (char* group = clients[index].Group)
                 {
                     result[index] = new(
                         clients[index].ClientId,
@@ -88,7 +94,11 @@ public sealed partial class NativeServer(string directory) : IDisposable
                         new IPAddress(new ReadOnlySpan<byte>(
                             address,
                             clients[index].Address.Family == 2 ? 4 : 16)),
-                        CreateConnectionStatistics(clients[index].Statistics));
+                        CreateConnectionStatistics(clients[index].Statistics),
+                        new string(group),
+                        clients[index].InstanceId == Guid.Empty ? string.Empty :
+                            clients[index].InstanceId.ToString("N").ToUpperInvariant(),
+                        clients[index].Capabilities);
                 }
             }
             return result;
@@ -156,9 +166,15 @@ public sealed partial class NativeServer(string directory) : IDisposable
         RunStatusAsync((callback, context) =>
             NativeMethods.ProbeConnection(ClientId, callback, context));
 
+    public byte[] ExportDeploymentRootCertificate() =>
+        deploymentRootCertificate is { } root ?
+            (byte[])root.Clone() :
+            throw new InvalidOperationException("Server is not started.");
+
     public void Start()
     {
         certificate = LoadCertificate(directory);
+        deploymentRootCertificate = File.ReadAllBytes(Path.Combine(directory, "zpigeon-root.cer"));
         ThrowIfFailed(NativeMethods.Start(certificate.Handle, Port));
         var eventHandle = NativeMethods.GetClientChangeEvent();
         if (eventHandle == 0)
@@ -564,6 +580,7 @@ public sealed partial class NativeServer(string directory) : IDisposable
         {
             certificate?.Dispose();
             certificate = null;
+            deploymentRootCertificate = null;
         }
     }
 
@@ -604,7 +621,26 @@ public sealed record ConnectedClient(
     ulong Id,
     string Fingerprint,
     IPAddress Address,
-    ConnectionStatistics Statistics);
+    ConnectionStatistics Statistics,
+    string Group,
+    string InstanceId,
+    ClientCapabilities Capabilities);
+
+[StructLayout(LayoutKind.Sequential)]
+public readonly record struct ClientCapabilities(ulong Modules, uint Transports, uint Execution)
+{
+    public bool SupportsModule(int moduleId) => moduleId is >= 1 and <= 46 &&
+        (Modules & (1UL << (moduleId - 1))) != 0;
+    public int[] ModuleIds => Enumerable.Range(1, 46).Where(SupportsModule).ToArray();
+    public int[] TransportIds
+    {
+        get
+        {
+            var transports = Transports;
+            return Enumerable.Range(1, 3).Where(id => (transports & (1U << id)) != 0).ToArray();
+        }
+    }
+}
 
 public sealed record SystemInfo(
     byte Architecture,
@@ -683,13 +719,16 @@ internal static partial class NativeMethods
     private const string Library = "KNSoft.ZPigeon.Server.Native.dll";
     internal const int ClientPublicKeySize = 65;
 
-    [StructLayout(LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     internal unsafe struct ClientInfo
     {
         internal ulong ClientId;
         internal fixed byte PublicKey[ClientPublicKeySize];
+        internal fixed char Group[65];
         internal IpAddress Address;
         internal ConnectionStatistics Statistics;
+        internal Guid InstanceId;
+        internal ClientCapabilities Capabilities;
     }
 
     [StructLayout(LayoutKind.Sequential)]

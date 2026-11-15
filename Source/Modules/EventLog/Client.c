@@ -3,6 +3,8 @@
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 #include <winevt.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EVENT_LOG_)
+
 #pragma comment(lib, "Wevtapi.lib")
 
 static
@@ -797,3 +799,5 @@ ZpEventLog_Execute(
     }
     return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
 }
+
+#endif

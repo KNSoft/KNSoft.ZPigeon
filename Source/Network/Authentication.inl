@@ -11,22 +11,26 @@ NTSTATUS
 ZpAuthentication_Hash(
     _In_reads_bytes_(ZP_SERVER_CHALLENGE_SIZE) const BYTE* Challenge,
     _In_reads_bytes_(ZP_CLIENT_PUBLIC_KEY_SIZE) const BYTE* PublicKey,
+    _In_opt_ PCWSTR Group,
+    _In_ PCZP_CLIENT_CAPABILITIES Capabilities,
+    _In_ const GUID* InstanceId,
     _Out_writes_bytes_(32) BYTE* Hash)
 {
     BCRYPT_ALG_HANDLE Algorithm;
     NTSTATUS Status;
     BYTE Input[(sizeof(ZpAuthenticationLabel) - 1) + 1 +
-               ZP_SERVER_CHALLENGE_SIZE + ZP_CLIENT_PUBLIC_KEY_SIZE] = { 0 };
+               ZP_SERVER_CHALLENGE_SIZE + ZP_CLIENT_HELLO_MAX_WIRE_SIZE];
     BYTE* Cursor = Input;
+    ULONG HelloLength;
 
-    RtlCopyMemory(Cursor,
-                  ZpAuthenticationLabel,
-                  sizeof(ZpAuthenticationLabel) - 1);
+    RtlCopyMemory(Cursor, ZpAuthenticationLabel, sizeof(ZpAuthenticationLabel) - 1);
     Cursor += sizeof(ZpAuthenticationLabel) - 1;
     *Cursor++ = 0;
     RtlCopyMemory(Cursor, Challenge, ZP_SERVER_CHALLENGE_SIZE);
     Cursor += ZP_SERVER_CHALLENGE_SIZE;
-    RtlCopyMemory(Cursor, PublicKey, ZP_CLIENT_PUBLIC_KEY_SIZE);
+    Status = ZpMessage_EncodeClientHello(PublicKey, Group, Capabilities, InstanceId,
+                                        Cursor, ZP_CLIENT_HELLO_MAX_WIRE_SIZE, &HelloLength);
+    if (!NT_SUCCESS(Status)) return Status;
 
     Status = BCryptOpenAlgorithmProvider(&Algorithm,
                                          BCRYPT_SHA256_ALGORITHM,
@@ -40,7 +44,7 @@ ZpAuthentication_Hash(
                         NULL,
                         0,
                         Input,
-                        sizeof(Input),
+                        (ULONG)(Cursor - Input) + HelloLength,
                         Hash,
                         32);
     BCryptCloseAlgorithmProvider(Algorithm, 0);
@@ -52,6 +56,9 @@ NTSTATUS
 ZpAuthentication_Verify(
     _In_reads_bytes_(ZP_CLIENT_PUBLIC_KEY_SIZE) const BYTE* PublicKey,
     _In_reads_bytes_(ZP_SERVER_CHALLENGE_SIZE) const BYTE* Challenge,
+    _In_opt_ PCWSTR Group,
+    _In_ PCZP_CLIENT_CAPABILITIES Capabilities,
+    _In_ const GUID* InstanceId,
     _In_reads_bytes_(ZP_CLIENT_SIGNATURE_SIZE) const BYTE* Signature)
 {
     BCRYPT_ALG_HANDLE Algorithm;
@@ -69,7 +76,7 @@ ZpAuthentication_Verify(
     Blob->dwMagic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
     Blob->cbKey = 32;
     RtlCopyMemory(BlobBuffer + sizeof(*Blob), PublicKey + 1, 64);
-    Status = ZpAuthentication_Hash(Challenge, PublicKey, Hash);
+    Status = ZpAuthentication_Hash(Challenge, PublicKey, Group, Capabilities, InstanceId, Hash);
     if (!NT_SUCCESS(Status))
     {
         return Status;

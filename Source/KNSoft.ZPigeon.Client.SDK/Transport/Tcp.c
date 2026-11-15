@@ -2,6 +2,8 @@
 
 #include "../Client.inl"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_TCP_)
+
 static
 VOID
 ZpClientTcp_UninitializeAttempt(
@@ -298,7 +300,9 @@ ZpClientTcp_Start(
         return ZpStatus_FromCode(ZpStatusWinsock, Error);
     }
     Transport->WsaInitialized = TRUE;
-    Status = ZpTls_AcquireClientCredentials(&Transport->Credential);
+    Status = ZpTls_AcquireClientCredentials(
+        &Transport->Credential,
+        Transport->Owner->Config.Endpoints[EndpointIndex].RequireTls13);
     if (!ZpStatus_IsSuccess(Status))
     {
         goto Failed;
@@ -418,3 +422,5 @@ ZpClientTcp_Uninitialize(
         Transport->StopEvent = NULL;
     }
 }
+
+#endif

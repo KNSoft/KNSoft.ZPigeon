@@ -13,13 +13,13 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                  audience: ToolAudience.ExternalMcp)]
     public ConnectedClientSummary[] ListClients() => application.GetClients();
 
-    [ZPigeonTool("get_system_info", "Get operating system and hardware summary for a client.", true)]
+    [ZPigeonTool("get_system_info", "Get operating system and hardware summary for a client.", true, moduleId: 1)]
     public Task<SystemInfo> GetSystemInfo(
         [Description("Exact client id returned by list_clients.")] string clientId,
         CancellationToken cancellationToken) =>
         application.GetSystemInfoAsync(ParseClientId(clientId), cancellationToken);
 
-    [ZPigeonTool("list_event_log_channels", "List Windows Event Log channel paths on a client.", true)]
+    [ZPigeonTool("list_event_log_channels", "List Windows Event Log channel paths on a client.", true, moduleId: 6)]
     public Task<string[]> ListEventLogChannels(
         [Description("Exact client id returned by list_clients.")] string clientId,
         CancellationToken cancellationToken) =>
@@ -27,7 +27,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
 
     [ZPigeonTool("query_event_log",
                  "Read one bounded page of Windows Event Log XML records. Pass the returned bookmark to continue.",
-                 true)]
+                 true, moduleId: 6)]
     public Task<EventLogPage> QueryEventLog(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Event Log channel path, for example System.")] string channelPath,
@@ -42,7 +42,8 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                                        limit,
                                        cancellationToken);
 
-    [ZPigeonTool("list_processes", "List or search processes. Results include stable process creation times.", true)]
+    [ZPigeonTool("list_processes", "List or search processes. Results include stable process creation times.",
+                 true, moduleId: 2)]
     public Task<LimitedResult<ProcessSummary>> ListProcesses(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Optional image, path, user, or service substring.")] string? query = null,
@@ -50,7 +51,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
         CancellationToken cancellationToken = default) =>
         application.GetProcessesAsync(ParseClientId(clientId), query, limit, cancellationToken);
 
-    [ZPigeonTool("get_process", "Get detailed information for one process instance.", true)]
+    [ZPigeonTool("get_process", "Get detailed information for one process instance.", true, moduleId: 2)]
     public Task<ProcessInfo> GetProcess(
         [Description("Exact client id returned by list_clients.")] string clientId,
         uint processId,
@@ -61,7 +62,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                                     ParseUInt64(createTime, nameof(createTime)),
                                     cancellationToken);
 
-    [ZPigeonTool("list_process_handles", "List handles owned by one process instance.", true)]
+    [ZPigeonTool("list_process_handles", "List handles owned by one process instance.", true, moduleId: 2)]
     public Task<LimitedResult<ProcessHandle>> ListProcessHandles(
         [Description("Exact client id returned by list_clients.")] string clientId,
         uint processId,
@@ -80,7 +81,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                  "Control one process instance. control is Terminate, TerminateTree, Suspend, Resume, " +
                  "EfficiencyMode, Priority, or UacVirtualization.",
                  false,
-                 destructive: true)]
+                 destructive: true, moduleId: 2)]
     public async Task<ToolOperationResult> ControlProcess(
         [Description("Exact client id returned by list_clients.")] string clientId,
         uint processId,
@@ -98,7 +99,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
         return new(true);
     }
 
-    [ZPigeonTool("list_services", "List or search Windows services.", true)]
+    [ZPigeonTool("list_services", "List or search Windows services.", true, moduleId: 3)]
     public Task<LimitedResult<ServiceRecord>> ListServices(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Optional service, display-name, description, or account substring.")] string? query = null,
@@ -106,7 +107,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
         CancellationToken cancellationToken = default) =>
         application.GetServicesAsync(ParseClientId(clientId), query, limit, cancellationToken);
 
-    [ZPigeonTool("get_service", "Get detailed configuration and state for a Windows service.", true)]
+    [ZPigeonTool("get_service", "Get detailed configuration and state for a Windows service.", true, moduleId: 3)]
     public Task<ServiceInfo> GetService(
         [Description("Exact client id returned by list_clients.")] string clientId,
         string serviceName,
@@ -116,7 +117,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
     [ZPigeonTool("control_service",
                  "Control a Windows service. control is Start, Stop, Pause, Continue, or Restart.",
                  false,
-                 destructive: true)]
+                 destructive: true, moduleId: 3)]
     public async Task<ToolOperationResult> ControlService(
         [Description("Exact client id returned by list_clients.")] string clientId,
         string serviceName,
@@ -132,7 +133,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
         return new(true);
     }
 
-    [ZPigeonTool("list_windows", "List or search top-level and child windows.", true)]
+    [ZPigeonTool("list_windows", "List or search top-level and child windows.", true, moduleId: 8)]
     public Task<LimitedResult<WindowRecord>> ListWindows(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Optional caption or class-name substring.")] string? query = null,
@@ -140,7 +141,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
         CancellationToken cancellationToken = default) =>
         application.GetWindowsAsync(ParseClientId(clientId), query, limit, cancellationToken);
 
-    [ZPigeonTool("list_files", "List one page of files and directories at a remote path.", true)]
+    [ZPigeonTool("list_files", "List one page of files and directories at a remote path.", true, moduleId: 4)]
     public Task<FilePage> ListFiles(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Remote directory path. Omit for roots.")] string? path = null,
@@ -152,14 +153,14 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                                   ParseUInt32(enumerationId, nameof(enumerationId), true),
                                   cancellationToken);
 
-    [ZPigeonTool("get_file_info", "Get metadata for a remote file or directory.", true)]
+    [ZPigeonTool("get_file_info", "Get metadata for a remote file or directory.", true, moduleId: 4)]
     public Task<KNSoft.ZPigeon.Server.Managed.FileInfo> GetFileInfo(
         [Description("Exact client id returned by list_clients.")] string clientId,
         string path,
         CancellationToken cancellationToken = default) =>
         application.GetFileAsync(ParseClientId(clientId), path, cancellationToken);
 
-    [ZPigeonTool("hash_file", "Hash a remote file with CRC32, MD5, SHA1, or SHA256.", true)]
+    [ZPigeonTool("hash_file", "Hash a remote file with CRC32, MD5, SHA1, or SHA256.", true, moduleId: 4)]
     public Task<FileHash> HashFile(
         [Description("Exact client id returned by list_clients.")] string clientId,
         string path,
@@ -170,7 +171,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                                   ParseEnum<FileHashAlgorithm>(algorithm),
                                   cancellationToken);
 
-    [ZPigeonTool("delete_file", "Delete a remote file or directory.", false, destructive: true)]
+    [ZPigeonTool("delete_file", "Delete a remote file or directory.", false, destructive: true, moduleId: 4)]
     public async Task<ToolOperationResult> DeleteFile(
         [Description("Exact client id returned by list_clients.")] string clientId,
         string path,
@@ -180,7 +181,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
         return new(true);
     }
 
-    [ZPigeonTool("rename_file", "Rename or move a remote file or directory.", false, destructive: true)]
+    [ZPigeonTool("rename_file", "Rename or move a remote file or directory.", false, destructive: true, moduleId: 4)]
     public async Task<ToolOperationResult> RenameFile(
         [Description("Exact client id returned by list_clients.")] string clientId,
         string path,
@@ -191,7 +192,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
         return new(true);
     }
 
-    [ZPigeonTool("query_wmi", "Run a bounded read-only WQL query on a client.", true)]
+    [ZPigeonTool("query_wmi", "Run a bounded read-only WQL query on a client.", true, moduleId: 13)]
     public Task<WmiRow[]> QueryWmi(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("WMI namespace, for example ROOT\\CIMV2.")] string wmiNamespace,
@@ -206,7 +207,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                                   includeSystemProperties,
                                   cancellationToken);
 
-    [ZPigeonTool("list_registry_keys", "List one page of Windows Registry subkeys.", true)]
+    [ZPigeonTool("list_registry_keys", "List one page of Windows Registry subkeys.", true, moduleId: 7)]
     public Task<RegistryPage<RegistryKeyRecord>> ListRegistryKeys(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("ClassesRoot, CurrentUser, LocalMachine, Users, or CurrentConfig.")] string root,
@@ -221,7 +222,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                                          limit,
                                          cancellationToken);
 
-    [ZPigeonTool("list_registry_values", "List one page of Windows Registry values.", true)]
+    [ZPigeonTool("list_registry_values", "List one page of Windows Registry values.", true, moduleId: 7)]
     public Task<RegistryPage<RegistryValueRecord>> ListRegistryValues(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("ClassesRoot, CurrentUser, LocalMachine, Users, or CurrentConfig.")] string root,
@@ -236,7 +237,8 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                                            limit,
                                            cancellationToken);
 
-    [ZPigeonTool("get_registry_value", "Read the type and complete binary data of one Registry value.", true)]
+    [ZPigeonTool("get_registry_value", "Read the type and complete binary data of one Registry value.",
+                 true, moduleId: 7)]
     public Task<RegistryValue> GetRegistryValue(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("ClassesRoot, CurrentUser, LocalMachine, Users, or CurrentConfig.")] string root,
@@ -249,7 +251,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                                           name,
                                           cancellationToken);
 
-    [ZPigeonTool("list_browsers", "List installed Chrome and Edge browsers and profiles.", true)]
+    [ZPigeonTool("list_browsers", "List installed Chrome and Edge browsers and profiles.", true, moduleId: 12)]
     public Task<BrowserPage> ListBrowsers(
         [Description("Exact client id returned by list_clients.")] string clientId,
         CancellationToken cancellationToken = default) =>
@@ -257,7 +259,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
 
     [ZPigeonTool("query_browser_data",
                  "Read a bounded page of History, Download, Bookmark, Setting, or Extension data.",
-                 true)]
+                 true, moduleId: 12)]
     public Task<BrowserPage> QueryBrowserData(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Chrome or Edge.")] string browser,
@@ -279,7 +281,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
     [ZPigeonTool("query_browser_secrets",
                  "Read a bounded page of sensitive Cookie or Password data only when explicitly requested.",
                  true,
-                 sensitive: true)]
+                 sensitive: true, moduleId: 12)]
     public Task<BrowserPage> QueryBrowserSecrets(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Chrome or Edge.")] string browser,
@@ -300,14 +302,15 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
 
     [ZPigeonTool("list_administration_operations",
                  "List the explicitly exposed enumeration and query names plus valid control-action pairs.",
-                 true)]
-    public AdministrationCapabilities ListAdministrationOperations() =>
-        ZPigeonApplication.GetAdministrationCapabilities();
+                 true, administration: AdministrationToolKind.Any)]
+    public AdministrationCapabilities ListAdministrationOperations(
+        [Description("Exact client id returned by list_clients.")] string clientId) =>
+        application.GetAdministrationCapabilities(ParseClientId(clientId));
 
     [ZPigeonTool("list_administration",
                  "Run an Enumerate* administration operation, covering users, software, devices, updates, tasks, " +
                  "networking, security, storage, and other Windows management areas.",
-                 true)]
+                 true, administration: AdministrationToolKind.Enumerate)]
     public Task<LimitedResult<AdministrationRecord>> ListAdministration(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Exact enumeration name returned by list_administration_operations.")] string operation,
@@ -322,7 +325,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
 
     [ZPigeonTool("query_administration",
                  "Run a Query* administration operation for one exact identity.",
-                 true)]
+                 true, administration: AdministrationToolKind.Query)]
     public Task<LimitedResult<AdministrationRecord>> QueryAdministration(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Exact query name returned by list_administration_operations.")] string operation,
@@ -338,7 +341,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
     [ZPigeonTool("control_administration",
                  "Apply a Control* administration operation. Obtain exact operation and action names first.",
                  false,
-                 destructive: true)]
+                 destructive: true, administration: AdministrationToolKind.Control)]
     public async Task<ToolAdministrationControlResult> ControlAdministration(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Exact control name returned by list_administration_operations.")] string operation,
@@ -362,7 +365,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                  "Start a hidden process under the connected client identity and return its execution job.",
                  false,
                  destructive: true,
-                 openWorld: true)]
+                 openWorld: true, moduleId: 10)]
     public Task<ExecutionJob> StartProcess(
         [Description("Exact client id returned by list_clients.")] string clientId,
         string fileName,
@@ -375,13 +378,13 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                                       workingDirectory,
                                       cancellationToken);
 
-    [ZPigeonTool("list_execution_jobs", "List processes started through the execution subsystem.", true)]
+    [ZPigeonTool("list_execution_jobs", "List processes started through the execution subsystem.", true, moduleId: 10)]
     public Task<ExecutionJob[]> ListExecutionJobs(
         [Description("Exact client id returned by list_clients.")] string clientId,
         CancellationToken cancellationToken = default) =>
         application.GetExecutionJobsAsync(ParseClientId(clientId), cancellationToken);
 
-    [ZPigeonTool("terminate_execution", "Terminate an execution job.", false, destructive: true)]
+    [ZPigeonTool("terminate_execution", "Terminate an execution job.", false, destructive: true, moduleId: 10)]
     public async Task<ToolOperationResult> TerminateExecution(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Numeric jobId returned by start_process or list_execution_jobs.")] string jobId,

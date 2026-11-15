@@ -8,6 +8,8 @@
 
 #include <Winsvc.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PROCESS_)
+
 #define ZP_PROCESS_WORKING_SET_BUFFER_SIZE 0x00010000UL
 #define ZP_PROCESS_OBJECT_NAME_BUFFER_SIZE 0x00001000UL
 #define ZP_PROCESS_OBJECT_NAME_TIMEOUT (-10000000LL)
@@ -1934,3 +1936,5 @@ ZpProcess_Execute(
     }
     return ZpStatus_FromNtStatus(Status);
 }
+
+#endif

@@ -8,9 +8,13 @@
 
 #include "../../KNSoft.ZPigeon.Client.SDK/Client.inl"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_)
+
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "KNSoft.NDK.WinAPI.lib")
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_SHELL_EXECUTE_)
 #pragma comment(lib, "Shell32.lib")
+#endif
 
 #define ZP_EXECUTION_MAX_JOBS 256
 #define ZP_EXECUTION_MAX_STAGING_NAME 128
@@ -48,6 +52,7 @@ ZpExecution_CopyString(
     return Value;
 }
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_RUNTIME_DISCOVERY_)
 static
 BOOL
 NTAPI
@@ -165,7 +170,9 @@ ZpExecution_QueryImage(
     }
     return ZpStatus_FromNtStatus(Status);
 }
+#endif
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_ALTERNATE_IDENTITY_)
 static
 ZP_STATUS
 ZpExecution_EncodeSessionsResponse(
@@ -270,6 +277,7 @@ Cleanup:
     if (Sessions != NULL) WinStationFreeMemory(Sessions);
     return ZpStatus_FromNtStatus(Status);
 }
+#endif
 
 static
 VOID
@@ -440,7 +448,9 @@ ZpExecution_Start(
     _Out_ PULONG ResponseLength)
 {
     PROCESS_INFORMATION ProcessInfo = { 0 };
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_SHELL_EXECUTE_)
     SHELLEXECUTEINFOW Shell = { sizeof(Shell) };
+#endif
     HANDLE JobObject = NULL;
     PZP_EXECUTION_JOB Job;
     ZP_EXECUTION_JOB_RECORD Record;
@@ -449,6 +459,10 @@ ZpExecution_Start(
     PBYTE Buffer;
     NTSTATUS Status;
     ZP_STATUS ExecutionStatus;
+
+#if defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) && !defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_SHELL_EXECUTE_)
+    if (Start->Engine != ZpExecutionEngineCreateProcess) return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
+#endif
 
     FileName = ZpExecution_CopyString(&Start->FileName);
     Arguments = ZpExecution_CopyString(&Start->Arguments);
@@ -470,6 +484,7 @@ ZpExecution_Start(
         ExecutionStatus = ZpExecution_CreateJobObject(&JobObject);
         if (!ZpStatus_IsSuccess(ExecutionStatus)) goto Cleanup;
     }
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_SHELL_EXECUTE_)
     if (Start->Engine == ZpExecutionEngineShellExecute)
     {
         if (CurrentSessionId == 0 || SessionId != CurrentSessionId || Start->Identity != ZpExecutionIdentityCurrent)
@@ -492,6 +507,7 @@ ZpExecution_Start(
         ProcessInfo.dwProcessId = Shell.hProcess != NULL ? GetProcessId(Shell.hProcess) : 0;
     }
     else
+#endif
     {
         ExecutionStatus = ZpProcess_Launch(Start, NULL, JobObject, &ProcessInfo, &SessionId);
         if (!ZpStatus_IsSuccess(ExecutionStatus)) goto Cleanup;
@@ -637,6 +653,7 @@ ZpExecution_Terminate(
     return Status;
 }
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_STAGING_)
 static
 ZP_STATUS
 ZpExecution_CreateStaging(
@@ -715,6 +732,7 @@ ZpExecution_CreateStaging(
     *ResponseLength = Index;
     return ZpStatus_Make(ZpStatusNone, 0);
 }
+#endif
 
 ZP_STATUS
 ZpExecution_Execute(
@@ -726,17 +744,24 @@ ZpExecution_Execute(
     _Out_ PULONG ResponseLength)
 {
     ZP_EXECUTION_START_VIEW Start;
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_RUNTIME_DISCOVERY_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_STAGING_)
     ZP_STRING_VIEW Name;
+#endif
     ULONG JobId;
     NTSTATUS Status;
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_ALTERNATE_IDENTITY_)
     if (OperationId == ZP_EXECUTION_OPERATION_ENUMERATE_SESSIONS)
     {
         return RequestLength == 0 ?
                    ZpExecution_EncodeSessionsResponse(Response, ResponseLength) :
                    ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
-    else if (OperationId == ZP_EXECUTION_OPERATION_QUERY_ENVIRONMENT)
+    else
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_RUNTIME_DISCOVERY_)
+    if (OperationId == ZP_EXECUTION_OPERATION_QUERY_ENVIRONMENT)
     {
         return RequestLength == 0 ?
                    ZpExecution_QueryEnvironment(Response, ResponseLength) :
@@ -748,7 +773,9 @@ ZpExecution_Execute(
         return NT_SUCCESS(Status) ? ZpExecution_QueryImage(&Name, Response, ResponseLength) :
                                     ZpStatus_FromNtStatus(Status);
     }
-    else if (OperationId == ZP_EXECUTION_OPERATION_START)
+    else
+#endif
+    if (OperationId == ZP_EXECUTION_OPERATION_START)
     {
         Status = ZpExecution_DecodeStart(Request, RequestLength, &Start);
         return NT_SUCCESS(Status) ? ZpExecution_Start(Client, &Start, Response, ResponseLength) :
@@ -764,12 +791,14 @@ ZpExecution_Execute(
         Status = ZpExecution_DecodeJobId(Request, RequestLength, &JobId);
         return NT_SUCCESS(Status) ? ZpExecution_Terminate(Client, JobId) : ZpStatus_FromNtStatus(Status);
     }
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_STAGING_)
     else if (OperationId == ZP_EXECUTION_OPERATION_CREATE_STAGING)
     {
         Status = ZpExecution_DecodeStaging(Request, RequestLength, &Name);
         return NT_SUCCESS(Status) ? ZpExecution_CreateStaging(&Name, Response, ResponseLength) :
                                     ZpStatus_FromNtStatus(Status);
     }
+#endif
     return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
 }
 
@@ -785,3 +814,5 @@ ZpExecution_Cleanup(
         ZpExecution_FreeJob(CONTAINING_RECORD(Entry, ZP_EXECUTION_JOB, ListEntry));
     }
 }
+
+#endif

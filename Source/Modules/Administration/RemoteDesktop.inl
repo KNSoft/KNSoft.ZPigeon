@@ -1,4 +1,6 @@
-﻿#define ZP_RDP_PATCH_EXECUTABLE 0x80
+﻿#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SYSTEM_ADMINISTRATION_)
+
+#define ZP_RDP_PATCH_EXECUTABLE 0x80
 #define ZP_RDP_PATCH_ENABLE 1
 #define ZP_RDP_PATCH_MAX_COUNT 16
 #define ZP_RDP_PATCH_MAX_LENGTH 32
@@ -1122,3 +1124,5 @@ ZpAdministration_ControlRemoteDesktopPatch(
     RtlReleaseSRWLockExclusive(&ZpRdpPatchLock);
     return ZpStatus_FromNtStatus(Status);
 }
+
+#endif

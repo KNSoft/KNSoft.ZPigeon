@@ -2,6 +2,8 @@
 
 #include <KNSoft/MakeLifeEasier/System/Info.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SYSTEM_)
+
 ZP_STATUS
 ZpSystem_ExecuteInfo(
     _Out_writes_bytes_to_(BufferSize, *PayloadLength) PBYTE Buffer,
@@ -53,3 +55,5 @@ ZpSystem_ExecuteInfo(
     return ZpStatus_FromNtStatus(
         ZpSystem_EncodeInfo(&Info, Buffer, BufferSize, PayloadLength));
 }
+
+#endif

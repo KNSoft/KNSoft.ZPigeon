@@ -4,6 +4,10 @@
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_VIDEO_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
+
 typedef struct _ZP_VIDEO_SHARED_SOURCE ZP_VIDEO_SHARED_SOURCE, *PZP_VIDEO_SHARED_SOURCE;
 
 struct _ZP_VIDEO_SHARED_CAPTURE
@@ -308,3 +312,5 @@ ZpVideoShared_Close(
     Mem_Free(Capture);
     if (Last) ZpVideoShared_FreeSource(Source);
 }
+
+#endif

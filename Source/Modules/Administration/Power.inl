@@ -1,4 +1,6 @@
-﻿#pragma comment(lib, "PowrProf.lib")
+﻿#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_POWER_)
+
+#pragma comment(lib, "PowrProf.lib")
 #pragma comment(lib, "User32.lib")
 
 #define ZP_POWER_SUPPLY_SHORT_TERM 0x00000008
@@ -390,3 +392,5 @@ ZpAdministration_ControlPower(
     Mem_Free(Identity);
     return ZpStatus_FromNtStatus(Status);
 }
+
+#endif

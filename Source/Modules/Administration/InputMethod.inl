@@ -1,6 +1,8 @@
 ﻿#include <lmcons.h>
 #include <msctf.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SOFTWARE_)
+
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Ole32.lib")
 #pragma comment(lib, "OleAut32.lib")
@@ -636,3 +638,5 @@ CleanupIdentity:
     Mem_Free(Identity);
     return ZpStatus_FromCode(ZpStatusHResult, Result);
 }
+
+#endif

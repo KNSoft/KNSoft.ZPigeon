@@ -2,6 +2,43 @@
 
 #include "../Network/Connection.h"
 #include "../Network/Udp.h"
+#include <KNSoft.Quic.h>
+
+typedef struct _QUIC_SEND_TEST_CONTEXT
+{
+    PUNITTEST_RESULT Result;
+    QUIC_STATUS SubmitStatus;
+    LOGICAL CompleteInline;
+    ULONG Submissions;
+    ULONG Completions;
+    ULONG Releases;
+    ULONG FrameLength;
+    PVOID Pending;
+    ZP_SEND_BUFFER Released;
+} QUIC_SEND_TEST_CONTEXT;
+
+static QUIC_SEND_TEST_CONTEXT QuicSendTest;
+
+static
+QUIC_STATUS
+QUIC_API
+QuicSendTest_Submit(
+    _In_ HQUIC Stream,
+    _In_reads_(BufferCount) const QUIC_BUFFER* const Buffers,
+    _In_ uint32_t BufferCount,
+    _In_ QUIC_SEND_FLAGS Flags,
+    _In_opt_ PVOID Context);
+
+static
+VOID
+QuicSendTest_Release(
+    _Inout_ PZP_SEND_BUFFER Buffer);
+
+#define MsQuicStreamSend QuicSendTest_Submit
+#define ZpSendBuffer_Release QuicSendTest_Release
+#include "../Network/Quic.inl"
+#undef ZpSendBuffer_Release
+#undef MsQuicStreamSend
 
 typedef struct _CONNECTION_TEST_CONTEXT
 {
@@ -43,9 +80,136 @@ ConnectionTest_MessageCallback(
     return TestContext->CallbackStatus;
 }
 
+static
+VOID
+QuicSendTest_Release(
+    _Inout_ PZP_SEND_BUFFER Buffer)
+{
+    PUNITTEST_RESULT TEST_PARAMETER_RESULT = QuicSendTest.Result;
+
+    TEST_OK(++QuicSendTest.Releases == 1);
+    if (QuicSendTest.Releases != 1) return;
+    QuicSendTest.Released = *Buffer;
+    /* Invalidate the submitted context without relying on freed heap contents. */
+    RtlFillMemory(QuicSendTest.Released.Allocation, QuicSendTest.Released.Offset, MAXBYTE);
+}
+
+static
+QUIC_STATUS
+QUIC_API
+QuicSendTest_Submit(
+    _In_ HQUIC Stream,
+    _In_reads_(BufferCount) const QUIC_BUFFER* const Buffers,
+    _In_ uint32_t BufferCount,
+    _In_ QUIC_SEND_FLAGS Flags,
+    _In_opt_ PVOID Context)
+{
+    PUNITTEST_RESULT TEST_PARAMETER_RESULT = QuicSendTest.Result;
+    PZP_QUIC_SEND_CONTEXT Send = Context;
+    ZP_NETWORK_STATISTICS Statistics;
+
+    TEST_OK(Stream == (HQUIC)&QuicSendTest && ++QuicSendTest.Submissions == 1);
+    TEST_OK(BufferCount == 1 && Flags == QUIC_SEND_FLAG_NONE &&
+            Buffers[0].Buffer == Send->Owner.Allocation + Send->Owner.Offset &&
+            Buffers[0].Length == Send->Owner.Length);
+    QuicSendTest.FrameLength = Send->Owner.Length;
+    ZpConnection_QueryStatistics(Send->Connection, &Statistics);
+    TEST_OK(Statistics.OutstandingSendBytes == QuicSendTest.FrameLength);
+    if (QUIC_SUCCEEDED(QuicSendTest.SubmitStatus))
+    {
+        if (QuicSendTest.CompleteInline)
+        {
+            QuicSendTest.Completions++;
+            ZpQuic_CompleteSend(Context);
+        }
+        else
+        {
+            QuicSendTest.Pending = Context;
+        }
+    }
+    return QuicSendTest.SubmitStatus;
+}
+
+static
+VOID
+QuicSendTest_Run(
+    _Inout_ PUNITTEST_RESULT TEST_PARAMETER_RESULT)
+{
+    BYTE Body[2] = { 1, 2 }, Payload[32] = { 0x42 };
+    const ULONG FrameLength = sizeof(ULONG) + sizeof(BYTE) + sizeof(Body) + sizeof(Payload);
+    CONNECTION_TEST_CONTEXT Context = { 0 };
+    ZP_CONNECTION Connection;
+    ZP_NETWORK_STATISTICS Statistics;
+    ZP_STATUS FailureStatus;
+    NTSTATUS Status;
+    ULONGLONG Started, Elapsed;
+
+    for (ULONG Index = 0; Index < 3; Index++)
+    {
+        RtlZeroMemory(&QuicSendTest, sizeof(QuicSendTest));
+        QuicSendTest.Result = TEST_PARAMETER_RESULT;
+        QuicSendTest.CompleteInline = Index == 1;
+        QuicSendTest.SubmitStatus = Index == 2 ? QUIC_STATUS_INVALID_STATE : QUIC_STATUS_SUCCESS;
+        TEST_OK(NT_SUCCESS(ZpConnection_Initialize(&Connection,
+                                                  ZpConnectionRoleClient,
+                                                  ConnectionTest_MessageCallback,
+                                                  &Context)));
+        Connection.State = ZpConnectionStateReady;
+        Started = GetTickCount64();
+        Status = ZpQuic_SendFrame((HQUIC)&QuicSendTest,
+                                  &Connection,
+                                  0,
+                                  ZpMessageChannelData,
+                                  Body,
+                                  sizeof(Body),
+                                  Payload,
+                                  sizeof(Payload),
+                                  &FailureStatus);
+        Elapsed = GetTickCount64() - Started;
+        ZpConnection_QueryStatistics(&Connection, &Statistics);
+        TEST_OK(QuicSendTest.Submissions == 1 && QuicSendTest.FrameLength == FrameLength);
+        TEST_OK(Statistics.MaximumOutstandingSendBytes == FrameLength);
+        if (Index == 2)
+        {
+            TEST_OK(Status == STATUS_CONNECTION_DISCONNECTED &&
+                    FailureStatus.Type == ZpStatusQuic && FailureStatus.Code == (ULONG)QUIC_STATUS_INVALID_STATE);
+            TEST_OK(Statistics.SentBytes == 0 && Statistics.OutstandingSendBytes == 0 &&
+                    Statistics.MaximumSendQueueDelayMilliseconds == 0 &&
+                    QuicSendTest.Completions == 0 && QuicSendTest.Releases == 1 && QuicSendTest.Pending == NULL);
+        }
+        else
+        {
+            TEST_OK(NT_SUCCESS(Status) && Statistics.SentBytes == FrameLength &&
+                    Connection.State == ZpConnectionStateReady);
+            TEST_OK(Statistics.MaximumSendQueueDelayMilliseconds <= Elapsed);
+            if (QuicSendTest.CompleteInline)
+            {
+                TEST_OK(Statistics.OutstandingSendBytes == 0 && QuicSendTest.Completions == 1 &&
+                        QuicSendTest.Releases == 1 && QuicSendTest.Pending == NULL);
+            }
+            else
+            {
+                TEST_OK(Statistics.OutstandingSendBytes == FrameLength && QuicSendTest.Pending != NULL &&
+                        QuicSendTest.Completions == 0 && QuicSendTest.Releases == 0);
+                QuicSendTest.Completions++;
+                ZpQuic_CompleteSend(QuicSendTest.Pending);
+                QuicSendTest.Pending = NULL;
+                ZpConnection_QueryStatistics(&Connection, &Statistics);
+                TEST_OK(Statistics.OutstandingSendBytes == 0 && QuicSendTest.Releases == 1);
+            }
+        }
+        ZpSendBuffer_Release(&QuicSendTest.Released);
+        ZpConnection_Uninitialize(&Connection);
+    }
+}
+
 TEST_FUNC(NetworkConnection)
 {
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE] = { 0x04 };
+    ZP_CLIENT_CAPABILITIES Capabilities = {
+        ZP_CLIENT_MODULE_MASK, ZP_CLIENT_TRANSPORT_MASK, ZP_CLIENT_EXECUTION_FEATURE_MASK
+    };
+    GUID InstanceId = { 1 };
     ZP_SERVER_REJECT_REASON RejectReason = ZpServerRejectClientVersionTooOld;
     BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE] = { 0 };
     BYTE Signature[ZP_CLIENT_SIGNATURE_SIZE] = { 0 };
@@ -77,6 +241,8 @@ TEST_FUNC(NetworkConnection)
     ULONG RandomValue = 1;
     ULONG BytesConsumed;
 
+    QuicSendTest_Run(TEST_PARAMETER_RESULT);
+
     TEST_OK(NT_SUCCESS(RtlInitializeCriticalSectionEx(
                 &UdpConnection.Lock,
                 0,
@@ -92,7 +258,7 @@ TEST_FUNC(NetworkConnection)
     TEST_OK(UdpTickStatus.Type == UdpCloseStatus.Type && UdpTickStatus.Code == UdpCloseStatus.Code);
     RtlDeleteCriticalSection(&UdpConnection.Lock);
 
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey,
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey, NULL, &Capabilities, &InstanceId,
                                                    HelloBody,
                                                    sizeof(HelloBody),
                                                    &BodyLength)));

@@ -1,5 +1,7 @@
 ﻿#include <KNSoft/MakeLifeEasier/System/Registry.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FONT_)
+
 static const UNICODE_STRING ZpFontMachineKey = RTL_CONSTANT_STRING(
     L"\\Registry\\Machine\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts");
 static const UNICODE_STRING ZpFontUserKey = RTL_CONSTANT_STRING(
@@ -404,3 +406,5 @@ ZpAdministration_ControlFont(
     Mem_Free(Identity);
     return Status;
 }
+
+#endif

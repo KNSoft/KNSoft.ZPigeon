@@ -1,5 +1,7 @@
 ﻿#include <wlanapi.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WLAN_)
+
 #define ZP_WLAN_NETWORK_CONNECTED 0x00000001
 #define ZP_WLAN_NETWORK_HAS_PROFILE 0x00000002
 #define ZP_WLAN_NETWORK_CONNECTABLE 0x00000004
@@ -403,3 +405,5 @@ CleanupIdentity:
     Mem_Free(Identity);
     return ZpStatus_FromCode(ZpStatusWin32, Error);
 }
+
+#endif

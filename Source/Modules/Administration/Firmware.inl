@@ -1,4 +1,6 @@
-﻿#define ZP_FIRMWARE_MAX_DATA_SIZE (16 * 1024 * 1024)
+﻿#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FIRMWARE_)
+
+#define ZP_FIRMWARE_MAX_DATA_SIZE (16 * 1024 * 1024)
 #define ZP_FIRMWARE_VARIABLE_PREFIX L"uefi:"
 #define ZP_FIRMWARE_CPUID_IDENTITY L"cpuid"
 #define ZP_FIRMWARE_SMBIOS_IDENTITY L"smbios"
@@ -1083,3 +1085,5 @@ ZpAdministration_ControlFirmwareData(
     Mem_Free(VariableBuffer);
     return ZpStatus_FromNtStatus(Status);
 }
+
+#endif

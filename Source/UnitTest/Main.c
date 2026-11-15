@@ -6,6 +6,8 @@ TEST_DECL_FUNC(ProtocolFrame);
 TEST_DECL_FUNC(ProtocolConnectionPolicy);
 TEST_DECL_FUNC(ProtocolRtc);
 TEST_DECL_FUNC(ProtocolWindow);
+TEST_DECL_FUNC(WindowMediaH264);
+TEST_DECL_FUNC(WindowMediaH265);
 TEST_DECL_FUNC(ProtocolProcess);
 TEST_DECL_FUNC(ProtocolBrowser);
 TEST_DECL_FUNC(ProtocolSerial);
@@ -14,8 +16,10 @@ TEST_DECL_FUNC(ProtocolPortable);
 TEST_DECL_FUNC(ProtocolFileOwners);
 TEST_DECL_FUNC(ProtocolFileDownload);
 TEST_DECL_FUNC(ProtocolMessage);
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BROWSER_)
 TEST_DECL_FUNC(BrowserJson);
 TEST_DECL_FUNC(BrowserProfiles);
+#endif
 TEST_DECL_FUNC(NetworkConnection);
 TEST_DECL_FUNC(SDKContract);
 TEST_DECL_FUNC(SDKQuicIntegration);
@@ -28,6 +32,8 @@ CONST UNITTEST_ENTRY UnitTestList[] = {
     TEST_DECL_ENTRY(ProtocolConnectionPolicy),
     TEST_DECL_ENTRY(ProtocolRtc),
     TEST_DECL_ENTRY(ProtocolWindow),
+    TEST_DECL_ENTRY(WindowMediaH264),
+    TEST_DECL_ENTRY(WindowMediaH265),
     TEST_DECL_ENTRY(ProtocolProcess),
     TEST_DECL_ENTRY(ProtocolBrowser),
     TEST_DECL_ENTRY(ProtocolSerial),
@@ -36,8 +42,10 @@ CONST UNITTEST_ENTRY UnitTestList[] = {
     TEST_DECL_ENTRY(ProtocolFileOwners),
     TEST_DECL_ENTRY(ProtocolFileDownload),
     TEST_DECL_ENTRY(ProtocolMessage),
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BROWSER_)
     TEST_DECL_ENTRY(BrowserJson),
     TEST_DECL_ENTRY(BrowserProfiles),
+#endif
     TEST_DECL_ENTRY(NetworkConnection),
     TEST_DECL_ENTRY(SDKContract),
     TEST_DECL_ENTRY(SDKQuicIntegration),

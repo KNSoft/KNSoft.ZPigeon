@@ -1,4 +1,6 @@
-﻿typedef struct _ZP_KEYBOARD_CAPTURE
+﻿#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_KEYBOARD_)
+
+typedef struct _ZP_KEYBOARD_CAPTURE
 {
     KBDLLHOOKSTRUCT Event;
     WPARAM Message;
@@ -100,3 +102,5 @@ ZpAdministration_WaitKeyboard(
     ZpAdministration_FreeBuilder(&Builder);
     return ZpStatus_FromNtStatus(Status);
 }
+
+#endif

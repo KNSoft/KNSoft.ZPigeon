@@ -1,5 +1,9 @@
 ﻿#include "Snapshot.h"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PROCESS_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BROWSER_)
+
 ULONG
 ZpClientSnapshot_Add(
     _Inout_ PZP_CLIENT_OBJECT Object,
@@ -102,3 +106,5 @@ ZpClientSnapshot_CloseAll(
             CONTAINING_RECORD(RemoveHeadList(&Snapshots), ZP_CLIENT_SNAPSHOT, ListEntry));
     }
 }
+
+#endif

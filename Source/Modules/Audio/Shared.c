@@ -2,6 +2,10 @@
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_AUDIO_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
+
 typedef struct _ZP_AUDIO_SHARED_SOURCE ZP_AUDIO_SHARED_SOURCE, *PZP_AUDIO_SHARED_SOURCE;
 
 struct _ZP_AUDIO_SHARED_CAPTURE
@@ -325,3 +329,5 @@ ZpAudioShared_Close(
     Mem_Free(Capture);
     if (Last) ZpAudioShared_FreeSource(Source);
 }
+
+#endif

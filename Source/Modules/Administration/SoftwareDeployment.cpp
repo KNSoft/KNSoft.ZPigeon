@@ -23,6 +23,8 @@
 #include <utility>
 #include <vector>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SOFTWARE_)
+
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "runtimeobject.lib")
 #pragma comment(lib, "shlwapi.lib")
@@ -1379,3 +1381,5 @@ ZpSoftware_EnumerateDeployments(
         return S_OK;
     });
 }
+
+#endif

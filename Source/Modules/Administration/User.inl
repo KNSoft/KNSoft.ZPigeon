@@ -7,6 +7,8 @@
 
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Account.h"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_USER_)
+
 #pragma comment(lib, "Netapi32.lib")
 #pragma comment(lib, "Secur32.lib")
 #pragma comment(lib, "Userenv.lib")
@@ -1176,3 +1178,5 @@ Cleanup:
     Mem_Free(Identity);
     return ZpStatus_FromCode(ZpStatusWin32, Error);
 }
+
+#endif

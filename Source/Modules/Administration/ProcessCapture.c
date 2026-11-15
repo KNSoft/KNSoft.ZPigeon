@@ -2,6 +2,9 @@
 
 #include "ProcessCapture.h"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SOFTWARE_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WSL_)
+
 #define ZP_PROCESS_COMMAND_LINE_LENGTH 32767
 
 static
@@ -357,3 +360,5 @@ CleanupPipe:
     Mem_Free(CommandLine);
     return NT_SUCCESS(Status) ? NTSTATUS_FROM_WIN32(Error) : Status;
 }
+
+#endif

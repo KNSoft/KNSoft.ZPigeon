@@ -38,13 +38,15 @@ ZpTls_AcquireCredentials(
 
 ZP_STATUS
 ZpTls_AcquireClientCredentials(
-    _Out_ PCredHandle Credential)
+    _Out_ PCredHandle Credential,
+    _In_ BOOLEAN RequireTls13)
 {
     TLS_PARAMETERS Parameters = { 0 };
     SCH_CREDENTIALS Credentials = { 0 };
 
     Parameters.grbitDisabledProtocols = SP_PROT_SSL2 | SP_PROT_SSL3 |
                                         SP_PROT_TLS1_0 | SP_PROT_TLS1_1;
+    if (RequireTls13) Parameters.grbitDisabledProtocols |= SP_PROT_TLS1_2;
     Credentials.dwVersion = SCH_CREDENTIALS_VERSION;
     Credentials.dwFlags = SCH_CRED_MANUAL_CRED_VALIDATION |
                           SCH_CRED_NO_DEFAULT_CREDS |

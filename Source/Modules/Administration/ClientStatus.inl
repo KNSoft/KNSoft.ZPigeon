@@ -1,5 +1,7 @@
 ﻿#include <psapi.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_CLIENT_STATUS_)
+
 #pragma comment(lib, "Psapi.lib")
 
 static
@@ -264,3 +266,5 @@ ZpAdministration_EnumerateClientStatus(
 #undef ZP_CLIENT_STATUS_ADD
     return ZpStatus_FromNtStatus(Status);
 }
+
+#endif

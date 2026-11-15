@@ -8,6 +8,8 @@
 
 #include "ProcessCapture.h"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WSL_)
+
 typedef HRESULT (WINAPI *ZP_WSL_LAUNCH)(
     PCWSTR,
     PCWSTR,
@@ -764,3 +766,5 @@ ZpAdministration_ControlWslProcess(
     Mem_Free(Identity);
     return Status;
 }
+
+#endif

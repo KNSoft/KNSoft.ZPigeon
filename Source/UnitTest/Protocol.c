@@ -10,6 +10,11 @@
 #include <KNSoft/ZPigeon/Process.h>
 #include <KNSoft/ZPigeon/Browser.h>
 
+static const ZP_CLIENT_CAPABILITIES TestCapabilities = {
+    ZP_CLIENT_MODULE_MASK, ZP_CLIENT_TRANSPORT_MASK, ZP_CLIENT_EXECUTION_FEATURE_MASK
+};
+static const GUID TestInstanceId = { 1 };
+
 TEST_FUNC(ProtocolBrowser)
 {
     const ZP_BROWSER_DOCUMENT_NODE Nodes[] = {
@@ -460,7 +465,7 @@ TEST_FUNC(ProtocolFrame)
     InvalidFrame[0] = 0;
     TEST_OK(ZpFrame_Decode(InvalidFrame, sizeof(InvalidFrame), &View, &BytesConsumed) == STATUS_DATA_ERROR);
 
-    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey,
+    TEST_OK(NT_SUCCESS(ZpMessage_EncodeClientHello(PublicKey, NULL, &TestCapabilities, &TestInstanceId,
                                                    ClientHello,
                                                    sizeof(ClientHello),
                                                    &ClientHelloLength)));

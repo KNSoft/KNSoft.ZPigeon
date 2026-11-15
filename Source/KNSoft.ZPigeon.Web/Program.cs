@@ -18,7 +18,8 @@ var localOrigin = new UriBuilder(Uri.UriSchemeHttp, "127.0.0.1", webPort).Uri.Ge
 builder.WebHost.UseUrls(localOrigin);
 builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 builder.Logging.AddFilter("ModelContextProtocol", LogLevel.Warning);
-var server = new NativeServer(AppContext.BaseDirectory);
+var server = new NativeServer(AppContext.BaseDirectory,
+                              builder.Configuration.GetValue<ushort>("Transport:Port", 21943));
 var zpigeonApplication = new ZPigeonApplication(server);
 var toolCatalog = new ZPigeonToolCatalog(zpigeonApplication);
 var clientServices = new ClientServicesRegistry(server);
@@ -29,19 +30,14 @@ var stun = new StunServer(builder.Configuration.GetValue("P2p:StunPort", (ushort
 var applicationData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                                    "KNSoft",
                                    "ZPigeon");
+var consoleStore = new ConsoleStore(Path.Combine(applicationData, "console.json"));
 builder.Services.AddDataProtection()
                 .SetApplicationName("KNSoft.ZPigeon")
                 .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(applicationData, "DataProtection")))
                 .ProtectKeysWithDpapi();
 builder.Services.AddMcpServer()
                 .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
-                .WithTools(McpToolFactory.Create(toolCatalog.CreateExternalTools()))
-                .WithListToolsHandler((_, _) => ValueTask.FromResult(new ListToolsResult
-                {
-                    Tools = [],
-                    TimeToLive = TimeSpan.FromHours(1),
-                    CacheScope = CacheScope.Private
-                }));
+                .WithDynamicTools(toolCatalog);
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -95,10 +91,12 @@ app.Use(async (context, next) =>
     await next();
 });
 #else
-// browser data (cookies, passwords, history) must never be cached anywhere
+// Management data must never be cached anywhere.
 app.Use(async (context, next) =>
 {
     if (context.Request.Path.StartsWithSegments("/api/browser") ||
+        context.Request.Path.StartsWithSegments("/api/clients") ||
+        context.Request.Path.StartsWithSegments("/api/console") ||
         context.Request.Path.StartsWithSegments("/api/agent") ||
         context.Request.Path.StartsWithSegments("/mcp"))
     {
@@ -160,6 +158,7 @@ app.Use(async (context, next) =>
 {
     if (!context.Request.Path.StartsWithSegments("/api") ||
         context.Request.Path.StartsWithSegments("/api/clients") ||
+        context.Request.Path.StartsWithSegments("/api/console") ||
         context.Request.Path.StartsWithSegments("/api/agent"))
     {
         await next();
@@ -200,9 +199,27 @@ app.Use(async (context, next) =>
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.MapMcp("/mcp");
-app.MapGet("/api/clients", () => GetConnectedClientViews(server));
+app.MapGet("/api/clients", () => GetConnectedClientViews(server, clientServices, consoleStore));
+app.MapGet("/api/capabilities", () =>
+{
+    var client = server.GetClients().Single(value => value.Id == server.ClientId);
+    return new { Modules = client.Capabilities.ModuleIds, Transports = client.Capabilities.TransportIds,
+                 client.Capabilities.Execution, client.InstanceId };
+});
 app.MapGet("/api/clients/events", (HttpContext context) =>
-    StreamClientChangesAsync(server, context));
+    StreamClientChangesAsync(server, clientServices, consoleStore, context));
+app.MapGet("/api/console/groups", consoleStore.GetGroups);
+app.MapPost("/api/console/groups", (ConsoleGroupRequest request) =>
+{
+    consoleStore.AddGroup(request.Group);
+    return Results.NoContent();
+});
+app.MapPut("/api/console/clients/{fingerprint}/group", (string fingerprint, ConsoleGroupRequest request) =>
+{
+    consoleStore.SetGroup(fingerprint, request.Group);
+    return Results.NoContent();
+});
+app.MapClientBuildApi(server);
 app.MapGet("/api/status", () => GetStatus(server, clientServices.Current));
 app.MapGet("/api/status/events", (HttpContext context) =>
     StreamStatusAsync(server, clientServices.Current, context));
@@ -315,13 +332,38 @@ static bool IsDeviceNotConnected(NativeException exception) =>
     exception.Status.Type == ZpStatusType.NtStatus &&
     exception.Status.Code == StatusDeviceNotConnected;
 
-static ConnectedClientView[] GetConnectedClientViews(NativeServer server) =>
-    server.GetClients()
-          .Select(client => new ConnectedClientView(client.Id,
-                                                     client.Fingerprint,
-                                                     client.Address.ToString(),
-                                                     client.Statistics.Transport))
-          .ToArray();
+static ConnectedClientView[] GetConnectedClientViews(
+    NativeServer server,
+    ClientServicesRegistry services,
+    ConsoleStore store)
+{
+    var clients = new List<ConnectedClientView>();
+    foreach (var client in server.GetClients())
+    {
+        try
+        {
+            using (server.SelectClient(client.Id))
+            {
+                var performance = services.Current.ConnectionPerformance;
+                performance.ProbeIfDue();
+                clients.Add(new(client.Id,
+                                client.Fingerprint,
+                                client.Address.ToString(),
+                                client.Statistics.Transport,
+                                store.GetGroup(client.Fingerprint, client.Group),
+                                performance.Current,
+                                client.InstanceId,
+                                client.Capabilities.ModuleIds,
+                                client.Capabilities.Execution));
+            }
+        }
+        catch (NativeException exception) when (IsDeviceNotConnected(exception))
+        {
+            services.Remove(client.Id);
+        }
+    }
+    return clients.ToArray();
+}
 
 static ServerStatusView GetStatus(NativeServer server, ClientServices services)
 {
@@ -355,7 +397,11 @@ static async Task StreamStatusAsync(
     }
 }
 
-static async Task StreamClientChangesAsync(NativeServer server, HttpContext context)
+static async Task StreamClientChangesAsync(
+    NativeServer server,
+    ClientServicesRegistry services,
+    ConsoleStore store,
+    HttpContext context)
 {
     using var changed = new SemaphoreSlim(0, 1);
     var gate = new object();
@@ -376,22 +422,23 @@ static async Task StreamClientChangesAsync(NativeServer server, HttpContext cont
     context.Response.Headers.CacheControl = "no-store";
     try
     {
-        await context.Response.WriteAsync("event: clients\ndata: changed\n\n",
-                                            context.RequestAborted);
-        await context.Response.Body.FlushAsync(context.RequestAborted);
         while (!context.RequestAborted.IsCancellationRequested)
         {
-            var hasChanged = await changed.WaitAsync(TimeSpan.FromSeconds(15),
-                                                     context.RequestAborted);
-            if (hasChanged)
+            await context.Response.WriteAsync("event: clients\ndata: ", context.RequestAborted);
+            await JsonSerializer.SerializeAsync(context.Response.Body,
+                                                new
+                                                {
+                                                    Clients = GetConnectedClientViews(server, services, store),
+                                                    Groups = store.GetGroups()
+                                                },
+                                                JsonSerializerOptions.Web,
+                                                context.RequestAborted);
+            await context.Response.WriteAsync("\n\n", context.RequestAborted);
+            await context.Response.Body.FlushAsync(context.RequestAborted);
+            if (await changed.WaitAsync(TimeSpan.FromSeconds(5), context.RequestAborted))
             {
                 lock (gate) pending = false;
             }
-            await context.Response.WriteAsync(hasChanged ?
-                                                    "event: clients\ndata: changed\n\n" :
-                                                    ": keepalive\n\n",
-                                                context.RequestAborted);
-            await context.Response.Body.FlushAsync(context.RequestAborted);
         }
     }
     catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
@@ -427,7 +474,12 @@ internal sealed record ConnectedClientView(
     ulong Id,
     string Fingerprint,
     string Address,
-    int Transport);
+    int Transport,
+    string Group,
+    ConnectionPerformance Performance,
+    string InstanceId,
+    int[] Modules,
+    uint Execution);
 internal sealed record ServerStatusView(
     int State,
     bool ClientConnected,

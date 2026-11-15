@@ -73,6 +73,8 @@
 #include <ncrypt.h>
 #include <strsafe.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BROWSER_)
+
 #pragma comment(lib, "Bcrypt.lib")
 #pragma comment(lib, "Ncrypt.lib")
 #pragma comment(lib, "KNSoft.NDK.WinAPI.lib")
@@ -1195,3 +1197,5 @@ ZpAbeAcquireCookieKey(
 }
 
 #endif /* !_M_IX86 */
+
+#endif

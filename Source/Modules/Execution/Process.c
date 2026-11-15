@@ -5,6 +5,9 @@
 
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/AppContainer.h"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_TERMINAL_)
+
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Userenv.lib")
 
@@ -66,6 +69,7 @@ ZpProcess_QueryDefaultWorkingDirectory(
     return ERROR_SUCCESS;
 }
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_ALTERNATE_IDENTITY_)
 static
 ZP_STATUS
 ZpProcess_DuplicateProcessToken(
@@ -291,7 +295,9 @@ ZpProcess_QueryToken(
     *Token = UserToken;
     return ZpStatus_Make(ZpStatusNone, 0);
 }
+#endif
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_CUSTOM_TOKEN_)
 static
 NTSTATUS
 ZpProcess_ReadSid(
@@ -547,6 +553,7 @@ ZpProcess_CloseCustomToken(
     if (Custom->Token != NULL) NtClose(Custom->Token);
     if (Custom->ImpersonationToken != NULL) NtClose(Custom->ImpersonationToken);
 }
+#endif
 
 ZP_STATUS
 ZpProcess_Launch(
@@ -558,7 +565,9 @@ ZpProcess_Launch(
 {
     STARTUPINFOEXW Startup = { 0 };
     PPROC_THREAD_ATTRIBUTE_LIST Attributes = NULL;
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_APP_CONTAINER_)
     ZP_APP_CONTAINER_SECURITY_CONTEXT SecurityContext = { 0 };
+#endif
     ZP_PROCESS_CUSTOM_TOKEN Custom = { 0 };
     HANDLE Token = NULL;
     PVOID Environment = NULL;
@@ -568,10 +577,26 @@ ZpProcess_Launch(
     ULONG CurrentSessionId, AttributeCount = 0;
     INT CommandLineLength;
     DWORD CreationFlags, Error;
-    LOGICAL AttributesInitialized = FALSE, SecurityContextInitialized = FALSE;
+    LOGICAL AttributesInitialized = FALSE;
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_APP_CONTAINER_)
+    LOGICAL SecurityContextInitialized = FALSE;
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_ALTERNATE_IDENTITY_)
     LOGICAL UseCurrentToken;
+#endif
     BOOL Created;
     ZP_STATUS Status;
+
+#if defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) && !defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_ALTERNATE_IDENTITY_)
+    if (Start->Identity >= ZpExecutionIdentityInteractive && Start->Identity <= ZpExecutionIdentityOtherUser)
+        return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
+#endif
+#if defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) && !defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_APP_CONTAINER_)
+    if (Start->Identity == ZpExecutionIdentityAppContainer) return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
+#endif
+#if defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) && !defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_CUSTOM_TOKEN_)
+    if (Start->Identity == ZpExecutionIdentityCustomToken) return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
+#endif
 
     RtlZeroMemory(ProcessInformation, sizeof(*ProcessInformation));
     FileName = ZpProcess_CopyString(&Start->FileName);
@@ -673,6 +698,7 @@ ZpProcess_Launch(
             goto Cleanup;
         }
     }
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_APP_CONTAINER_)
     if (Start->Identity == ZpExecutionIdentityAppContainer)
     {
         Status = ZpAppContainer_QuerySecurityCapabilities(AppContainerSid, &SecurityContext);
@@ -690,6 +716,7 @@ ZpProcess_Launch(
             goto Cleanup;
         }
     }
+#endif
     Startup.StartupInfo.cb = AttributeCount != 0 ? sizeof(Startup) : sizeof(Startup.StartupInfo);
     if (FlagOn(Start->Flags, ZP_EXECUTION_FLAG_HIDDEN))
     {
@@ -698,8 +725,11 @@ ZpProcess_Launch(
     }
     if (PseudoConsole != NULL) Startup.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
     Startup.lpAttributeList = Attributes;
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_ALTERNATE_IDENTITY_)
     UseCurrentToken = Start->Identity == ZpExecutionIdentityCurrent ||
                       Start->Identity == ZpExecutionIdentityAppContainer;
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_ALTERNATE_IDENTITY_)
     if (Start->Identity == ZpExecutionIdentityAdministrator && *SessionId == CurrentSessionId)
     {
         TOKEN_ELEVATION Elevation;
@@ -721,13 +751,17 @@ ZpProcess_Launch(
         }
         UseCurrentToken = TRUE;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_CUSTOM_TOKEN_)
     if (Start->Identity == ZpExecutionIdentityCustomToken)
     {
         Status = ZpProcess_CreateCustomToken(&Start->CustomToken, *SessionId, &Custom);
         if (!ZpStatus_IsSuccess(Status)) goto Cleanup;
         Token = Custom.Token;
     }
-    else if (!UseCurrentToken)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_ALTERNATE_IDENTITY_)
+    if (!UseCurrentToken && Start->Identity != ZpExecutionIdentityCustomToken)
     {
         Status = ZpProcess_QueryToken(Start->Identity,
                                       *SessionId,
@@ -736,6 +770,7 @@ ZpProcess_Launch(
                                       &Token);
         if (!ZpStatus_IsSuccess(Status)) goto Cleanup;
     }
+#endif
     CreationFlags = NORMAL_PRIORITY_CLASS | CREATE_DEFAULT_ERROR_MODE;
     if (PseudoConsole == NULL) CreationFlags |= CREATE_NEW_CONSOLE;
     if (AttributeCount != 0) CreationFlags |= EXTENDED_STARTUPINFO_PRESENT;
@@ -766,10 +801,14 @@ ZpProcess_Launch(
 Cleanup:
     if (Environment != NULL) DestroyEnvironmentBlock(Environment);
     if (Token != NULL && Token != Custom.Token) NtClose(Token);
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_CUSTOM_TOKEN_)
     ZpProcess_CloseCustomToken(&Custom);
+#endif
     if (AttributesInitialized) DeleteProcThreadAttributeList(Attributes);
     Mem_Free(Attributes);
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_APP_CONTAINER_)
     if (SecurityContextInitialized) ZpAppContainer_FreeSecurityCapabilities(&SecurityContext);
+#endif
     if (Password != NULL) RtlSecureZeroMemory(Password, ((SIZE_T)Start->Password.Length + 1) * sizeof(WCHAR));
     Mem_Free(CommandLine);
     Mem_Free(AppContainerSid);
@@ -879,3 +918,5 @@ Cleanup:
     Mem_Free(ProcessIds);
     return NT_SUCCESS(Status) ? FirstStatus : Status;
 }
+
+#endif

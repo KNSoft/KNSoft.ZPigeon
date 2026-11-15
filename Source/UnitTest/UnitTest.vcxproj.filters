@@ -9,6 +9,7 @@
     <ClCompile Include="Network.c" />
     <ClCompile Include="Protocol.c" />
     <ClCompile Include="SDK.c" />
+    <ClCompile Include="WindowMedia.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\KNSoft.ZPigeon.Client.SDK\Client.inl" />

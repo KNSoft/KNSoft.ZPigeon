@@ -12,6 +12,8 @@
     raw_interfaces_only named_guids rename_namespace("MSTSCLib") \
     exclude("wireHWND", "_RemotableHandle", "__MIDL_IWinTypes_0009")
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SYSTEM_ADMINISTRATION_)
+
 #pragma comment(lib, "Ole32.lib")
 #pragma comment(lib, "OleAut32.lib")
 #pragma comment(lib, "Userenv.lib")
@@ -1312,3 +1314,5 @@ ZpRdpChildSession_Close(VOID)
     RtlReleaseSRWLockExclusive(&ZpRdpChildSessionLock);
     if (Hosted) ZpRdpChildSession_Stop();
 }
+
+#endif

@@ -13,6 +13,10 @@
 
 #include <KNSoft/MakeLifeEasier/Memory/Core.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_VIDEO_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
+
 #pragma comment(lib, "Mfplat.lib")
 #pragma comment(lib, "Mf.lib")
 #pragma comment(lib, "Mfreadwrite.lib")
@@ -614,3 +618,5 @@ ZpVideoCapture_Close(
     if (Capture->Started) MFShutdown();
     Mem_Free(Capture);
 }
+
+#endif

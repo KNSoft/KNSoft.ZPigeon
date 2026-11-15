@@ -1,6 +1,8 @@
 ﻿#include <wincodec.h>
 #include <shellapi.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_CLIPBOARD_)
+
 #pragma comment(lib, "Windowscodecs.lib")
 #pragma comment(lib, "Shell32.lib")
 
@@ -577,3 +579,5 @@ ZpAdministration_WaitClipboard(
     ZpAdministration_FreeBuilder(&Builder);
     return ZpStatus_FromNtStatus(Status);
 }
+
+#endif

@@ -4,6 +4,8 @@
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Security.h"
 #include <stdlib.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_REGISTRY_)
+
 #define ZP_REGISTRY_SNAPSHOT_MAX_COUNT 65536
 #define ZP_REGISTRY_SNAPSHOT_MAX_NAME_BYTES 0x01000000UL
 #define ZP_REGISTRY_DELETE_MAX_DEPTH 512
@@ -1384,3 +1386,5 @@ ZpRegistry_Execute(
     }
     return Status;
 }
+
+#endif

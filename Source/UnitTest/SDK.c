@@ -18,6 +18,8 @@
 #include "../Network/Authentication.inl"
 #include "../Network/Quic.inl"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_)
+
 #define SDK_STATUS_IS(Status, Value) \
     ((Status).Type == ((Value) == STATUS_SUCCESS ? ZpStatusNone : ZpStatusNtStatus) && \
      (Status).Code == (ULONG)(Value))
@@ -359,6 +361,7 @@ SDKTest_OrderedConcurrentRequests(VOID)
     {
         return FALSE;
     }
+    ZpClient_QueryBuildCapabilities(&Connection.Connection.Capabilities);
     ZpServerConnection_SetPhase(&Connection.Connection,
                                 ZpConnectionPhaseReady);
     Connection.SendDelay = 5;
@@ -1106,6 +1109,8 @@ SDKTest_AuthenticationRoundTrip(VOID)
     BYTE Challenge[ZP_SERVER_CHALLENGE_SIZE] = { 1 };
     BYTE Hash[32];
     BYTE Signature[ZP_CLIENT_SIGNATURE_SIZE];
+    ZP_CLIENT_CAPABILITIES Capabilities;
+    GUID InstanceId = { 1 };
     ULONG BlobSize, SignatureSize;
     NTSTATUS Status;
     LOGICAL Result = FALSE;
@@ -1136,7 +1141,8 @@ SDKTest_AuthenticationRoundTrip(VOID)
     }
     PublicKey[0] = 0x04;
     RtlCopyMemory(PublicKey + 1, BlobBuffer + sizeof(*Blob), 64);
-    Status = ZpAuthentication_Hash(Challenge, PublicKey, Hash);
+    ZpClient_QueryBuildCapabilities(&Capabilities);
+    Status = ZpAuthentication_Hash(Challenge, PublicKey, L"Local test", &Capabilities, &InstanceId, Hash);
     if (!NT_SUCCESS(Status) ||
         !NT_SUCCESS(Status = BCryptSignHash(Key,
                                             NULL,
@@ -1147,12 +1153,47 @@ SDKTest_AuthenticationRoundTrip(VOID)
                                             &SignatureSize,
                                             0)) ||
         SignatureSize != sizeof(Signature) ||
-        !NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, Signature)))
+        !NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, L"Local test",
+                                            &Capabilities, &InstanceId, Signature)))
     {
         goto Cleanup;
     }
+    if (NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, L"Changed group",
+                                          &Capabilities, &InstanceId, Signature)))
+    {
+        goto Cleanup;
+    }
+    Capabilities.Modules ^= ZP_MODULE_BIT(ZP_SYSTEM_MODULE_ID);
+    if (NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, L"Local test",
+                                          &Capabilities, &InstanceId, Signature)))
+    {
+        goto Cleanup;
+    }
+    Capabilities.Modules ^= ZP_MODULE_BIT(ZP_SYSTEM_MODULE_ID);
+    Capabilities.Transports ^= 1UL << ZpTransportTcp;
+    if (NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, L"Local test",
+                                          &Capabilities, &InstanceId, Signature)))
+    {
+        goto Cleanup;
+    }
+    Capabilities.Transports ^= 1UL << ZpTransportTcp;
+    Capabilities.Execution ^= ZP_CLIENT_EXECUTION_FEATURE_RUNTIME_DISCOVERY;
+    if (NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, L"Local test",
+                                          &Capabilities, &InstanceId, Signature)))
+    {
+        goto Cleanup;
+    }
+    Capabilities.Execution ^= ZP_CLIENT_EXECUTION_FEATURE_RUNTIME_DISCOVERY;
+    InstanceId.Data1 ^= 1;
+    if (NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, L"Local test",
+                                          &Capabilities, &InstanceId, Signature)))
+    {
+        goto Cleanup;
+    }
+    InstanceId.Data1 ^= 1;
     Signature[0] ^= 1;
-    Result = !NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, Signature));
+    Result = !NT_SUCCESS(ZpAuthentication_Verify(PublicKey, Challenge, L"Local test",
+                                               &Capabilities, &InstanceId, Signature));
 
 Cleanup:
     if (Key != NULL)
@@ -1477,6 +1518,7 @@ TEST_FUNC(SDKContract)
                            SDKTest_SystemConnectionSend,
                            SDKTest_ConnectionDisconnect,
                            SDKTest_SystemConnectionDestroy)));
+    ZpClient_QueryBuildCapabilities(&SystemLoopback.Connection.Capabilities);
     ZpServerConnection_SetPhase(&SystemLoopback.Connection,
                                 ZpConnectionPhaseReady);
     TEST_OK(NT_SUCCESS(ZpServer_GetSystemInfo(
@@ -1719,6 +1761,9 @@ TEST_FUNC(SDKContract)
         KNSoftQuicUninitialize();
     }
 
+    ClientConfig.Group = L"Bad\nGroup";
+    TEST_OK(ZpClient_Create(&ClientConfig, &Client) == STATUS_INVALID_PARAMETER);
+    ClientConfig.Group = L"Lab";
     TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
     ClientObject = (PZP_CLIENT_OBJECT)Client;
     Host[0] = L'X';
@@ -1731,6 +1776,8 @@ TEST_FUNC(SDKContract)
     TEST_OK(wcscmp(ClientObject->Config.Endpoints[0].Host, L"127.0.0.1") == 0 &&
             wcscmp(ClientObject->Config.Endpoints[0].ServerName, L"server.example") == 0);
     TEST_OK(wcscmp(ClientObject->Config.ClientKeyName, L"ClientKey") == 0);
+    TEST_OK(ClientObject->Config.Group != ClientConfig.Group &&
+            wcscmp(ClientObject->Config.Group, L"Lab") == 0);
     TEST_OK(ClientObject->Config.DeploymentRootCertificate[0] == 0x30);
     TEST_OK(ClientObject->TransportOperations[ZpTransportQuic] != NULL &&
             ClientObject->TransportContexts[ZpTransportQuic] == &ClientObject->QuicTransport &&
@@ -1964,6 +2011,7 @@ TEST_FUNC(SDKContract)
                            SDKTest_RequestConnectionSend,
                            SDKTest_ConnectionDisconnect,
                            SDKTest_RequestConnectionDestroy)));
+    ZpClient_QueryBuildCapabilities(&RegistryConnection.Connection.Capabilities);
     ZpServerConnection_SetPhase(&RegistryConnection.Connection,
                                 ZpConnectionPhaseReady);
     TEST_OK(NT_SUCCESS(ZpServer_SetRegistryValue(
@@ -2622,14 +2670,45 @@ TEST_FUNC(SDKContract)
             TestContext.ClientStateCount == 2 &&
             TestContext.ClientStates[1] == ZpClientStateRetryWait &&
             SDK_STATUS_IS(TestContext.ClientStatuses[1], STATUS_ACCESS_DENIED));
-#ifdef _DEBUG
-    TEST_OK(ClientObject->RetryDelay == 5000);
-#endif
-    TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) && TestContext.StopCount == 1);
-    TEST_OK(NT_SUCCESS(ZpClient_NotifyState(Client,
-                                            ZpClientStateStopped,
-                                            ZpStatus_FromNtStatus(
-                                                STATUS_SUCCESS))));
+    TEST_OK(ClientObject->RetryDelay >= 800 && ClientObject->RetryDelay <= 1200 &&
+            ClientObject->NextEndpointIndex == 0);
+    TestContext.CloseClientOnStopped = TRUE;
+    TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) &&
+            ClientObject->State == ZpClientStateStopped &&
+            !ClientObject->RetryPending && !ClientObject->StartPending &&
+            TestContext.StopCount == 0 &&
+            TestContext.ClientStateCount == 4 &&
+            TestContext.ClientStates[2] == ZpClientStateStopping &&
+            TestContext.ClientStates[3] == ZpClientStateStopped &&
+            TestContext.ClientCloseStatus == STATUS_DEVICE_BUSY);
+    TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) &&
+            TestContext.StopCount == 0 && TestContext.ClientStateCount == 4);
+    TEST_OK(NT_SUCCESS(ZpClient_Close(Client)));
+
+    RtlZeroMemory(&TestContext, sizeof(TestContext));
+    ClientConfig.Endpoints = MixedEndpoints;
+    ClientConfig.EndpointCount = ARRAYSIZE(MixedEndpoints);
+    TEST_OK(NT_SUCCESS(ZpClient_Create(&ClientConfig, &Client)));
+    TEST_OK(NT_SUCCESS(ZpClient_SetTransport(Client,
+                                             ZpTransportTcp,
+                                             &SDKTest_TransportOperations,
+                                             &TestContext)) &&
+            NT_SUCCESS(ZpClient_SetTransport(Client,
+                                             ZpTransportQuic,
+                                             &SDKTest_TransportOperations,
+                                             &TestContext)));
+    ClientObject = (PZP_CLIENT_OBJECT)Client;
+    TEST_OK(NT_SUCCESS(ZpClient_Start(Client)) && TestContext.StartCount == 1 &&
+            ClientObject->EndpointIndex == 0);
+    /* Model shutdown before Start returns; keep the retry timer behind its pending-start gate. */
+    ClientObject->StartPending = TRUE;
+    ZpClient_TransportShutdown(Client, ZpStatus_FromNtStatus(STATUS_CONNECTION_DISCONNECTED));
+    TEST_OK(ClientObject->State == ZpClientStateRetryWait && ClientObject->RetryPending &&
+            ClientObject->RetryDelay == 1 && ClientObject->NextEndpointIndex == 1 &&
+            ClientObject->FailureRound == 0 && TestContext.StartCount == 1);
+    ClientObject->StartPending = FALSE;
+    TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) && ClientObject->State == ZpClientStateStopped &&
+            !ClientObject->RetryPending && TestContext.StopCount == 0);
     TEST_OK(NT_SUCCESS(ZpClient_Close(Client)));
 
     RtlZeroMemory(&TestContext, sizeof(TestContext));
@@ -2663,3 +2742,119 @@ TEST_FUNC(SDKContract)
     ServerObject->Config.DeploymentCount = 0;
     TEST_OK(NT_SUCCESS(ZpServer_Close(Server)));
 }
+
+#else
+
+static
+VOID
+NTAPI
+SDKTest_CustomClientStateCallback(
+    _In_ ZP_CLIENT_HANDLE Client,
+    _In_ ZP_CLIENT_STATE State,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PVOID Context)
+{
+    UNREFERENCED_PARAMETER(Client);
+    UNREFERENCED_PARAMETER(State);
+    UNREFERENCED_PARAMETER(Status);
+    UNREFERENCED_PARAMETER(Context);
+}
+
+TEST_FUNC(SDKContract)
+{
+    WCHAR Host[] = L"127.0.0.1", ServerName[] = L"localhost", KeyName[] = L"Contract", Group[] = L"Contract";
+    BYTE RootCertificate[] = { 0x30, 0x01, 0x00 };
+    ZP_ENDPOINT Endpoint = { 0, Host, 443, ServerName };
+    ZP_CLIENT_CONFIG Config = { 0 };
+    ZP_CLIENT_CAPABILITIES Capabilities;
+    ZP_CLIENT_HANDLE Client;
+    PZP_CLIENT_OBJECT Object;
+    ULONG ExpectedTransports = 0;
+    ZP_TRANSPORT_TYPE Transport;
+    NTSTATUS Status;
+
+    UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGC);
+    UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGV);
+#ifdef _KNSOFT_ZPIGEON_BUILD_TRANSPORT_QUIC_
+    ExpectedTransports |= 1UL << ZpTransportQuic;
+#endif
+#ifdef _KNSOFT_ZPIGEON_BUILD_TRANSPORT_TCP_
+    ExpectedTransports |= 1UL << ZpTransportTcp;
+#endif
+#ifdef _KNSOFT_ZPIGEON_BUILD_TRANSPORT_UDP_
+    ExpectedTransports |= 1UL << ZpTransportUdp;
+#endif
+    ZpClient_QueryBuildCapabilities(&Capabilities);
+    TEST_OK(Capabilities.Transports == ExpectedTransports && ExpectedTransports != 0);
+    TEST_OK((Capabilities.Modules & ~ZP_CLIENT_MODULE_MASK) == 0);
+    TEST_OK((Capabilities.Execution & ~ZP_CLIENT_EXECUTION_FEATURE_MASK) == 0);
+    TEST_OK(FlagOn(Capabilities.Modules, ZP_MODULE_BIT(ZP_EXECUTION_MODULE_ID)) || Capabilities.Execution == 0);
+    TEST_OK(ZpClientRetry_GetBaseDelay(0) == 1000 &&
+            ZpClientRetry_GetBaseDelay(1) == 2000 &&
+            ZpClientRetry_GetBaseDelay(6) == 60000 &&
+            ZpClientRetry_GetBaseDelay(MAXULONG) == 60000);
+    TEST_OK(ZpClientRetry_GetDelay(0, 0) == 800 && ZpClientRetry_GetDelay(0, 400) == 1200);
+
+    Config.Endpoints = &Endpoint;
+    Config.EndpointCount = 1;
+    Config.DeploymentRootCertificate = RootCertificate;
+    Config.DeploymentRootCertificateLength = sizeof(RootCertificate);
+    Config.ClientKeyName = KeyName;
+    Config.Group = Group;
+    Config.StateCallback = SDKTest_CustomClientStateCallback;
+    for (Transport = ZpTransportQuic; Transport < ZpTransportCount; Transport++)
+    {
+        Endpoint.Transport = Transport;
+        Status = ZpClient_Create(&Config, &Client);
+        if (!FlagOn(ExpectedTransports, 1UL << Transport))
+        {
+            TEST_OK(Status == STATUS_NOT_SUPPORTED);
+            if (NT_SUCCESS(Status)) ZpClient_Close(Client);
+            continue;
+        }
+        TEST_OK(NT_SUCCESS(Status));
+        if (!NT_SUCCESS(Status)) continue;
+        Object = (PZP_CLIENT_OBJECT)Client;
+        TEST_OK(Object->State == ZpClientStateStopped && Object->TransportOperations[Transport] != NULL);
+        TEST_OK(Object->Config.Endpoints != &Endpoint &&
+                Object->Config.Endpoints[0].Host != Host &&
+                wcscmp(Object->Config.Endpoints[0].Host, Host) == 0 &&
+                Object->Config.Endpoints[0].ServerName != ServerName &&
+                wcscmp(Object->Config.Endpoints[0].ServerName, ServerName) == 0);
+        TEST_OK(Object->Config.ClientKeyName != KeyName && wcscmp(Object->Config.ClientKeyName, KeyName) == 0);
+        TEST_OK(Object->Config.Group != Group && wcscmp(Object->Config.Group, Group) == 0);
+        TEST_OK(Object->Config.DeploymentRootCertificate != RootCertificate &&
+                Object->Config.DeploymentRootCertificateLength == sizeof(RootCertificate) &&
+                memcmp(Object->Config.DeploymentRootCertificate, RootCertificate, sizeof(RootCertificate)) == 0);
+        TEST_OK(Object->Config.ConnectTimeoutMilliseconds == ZP_CLIENT_DEFAULT_CONNECT_TIMEOUT_MILLISECONDS &&
+                Object->Config.MaxRequestsPerConnection == ZP_CLIENT_DEFAULT_MAX_REQUESTS_PER_CONNECTION &&
+                Object->Config.MaxRequestPayloadBytesPerConnection ==
+                    ZP_CLIENT_DEFAULT_MAX_REQUEST_PAYLOAD_BYTES_PER_CONNECTION &&
+                Object->Config.MaxChannelsPerConnection == ZP_CLIENT_DEFAULT_MAX_CHANNELS_PER_CONNECTION);
+        TEST_OK(NT_SUCCESS(ZpClient_Stop(Client)) && NT_SUCCESS(ZpClient_Stop(Client)));
+        TEST_OK(NT_SUCCESS(ZpClient_Close(Client)));
+        Endpoint.RequireTls13 = TRUE;
+        Status = ZpClient_Create(&Config, &Client);
+        if (Transport == ZpTransportTcp)
+        {
+            TEST_OK(NT_SUCCESS(Status));
+            if (NT_SUCCESS(Status))
+            {
+                Object = (PZP_CLIENT_OBJECT)Client;
+                TEST_OK(Object->Config.Endpoints[0].RequireTls13);
+                TEST_OK(NT_SUCCESS(ZpClient_Close(Client)));
+            }
+        }
+        else
+        {
+            TEST_OK(Status == STATUS_INVALID_PARAMETER);
+            if (NT_SUCCESS(Status)) ZpClient_Close(Client);
+        }
+        Endpoint.RequireTls13 = FALSE;
+        Config.MaxRequestsPerConnection = ZP_CLIENT_MAX_REQUESTS_PER_CONNECTION + 1;
+        TEST_OK(ZpClient_Create(&Config, &Client) == STATUS_INVALID_PARAMETER);
+        Config.MaxRequestsPerConnection = 0;
+    }
+}
+
+#endif

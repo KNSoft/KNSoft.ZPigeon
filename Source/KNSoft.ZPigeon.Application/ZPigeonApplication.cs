@@ -13,8 +13,14 @@ public sealed partial class ZPigeonApplication(NativeServer server)
                   client.Id.ToString(CultureInfo.InvariantCulture),
                   client.Fingerprint,
                   client.Address.ToString(),
-                  client.Statistics.Transport))
+                  client.Statistics.Transport,
+                  client.InstanceId,
+                  client.Capabilities))
               .ToArray();
+
+    public ClientCapabilities GetClientCapabilities(ulong clientId) =>
+        server.GetClients().SingleOrDefault(client => client.Id == clientId)?.Capabilities ??
+        throw new InvalidOperationException("Client is not connected.");
 
     public bool IsClientConnected(ulong clientId) => NativeServer.IsClientConnected(clientId);
 
@@ -112,4 +118,10 @@ public sealed record LimitedResult<T>(T[] Items, int Total)
     public bool Truncated => Items.Length < Total;
 }
 
-public sealed record ConnectedClientSummary(string Id, string Fingerprint, string Address, int Transport);
+public sealed record ConnectedClientSummary(
+    string Id,
+    string Fingerprint,
+    string Address,
+    int Transport,
+    string InstanceId,
+    ClientCapabilities Capabilities);

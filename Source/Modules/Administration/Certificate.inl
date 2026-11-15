@@ -2,6 +2,8 @@
 
 #include <cryptuiapi.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_CERTIFICATE_)
+
 #pragma comment(lib, "Cryptui.lib")
 
 #define ZP_CERTIFICATE_STORE_ERROR 0x00000001
@@ -950,3 +952,5 @@ Cleanup:
            !NT_SUCCESS(NtStatus) ?
                ZpStatus_FromNtStatus(NtStatus) : Status;
 }
+
+#endif

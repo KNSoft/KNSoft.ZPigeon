@@ -13,6 +13,8 @@
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
+
 #define ZP_RECORDING_DEFAULT_AUDIO_BIT_RATE 160000
 #define ZP_RECORDING_DEFAULT_VIDEO_BIT_RATE 4000000
 #define ZP_RECORDING_DEFAULT_FRAME_RATE 30
@@ -1042,3 +1044,5 @@ ZpRecording_Cleanup(
         ZpRecording_FreeJob(Job);
     }
 }
+
+#endif

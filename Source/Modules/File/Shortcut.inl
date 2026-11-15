@@ -1,4 +1,6 @@
-﻿static
+﻿
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
+static
 NTSTATUS
 ZpFile_QueryShortcut(
     _In_ PCZP_STRING_VIEW Path,
@@ -70,3 +72,5 @@ ZpFile_QueryShortcut(
     Mem_Free(Target);
     return Status;
 }
+
+#endif

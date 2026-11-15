@@ -8,6 +8,8 @@
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
+
 #pragma comment(lib, "Mfplat.lib")
 #pragma comment(lib, "Mfreadwrite.lib")
 #pragma comment(lib, "Mfuuid.lib")
@@ -610,3 +612,5 @@ ZpMediaWriter_Close(
     if (Writer->MfStarted) MFShutdown();
     Mem_Free(Writer);
 }
+
+#endif

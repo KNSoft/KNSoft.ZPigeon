@@ -6,7 +6,8 @@ using KNSoft.ZPigeon.Tools;
 var server = new NativeServer(AppContext.BaseDirectory);
 var catalog = new ZPigeonToolCatalog(new ZPigeonApplication(server));
 var external = catalog.CreateExternalTools();
-var builtIn = catalog.CreateBuiltInTools(1);
+var fullCapabilities = new ClientCapabilities((1UL << 46) - 1, 14, 63);
+var builtIn = catalog.CreateBuiltInTools(1, fullCapabilities);
 var externalNames = external.Select(tool => tool.Function.Name).ToHashSet(StringComparer.Ordinal);
 var builtInNames = builtIn.Select(tool => tool.Function.Name).ToHashSet(StringComparer.Ordinal);
 
@@ -20,7 +21,7 @@ Assert(external.Select(tool => tool.Function.Name)
 foreach (var tool in external)
 {
     var hasClientId = tool.Function.JsonSchema.GetProperty("properties").TryGetProperty("clientId", out _);
-    var targetless = tool.Function.Name is "list_clients" or "list_administration_operations";
+    var targetless = tool.Function.Name is "list_clients";
     Assert(hasClientId == !targetless,
            $"External tool {tool.Function.Name} has an invalid clientId schema.");
     Assert(tool.ReadOnly || tool.Destructive,
@@ -37,6 +38,22 @@ Assert(external.Where(tool => tool.Sensitive)
                .Select(tool => tool.Function.Name)
                .SequenceEqual(["query_browser_secrets"]),
        "Sensitive tools must be explicit.");
+var executionTools = catalog.CreateBuiltInTools(1, new ClientCapabilities(1UL << 9, 1U << 2, 0));
+Assert(executionTools.Select(tool => tool.Function.Name).SequenceEqual(
+           ["list_execution_jobs", "start_process", "terminate_execution"]),
+       "An execution-only client must expose only its three compiled execution tools.");
+Assert(catalog.CreateAvailableExternalTools().Select(tool => tool.Function.Name).SequenceEqual(["list_clients"]),
+       "With no connected clients, MCP must advertise only discovery.");
+var userCapabilities = ZPigeonApplication.GetAdministrationCapabilities(new ClientCapabilities(1UL << 8, 4, 0));
+Assert(userCapabilities.Enumerations.All(operation =>
+           ((int)Enum.Parse<AdministrationOperation>(operation) >> 8) == 9) &&
+       userCapabilities.Controls.All(control =>
+           ((int)Enum.Parse<AdministrationOperation>(control.Operation) >> 8) == 9) &&
+       userCapabilities.Queries.Length == 0,
+       "Administration operation names must be limited to the selected client's compiled modules.");
+Assert(catalog.CreateBuiltInTools(1, new ClientCapabilities(1UL << 8, 4, 0))
+              .All(tool => tool.Function.Name != "query_administration"),
+       "A client without exposed administration query operations must not advertise the generic query tool.");
 
 var administration = ZPigeonApplication.GetAdministrationCapabilities();
 Assert(!administration.Queries.Contains(nameof(AdministrationOperation.QueryCredential)),
@@ -54,6 +71,7 @@ var updates = administration.Controls.Single(control =>
 Assert(updates.Actions.SequenceEqual([nameof(AdministrationAction.Refresh), nameof(AdministrationAction.Check)]),
        "Administration action combinations must be explicit and deterministic.");
 TestAgentStore();
+RemoteMediaTests.Run();
 
 Console.WriteLine($"Tool catalog: {external.Count} external, {builtIn.Count} built-in.");
 

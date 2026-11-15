@@ -3,6 +3,8 @@
 #include <sddl.h>
 #include <winnetwk.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_NETWORK_SHARE_)
+
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Netapi32.lib")
 #pragma comment(lib, "Mpr.lib")
@@ -437,3 +439,5 @@ Cleanup:
     Mem_Free(Identity);
     return ZpStatus_FromCode(ZpStatusWin32, Result);
 }
+
+#endif

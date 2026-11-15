@@ -139,6 +139,7 @@ public sealed partial class ZPigeonApplication
         CancellationToken cancellationToken = default)
     {
         ValidateAdministrationValue(operation, AdministrationEnumerations, nameof(operation));
+        ValidateAdministrationCapability(clientId, operation);
         ValidateOptionalText(query, 256, nameof(query));
         var values = await RunAsync(clientId,
                                     () => server.EnumerateAdministrationAsync(operation),
@@ -160,6 +161,7 @@ public sealed partial class ZPigeonApplication
         CancellationToken cancellationToken = default)
     {
         ValidateAdministrationValue(operation, AdministrationQueries, nameof(operation));
+        ValidateAdministrationCapability(clientId, operation);
         ValidateRequiredText(identity, 32767, nameof(identity));
         return Limit(await RunAsync(clientId,
                                     () => server.QueryAdministrationAsync(operation, identity),
@@ -178,6 +180,7 @@ public sealed partial class ZPigeonApplication
     {
         var control = AdministrationControls.SingleOrDefault(value => value.Operation == operation);
         if (control is null) throw new ArgumentOutOfRangeException(nameof(operation));
+        ValidateAdministrationCapability(clientId, operation);
         ValidateAdministrationValue(action, control.Actions, nameof(action));
         ValidateOptionalText(identity, 32767, nameof(identity));
         ValidateOptionalText(argument, 32767, nameof(argument));
@@ -206,6 +209,23 @@ public sealed partial class ZPigeonApplication
             [.. AdministrationControls.Select(control => new AdministrationControlCapability(
                 control.Operation.ToString(),
                 ToNames(control.Actions)))]);
+
+    public AdministrationCapabilities GetAdministrationCapabilities(ulong clientId) =>
+        GetAdministrationCapabilities(GetClientCapabilities(clientId));
+
+    public static AdministrationCapabilities GetAdministrationCapabilities(ClientCapabilities capabilities) =>
+        new(ToNames(AdministrationEnumerations.Where(operation => capabilities.SupportsModule((int)operation >> 8))),
+            ToNames(AdministrationQueries.Where(operation => capabilities.SupportsModule((int)operation >> 8))),
+            [.. AdministrationControls.Where(control => capabilities.SupportsModule((int)control.Operation >> 8))
+                                      .Select(control => new AdministrationControlCapability(
+                                          control.Operation.ToString(),
+                                          ToNames(control.Actions)))]);
+
+    private void ValidateAdministrationCapability(ulong clientId, AdministrationOperation operation)
+    {
+        if (!GetClientCapabilities(clientId).SupportsModule((int)operation >> 8))
+            throw new NotSupportedException("The client was built without the selected administration module.");
+    }
 
     private static string[] ToNames<T>(IEnumerable<T> values) where T : struct, Enum =>
         [.. values.Select(value => value.ToString())];

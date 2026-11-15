@@ -32,7 +32,11 @@ ZpServerSession_MessageCallback(
             Status = ZpMessage_DecodeClientHello(Frame->Body, Frame->BodyLength, &Hello);
             if (NT_SUCCESS(Status))
             {
+                if ((Hello.Capabilities.Transports & (1UL << Session->Public->Transport)) == 0)
+                    return STATUS_DATA_ERROR;
                 Session->ClientVersion = Hello.ClientVersion;
+                Session->Capabilities = Hello.Capabilities;
+                Session->InstanceId = Hello.InstanceId;
                 if (Hello.ClientVersion < ZP_MIN_CLIENT_VERSION ||
                     Hello.ClientVersion > ZP_MAX_CLIENT_VERSION)
                 {
@@ -51,6 +55,8 @@ ZpServerSession_MessageCallback(
                 RtlCopyMemory(Session->PublicKey,
                               Hello.ClientPublicKey,
                               sizeof(Session->PublicKey));
+                RtlCopyMemory(Session->Group, Hello.Group.Buffer, Hello.Group.Length * sizeof(WCHAR));
+                Session->Group[Hello.Group.Length] = UNICODE_NULL;
             }
             if (NT_SUCCESS(Status))
             {
@@ -83,6 +89,9 @@ ZpServerSession_MessageCallback(
             {
                 Status = ZpAuthentication_Verify(Session->PublicKey,
                                                  Session->Challenge,
+                                                 Session->Group,
+                                                 &Session->Capabilities,
+                                                 &Session->InstanceId,
                                                  Signature.Buffer);
             }
             RtlSecureZeroMemory(Session->Challenge, sizeof(Session->Challenge));
@@ -99,6 +108,8 @@ ZpServerSession_MessageCallback(
                                            0);
             if (NT_SUCCESS(Status))
             {
+                Session->Public->Capabilities = Session->Capabilities;
+                Session->Public->InstanceId = Session->InstanceId;
                 ZpServerConnection_SetPhase(Session->Public, ZpConnectionPhaseReady);
                 ZpServer_NotifyConnection((ZP_SERVER_HANDLE)Session->Owner,
                                           (ZP_CONNECTION_HANDLE)Session->Public,
@@ -200,6 +211,35 @@ ZpServer_QueryConnectionClientPublicKey(
 
 NTSTATUS
 NTAPI
+ZpServer_QueryConnectionClientGroup(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _Out_writes_(ZP_CLIENT_GROUP_MAX_LENGTH + 1) PWSTR Group)
+{
+    PZP_CONNECTION_OBJECT ConnectionObject = Connection;
+    PZP_SERVER_SESSION Session;
+    NTSTATUS Status;
+
+    if (ConnectionObject == NULL || Group == NULL) return STATUS_INVALID_PARAMETER;
+    RtlAcquireSRWLockShared(&ConnectionObject->Lock);
+    if (ConnectionObject->Phase == ZpConnectionPhaseReady &&
+        ConnectionObject->ProtocolConnection != NULL)
+    {
+        Session = CONTAINING_RECORD(ConnectionObject->ProtocolConnection,
+                                    ZP_SERVER_SESSION,
+                                    Connection);
+        RtlCopyMemory(Group, Session->Group, sizeof(Session->Group));
+        Status = STATUS_SUCCESS;
+    }
+    else
+    {
+        Status = STATUS_INVALID_DEVICE_STATE;
+    }
+    RtlReleaseSRWLockShared(&ConnectionObject->Lock);
+    return Status;
+}
+
+NTSTATUS
+NTAPI
 ZpServer_QueryConnectionClientVersion(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _Out_ PUSHORT ClientVersion)
@@ -239,4 +279,30 @@ ZpServerSession_Uninitialize(
         ZpConnection_Uninitialize(&Session->Connection);
     }
     RtlSecureZeroMemory(Session, sizeof(*Session));
+}
+
+NTSTATUS
+NTAPI
+ZpServer_QueryConnectionClientCapabilities(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _Out_ PZP_CLIENT_CAPABILITIES Capabilities,
+    _Out_ GUID* InstanceId)
+{
+    PZP_CONNECTION_OBJECT Object = Connection;
+    NTSTATUS Status;
+
+    if (Object == NULL || Capabilities == NULL || InstanceId == NULL) return STATUS_INVALID_PARAMETER;
+    RtlAcquireSRWLockShared(&Object->Lock);
+    if (Object->Phase == ZpConnectionPhaseReady)
+    {
+        *Capabilities = Object->Capabilities;
+        *InstanceId = Object->InstanceId;
+        Status = STATUS_SUCCESS;
+    }
+    else
+    {
+        Status = STATUS_INVALID_DEVICE_STATE;
+    }
+    RtlReleaseSRWLockShared(&Object->Lock);
+    return Status;
 }

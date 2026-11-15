@@ -6,9 +6,42 @@
 
 #include <stdio.h>
 
-#define ZP_CLIENT_PORT 4433
+#define ZP_CLIENT_PORT 21943
 #define ZP_CLIENT_LOG_CACHE_SIZE 32
-#define ZP_CLIENT_SESSION_WORKER_KEY_NAME L"KNSoft.ZPigeon.Client.SessionWorker"
+#define ZP_CLIENT_BOOTSTRAP_CERTIFICATE_CAPACITY 4096
+#define ZP_CLIENT_BOOTSTRAP_KEY_NAME_MAX_LENGTH 128
+
+typedef struct _ZP_CLIENT_BOOTSTRAP
+{
+    BYTE Magic[16];
+    ULONG Version;
+    ULONG RootCertificateLength;
+    ULONG Transports;
+    ULONG Port;
+    WCHAR Group[ZP_CLIENT_GROUP_MAX_LENGTH + 1];
+    WCHAR KeyName[ZP_CLIENT_BOOTSTRAP_KEY_NAME_MAX_LENGTH + 1];
+    WCHAR Host[16];
+    WCHAR ServerName[16];
+    BYTE RootCertificate[ZP_CLIENT_BOOTSTRAP_CERTIFICATE_CAPACITY];
+} ZP_CLIENT_BOOTSTRAP;
+
+C_ASSERT(sizeof(ZP_CLIENT_BOOTSTRAP) == 4580);
+C_ASSERT(FIELD_OFFSET(ZP_CLIENT_BOOTSTRAP, Group) == 32);
+C_ASSERT(FIELD_OFFSET(ZP_CLIENT_BOOTSTRAP, KeyName) == 162);
+C_ASSERT(FIELD_OFFSET(ZP_CLIENT_BOOTSTRAP, RootCertificate) == 484);
+
+#pragma section(".zpcfg", read)
+__declspec(allocate(".zpcfg")) static volatile const ZP_CLIENT_BOOTSTRAP ZpClientBootstrap = {
+    { 0x5A, 0x50, 0x43, 0x46, 0x47, 0x01, 0x71, 0xD8, 0xA2, 0x4C, 0x6B, 0x19, 0xE5, 0x33, 0x8F, 0xC0 },
+    1,
+    0,
+    0,
+    ZP_CLIENT_PORT,
+    L"",
+    ZP_CLIENT_DEFAULT_KEY_NAME,
+    L"127.0.0.1",
+    L"localhost"
+};
 
 typedef struct _ZP_CLIENT_LOG
 {
@@ -382,17 +415,44 @@ ZpClient_LoadRootCertificate(
     return STATUS_SUCCESS;
 }
 
+static
+NTSTATUS
+ZpClient_AcquireInstance(
+    _In_ PCWSTR KeyName,
+    _In_ BOOLEAN SessionWorker,
+    _Out_ PHANDLE InstanceMutex)
+{
+    BYTE TokenBuffer[sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE];
+    ULONG Length;
+    UNICODE_STRING Sid, Name;
+    WCHAR Buffer[256];
+    OBJECT_ATTRIBUTES Attributes;
+    NTSTATUS Status;
+
+    Status = NtQueryInformationToken(NtCurrentProcessToken(), TokenUser, TokenBuffer, sizeof(TokenBuffer), &Length);
+    if (!NT_SUCCESS(Status)) return Status;
+    Status = RtlConvertSidToUnicodeString(&Sid, ((PTOKEN_USER)TokenBuffer)->User.Sid, TRUE);
+    if (!NT_SUCCESS(Status)) return Status;
+    Length = _snwprintf_s(Buffer, ARRAYSIZE(Buffer), _TRUNCATE, L"\\BaseNamedObjects\\%s.%s.%s",
+                          KeyName, Sid.Buffer, SessionWorker ? L"SessionWorker" : L"Client");
+    RtlFreeUnicodeString(&Sid);
+    if ((INT)Length < 0) return STATUS_NAME_TOO_LONG;
+    RtlInitUnicodeString(&Name, Buffer);
+    InitializeObjectAttributes(&Attributes, &Name, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    return NtCreateMutant(InstanceMutex, MUTANT_ALL_ACCESS, &Attributes, FALSE);
+}
+
 int
 wmain(
     _In_ int ArgumentCount,
     _In_reads_(ArgumentCount) _Pre_z_ PWSTR* Arguments)
 {
-    static const ZP_ENDPOINT Endpoint = {
-        ZpTransportQuic,
-        L"127.0.0.1",
-        ZP_CLIENT_PORT,
-        L"localhost"
-    };
+    ZP_CLIENT_BOOTSTRAP Bootstrap = ZpClientBootstrap;
+    ZP_ENDPOINT Endpoints[3];
+    ZP_CLIENT_CAPABILITIES Capabilities;
+    ULONG TransportOrder, EndpointCount = 0;
+    HANDLE InstanceMutex;
+    WCHAR SessionKeyName[ZP_CLIENT_BOOTSTRAP_KEY_NAME_MAX_LENGTH + 15];
     ZP_CLIENT_CONFIG Config = { 0 };
     ZP_CLIENT_HANDLE Client;
     PBYTE RootCertificate;
@@ -400,8 +460,13 @@ wmain(
     NTSTATUS Status;
     BOOLEAN SessionWorker;
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SYSTEM_ADMINISTRATION_)
     SessionWorker = ArgumentCount == 2 &&
                     wcscmp(Arguments[1], ZP_RDP_CHILD_SESSION_WORKER_ARGUMENT) == 0;
+#else
+    UNREFERENCED_PARAMETER(Arguments);
+    SessionWorker = FALSE;
+#endif
     if (ArgumentCount != 1 && !SessionWorker)
     {
         return (int)STATUS_INVALID_PARAMETER;
@@ -428,6 +493,85 @@ wmain(
         }
     }
 
+    if (Bootstrap.Version != 1 || Bootstrap.RootCertificateLength > sizeof(Bootstrap.RootCertificate) ||
+        (Bootstrap.Port & 0xFFFF) == 0 || (Bootstrap.Port & 0xFFFF) == MAXUSHORT ||
+        (Bootstrap.Port & ~0x1FFFFUL) != 0 ||
+        Bootstrap.Host[ARRAYSIZE(Bootstrap.Host) - 1] != UNICODE_NULL ||
+        Bootstrap.ServerName[ARRAYSIZE(Bootstrap.ServerName) - 1] != UNICODE_NULL ||
+        Bootstrap.Group[ARRAYSIZE(Bootstrap.Group) - 1] != UNICODE_NULL ||
+        Bootstrap.KeyName[ARRAYSIZE(Bootstrap.KeyName) - 1] != UNICODE_NULL ||
+        Bootstrap.KeyName[0] == UNICODE_NULL ||
+        wcscmp(Bootstrap.Host, L"127.0.0.1") != 0 || wcscmp(Bootstrap.ServerName, L"localhost") != 0)
+    {
+        return (int)STATUS_INVALID_PARAMETER;
+    }
+    ZpClient_QueryBuildCapabilities(&Capabilities);
+    TransportOrder = Bootstrap.Transports;
+    if (TransportOrder == 0)
+    {
+        for (ULONG Transport = ZpTransportQuic; Transport < ZpTransportCount; Transport++)
+        {
+            if (FlagOn(Capabilities.Transports, 1UL << Transport))
+            {
+                TransportOrder |= Transport << (EndpointCount++ * 8);
+            }
+        }
+        EndpointCount = 0;
+    }
+    while (TransportOrder != 0 && EndpointCount < ARRAYSIZE(Endpoints))
+    {
+        ZP_TRANSPORT_TYPE Transport = (ZP_TRANSPORT_TYPE)TransportOrder;
+
+        if (Transport < ZpTransportQuic || Transport >= ZpTransportCount ||
+            !FlagOn(Capabilities.Transports, 1UL << Transport)) return (int)STATUS_NOT_SUPPORTED;
+        for (ULONG Index = 0; Index < EndpointCount; Index++)
+        {
+            if (Endpoints[Index].Transport == Transport) return (int)STATUS_INVALID_PARAMETER;
+        }
+        Endpoints[EndpointCount].Transport = Transport;
+        Endpoints[EndpointCount].Host = Bootstrap.Host;
+        Endpoints[EndpointCount].Port = (USHORT)Bootstrap.Port + (Transport == ZpTransportUdp);
+        Endpoints[EndpointCount].ServerName = Bootstrap.ServerName;
+        Endpoints[EndpointCount].RequireTls13 = Transport == ZpTransportTcp && FlagOn(Bootstrap.Port, 0x10000);
+        EndpointCount++;
+        TransportOrder >>= 8;
+    }
+    if (TransportOrder != 0 || EndpointCount == 0) return (int)STATUS_INVALID_PARAMETER;
+    if (Bootstrap.RootCertificateLength != 0)
+    {
+        static const WCHAR Prefix[] = L"KNSoft.ZPigeon.Client.";
+        WCHAR GuidText[39];
+        UNICODE_STRING GuidString;
+        ULONG Index;
+
+        if (wcslen(Bootstrap.KeyName) != 119 ||
+            wcsncmp(Bootstrap.KeyName, Prefix, ARRAYSIZE(Prefix) - 1) != 0 || Bootstrap.KeyName[86] != L'.')
+            return (int)STATUS_INVALID_PARAMETER;
+        for (Index = ARRAYSIZE(Prefix) - 1; Index < 119; Index++)
+        {
+            WCHAR Character = Bootstrap.KeyName[Index];
+            if (Index != 86 && !((Character >= L'0' && Character <= L'9') ||
+                                (Character >= L'A' && Character <= L'F'))) return (int)STATUS_INVALID_PARAMETER;
+        }
+        _snwprintf_s(GuidText, ARRAYSIZE(GuidText), _TRUNCATE, L"{%.8s-%.4s-%.4s-%.4s-%.12s}",
+                     Bootstrap.KeyName + 87, Bootstrap.KeyName + 95, Bootstrap.KeyName + 99,
+                     Bootstrap.KeyName + 103, Bootstrap.KeyName + 107);
+        RtlInitUnicodeString(&GuidString, GuidText);
+        Status = RtlGUIDFromString(&GuidString, &Config.InstanceId);
+        if (!NT_SUCCESS(Status)) return (int)Status;
+    }
+    if (SessionWorker && _snwprintf_s(SessionKeyName,
+                                      ARRAYSIZE(SessionKeyName),
+                                      _TRUNCATE,
+                                      L"%s.SessionWorker",
+                                      Bootstrap.KeyName) < 0)
+    {
+        return (int)STATUS_NAME_TOO_LONG;
+    }
+
+    Status = ZpClient_AcquireInstance(Bootstrap.KeyName, SessionWorker, &InstanceMutex);
+    if (!NT_SUCCESS(Status)) return (int)Status;
+
     Status = ZpClient_InitializeDirectory();
     if (!NT_SUCCESS(Status))
     {
@@ -439,25 +583,35 @@ wmain(
     {
         return (int)NTSTATUS_FROM_WIN32(GetLastError());
     }
-    Status = ZpClient_LoadRootCertificate(&RootCertificate,
-                                          &RootCertificateLength);
-    if (!NT_SUCCESS(Status))
-    {
-        ZpClient_WriteLog(L"network.log",
-                          "event=LoadRootCertificate",
-                          ZpStatus_FromNtStatus(Status));
-        return (int)Status;
-    }
-    Config.Endpoints = &Endpoint;
-    Config.EndpointCount = 1;
-    Config.DeploymentRootCertificate = RootCertificate;
-    Config.DeploymentRootCertificateLength = RootCertificateLength;
+    Config.Endpoints = Endpoints;
+    Config.EndpointCount = EndpointCount;
     Config.StateCallback = ZpClient_StateCallback;
     Config.OperationCallback = ZpClient_OperationCallback;
-    Config.ClientKeyName = SessionWorker ? ZP_CLIENT_SESSION_WORKER_KEY_NAME : NULL;
+    Config.ClientKeyName = SessionWorker ? SessionKeyName : Bootstrap.KeyName;
+    Config.Group = Bootstrap.Group;
     Config.ClientKeyScope = ZpClientKeyUser;
-    Status = ZpClient_Create(&Config, &Client);
-    Mem_Free(RootCertificate);
+    if (Bootstrap.RootCertificateLength != 0)
+    {
+        Config.DeploymentRootCertificate = Bootstrap.RootCertificate;
+        Config.DeploymentRootCertificateLength = Bootstrap.RootCertificateLength;
+        Status = ZpClient_Create(&Config, &Client);
+    }
+    else
+    {
+        Status = ZpClient_LoadRootCertificate(&RootCertificate,
+                                              &RootCertificateLength);
+        if (!NT_SUCCESS(Status))
+        {
+            ZpClient_WriteLog(L"network.log",
+                              "event=LoadRootCertificate",
+                              ZpStatus_FromNtStatus(Status));
+            return (int)Status;
+        }
+        Config.DeploymentRootCertificate = RootCertificate;
+        Config.DeploymentRootCertificateLength = RootCertificateLength;
+        Status = ZpClient_Create(&Config, &Client);
+        Mem_Free(RootCertificate);
+    }
     if (!NT_SUCCESS(Status))
     {
         ZpClient_WriteLog(L"network.log",
@@ -486,5 +640,6 @@ wmain(
     ZpClient_CloseLogs();
     CloseHandle(ZpClientStoppedEvent);
     CloseHandle(ZpClientStopEvent);
+    NtClose(InstanceMutex);
     return (int)Status;
 }

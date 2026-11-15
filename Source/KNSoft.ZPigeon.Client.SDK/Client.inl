@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <KNSoft/ZPigeon/Client.h>
+#include <combaseapi.h>
 #include <KNSoft/MakeLifeEasier/Memory/Core.h>
 
 #include "../Network/Transport.h"
@@ -61,6 +62,7 @@ typedef struct _ZP_CLIENT_OBJECT
     ZP_CLIENT_TCP_TRANSPORT TcpTransport;
     ZP_CLIENT_UDP_TRANSPORT UdpTransport;
     PVOID RtcSession;
+    CO_MTA_USAGE_COOKIE CaptureMtaCookie;
 } ZP_CLIENT_OBJECT, *PZP_CLIENT_OBJECT;
 
 FORCEINLINE

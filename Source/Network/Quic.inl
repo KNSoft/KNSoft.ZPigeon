@@ -20,7 +20,6 @@ typedef struct _ZP_QUIC_SEND_CONTEXT
 {
     ZP_SEND_BUFFER Owner;
     PZP_CONNECTION Connection;
-    ULONGLONG EnqueuedTickCount;
     QUIC_BUFFER Buffer;
 } ZP_QUIC_SEND_CONTEXT, *PZP_QUIC_SEND_CONTEXT;
 
@@ -39,6 +38,7 @@ ZpQuic_SendFrame(
 {
     ZP_SEND_BUFFER Frame;
     PZP_QUIC_SEND_CONTEXT Send;
+    ULONGLONG EnqueuedTickCount;
     QUIC_STATUS QuicStatus;
     NTSTATUS Status;
 
@@ -66,7 +66,7 @@ ZpQuic_SendFrame(
     }
     Send->Owner = Frame;
     Send->Connection = Connection;
-    Send->EnqueuedTickCount = GetTickCount64();
+    EnqueuedTickCount = GetTickCount64();
     Send->Buffer.Buffer = Frame.Allocation + Frame.Offset;
     Send->Buffer.Length = Frame.Length;
     QuicStatus = MsQuicStreamSend(Stream,
@@ -81,7 +81,7 @@ ZpQuic_SendFrame(
         ZpSendBuffer_Release(&Frame);
         return STATUS_CONNECTION_DISCONNECTED;
     }
-    ZpConnection_RecordSendQueueDelay(Connection, Send->EnqueuedTickCount);
+    ZpConnection_RecordSendQueueDelay(Connection, EnqueuedTickCount);
     Status = ZpConnection_NotifyMessageSent(Connection, MessageType, Frame.Length);
     if (!NT_SUCCESS(Status)) *FailureStatus = ZpStatus_FromNtStatus(Status);
     return Status;

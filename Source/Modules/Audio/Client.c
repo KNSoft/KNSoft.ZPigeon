@@ -15,6 +15,8 @@
 
 #include <KNSoft/MakeLifeEasier/Memory/Core.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_AUDIO_)
+
 #pragma comment(lib, "Ole32.lib")
 
 typedef struct _ZP_AUDIO_DEVICE_BUILDER
@@ -824,3 +826,5 @@ ZpAudio_Execute(
     *Channel = (PZP_CLIENT_LOCAL_CHANNEL)AudioChannel;
     return ZpStatus_Make(ZpStatusNone, 0);
 }
+
+#endif

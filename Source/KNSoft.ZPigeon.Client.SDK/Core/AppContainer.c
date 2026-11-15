@@ -2,6 +2,10 @@
 
 #include <sddl.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_APP_CONTAINER_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_APP_CONTAINER_)
+
 #pragma comment(lib, "Advapi32.lib")
 
 typedef union _ZP_APP_CONTAINER_NETWORK_PROC
@@ -104,3 +108,5 @@ ZpAppContainer_FreeSecurityCapabilities(
     Context->Api.Free(Context->Profiles);
     FreeLibrary(Context->Api.Module);
 }
+
+#endif

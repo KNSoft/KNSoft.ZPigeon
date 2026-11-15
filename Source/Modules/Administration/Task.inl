@@ -2,6 +2,8 @@
 #include <taskschd.h>
 #include <stdio.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_TASK_)
+
 #pragma comment(lib, "Ole32.lib")
 #pragma comment(lib, "OleAut32.lib")
 #pragma comment(lib, "Taskschd.lib")
@@ -301,3 +303,5 @@ ZpAdministration_ControlTaskImpl(
     Mem_Free(Identity);
     return ZpStatus_FromCode(ZpStatusHResult, Result);
 }
+
+#endif

@@ -63,9 +63,16 @@ typedef struct _ZP_CLIENT_CONFIG
     ULONG MaxRequestPayloadBytesPerConnection;
     ULONG MaxChannelsPerConnection;
     ZP_CLIENT_KEY_SCOPE ClientKeyScope;
+    PCWSTR Group;
+    GUID InstanceId;
 } ZP_CLIENT_CONFIG, *PZP_CLIENT_CONFIG;
 
 typedef const ZP_CLIENT_CONFIG* PCZP_CLIENT_CONFIG;
+
+VOID
+NTAPI
+ZpClient_QueryBuildCapabilities(
+    _Out_ PZP_CLIENT_CAPABILITIES Capabilities);
 
 NTSTATUS
 NTAPI

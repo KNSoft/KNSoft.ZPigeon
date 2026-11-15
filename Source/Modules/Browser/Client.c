@@ -21,6 +21,8 @@
 #define SQLITE_API __declspec(dllimport)
 #include <winsqlite/winsqlite3.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BROWSER_)
+
 typedef int (*ZP_SQLITE_DESERIALIZE)(
     sqlite3*,
     const char*,
@@ -2534,3 +2536,5 @@ ZpBrowser_Execute(
     RoUninitialize();
     return Status;
 }
+
+#endif

@@ -141,11 +141,38 @@ ZpMessage_ValidateBody(
     switch (MessageType)
     {
         case ZpMessageClientHello:
-            if (BodyLength != ZP_CLIENT_HELLO_WIRE_SIZE)
             {
-                return STATUS_DATA_ERROR;
+                ULONG GroupLength, Index;
+                USHORT Character;
+
+                if (BodyLength < ZP_CLIENT_HELLO_WIRE_SIZE ||
+                    BodyLength > ZP_CLIENT_HELLO_MAX_WIRE_SIZE || Body[sizeof(USHORT)] != 0x04)
+                {
+                    return STATUS_DATA_ERROR;
+                }
+                if ((ZpReadUInt64(Body + 67) & ~ZP_CLIENT_MODULE_MASK) != 0 ||
+                    (ZpReadUInt32(Body + 75) & ~ZP_CLIENT_TRANSPORT_MASK) != 0 ||
+                    ZpReadUInt32(Body + 75) == 0 ||
+                    (ZpReadUInt32(Body + 79) & ~ZP_CLIENT_EXECUTION_FEATURE_MASK) != 0 ||
+                    (ZpReadUInt32(Body + 79) != 0 && (ZpReadUInt64(Body + 67) & ZP_MODULE_BIT(10)) == 0))
+                {
+                    return STATUS_DATA_ERROR;
+                }
+                GroupLength = ZpReadUInt16(Body + ZP_CLIENT_HELLO_WIRE_SIZE - sizeof(USHORT));
+                if (BodyLength != ZP_CLIENT_HELLO_WIRE_SIZE + GroupLength * sizeof(WCHAR))
+                {
+                    return STATUS_DATA_ERROR;
+                }
+                for (Index = 0; Index < GroupLength; Index++)
+                {
+                    Character = ZpReadUInt16(Body + ZP_CLIENT_HELLO_WIRE_SIZE + Index * sizeof(WCHAR));
+                    if (Character < 0x20 || (Character >= 0x7F && Character <= 0x9F))
+                    {
+                        return STATUS_DATA_ERROR;
+                    }
+                }
+                return STATUS_SUCCESS;
             }
-            return Body[sizeof(USHORT)] == 0x04 ? STATUS_SUCCESS : STATUS_DATA_ERROR;
 
         case ZpMessageServerChallenge:
             return BodyLength == ZP_SERVER_CHALLENGE_SIZE ? STATUS_SUCCESS : STATUS_DATA_ERROR;
@@ -235,20 +262,40 @@ ZpMessage_ValidateBody(
 NTSTATUS
 ZpMessage_EncodeClientHello(
     _In_reads_bytes_(ZP_CLIENT_PUBLIC_KEY_SIZE) const BYTE* ClientPublicKey,
+    _In_opt_ PCWSTR Group,
+    _In_ PCZP_CLIENT_CAPABILITIES Capabilities,
+    _In_ const GUID* InstanceId,
     _Out_writes_bytes_opt_(BufferSize) PVOID Buffer,
     _In_ ULONG BufferSize,
     _Out_ PULONG BytesWritten)
 {
     NTSTATUS Status;
     PBYTE Cursor;
+    ULONG GroupLength = 0;
 
-    if (ClientPublicKey == NULL || ClientPublicKey[0] != 0x04)
+    if (Group != NULL)
+    {
+        while (Group[GroupLength] != UNICODE_NULL)
+        {
+            if (GroupLength == ZP_CLIENT_GROUP_MAX_LENGTH || Group[GroupLength] < 0x20 ||
+                (Group[GroupLength] >= 0x7F && Group[GroupLength] <= 0x9F))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            GroupLength++;
+        }
+    }
+    if (ClientPublicKey == NULL || ClientPublicKey[0] != 0x04 || Capabilities == NULL || InstanceId == NULL ||
+        (Capabilities->Modules & ~ZP_CLIENT_MODULE_MASK) != 0 ||
+        (Capabilities->Transports & ~ZP_CLIENT_TRANSPORT_MASK) != 0 || Capabilities->Transports == 0 ||
+        (Capabilities->Execution & ~ZP_CLIENT_EXECUTION_FEATURE_MASK) != 0 ||
+        (Capabilities->Execution != 0 && (Capabilities->Modules & ZP_MODULE_BIT(10)) == 0))
     {
         return STATUS_INVALID_PARAMETER;
     }
     Status = ZpMessage_PrepareOutput(Buffer,
                                      BufferSize,
-                                     ZP_CLIENT_HELLO_WIRE_SIZE,
+                                     ZP_CLIENT_HELLO_WIRE_SIZE + GroupLength * sizeof(WCHAR),
                                      BytesWritten);
     if (!NT_SUCCESS(Status) || Buffer == NULL)
     {
@@ -258,6 +305,12 @@ ZpMessage_EncodeClientHello(
     Cursor = Buffer;
     ZpWire_WriteUInt16(&Cursor, ZP_CLIENT_VERSION);
     ZpWire_WriteData(&Cursor, ClientPublicKey, ZP_CLIENT_PUBLIC_KEY_SIZE);
+    ZpWire_WriteUInt64(&Cursor, Capabilities->Modules);
+    ZpWire_WriteUInt32(&Cursor, Capabilities->Transports);
+    ZpWire_WriteUInt32(&Cursor, Capabilities->Execution);
+    ZpWire_WriteData(&Cursor, InstanceId, ZP_GUID_WIRE_SIZE);
+    ZpWire_WriteUInt16(&Cursor, (USHORT)GroupLength);
+    if (GroupLength != 0) ZpWire_WriteData(&Cursor, Group, GroupLength * sizeof(WCHAR));
     return STATUS_SUCCESS;
 }
 
@@ -275,6 +328,12 @@ ZpMessage_DecodeClientHello(
     {
         View->ClientVersion = ZpReadUInt16(Buffer);
         View->ClientPublicKey = Buffer + sizeof(USHORT);
+        View->Group.Buffer = (PCWCH)(Buffer + ZP_CLIENT_HELLO_WIRE_SIZE);
+        View->Group.Length = ZpReadUInt16(Buffer + ZP_CLIENT_HELLO_WIRE_SIZE - sizeof(USHORT));
+        View->Capabilities.Modules = ZpReadUInt64(Buffer + 67);
+        View->Capabilities.Transports = ZpReadUInt32(Buffer + 75);
+        View->Capabilities.Execution = ZpReadUInt32(Buffer + 79);
+        RtlCopyMemory(&View->InstanceId, Buffer + 83, ZP_GUID_WIRE_SIZE);
     }
     return Status;
 }

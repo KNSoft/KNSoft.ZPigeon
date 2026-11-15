@@ -1,4 +1,6 @@
-﻿static
+﻿#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FIREWALL_)
+
+static
 HRESULT
 ZpAdministration_OpenFirewall(
     _Out_ INetFwPolicy2** Policy,
@@ -323,3 +325,5 @@ Exit:
     Mem_Free(Identity);
     return ZpStatus_FromCode(ZpStatusHResult, Result);
 }
+
+#endif

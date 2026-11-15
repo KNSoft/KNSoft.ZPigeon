@@ -170,7 +170,7 @@ ZpClientInbound_RequestCallback(
     PBYTE AllocatedResponse = NULL;
     PZP_CLIENT_LOCAL_CHANNEL Channel = NULL;
     ULONG PayloadLength = 0;
-    NTSTATUS ModuleStatus, SendStatus = STATUS_CANCELLED;
+    NTSTATUS SendStatus = STATUS_CANCELLED;
     ZP_STATUS Status;
     LOGICAL Respond;
 
@@ -187,6 +187,7 @@ ZpClientInbound_RequestCallback(
                      ZpStatus_FromNtStatus(STATUS_SUCCESS) :
                      ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SYSTEM_)
     else if (Request->ModuleId == ZP_SYSTEM_MODULE_ID &&
              Request->OperationId == ZP_SYSTEM_OPERATION_INFO)
     {
@@ -196,8 +197,12 @@ ZpClientInbound_RequestCallback(
                                           &PayloadLength) :
                      ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
     else if (Request->ModuleId == ZP_FILE_MODULE_ID)
     {
+        NTSTATUS ModuleStatus;
+
         ModuleStatus = ZpFile_Execute(Object,
                                       Request->OperationId,
                                       Request->Payload,
@@ -209,6 +214,8 @@ ZpClientInbound_RequestCallback(
         Status = ZpStatus_FromNtStatus(ModuleStatus);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PORTABLE_DEVICE_)
     else if (Request->ModuleId == ZP_PORTABLE_DEVICE_MODULE_ID)
     {
         Status = ZpPortable_Execute(Object,
@@ -221,6 +228,8 @@ ZpClientInbound_RequestCallback(
                                     &Channel);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PROCESS_)
     else if (Request->ModuleId == ZP_PROCESS_MODULE_ID)
     {
         Status = ZpProcess_Execute(Object,
@@ -231,6 +240,8 @@ ZpClientInbound_RequestCallback(
                                    &PayloadLength);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SERVICE_)
     else if (Request->ModuleId == ZP_SERVICE_MODULE_ID)
     {
         Status = ZpService_Execute(Request->OperationId,
@@ -240,8 +251,12 @@ ZpClientInbound_RequestCallback(
                                    &PayloadLength);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_REGISTRY_)
     else if (Request->ModuleId == ZP_REGISTRY_MODULE_ID)
     {
+        NTSTATUS ModuleStatus;
+
         ModuleStatus = ZpRegistry_Execute(Request->OperationId,
                                            Request->Payload,
                                            Request->PayloadLength,
@@ -250,6 +265,8 @@ ZpClientInbound_RequestCallback(
         Status = ZpStatus_FromNtStatus(ModuleStatus);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EVENT_LOG_)
     else if (Request->ModuleId == ZP_EVENT_LOG_MODULE_ID)
     {
         Status = ZpEventLog_Execute(Request->OperationId,
@@ -260,6 +277,8 @@ ZpClientInbound_RequestCallback(
                                     &PayloadLength);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_)
     else if (Request->ModuleId == ZP_EXECUTION_MODULE_ID)
     {
         Status = ZpExecution_Execute(Object,
@@ -270,6 +289,8 @@ ZpClientInbound_RequestCallback(
                                      &PayloadLength);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_TERMINAL_)
     else if (Request->ModuleId == ZP_TERMINAL_MODULE_ID)
     {
         Status = ZpTerminal_Execute(Object,
@@ -281,6 +302,8 @@ ZpClientInbound_RequestCallback(
                                     &Channel);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WINDOW_)
     else if (Request->ModuleId == ZP_WINDOW_MODULE_ID)
     {
         Status = ZpWindow_Execute(Object,
@@ -292,6 +315,8 @@ ZpClientInbound_RequestCallback(
                                   &Channel);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_AUDIO_)
     else if (Request->ModuleId == ZP_AUDIO_MODULE_ID)
     {
         Status = ZpAudio_Execute(Object,
@@ -303,6 +328,8 @@ ZpClientInbound_RequestCallback(
                                  &Channel);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_VIDEO_)
     else if (Request->ModuleId == ZP_VIDEO_MODULE_ID)
     {
         Status = ZpVideo_Execute(Object,
@@ -314,6 +341,8 @@ ZpClientInbound_RequestCallback(
                                  &Channel);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RTC_)
     else if (Request->ModuleId == ZP_RTC_MODULE_ID)
     {
         Status = ZpRtc_Execute(Object,
@@ -324,6 +353,8 @@ ZpClientInbound_RequestCallback(
                                &PayloadLength);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SERIAL_)
     else if (Request->ModuleId == ZP_SERIAL_MODULE_ID)
     {
         Status = ZpSerial_Execute(Object,
@@ -335,6 +366,8 @@ ZpClientInbound_RequestCallback(
                                   &Channel);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_TUNNEL_)
     else if (Request->ModuleId == ZP_TUNNEL_MODULE_ID)
     {
         Status = ZpTunnel_Execute(Object,
@@ -347,7 +380,37 @@ ZpClientInbound_RequestCallback(
                                   &Channel);
         Response = AllocatedResponse;
     }
-    else if (FlagOn(ZP_MANAGEMENT_MODULE_MASK, ZP_MODULE_BIT(Request->ModuleId)))
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_USER_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SOFTWARE_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_HARDWARE_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_UPDATE_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_TASK_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FIREWALL_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_POWER_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SYSTEM_ADMINISTRATION_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WLAN_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_CERTIFICATE_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_CLIPBOARD_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_CREDENTIAL_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FIRMWARE_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_NETWORK_SHARE_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_NETWORK_STATUS_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PAGE_FILE_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BLUETOOTH_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_KEYBOARD_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_LOCATION_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FONT_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_APP_CONTAINER_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WINOBJ_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WSL_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_UI_AUTOMATION_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PROXY_VPN_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_CLIENT_STATUS_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SHADOW_COPY_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BITLOCKER_)
+    else if (Request->ModuleId <= 46 &&
+             FlagOn(ZP_MANAGEMENT_MODULE_MASK, ZP_MODULE_BIT(Request->ModuleId)))
     {
         Status = ZpAdministration_Execute(Request->ModuleId,
                                           Request->OperationId,
@@ -357,6 +420,8 @@ ZpClientInbound_RequestCallback(
                                           &PayloadLength);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BROWSER_)
     else if (Request->ModuleId == ZP_BROWSER_MODULE_ID)
     {
         Status = ZpBrowser_Execute(Object,
@@ -367,6 +432,8 @@ ZpClientInbound_RequestCallback(
                                    &PayloadLength);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WMI_)
     else if (Request->ModuleId == ZP_WMI_MODULE_ID)
     {
         Status = ZpWmi_Execute(Request->OperationId,
@@ -376,6 +443,8 @@ ZpClientInbound_RequestCallback(
                                &PayloadLength);
         Response = AllocatedResponse;
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
     else if (Request->ModuleId == ZP_RECORDING_MODULE_ID)
     {
         Status = ZpRecording_Execute(Object,
@@ -386,6 +455,7 @@ ZpClientInbound_RequestCallback(
                                      &PayloadLength);
         Response = AllocatedResponse;
     }
+#endif
     else
     {
         Status = ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);

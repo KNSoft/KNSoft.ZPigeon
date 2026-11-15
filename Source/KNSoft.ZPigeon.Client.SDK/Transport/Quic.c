@@ -2,6 +2,8 @@
 #include "../../Modules/File/Client.h"
 #include "../../Network/Quic.inl"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_QUIC_)
+
 #define ZP_CLIENT_QUIC_KEEP_ALIVE_INTERVAL_MILLISECONDS 20000
 
 static const QUIC_REGISTRATION_CONFIG ZpClientQuicRegistrationConfig = {
@@ -592,3 +594,5 @@ ZpClientQuic_Uninitialize(
 {
     ZpClientQuic_UninitializeAttempt(Transport);
 }
+
+#endif

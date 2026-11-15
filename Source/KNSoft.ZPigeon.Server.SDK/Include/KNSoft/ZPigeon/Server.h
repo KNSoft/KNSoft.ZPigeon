@@ -363,6 +363,19 @@ ZpServer_QueryConnectionClientPublicKey(
 
 NTSTATUS
 NTAPI
+ZpServer_QueryConnectionClientCapabilities(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _Out_ PZP_CLIENT_CAPABILITIES Capabilities,
+    _Out_ GUID* InstanceId);
+
+NTSTATUS
+NTAPI
+ZpServer_QueryConnectionClientGroup(
+    _In_ ZP_CONNECTION_HANDLE Connection,
+    _Out_writes_(ZP_CLIENT_GROUP_MAX_LENGTH + 1) PWSTR Group);
+
+NTSTATUS
+NTAPI
 ZpServer_QueryConnectionClientVersion(
     _In_ ZP_CONNECTION_HANDLE Connection,
     _Out_ PUSHORT ClientVersion);
@@ -1023,6 +1036,7 @@ ZpServer_OpenWindowCapture(
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback,
     _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback,
     _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request);

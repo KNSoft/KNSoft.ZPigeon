@@ -9,6 +9,9 @@
 #include <vector>
 #include <winver.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SOFTWARE_) || \
+    (defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_) && defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_RUNTIME_DISCOVERY_))
+
 #pragma comment(lib, "Version.lib")
 
 namespace
@@ -341,3 +344,5 @@ ZpRuntime_Enumerate(
     }
     return S_OK;
 }
+
+#endif

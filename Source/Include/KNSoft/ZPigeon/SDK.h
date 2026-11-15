@@ -35,6 +35,7 @@ typedef struct _ZP_ENDPOINT
     PCWSTR Host;
     USHORT Port;
     PCWSTR ServerName;
+    BOOLEAN RequireTls13;
 } ZP_ENDPOINT, *PZP_ENDPOINT;
 
 typedef const ZP_ENDPOINT* PCZP_ENDPOINT;

@@ -4,6 +4,8 @@
 #endif
 
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_HARDWARE_)
+
 #pragma comment(lib, "Cfgmgr32.lib")
 
 static
@@ -134,3 +136,5 @@ ZpAdministration_ControlHardware(
     Mem_Free(Identity);
     return ZpStatus_FromCode(ZpStatusConfigurationManager, Result);
 }
+
+#endif

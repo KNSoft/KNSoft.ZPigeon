@@ -10,6 +10,8 @@
 #include <Shlwapi.h>
 #include <Winsvc.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SERVICE_)
+
 #pragma comment(lib, "Shlwapi.lib")
 
 typedef struct _ZP_SERVICE_RECORD_ALLOCATION
@@ -523,6 +525,8 @@ ZpService_Enumerate(
         Services[Index].ServiceNameLength = (ULONG)wcslen(Entries[Index].lpServiceName);
         Services[Index].DisplayName = Entries[Index].lpDisplayName;
         Services[Index].DisplayNameLength = (ULONG)wcslen(Entries[Index].lpDisplayName);
+        Services[Index].Description = NULL;
+        Services[Index].DescriptionLength = 0;
         Services[Index].StartName = NULL;
         Services[Index].StartNameLength = 0;
         Service = OpenServiceW(Manager, Entries[Index].lpServiceName, SERVICE_QUERY_CONFIG);
@@ -1352,3 +1356,5 @@ ZpService_Execute(
     }
     return Result;
 }
+
+#endif

@@ -5,6 +5,8 @@
 
 #include <strsafe.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BROWSER_)
+
 static
 VOID
 TestBrowserJson(
@@ -335,3 +337,5 @@ Cleanup:
     }
     TEST_OK(RemoveDirectoryW(Root));
 }
+
+#endif

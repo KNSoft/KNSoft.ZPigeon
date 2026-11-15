@@ -6,12 +6,217 @@
 #include "../../Modules/File/Client.h"
 #include "../../Modules/Rtc/Client.h"
 #include "../../Modules/Recording/Client.h"
+#include "../../Modules/Window/Capture.h"
 #include "../../Network/Config.inl"
 #include "Retry.inl"
 
-#define ZP_CLIENT_DEBUG_RETRY_MILLISECONDS 5000
+#if defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) && \
+    !defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_QUIC_) && \
+    !defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_TCP_) && \
+    !defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_UDP_)
+#error A Client build must enable at least one transport.
+#endif
 
 #include <Bcrypt.h>
+
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WINDOW_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
+#pragma comment(lib, "Ole32.lib")
+#endif
+
+VOID
+NTAPI
+ZpClient_QueryBuildCapabilities(
+    _Out_ PZP_CLIENT_CAPABILITIES Capabilities)
+{
+    static const ZP_CLIENT_CAPABILITIES Build = {
+        0
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SYSTEM_)
+        | ZP_MODULE_BIT(1)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PROCESS_)
+        | ZP_MODULE_BIT(2)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SERVICE_)
+        | ZP_MODULE_BIT(3)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
+        | ZP_MODULE_BIT(4)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_TERMINAL_)
+        | ZP_MODULE_BIT(5)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EVENT_LOG_)
+        | ZP_MODULE_BIT(6)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_REGISTRY_)
+        | ZP_MODULE_BIT(7)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WINDOW_)
+        | ZP_MODULE_BIT(8)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_USER_)
+        | ZP_MODULE_BIT(9)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_)
+        | ZP_MODULE_BIT(10)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_TUNNEL_)
+        | ZP_MODULE_BIT(11)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BROWSER_)
+        | ZP_MODULE_BIT(12)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WMI_)
+        | ZP_MODULE_BIT(13)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_AUDIO_)
+        | ZP_MODULE_BIT(14)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_VIDEO_)
+        | ZP_MODULE_BIT(15)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RTC_)
+        | ZP_MODULE_BIT(16)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SERIAL_)
+        | ZP_MODULE_BIT(17)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
+        | ZP_MODULE_BIT(18)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PORTABLE_DEVICE_)
+        | ZP_MODULE_BIT(19)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SOFTWARE_)
+        | ZP_MODULE_BIT(20)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_HARDWARE_)
+        | ZP_MODULE_BIT(21)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_UPDATE_)
+        | ZP_MODULE_BIT(22)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_TASK_)
+        | ZP_MODULE_BIT(23)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FIREWALL_)
+        | ZP_MODULE_BIT(24)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_POWER_)
+        | ZP_MODULE_BIT(25)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SYSTEM_ADMINISTRATION_)
+        | ZP_MODULE_BIT(26)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WLAN_)
+        | ZP_MODULE_BIT(27)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_CERTIFICATE_)
+        | ZP_MODULE_BIT(28)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_CLIPBOARD_)
+        | ZP_MODULE_BIT(29)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_CREDENTIAL_)
+        | ZP_MODULE_BIT(30)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FIRMWARE_)
+        | ZP_MODULE_BIT(31)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_NETWORK_SHARE_)
+        | ZP_MODULE_BIT(32)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_NETWORK_STATUS_)
+        | ZP_MODULE_BIT(33)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PAGE_FILE_)
+        | ZP_MODULE_BIT(34)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BLUETOOTH_)
+        | ZP_MODULE_BIT(35)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_KEYBOARD_)
+        | ZP_MODULE_BIT(36)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_LOCATION_)
+        | ZP_MODULE_BIT(37)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FONT_)
+        | ZP_MODULE_BIT(38)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_APP_CONTAINER_)
+        | ZP_MODULE_BIT(39)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WINOBJ_)
+        | ZP_MODULE_BIT(40)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WSL_)
+        | ZP_MODULE_BIT(41)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_UI_AUTOMATION_)
+        | ZP_MODULE_BIT(42)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PROXY_VPN_)
+        | ZP_MODULE_BIT(43)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_CLIENT_STATUS_)
+        | ZP_MODULE_BIT(44)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SHADOW_COPY_)
+        | ZP_MODULE_BIT(45)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BITLOCKER_)
+        | ZP_MODULE_BIT(46)
+#endif
+        ,
+        0
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_QUIC_)
+        | (1UL << ZpTransportQuic)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_TCP_)
+        | (1UL << ZpTransportTcp)
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_UDP_)
+        | (1UL << ZpTransportUdp)
+#endif
+        ,
+        0
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    (defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_) && \
+     defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_RUNTIME_DISCOVERY_))
+        | ZP_CLIENT_EXECUTION_FEATURE_RUNTIME_DISCOVERY
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    (defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_) && \
+     defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_SHELL_EXECUTE_))
+        | ZP_CLIENT_EXECUTION_FEATURE_SHELL_EXECUTE
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    (defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_) && \
+     defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_ALTERNATE_IDENTITY_))
+        | ZP_CLIENT_EXECUTION_FEATURE_ALTERNATE_IDENTITY
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    (defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_) && \
+     defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_APP_CONTAINER_))
+        | ZP_CLIENT_EXECUTION_FEATURE_APP_CONTAINER
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    (defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_) && \
+     defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_CUSTOM_TOKEN_))
+        | ZP_CLIENT_EXECUTION_FEATURE_CUSTOM_TOKEN
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    (defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_) && \
+     defined(_KNSOFT_ZPIGEON_BUILD_EXECUTION_STAGING_))
+        | ZP_CLIENT_EXECUTION_FEATURE_STAGING
+#endif
+    };
+
+    *Capabilities = Build;
+}
 
 static
 NTSTATUS
@@ -22,6 +227,7 @@ ZpClient_ValidateConfig(
     NTSTATUS Status;
     SIZE_T Size, StringSize;
     ULONG Index;
+    ZP_CLIENT_CAPABILITIES Capabilities;
 
     if (Config->EndpointCount == 0 ||
         Config->EndpointCount > ZP_ENDPOINT_MAX_COUNT ||
@@ -52,11 +258,37 @@ ZpClient_ValidateConfig(
         return STATUS_INVALID_PARAMETER;
     }
 
+    Status = ZpConfig_AddStringSize(&Size, Config->Group, FALSE, &StringSize);
+    if (!NT_SUCCESS(Status) || StringSize > (ZP_CLIENT_GROUP_MAX_LENGTH + 1) * sizeof(WCHAR))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (Config->Group != NULL)
+    {
+        for (Index = 0; Config->Group[Index] != UNICODE_NULL; Index++)
+        {
+            if (Config->Group[Index] < 0x20 ||
+                (Config->Group[Index] >= 0x7F && Config->Group[Index] <= 0x9F))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+        }
+    }
+
+    ZpClient_QueryBuildCapabilities(&Capabilities);
     for (Index = 0; Index < Config->EndpointCount; Index++)
     {
         PCZP_ENDPOINT Endpoint = &Config->Endpoints[Index];
 
         if (!ZpConfig_IsTransportValid(Endpoint->Transport) || Endpoint->Port == 0)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+        if (!FlagOn(Capabilities.Transports, 1UL << Endpoint->Transport))
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+        if (Endpoint->RequireTls13 && Endpoint->Transport != ZpTransportTcp)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -100,11 +332,22 @@ ZpClient_Create(
     }
     RtlZeroMemory(Object, sizeof(*Object));
     RtlInitializeSRWLock(&Object->Lock);
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
     RtlInitializeSRWLock(&Object->FileEnumerationLock);
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
     RtlInitializeSRWLock(&Object->ArchiveEnumerationLock);
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_)
     RtlInitializeSRWLock(&Object->ExecutionLock);
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
     RtlInitializeSRWLock(&Object->RecordingLock);
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PROCESS_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BROWSER_)
     RtlInitializeSRWLock(&Object->SnapshotLock);
+#endif
     InitializeListHead(&Object->InboundRequests);
     InitializeListHead(&Object->LocalChannels);
     for (Index = 0; Index < ZP_CLIENT_LOOKUP_BUCKET_COUNT; Index++)
@@ -112,15 +355,42 @@ ZpClient_Create(
         InitializeListHead(&Object->InboundRequestBuckets[Index]);
         InitializeListHead(&Object->LocalChannelBuckets[Index]);
     }
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_)
     InitializeListHead(&Object->ExecutionJobs);
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
     InitializeListHead(&Object->RecordingJobs);
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
     InitializeListHead(&Object->FileEnumerations);
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
     InitializeListHead(&Object->ArchiveEnumerations);
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PROCESS_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BROWSER_)
     InitializeListHead(&Object->Snapshots);
+#endif
     Object->NextLocalChannelId = 1;
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
     Object->NextFileEnumerationId = 1;
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
     Object->NextArchiveEnumerationId = 1;
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_)
     Object->NextExecutionJobId = 1;
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WINDOW_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
+    if (FAILED(CoIncrementMTAUsage(&Object->CaptureMtaCookie)))
+    {
+        Mem_Free(Object);
+        return STATUS_DLL_INIT_FAILED;
+    }
+    ZpWindowCapture_Initialize();
+#endif
     Object->State = ZpClientStateStopped;
     Object->Config = *Config;
     Object->Config.ConnectTimeoutMilliseconds = Config->ConnectTimeoutMilliseconds != 0 ?
@@ -142,6 +412,7 @@ ZpClient_Create(
     Cursor += (SIZE_T)Config->EndpointCount * sizeof(*Endpoints);
     Object->Config.Endpoints = Endpoints;
     ZpConfig_CopyString(&Cursor, Config->ClientKeyName, &Object->Config.ClientKeyName);
+    ZpConfig_CopyString(&Cursor, Config->Group, &Object->Config.Group);
 
     for (Index = 0; Index < Config->EndpointCount; Index++)
     {
@@ -163,17 +434,23 @@ ZpClient_Create(
         }
         switch (Transport)
         {
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_QUIC_)
             case ZpTransportQuic:
                 ZpClientQuic_Configure(Object);
                 break;
+#endif
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_TCP_)
             case ZpTransportTcp:
                 ZpClientTcp_Configure(Object);
                 break;
+#endif
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_UDP_)
             case ZpTransportUdp:
                 ZpClientUdp_Configure(Object);
                 break;
+#endif
 
             default:
                 break;
@@ -213,9 +490,7 @@ ZpClient_ScheduleRetry(
 {
     LARGE_INTEGER DueTime;
     ULONG Delay, EndpointIndex;
-#ifndef _DEBUG
     ULONG RandomValue;
-#endif
 
     if (RestartRound)
     {
@@ -226,18 +501,11 @@ ZpClient_ScheduleRetry(
                                   &EndpointIndex))
     {
         Object->NextEndpointIndex = EndpointIndex;
-#ifdef _DEBUG
-        Delay = ZP_CLIENT_DEBUG_RETRY_MILLISECONDS;
-#else
         Delay = 1;
-#endif
     }
     else
     {
         Object->NextEndpointIndex = 0;
-#ifdef _DEBUG
-        Delay = ZP_CLIENT_DEBUG_RETRY_MILLISECONDS;
-#else
         if (!NT_SUCCESS(BCryptGenRandom(NULL,
                                         (PUCHAR)&RandomValue,
                                         sizeof(RandomValue),
@@ -247,7 +515,6 @@ ZpClient_ScheduleRetry(
                           ZP_CLIENT_DEFAULT_RETRY_JITTER_PERCENT / 100;
         }
         Delay = ZpClientRetry_GetDelay(Object->FailureRound, RandomValue);
-#endif
         if (Object->FailureRound != MAXULONG)
         {
             Object->FailureRound++;
@@ -479,6 +746,7 @@ ZpClient_Stop(
     PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
     PCZP_TRANSPORT_OPERATIONS Operations;
     PVOID TransportContext;
+    LOGICAL CompleteStop;
 
     RtlAcquireSRWLockExclusive(&Object->Lock);
     if (Object->State == ZpClientStateStopped || Object->State == ZpClientStateStopping)
@@ -486,6 +754,7 @@ ZpClient_Stop(
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return STATUS_SUCCESS;
     }
+    CompleteStop = Object->State == ZpClientStateRetryWait && !Object->StartPending;
     Object->State = ZpClientStateStopping;
     Object->CallbackCount++;
     Object->RetryPending = FALSE;
@@ -504,7 +773,14 @@ ZpClient_Stop(
     RtlAcquireSRWLockExclusive(&Object->Lock);
     Object->CallbackCount--;
     RtlReleaseSRWLockExclusive(&Object->Lock);
-    Operations->Stop(TransportContext);
+    if (CompleteStop)
+    {
+        ZpClient_NotifyState(Client, ZpClientStateStopped, ZpStatus_FromNtStatus(STATUS_SUCCESS));
+    }
+    else
+    {
+        Operations->Stop(TransportContext);
+    }
     return STATUS_SUCCESS;
 }
 
@@ -621,11 +897,20 @@ ZpClient_TransportShutdown(
     RtlReleaseSRWLockExclusive(&Object->Lock);
 
     ZpClient_CloseInboundRequests(Client);
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RTC_)
     ZpRtc_Close(Object);
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_)
     ZpFile_ResetEnumeration(Object);
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PROCESS_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BROWSER_)
     ZpClientSnapshot_CloseAll(Object);
+#endif
     ZpClientLocalChannel_CloseAll(Object, Status);
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
     ZpRecording_StopAll(Object);
+#endif
     if (State == ZpClientStateStopping)
     {
         ZpClient_NotifyState(Client, ZpClientStateStopped, Status);
@@ -664,21 +949,39 @@ ZpClient_Close(
         CloseThreadpoolTimer(Object->RetryTimer);
         Object->RetryTimer = NULL;
     }
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_QUIC_)
     if (Object->TransportOperations[ZpTransportQuic] != NULL)
     {
         ZpClientQuic_Uninitialize(&Object->QuicTransport);
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_TCP_)
     if (Object->TransportOperations[ZpTransportTcp] != NULL)
     {
         ZpClientTcp_Uninitialize(&Object->TcpTransport);
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_UDP_)
     if (Object->TransportOperations[ZpTransportUdp] != NULL)
     {
         ZpClientUdp_Uninitialize(&Object->UdpTransport);
     }
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_)
     ZpExecution_Cleanup(Object);
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
     ZpRecording_Cleanup(Object);
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SYSTEM_ADMINISTRATION_)
     ZpRdpChildSession_Close();
+#endif
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WINDOW_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
+    ZpWindowCapture_Uninitialize();
+    CoDecrementMTAUsage(Object->CaptureMtaCookie);
+#endif
     Mem_Free(Object);
     return STATUS_SUCCESS;
 }

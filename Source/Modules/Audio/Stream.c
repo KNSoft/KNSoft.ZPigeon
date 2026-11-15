@@ -15,6 +15,10 @@
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_AUDIO_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
+
 #pragma comment(lib, "Ole32.lib")
 
 #define ZP_AUDIO_CHANNEL_CHUNK_SIZE 0x00040000UL
@@ -104,7 +108,11 @@ ZpAudio_SendBytes(
 
     if (Channel->DirectStreamId != 0)
     {
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RTC_)
         return ZpRtc_Send(Object, Channel->DirectStreamId, Data, Length);
+#else
+        return STATUS_NOT_SUPPORTED;
+#endif
     }
     Status = ZpMessage_EncodeChannelDataHeader(Channel->Header.ChannelId, Header);
     if (!NT_SUCCESS(Status)) return Status;
@@ -649,6 +657,10 @@ ZpAudio_CreateStreamChannel(
     SIZE_T AllocationSize;
     NTSTATUS Status;
 
+#if defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) && !defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RTC_)
+    if (Request->DirectStreamId != 0) return STATUS_NOT_SUPPORTED;
+#endif
+
     AllocationSize = FIELD_OFFSET(ZP_CLIENT_AUDIO_CHANNEL, DeviceId) +
                      ((SIZE_T)Request->DeviceId.Length + 1) * sizeof(WCHAR);
     AudioChannel = Mem_Alloc(AllocationSize);
@@ -736,3 +748,5 @@ ZpAudio_CommitChannel(
         ZpAudio_FinishWorker(Channel, ZpStatus_FromNtStatus(Status));
     }
 }
+
+#endif

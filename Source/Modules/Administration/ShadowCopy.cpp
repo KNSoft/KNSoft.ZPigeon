@@ -9,6 +9,8 @@
 #include <vsbackup.h>
 #include <wrl/client.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SHADOW_COPY_)
+
 #pragma comment(lib, "SrClient.lib")
 #pragma comment(lib, "VssApi.lib")
 
@@ -890,3 +892,5 @@ Cleanup:
     Mem_Free(identity);
     return ZpStatus_FromCode(ZpStatusHResult, result);
 }
+
+#endif

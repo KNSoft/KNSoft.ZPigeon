@@ -1,5 +1,7 @@
 ﻿#include <KNSoft/MakeLifeEasier/System/Registry.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PAGE_FILE_)
+
 static const UNICODE_STRING ZpPageFileKey = RTL_CONSTANT_STRING(
     L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management");
 static const UNICODE_STRING ZpPageFileValue = RTL_CONSTANT_STRING(L"PagingFiles");
@@ -237,3 +239,5 @@ Cleanup:
     Mem_Free(Identity);
     return ZpStatus_FromNtStatus(Status);
 }
+
+#endif

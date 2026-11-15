@@ -3,6 +3,8 @@
 #include <winhttp.h>
 #include <wininet.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_PROXY_VPN_)
+
 #pragma comment(lib, "Rasapi32.lib")
 #pragma comment(lib, "Winhttp.lib")
 #pragma comment(lib, "Wininet.lib")
@@ -369,3 +371,5 @@ ZpAdministration_ControlProxyVpn(
     Mem_Free(Identity);
     return ZpStatus_FromNtStatus(Status);
 }
+
+#endif

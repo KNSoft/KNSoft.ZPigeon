@@ -2,6 +2,10 @@
 
 #include <sddl.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_FILE_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_REGISTRY_)
+
 #pragma comment(lib, "KNSoft.NDK.WinAPI.lib")
 
 NTSTATUS
@@ -126,3 +130,5 @@ ZpSecurity_SetDacl(
     LocalFree(Descriptor);
     return Status;
 }
+
+#endif

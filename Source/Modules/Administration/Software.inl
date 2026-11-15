@@ -4,6 +4,8 @@
 
 #include "SoftwareDeployment.h"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SOFTWARE_)
+
 static
 PWSTR
 ZpAdministration_QueryRegistryString(
@@ -495,3 +497,5 @@ ZpAdministration_ControlSoftware(
                                         Control->Data.Length / sizeof(WCHAR));
     return ZpStatus_FromCode(ZpStatusHResult, Result);
 }
+
+#endif

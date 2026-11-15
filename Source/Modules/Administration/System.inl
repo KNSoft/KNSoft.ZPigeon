@@ -1,5 +1,7 @@
 ﻿#include <KNSoft/MakeLifeEasier/System/Registry.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SYSTEM_ADMINISTRATION_)
+
 #define ZP_SYSTEM_INFORMATION_EDITABLE 0x00000001
 #define ZP_SYSTEM_INFORMATION_RESTART_REQUIRED 0x00000002
 #define ZP_SYSTEM_INFORMATION_DISPLAY 0x00000004
@@ -99,7 +101,11 @@ ZpAdministration_AddDisplays(
     return Status;
 }
 
+#endif
+
 #include "RemoteDesktop.inl"
+
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_SYSTEM_ADMINISTRATION_)
 
 static
 NTSTATUS
@@ -696,3 +702,5 @@ ZpAdministration_ControlSystem(
     Mem_Free(Identity);
     return ZpStatus_FromNtStatus(Status);
 }
+
+#endif

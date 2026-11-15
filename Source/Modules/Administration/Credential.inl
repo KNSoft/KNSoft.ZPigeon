@@ -1,4 +1,6 @@
-﻿#pragma comment(lib, "Advapi32.lib")
+﻿#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_CREDENTIAL_)
+
+#pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "RuntimeObject.lib")
 
 typedef __x_ABI_CWindows_CSecurity_CCredentials_CICredentialFactory ZP_CREDENTIAL_FACTORY;
@@ -541,3 +543,5 @@ ZpAdministration_ControlCredential(
                ZpCredential_ControlWindows(Control, &Parsed) :
                ZpCredential_ControlWeb(Control, &Parsed);
 }
+
+#endif

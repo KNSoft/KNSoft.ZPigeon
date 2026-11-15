@@ -1,3 +1,5 @@
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_BITLOCKER_)
+
 typedef struct _ZP_BITLOCKER_ENUMERATION_CONTEXT
 {
     PZP_ADMINISTRATION_BUILDER Builder;
@@ -693,3 +695,5 @@ ZpAdministration_ControlBitLockerProtector(
     }
     return ZpStatus_FromCode(ZpStatusHResult, Hr);
 }
+
+#endif

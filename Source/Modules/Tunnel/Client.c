@@ -6,6 +6,8 @@
 #include "../../KNSoft.ZPigeon.Client.SDK/Client.inl"
 #include "../../KNSoft.ZPigeon.Client.SDK/Core/Channel.h"
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_TUNNEL_)
+
 #pragma comment(lib, "Ws2_32.lib")
 
 #define ZP_TUNNEL_CHUNK_SIZE 0x00010000UL
@@ -618,3 +620,5 @@ ZpTunnel_CommitChannel(
     if (Removed) ZpClientLocalChannel_Release(&Channel->Header);
     else if (StartWorker) ZpTunnel_StartWorker(Channel);
 }
+
+#endif
