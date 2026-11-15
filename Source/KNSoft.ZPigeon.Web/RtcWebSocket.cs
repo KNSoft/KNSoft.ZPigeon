@@ -8,6 +8,7 @@ namespace KNSoft.ZPigeon.Web;
 internal static class RtcWebSocket
 {
     private const int MaximumSignalLength = 512 * 1024;
+    private const int CloseMilliseconds = 5000;
 
     internal static async Task RunAsync(
         HttpContext context,
@@ -35,59 +36,103 @@ internal static class RtcWebSocket
         var iceServers = configuredIceServers.Prepend(stun.Url(context)).Distinct().ToArray();
         using var lease = stun.Authorize(managementAddress, server.GetClientAddress());
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
+        using var negotiation = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+        negotiation.CancelAfter(StunServer.LeaseMilliseconds);
         var sessionId = Guid.NewGuid();
-        var opened = false;
+        Task<string>? opening = null;
         try
         {
             await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { iceServers }),
                                    WebSocketMessageType.Text,
                                    true,
-                                   context.RequestAborted);
-            var signal = await ReceiveAsync(socket, context.RequestAborted);
+                                   negotiation.Token);
+            var signal = await ReceiveAsync(socket, negotiation.Token);
             var offer = JsonSerializer.Deserialize<RtcOffer>(signal)?.Offer;
             if (string.IsNullOrEmpty(offer)) throw new InvalidDataException("无效的 WebRTC Offer");
-            var answer = await server.OpenRtcAsync(sessionId, offer, iceServers);
-            opened = true;
+            using (server.SelectCancellation(CancellationToken.None))
+            {
+                opening = server.OpenRtcAsync(sessionId, offer, iceServers);
+            }
+            var answer = await opening.WaitAsync(negotiation.Token);
             await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { answer }),
                                    WebSocketMessageType.Text,
                                    true,
-                                   context.RequestAborted);
+                                   negotiation.Token);
+            lease.Dispose();
             var closeBuffer = new byte[1];
             while (socket.State == WebSocketState.Open)
             {
                 var message = await socket.ReceiveAsync(closeBuffer, context.RequestAborted);
                 if (message.MessageType == WebSocketMessageType.Close) break;
-                await socket.CloseAsync(WebSocketCloseStatus.InvalidMessageType,
-                                        "WebRTC 信令已完成",
-                                        CancellationToken.None);
+                await CloseOutputAsync(socket, WebSocketCloseStatus.InvalidMessageType, "WebRTC 信令已完成");
+                break;
             }
         }
-        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        catch (OperationCanceledException) when (negotiation.IsCancellationRequested)
         {
+            if (!context.RequestAborted.IsCancellationRequested)
+            {
+                await CloseOutputAsync(socket, WebSocketCloseStatus.PolicyViolation, "P2P 协商超时");
+            }
         }
-        catch (Exception exception) when (exception is NativeException or InvalidDataException or WebSocketException)
+        catch (Exception exception) when (
+            exception is NativeException or InvalidDataException or JsonException or WebSocketException)
         {
             if (socket.State == WebSocketState.Open)
             {
                 var message = exception.Message;
-                if (message.Length > 100) message = message[..100];
-                await socket.CloseAsync(WebSocketCloseStatus.InternalServerError,
-                                        message,
-                                        CancellationToken.None);
+                if (message.Length > 40) message = message[..40];
+                await CloseOutputAsync(socket, WebSocketCloseStatus.InternalServerError, message);
             }
         }
         finally
         {
-            if (opened)
+            if (opening != null)
             {
-                try
+                if (opening.IsCompleted)
                 {
-                    await server.CloseRtcAsync(sessionId);
+                    await CloseSessionAsync(server, sessionId, opening);
                 }
-                catch (NativeException)
+                else
                 {
+                    // A timed-out offer can still create a native session; close it when the request finishes.
+                    _ = CloseSessionAsync(server, sessionId, opening);
                 }
             }
+        }
+    }
+
+    private static async Task CloseSessionAsync(NativeServer server, Guid sessionId, Task<string> opening)
+    {
+        try
+        {
+            await opening;
+        }
+        catch (Exception exception) when (exception is NativeException or OperationCanceledException)
+        {
+        }
+        using var cleanup = new CancellationTokenSource(CloseMilliseconds);
+        using var selection = server.SelectCancellation(cleanup.Token);
+        try
+        {
+            await server.CloseRtcAsync(sessionId).WaitAsync(cleanup.Token);
+        }
+        catch (Exception exception) when (exception is NativeException or OperationCanceledException)
+        {
+        }
+    }
+
+    private static async Task CloseOutputAsync(WebSocket socket, WebSocketCloseStatus status, string message)
+    {
+        if (socket.State != WebSocketState.Open) return;
+        using var timeout = new CancellationTokenSource(CloseMilliseconds);
+        try
+        {
+            await socket.CloseOutputAsync(status, message, timeout.Token);
+        }
+        catch (Exception exception) when (exception is OperationCanceledException or WebSocketException)
+        {
+            socket.Abort();
         }
     }
 

@@ -10,8 +10,11 @@ typedef struct _ZP_NATIVE_CLIENT_INFO
 {
     ULONGLONG ClientId;
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE];
+    WCHAR Group[ZP_CLIENT_GROUP_MAX_LENGTH + 1];
     ZP_IP_ADDRESS Address;
     ZP_SERVER_CONNECTION_STATISTICS Statistics;
+    GUID InstanceId;
+    ZP_CLIENT_CAPABILITIES Capabilities;
 } ZP_NATIVE_CLIENT_INFO, *PZP_NATIVE_CLIENT_INFO;
 
 typedef
@@ -730,6 +733,12 @@ BOOLEAN
 (NTAPI *ZP_NATIVE_WINDOW_CAPTURE_DATA_CALLBACK)(
     _In_reads_bytes_(DataLength) const BYTE* Data,
     _In_ ULONG DataLength,
+    _In_opt_ PVOID Context);
+
+typedef
+VOID
+(NTAPI *ZP_NATIVE_WINDOW_CAPTURE_WRITABLE_CALLBACK)(
+    _In_ ULONG CreditBytes,
     _In_opt_ PVOID Context);
 
 typedef
@@ -1727,6 +1736,7 @@ ZpNative_OpenWindowCapture(
     _In_ BYTE Encoding,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_WRITABLE_CALLBACK WritableCallback,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_CLOSE_CALLBACK CloseCallback,
     _In_opt_ PVOID Context);
 

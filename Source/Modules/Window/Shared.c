@@ -2,6 +2,10 @@
 
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WINDOW_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
+
 typedef struct _ZP_WINDOW_SHARED_SOURCE ZP_WINDOW_SHARED_SOURCE, *PZP_WINDOW_SHARED_SOURCE;
 
 struct _ZP_WINDOW_SHARED_CAPTURE
@@ -125,6 +129,11 @@ ZpWindowShared_Worker(
     ZpWindowShared_SignalCaptures(Source);
     RtlReleaseSRWLockExclusive(&Source->Lock);
     NtWaitForSingleObject(Source->StopEvent, FALSE, NULL);
+    if (Source->Frame != NULL)
+    {
+        ZpWindowCapture_ReleaseFrame(Source->Frame);
+        Source->Frame = NULL;
+    }
     ZpWindowCapture_Close(Source->Device);
     return FAILED(Result) ? (NTSTATUS)Result : STATUS_SUCCESS;
 }
@@ -246,7 +255,16 @@ ZpWindowShared_Open(
                                  Source,
                                  &Source->Thread,
                                  NULL);
-        if (NT_SUCCESS(Status)) NtResumeThread(Source->Thread, NULL);
+        if (NT_SUCCESS(Status))
+        {
+            Status = NtResumeThread(Source->Thread, NULL);
+            if (!NT_SUCCESS(Status))
+            {
+                NtTerminateThread(Source->Thread, Status);
+                Source->Result = HRESULT_FROM_NT(Status);
+                NtSetEvent(Source->ReadyEvent, NULL);
+            }
+        }
     }
     else
     {
@@ -351,9 +369,13 @@ ZpWindowShared_Next(
         {
             Object = Mem_Alloc(sizeof(*Object));
             Result = Object != NULL ?
-                         ZpWindowCapture_EncodeFrame(Source->Device, Frame, &Object->Value) :
+                         ZpWindowCapture_GetFrameChangeRate(Frame, &Object->ChangeRate) :
                          E_OUTOFMEMORY;
-            if (SUCCEEDED(Result))
+            if (Result == S_OK)
+            {
+                Result = ZpWindowCapture_EncodeFrame(Source->Device, Frame, &Object->Value);
+            }
+            if (Result == S_OK)
             {
                 Object->ReferenceCount = 1;
                 if (Source->ImageSequence <= Sequence)
@@ -373,7 +395,7 @@ ZpWindowShared_Next(
         RtlReleaseSRWLockExclusive(&Source->ConvertLock);
         ZpWindowCapture_ReleaseFrame(Frame);
         if (Previous != NULL) ZpWindowShared_ReleaseImage(Previous);
-        if (SUCCEEDED(Result)) *Image = Object;
+        if (Result == S_OK) *Image = Object;
     }
     return Result;
 }
@@ -386,10 +408,16 @@ ZpWindowShared_Update(
     _In_ BYTE Quality)
 {
     PZP_WINDOW_SHARED_SOURCE Source = Capture->Source;
-    ZP_WINDOW_CAPTURE_OPTIONS Previous = Capture->Options;
+    ZP_WINDOW_CAPTURE_OPTIONS Previous;
     HRESULT Result;
 
     RtlAcquireSRWLockExclusive(&Source->Lock);
+    Previous = Capture->Options;
+    if (Previous.MaxDimension == MaxDimension && Previous.FrameRate == FrameRate && Previous.Quality == Quality)
+    {
+        RtlReleaseSRWLockExclusive(&Source->Lock);
+        return S_OK;
+    }
     Capture->Options.MaxDimension = MaxDimension;
     Capture->Options.FrameRate = FrameRate;
     Capture->Options.Quality = Quality;
@@ -483,3 +511,5 @@ ZpWindowShared_Close(
     Mem_Free(Capture);
     if (Last) ZpWindowShared_FreeSource(Source);
 }
+
+#endif

@@ -23,6 +23,7 @@ typedef struct _ZP_WINDOW_CAPTURE_CONTEXT
     ZP_CONNECTION_HANDLE Connection;
     ZP_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback;
     ZP_CHANNEL_DATA_CALLBACK DataCallback;
+    ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback;
     ZP_CHANNEL_CLOSE_CALLBACK CloseCallback;
     PVOID Context;
 } ZP_WINDOW_CAPTURE_CONTEXT, *PZP_WINDOW_CAPTURE_CONTEXT;
@@ -376,19 +377,6 @@ ZpServer_CaptureWindow(
 static
 VOID
 NTAPI
-ZpWindow_CaptureWritable(
-    _In_ ZP_CHANNEL_HANDLE Channel,
-    _In_ ULONG CreditBytes,
-    _In_opt_ PVOID Context)
-{
-    UNREFERENCED_PARAMETER(Channel);
-    UNREFERENCED_PARAMETER(CreditBytes);
-    UNREFERENCED_PARAMETER(Context);
-}
-
-static
-VOID
-NTAPI
 ZpWindow_OpenCaptureComplete(
     _In_ ZP_REQUEST_HANDLE Request,
     _In_ ZP_STATUS Status,
@@ -419,7 +407,7 @@ ZpWindow_OpenCaptureComplete(
                 FALSE,
                 0,
                 CaptureContext->DataCallback,
-                ZpWindow_CaptureWritable,
+                CaptureContext->WritableCallback,
                 CaptureContext->CloseCallback,
                 CaptureContext->Context,
                 TRUE,
@@ -461,6 +449,7 @@ ZpServer_OpenWindowCapture(
     _In_ ULONG TimeoutMilliseconds,
     _In_ ZP_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback,
     _In_ ZP_CHANNEL_DATA_CALLBACK DataCallback,
+    _In_ ZP_CHANNEL_WRITABLE_CALLBACK WritableCallback,
     _In_ ZP_CHANNEL_CLOSE_CALLBACK CloseCallback,
     _In_opt_ PVOID Context,
     _Out_ ZP_REQUEST_HANDLE* Request)
@@ -471,7 +460,7 @@ ZpServer_OpenWindowCapture(
     NTSTATUS Status;
     LOGICAL Reserved = FALSE;
 
-    if (OpenCallback == NULL || DataCallback == NULL || CloseCallback == NULL)
+    if (OpenCallback == NULL || DataCallback == NULL || WritableCallback == NULL || CloseCallback == NULL)
     {
         return STATUS_INVALID_PARAMETER;
     }
@@ -491,6 +480,7 @@ ZpServer_OpenWindowCapture(
         CaptureContext->Connection = Connection;
         CaptureContext->OpenCallback = OpenCallback;
         CaptureContext->DataCallback = DataCallback;
+        CaptureContext->WritableCallback = WritableCallback;
         CaptureContext->CloseCallback = CloseCallback;
         CaptureContext->Context = Context;
         Status = ZpServer_SendRequest(Connection,

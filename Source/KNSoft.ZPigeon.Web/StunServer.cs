@@ -13,11 +13,13 @@ internal sealed class StunServer(ushort port) : IDisposable
     private const int HeaderLength = 20;
     private const int MaximumRequestLength = 2048;
     private const int MaximumRequestsPerSecond = 64;
+    internal const int LeaseMilliseconds = 60000;
     private readonly Lock sync = new();
     private readonly Dictionary<IPAddress, AllowEntry> allowed = [];
     private readonly CancellationTokenSource cancellation = new();
     private Socket? socket;
     private Task? worker;
+    private Timer? leaseCleanup;
 
     internal ushort Port => port;
 
@@ -28,12 +30,14 @@ internal sealed class StunServer(ushort port) : IDisposable
             DualMode = true
         };
         socket.Bind(new IPEndPoint(IPAddress.IPv6Any, port));
+        leaseCleanup = new Timer(_ => RemoveExpired(), null, LeaseMilliseconds, LeaseMilliseconds);
         worker = RunAsync();
     }
 
     internal IDisposable Authorize(params IPAddress[] addresses)
     {
         var unique = addresses.Select(Normalize).Distinct().ToArray();
+        var lease = new Lease(this, unique, Environment.TickCount64 + LeaseMilliseconds);
         lock (sync)
         {
             foreach (var address in unique)
@@ -43,10 +47,10 @@ internal sealed class StunServer(ushort port) : IDisposable
                     entry = new AllowEntry();
                     allowed.Add(address, entry);
                 }
-                entry.References++;
+                entry.Leases.Add(lease);
             }
         }
-        return new Lease(this, unique);
+        return lease;
     }
 
     internal string Url(HttpContext context)
@@ -110,6 +114,12 @@ internal sealed class StunServer(ushort port) : IDisposable
         lock (sync)
         {
             if (!allowed.TryGetValue(address, out var entry)) return false;
+            entry.Leases.RemoveAll(lease => lease.ExpiresAt <= now);
+            if (entry.Leases.Count == 0)
+            {
+                allowed.Remove(address);
+                return false;
+            }
             if (now - entry.RequestWindow >= 1000)
             {
                 entry.RequestWindow = now;
@@ -132,6 +142,14 @@ internal sealed class StunServer(ushort port) : IDisposable
         {
             return false;
         }
+        for (var offset = HeaderLength; offset < request.Length;)
+        {
+            if (request.Length - offset < sizeof(uint)) return false;
+            var length = BinaryPrimitives.ReadUInt16BigEndian(request[(offset + 2)..]);
+            var paddedLength = (length + 3) & ~3;
+            if (paddedLength > request.Length - offset - sizeof(uint)) return false;
+            offset += sizeof(uint) + paddedLength;
+        }
         var address = Normalize(source.Address).GetAddressBytes();
         var valueLength = address.Length == 4 ? 8 : 20;
         response = GC.AllocateUninitializedArray<byte>(HeaderLength + sizeof(uint) + valueLength);
@@ -152,14 +170,29 @@ internal sealed class StunServer(ushort port) : IDisposable
         return true;
     }
 
-    private void Release(IPAddress[] addresses)
+    private void RemoveExpired()
+    {
+        var now = Environment.TickCount64;
+        lock (sync)
+        {
+            foreach (var address in allowed.Keys.ToArray())
+            {
+                var entry = allowed[address];
+                entry.Leases.RemoveAll(lease => lease.ExpiresAt <= now);
+                if (entry.Leases.Count == 0) allowed.Remove(address);
+            }
+        }
+    }
+
+    private void Release(Lease lease, IPAddress[] addresses)
     {
         lock (sync)
         {
             foreach (var address in addresses)
             {
                 if (!allowed.TryGetValue(address, out var entry)) continue;
-                if (--entry.References == 0) allowed.Remove(address);
+                entry.Leases.Remove(lease);
+                if (entry.Leases.Count == 0) allowed.Remove(address);
             }
         }
     }
@@ -170,6 +203,7 @@ internal sealed class StunServer(ushort port) : IDisposable
     public void Dispose()
     {
         cancellation.Cancel();
+        leaseCleanup?.Dispose();
         socket?.Dispose();
         try
         {
@@ -186,15 +220,16 @@ internal sealed class StunServer(ushort port) : IDisposable
 
     private sealed class AllowEntry
     {
-        internal int References;
+        internal readonly List<Lease> Leases = [];
         internal int RequestCount;
         internal long RequestWindow;
     }
 
-    private sealed class Lease(StunServer owner, IPAddress[] addresses) : IDisposable
+    private sealed class Lease(StunServer owner, IPAddress[] addresses, long expiresAt) : IDisposable
     {
         private StunServer? server = owner;
+        internal long ExpiresAt => expiresAt;
 
-        public void Dispose() => Interlocked.Exchange(ref server, null)?.Release(addresses);
+        public void Dispose() => Interlocked.Exchange(ref server, null)?.Release(this, addresses);
     }
 }

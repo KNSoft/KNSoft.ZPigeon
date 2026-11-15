@@ -25,7 +25,8 @@ public readonly record struct WindowCaptureOptions(
     bool Desktop = false,
     uint MonitorIndex = uint.MaxValue,
     WindowCaptureMode Mode = WindowCaptureMode.Image,
-    WindowVideoCodec VideoCodec = WindowVideoCodec.H264)
+    WindowVideoCodec VideoCodec = WindowVideoCodec.H264,
+    uint MaxBitRate = 100_000_000)
 {
     internal uint Flags => (CaptureCursor ? 1U : 0) | (Desktop ? 2U : 0);
     internal byte Encoding => (byte)((byte)Mode | (byte)((byte)VideoCodec << 2));
@@ -39,6 +40,8 @@ public sealed partial class NativeServer
         CompleteWindowCaptureOpen;
     private static readonly NativeMethods.WindowCaptureDataCallback WindowCaptureDataCallback =
         ReceiveWindowCaptureData;
+    private static readonly NativeMethods.WindowCaptureWritableCallback WindowCaptureWritableCallback =
+        SignalWindowCaptureWritable;
     private static readonly NativeMethods.WindowCaptureCloseCallback WindowCaptureCloseCallback =
         CompleteWindowCaptureClose;
 
@@ -64,6 +67,7 @@ public sealed partial class NativeServer
                                                      options.Encoding,
                                                      WindowCaptureOpenCallback,
                                                      WindowCaptureDataCallback,
+                                                     WindowCaptureWritableCallback,
                                                      WindowCaptureCloseCallback,
                                                      GCHandle.ToIntPtr(creation.Handle));
         if (status < 0)
@@ -78,7 +82,7 @@ public sealed partial class NativeServer
     {
         if (options.MaxDimension is 0 or > 7680 || options.FrameRate is 0 or > 60 ||
             options.ImageQuality is 0 or > 100 || options.Mode > WindowCaptureMode.Video ||
-            options.VideoCodec > WindowVideoCodec.H265)
+            options.VideoCodec > WindowVideoCodec.H265 || options.MaxBitRate is < 256_000 or > 100_000_000)
         {
             throw new ArgumentOutOfRangeException(nameof(options));
         }
@@ -100,6 +104,9 @@ public sealed partial class NativeServer
     private static bool ReceiveWindowCaptureData(nint data, uint dataLength, nint context) =>
         GetWindowCaptureCreation(context).Stream?.Receive(data, dataLength) == true;
 
+    private static void SignalWindowCaptureWritable(uint creditBytes, nint context) =>
+        GetWindowCaptureCreation(context).Stream?.SignalWritable();
+
     private static void CompleteWindowCaptureClose(ZpStatus status, nint context) =>
         GetWindowCaptureCreation(context).Stream?.Complete(status);
 
@@ -117,10 +124,13 @@ public sealed partial class NativeServer
 
 public sealed class WindowCaptureStream : IAsyncDisposable
 {
+    private const int Retry = unchecked((int)0xC000022D);
+    private const int InvalidDeviceState = unchecked((int)0xC0000184);
+    private const int MaximumBufferedBytes = 32 * 1024 * 1024;
     private readonly nint stream;
     private readonly NativeServer.WindowCaptureCreation creation;
     private readonly Channel<OwnedBuffer> output =
-        Channel.CreateBounded<OwnedBuffer>(new BoundedChannelOptions(8)
+        Channel.CreateBounded<OwnedBuffer>(new BoundedChannelOptions(128)
         {
             SingleReader = true,
             SingleWriter = true,
@@ -128,10 +138,16 @@ public sealed class WindowCaptureStream : IAsyncDisposable
         });
     private readonly TaskCompletionSource<WindowCaptureCompletion> completion =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly SemaphoreSlim sendLock = new(1, 1);
+    private readonly SemaphoreSlim writable = new(0);
+    private readonly CancellationTokenSource closing = new();
     private int disposed;
+    private int bufferedBytes;
+    private readonly Action<int> releaseBuffer;
 
     internal WindowCaptureStream(nint stream, NativeServer.WindowCaptureCreation creation)
     {
+        releaseBuffer = ReleaseBuffer;
         this.stream = stream;
         this.creation = creation;
     }
@@ -141,51 +157,104 @@ public sealed class WindowCaptureStream : IAsyncDisposable
 
     internal bool Receive(nint data, uint dataLength)
     {
-        if (disposed != 0) return false;
-        var buffer = OwnedBuffer.Copy(data, (int)dataLength);
+        if (disposed != 0 || dataLength > MaximumBufferedBytes) return false;
+        if (Interlocked.Add(ref bufferedBytes, (int)dataLength) > MaximumBufferedBytes)
+        {
+            ReleaseBuffer((int)dataLength);
+            return false;
+        }
+        var buffer = OwnedBuffer.Copy(data, (int)dataLength, releaseBuffer);
         if (output.Writer.TryWrite(buffer)) return true;
         buffer.Dispose();
         return false;
     }
 
+    private void ReleaseBuffer(int length) => Interlocked.Add(ref bufferedBytes, -length);
+
     internal void Complete(ZpStatus status)
     {
+        closing.Cancel();
         output.Writer.TryComplete();
         completion.TrySetResult(new(status));
     }
 
-    public unsafe void Send(ReadOnlySpan<byte> data)
+    internal void SignalWritable() => writable.Release();
+
+    public async ValueTask SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(disposed != 0, this);
-        fixed (byte* pointer = data)
+        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, closing.Token);
+        try
         {
-            NativeServer.ThrowIfFailed(NativeMethods.SendWindowCaptureInput(
-                stream,
-                pointer,
-                (uint)data.Length));
+            await sendLock.WaitAsync(waiting.Token);
+            try
+            {
+                while (true)
+                {
+                    waiting.Token.ThrowIfCancellationRequested();
+                    var status = Send(data.Span);
+                    if (status != Retry)
+                    {
+                        NativeServer.ThrowIfFailed(status);
+                        return;
+                    }
+                    await writable.WaitAsync(waiting.Token);
+                }
+            }
+            finally
+            {
+                sendLock.Release();
+            }
+        }
+        catch (OperationCanceledException) when (closing.IsCancellationRequested &&
+                                                  !cancellationToken.IsCancellationRequested)
+        {
+            NativeServer.ThrowIfFailed(InvalidDeviceState);
         }
     }
 
-    public void Update(WindowCaptureOptions options)
+    private unsafe int Send(ReadOnlySpan<byte> data)
+    {
+        fixed (byte* pointer = data)
+        {
+            return NativeMethods.SendWindowCaptureInput(stream, pointer, (uint)data.Length);
+        }
+    }
+
+    public ValueTask UpdateAsync(WindowCaptureOptions options, CancellationToken cancellationToken = default)
     {
         NativeServer.ValidateWindowCaptureOptions(options);
-        Span<byte> message = stackalloc byte[sizeof(byte) + sizeof(ushort) + 3 * sizeof(byte)];
+        var message = new byte[sizeof(byte) + sizeof(ushort) + 3 * sizeof(byte) + sizeof(uint)];
         message[0] = 5;
-        BinaryPrimitives.WriteUInt16LittleEndian(message[sizeof(byte)..], (ushort)options.MaxDimension);
+        BinaryPrimitives.WriteUInt16LittleEndian(message.AsSpan(sizeof(byte)), (ushort)options.MaxDimension);
         message[sizeof(byte) + sizeof(ushort)] = options.FrameRate;
         message[sizeof(byte) + sizeof(ushort) + sizeof(byte)] = options.ImageQuality;
         message[sizeof(byte) + sizeof(ushort) + 2 * sizeof(byte)] = options.Encoding;
-        Send(message);
+        BinaryPrimitives.WriteUInt32LittleEndian(message.AsSpan(sizeof(byte) + sizeof(ushort) + 3 * sizeof(byte)),
+                                                options.MaxBitRate);
+        return SendAsync(message, cancellationToken);
     }
 
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        closing.Cancel();
         output.Writer.TryComplete();
-        _ = NativeMethods.CloseWindowCapture(stream);
+        await sendLock.WaitAsync();
+        try
+        {
+            _ = NativeMethods.CloseWindowCapture(stream);
+        }
+        finally
+        {
+            sendLock.Release();
+        }
         await completion.Task;
         OwnedBuffer.Drain(output.Reader);
         creation.Handle.Free();
+        sendLock.Dispose();
+        writable.Dispose();
+        closing.Dispose();
     }
 }
 
@@ -197,6 +266,9 @@ internal static partial class NativeMethods
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal delegate bool WindowCaptureDataCallback(nint data, uint dataLength, nint context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    internal delegate void WindowCaptureWritableCallback(uint creditBytes, nint context);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     internal delegate void WindowCaptureCloseCallback(ZpStatus status, nint context);
@@ -216,6 +288,7 @@ internal static partial class NativeMethods
         byte encoding,
         WindowCaptureOpenCallback openCallback,
         WindowCaptureDataCallback dataCallback,
+        WindowCaptureWritableCallback writableCallback,
         WindowCaptureCloseCallback closeCallback,
         nint context);
 

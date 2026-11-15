@@ -1,23 +1,40 @@
 const headerLength = 21,
   maximumImageLength = 0x1000000,
   maximumDimension = 7680,
-  minimumVideoDimension = 128;
+  minimumVideoDimension = 128,
+  maximumPendingFrames = 8,
+  maximumPendingBytes = 0x2000000;
 const h264Codec = "avc1.4D0033",
   h265Codec = "hev1.1.6.L153.B0",
   h264Flag = 1,
   h265Flag = 2;
 
 export class CaptureFrameDecoder {
-  constructor(canvas, status, active, acknowledge, reportVideoCodecs) {
+  constructor(canvas, status, active, acknowledge, reportVideoCodecs, reportStatistics) {
     this.canvas = canvas;
     this.status = status;
     this.active = active;
     this.acknowledge = acknowledge;
     this.reportVideoCodecs = reportVideoCodecs;
+    this.reportStatistics = reportStatistics;
     this.reset();
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && this.pendingPaint) {
+        cancelAnimationFrame(this.paintRequest);
+        this.paintVideo();
+      }
+    });
   }
 
   reset() {
+    this.generation = (this.generation || 0) + 1;
+    this.queueEpoch = (this.queueEpoch || 0) + 1;
+    this.acknowledgedSequence = 0;
+    this.queuedFrames = this.queuedBytes = 0;
+    this.receivedBytes = this.displayedFrames = this.recoveredFrames = 0;
+    this.started = performance.now();
+    this.displayTimes = [];
+    this.renderDelays = [];
     this.resetVideo();
     this.supportedWidth = this.supportedHeight = 0;
     this.supportedCodecs = 0;
@@ -31,8 +48,13 @@ export class CaptureFrameDecoder {
   }
 
   resetVideo() {
+    if (this.paintRequest != null) cancelAnimationFrame(this.paintRequest);
+    this.paintRequest = null;
+    this.pendingPaint?.video.close();
+    this.pendingPaint = null;
     this.videoFrames?.clear();
     this.videoFrames = new Map();
+    this.videoBytes = 0;
     if (this.videoDecoder && this.videoDecoder.state !== "closed") this.videoDecoder.close();
     this.videoDecoder = null;
     this.videoCodec = null;
@@ -40,6 +62,7 @@ export class CaptureFrameDecoder {
 
   receive(data, socket) {
     if (!this.active(socket) || !data.length) return;
+    this.receivedBytes += data.length;
     this.chunks.push({ data, offset: 0 });
     this.available += data.length;
     if (this.available > maximumImageLength + headerLength) {
@@ -81,10 +104,26 @@ export class CaptureFrameDecoder {
         this.recover(frame, socket);
         continue;
       }
+      frame.received = performance.now();
+      if (this.queuedFrames + this.videoFrames.size + (this.pendingPaint ? 1 : 0) >= maximumPendingFrames ||
+          this.queuedBytes + this.videoBytes + frame.length > maximumPendingBytes) {
+        this.recover(frame, socket);
+        continue;
+      }
+      const generation = this.generation, queueEpoch = this.queueEpoch;
+      this.queuedFrames++;
+      this.queuedBytes += frame.length;
       this.decode = this.decode
-        .then(() => this.draw(frame, socket))
+        .then(() => generation === this.generation && this.draw(frame, socket))
         .catch((error) => {
-          this.recover(frame, socket, error);
+          if (generation === this.generation) this.recover(frame, socket, error);
+        })
+        .finally(() => {
+          if (queueEpoch !== this.queueEpoch) return;
+          this.queuedFrames--;
+          this.queuedBytes -= frame.length;
+          if (frame.type <= 2 && generation === this.generation && this.active(socket))
+            this.reportStatistics(this.statistics);
         });
     }
   }
@@ -96,9 +135,48 @@ export class CaptureFrameDecoder {
       socket.close(1002, "无效的画面序号");
       return;
     }
+    this.generation++;
+    this.sequence = 0;
+    this.recoveredFrames++;
     this.resetVideo();
     this.status.textContent = "正在重新同步远程画面…";
-    this.acknowledge(frame.sequence, true, socket);
+    this.acknowledgeOnce(frame.sequence, true, socket);
+  }
+
+  acknowledgeOnce(sequence, keyframe, socket, renderMilliseconds = 0) {
+    if (!this.active(socket)) return;
+    if (this.acknowledgedSequence &&
+        ((sequence - this.acknowledgedSequence) >>> 0) >= 0x80000000) return;
+    if (sequence === this.acknowledgedSequence) return;
+    this.acknowledgedSequence = sequence;
+    this.acknowledge(sequence, keyframe, socket, renderMilliseconds);
+  }
+
+  get statistics() {
+    const now = performance.now(),
+      ordered = [...this.renderDelays].sort((a, b) => a - b),
+      elapsed = Math.max(1, now - this.started);
+    return {
+      receivedBytes: this.receivedBytes,
+      displayedFrames: this.displayedFrames,
+      framesPerSecond: this.displayTimes.filter((time) => now - time < 1000).length,
+      megabitsPerSecond: (this.receivedBytes * 8) / (elapsed * 1000),
+      receiveToDrawP95Milliseconds: ordered[Math.max(0, Math.ceil(ordered.length * 0.95) - 1)] ?? 0,
+      pendingFrames: this.queuedFrames + this.videoFrames.size + (this.pendingPaint ? 1 : 0),
+      decoderQueueSize: this.videoDecoder?.decodeQueueSize ?? 0,
+      recoveredFrames: this.recoveredFrames,
+    };
+  }
+
+  rendered(frame, report = true) {
+    const now = performance.now(), delay = now - (frame.received ?? now);
+    this.displayedFrames++;
+    this.displayTimes.push(now);
+    while (this.displayTimes.length > 120 || now - this.displayTimes[0] >= 1000) this.displayTimes.shift();
+    this.renderDelays.push(delay);
+    if (this.renderDelays.length > 120) this.renderDelays.shift();
+    if (report) this.reportStatistics(this.statistics);
+    return Math.min(65535, Math.max(1, Math.ceil(delay)));
   }
 
   read(length) {
@@ -131,6 +209,7 @@ export class CaptureFrameDecoder {
   }
 
   async drawImage(frame, socket) {
+    const generation = this.generation;
     if (
       frame.type === 2 &&
       (!this.sequence ||
@@ -139,18 +218,18 @@ export class CaptureFrameDecoder {
         this.canvas.height !== frame.canvasHeight)
     ) {
       this.status.textContent = "正在重新同步远程画面…";
-      this.acknowledge(frame.sequence, true, socket);
+      this.acknowledgeOnce(frame.sequence, true, socket);
       return;
     }
     await this.ensureVideoCodecs(videoDimension(frame.canvasWidth), videoDimension(frame.canvasHeight), socket);
-    if (!this.active(socket)) return;
+    if (!this.active(socket) || generation !== this.generation) return;
     this.resetVideo();
     const bitmap = await createImageBitmap(
       new Blob([frame.image], {
         type: frame.type === 1 ? "image/jpeg" : "image/png",
       }),
     );
-    if (!this.active(socket)) {
+    if (!this.active(socket) || generation !== this.generation) {
       bitmap.close();
       return;
     }
@@ -166,11 +245,12 @@ export class CaptureFrameDecoder {
     this.sequence = frame.sequence;
     this.canvas.hidden = false;
     this.status.textContent = `${frame.canvasWidth} × ${frame.canvasHeight} · 实时`;
-    this.acknowledge(frame.sequence, false, socket);
+    this.acknowledgeOnce(frame.sequence, false, socket, this.rendered(frame, false));
   }
 
   async drawVideo(frame, socket) {
-    const key = frame.type === 3 || frame.type === 5,
+    const generation = this.generation,
+      key = frame.type === 3 || frame.type === 5,
       codec = frame.type <= 4 ? h264Codec : h265Codec,
       codecFlag = frame.type <= 4 ? h264Flag : h265Flag,
       supportedCodecs = await this.ensureVideoCodecs(
@@ -178,12 +258,12 @@ export class CaptureFrameDecoder {
         videoDimension(frame.canvasHeight),
         socket,
       );
-    if (!this.active(socket)) return;
+    if (!this.active(socket) || generation !== this.generation) return;
     if (!(supportedCodecs & codecFlag)) {
       this.resetVideo();
       this.sequence = 0;
       this.status.textContent = "正在重新同步远程画面…";
-      this.acknowledge(frame.sequence, false, socket);
+      this.acknowledgeOnce(frame.sequence, false, socket);
       return;
     }
     if (
@@ -195,7 +275,7 @@ export class CaptureFrameDecoder {
         this.canvas.height !== frame.canvasHeight)
     ) {
       this.status.textContent = "正在重新同步远程画面…";
-      this.acknowledge(frame.sequence, true, socket);
+      this.acknowledgeOnce(frame.sequence, true, socket);
       return;
     }
     if (
@@ -205,7 +285,7 @@ export class CaptureFrameDecoder {
       this.canvas.height !== frame.canvasHeight
     ) {
       if (!key) {
-        this.acknowledge(frame.sequence, true, socket);
+        this.acknowledgeOnce(frame.sequence, true, socket);
         return;
       }
       this.resetVideo();
@@ -221,12 +301,20 @@ export class CaptureFrameDecoder {
         decoder.configure(videoConfig(codec, frame.canvasWidth, frame.canvasHeight));
       } catch (error) {
         this.videoError(error, socket, decoder, codec);
-        this.acknowledge(frame.sequence, false, socket);
+        this.acknowledgeOnce(frame.sequence, false, socket);
         return;
       }
     }
+    const length = frame.image.byteLength;
+    if (this.videoFrames.size + (this.pendingPaint ? 1 : 0) >= maximumPendingFrames ||
+        this.videoBytes + length > maximumPendingBytes ||
+        (this.videoDecoder.decodeQueueSize ?? 0) >= maximumPendingFrames) {
+      this.recover(frame, socket);
+      return;
+    }
     const timestamp = frame.sequence * 1000;
-    this.videoFrames.set(timestamp, { frame, socket });
+    this.videoFrames.set(timestamp, { frame, socket, length });
+    this.videoBytes += length;
     try {
       this.videoDecoder.decode(
         new EncodedVideoChunk({
@@ -237,12 +325,13 @@ export class CaptureFrameDecoder {
       );
     } catch (error) {
       this.videoFrames.delete(timestamp);
+      this.videoBytes -= length;
       this.videoError(error, socket, this.videoDecoder, codec);
-      this.acknowledge(frame.sequence, false, socket);
+      this.acknowledgeOnce(frame.sequence, false, socket);
       return;
     }
+    delete frame.image;
     this.sequence = frame.sequence;
-    this.acknowledge(frame.sequence, false, socket);
   }
 
   videoOutput(video, decoder) {
@@ -252,32 +341,74 @@ export class CaptureFrameDecoder {
       return;
     }
     this.videoFrames.delete(video.timestamp);
+    this.videoBytes -= pending.length;
     const { frame, socket } = pending;
-    if (this.active(socket)) {
+    if (!this.active(socket)) {
+      video.close();
+      return;
+    }
+    if (document.hidden) {
+      if (this.paintRequest != null) cancelAnimationFrame(this.paintRequest);
+      this.paintRequest = null;
+      this.pendingPaint?.video.close();
+      this.pendingPaint = null;
+      video.close();
+      this.acknowledgeOnce(frame.sequence, false, socket);
+      return;
+    }
+    this.pendingPaint?.video.close();
+    this.pendingPaint = { video, frame, socket, generation: this.generation };
+    if (this.paintRequest == null) {
+      const generation = this.generation,
+        request = requestAnimationFrame(() => {
+          if (this.paintRequest === request && generation === this.generation && this.videoDecoder === decoder)
+            this.paintVideo();
+        });
+      this.paintRequest = request;
+    }
+  }
+
+  paintVideo() {
+    const pending = this.pendingPaint;
+    this.pendingPaint = null;
+    this.paintRequest = null;
+    if (!pending) return;
+    const { video, frame, socket, generation } = pending;
+    try {
+      if (generation !== this.generation || !this.active(socket)) return;
+      if (document.hidden) {
+        this.acknowledgeOnce(frame.sequence, false, socket);
+        return;
+      }
       const context = this.canvas.getContext("2d");
       context.globalCompositeOperation = "copy";
       context.drawImage(video, 0, 0, this.canvas.width, this.canvas.height);
       context.globalCompositeOperation = "source-over";
       this.canvas.hidden = false;
       this.status.textContent = `${frame.canvasWidth} × ${frame.canvasHeight} · ${frame.type <= 4 ? "H.264" : "H.265"}`;
+      this.acknowledgeOnce(frame.sequence, false, socket, this.rendered(frame));
+    } finally {
+      video.close();
     }
-    video.close();
   }
 
   videoError(error, socket, decoder, codec) {
     if (this.videoDecoder !== decoder || !this.active(socket)) return;
     console.warn(error);
+    const latest = [...this.videoFrames.values()].at(-1) ?? this.pendingPaint;
     this.resetVideo();
     this.sequence = 0;
+    if (latest) this.acknowledgeOnce(latest.frame.sequence, true, socket);
     this.status.textContent = "正在重新同步远程画面…";
     this.supportedCodecs &= ~(codec === h264Codec ? h264Flag : h265Flag);
     this.sendVideoCodecs(socket);
   }
 
   async ensureVideoCodecs(width, height, socket) {
+    const generation = this.generation;
     if (this.supportedWidth !== width || this.supportedHeight !== height) {
       const codecs = await supportedVideoCodecs(width, height);
-      if (!this.active(socket)) return 0;
+      if (!this.active(socket) || generation !== this.generation) return 0;
       this.supportedWidth = width;
       this.supportedHeight = height;
       this.supportedCodecs = codecs;

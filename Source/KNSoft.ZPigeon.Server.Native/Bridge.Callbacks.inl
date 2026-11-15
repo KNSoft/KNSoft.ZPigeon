@@ -44,6 +44,16 @@ ZpNative_ServerConnectionCallback(
         }
         NtStatus = ZpServer_QueryConnectionClientPublicKey(Connection,
                                                            Client->PublicKey);
+        if (NT_SUCCESS(NtStatus))
+        {
+            NtStatus = ZpServer_QueryConnectionClientGroup(Connection, Client->Group);
+        }
+        if (NT_SUCCESS(NtStatus))
+        {
+            NtStatus = ZpServer_QueryConnectionClientCapabilities(Connection,
+                                                                &Client->Capabilities,
+                                                                &Client->InstanceId);
+        }
         if (!NT_SUCCESS(NtStatus))
         {
             Mem_Free(Client);
@@ -1291,6 +1301,20 @@ ZpNative_WindowCaptureDataCallback(
     {
         ZpChannel_Cancel(Channel);
     }
+}
+
+static
+VOID
+NTAPI
+ZpNative_WindowCaptureWritableCallback(
+    _In_ ZP_CHANNEL_HANDLE Channel,
+    _In_ ULONG CreditBytes,
+    _In_opt_ PVOID Context)
+{
+    PZP_NATIVE_WINDOW_CAPTURE_STREAM Stream = Context;
+
+    UNREFERENCED_PARAMETER(Channel);
+    Stream->WritableCallback(CreditBytes, Stream->Context);
 }
 
 static

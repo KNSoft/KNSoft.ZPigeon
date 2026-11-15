@@ -50,6 +50,8 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     ZP_STATUS ServerReadyStatus;
     ZP_STATUS ServerStoppedStatus;
     USHORT ClientVersion;
+    ULONG TcpCallbackLockChecks;
+    ULONG TcpCallbackLockFailures;
     ZP_STATUS SystemInfoStatus;
     ZP_SYSTEM_ARCHITECTURE SystemArchitecture;
     ULONG SystemProcessorCount;
@@ -132,7 +134,32 @@ typedef struct _SDK_INTEGRATION_CONTEXT
     BYTE RegistryValueData[64];
     ULONG RegistryValueDataLength;
     ZP_STATUS RegistryStatus;
+#ifdef _KNSOFT_ZPIGEON_BUILD_CUSTOM_
+    HANDLE ProbeEvent;
+    ZP_STATUS ProbeStatus;
+#ifdef _KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_
+    HANDLE ExecutionEvent;
+    ZP_STATUS ExecutionStatus;
+    ULONG ExecutionExpectedJobId;
+    ULONG ExecutionJobId;
+    ZP_EXECUTION_JOB_STATE ExecutionState;
+    ULONG ExecutionExitCode;
+#endif
+#endif
 } SDK_INTEGRATION_CONTEXT, *PSDK_INTEGRATION_CONTEXT;
+
+static
+DWORD
+WINAPI
+SDKIntegration_ProbeTcpCallbackLock(
+    _In_ PVOID Context)
+{
+    PRTL_CRITICAL_SECTION Lock = Context;
+
+    if (!RtlTryEnterCriticalSection(Lock)) return FALSE;
+    RtlLeaveCriticalSection(Lock);
+    return TRUE;
+}
 
 static
 VOID
@@ -144,8 +171,30 @@ SDKIntegration_ClientStateCallback(
     _In_opt_ PVOID Context)
 {
     PSDK_INTEGRATION_CONTEXT TestContext = Context;
+    PZP_CLIENT_OBJECT Object = (PZP_CLIENT_OBJECT)Client;
+    HANDLE Thread;
+    DWORD ExitCode;
 
-    UNREFERENCED_PARAMETER(Client);
+    if (Object->ActiveTransport == ZpTransportTcp &&
+        (State == ZpClientStateAuthenticating || State == ZpClientStateReady))
+    {
+        TestContext->TcpCallbackLockChecks++;
+        Thread = CreateThread(NULL, 0, SDKIntegration_ProbeTcpCallbackLock,
+                              &Object->TcpTransport.Connection.Lock, 0, NULL);
+        if (Thread == NULL)
+        {
+            TestContext->TcpCallbackLockFailures++;
+        }
+        else
+        {
+            if (WaitForSingleObject(Thread, INFINITE) != WAIT_OBJECT_0 ||
+                !GetExitCodeThread(Thread, &ExitCode) || !ExitCode)
+            {
+                TestContext->TcpCallbackLockFailures++;
+            }
+            CloseHandle(Thread);
+        }
+    }
     if (State == ZpClientStateReady)
     {
         TestContext->ClientReadyStatus = Status;
@@ -161,6 +210,8 @@ SDKIntegration_ClientStateCallback(
         SetEvent(TestContext->ClientStoppedEvent);
     }
 }
+
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_)
 
 static
 VOID
@@ -916,6 +967,8 @@ Cleanup:
     return Result;
 }
 
+#endif
+
 static
 VOID
 NTAPI
@@ -1230,6 +1283,8 @@ Cleanup:
     return Port;
 }
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_)
+
 static
 VOID
 SDKIntegration_Run(
@@ -1392,6 +1447,7 @@ SDKIntegration_Run(
     ClientConfig.DeploymentRootCertificate = Certificate->pbCertEncoded;
     ClientConfig.DeploymentRootCertificateLength = Certificate->cbCertEncoded;
     ClientConfig.ClientKeyName = NULL;
+    ClientConfig.Group = L"SDK integration";
     ClientConfig.ConnectTimeoutMilliseconds = SDK_INTEGRATION_TIMEOUT_MILLISECONDS;
     ClientConfig.StateCallback = SDKIntegration_ClientStateCallback;
     ClientConfig.CallbackContext = &TestContext;
@@ -1446,8 +1502,26 @@ SDKIntegration_Run(
         goto Cleanup;
     }
 
+    {
+        WCHAR Group[ZP_CLIENT_GROUP_MAX_LENGTH + 1];
+        ZP_CLIENT_CAPABILITIES LocalCapabilities, RemoteCapabilities;
+        GUID InstanceId;
+
+        ZpClient_QueryBuildCapabilities(&LocalCapabilities);
+        if (!NT_SUCCESS(ZpServer_QueryConnectionClientGroup(TestContext.Connection, Group)) ||
+            wcscmp(Group, ClientConfig.Group) != 0 ||
+            !NT_SUCCESS(ZpServer_QueryConnectionClientCapabilities(
+                            TestContext.Connection, &RemoteCapabilities, &InstanceId)) ||
+            memcmp(&RemoteCapabilities, &LocalCapabilities, sizeof(LocalCapabilities)) != 0 ||
+            memcmp(&InstanceId, &ClientConfig.InstanceId, sizeof(InstanceId)) != 0)
+        {
+            goto Cleanup;
+        }
+    }
+
     if (Transport == ZpTransportTcp)
     {
+        TEST_OK(TestContext.TcpCallbackLockChecks == 2 && TestContext.TcpCallbackLockFailures == 0);
         TestContext.ExpectedProcessCompletions = 1;
         TestContext.CollectProcessDetails = TRUE;
         Status = ZpServer_EnumerateProcesses(TestContext.Connection,
@@ -2770,23 +2844,437 @@ Cleanup:
     TEST_OK(Result);
 }
 
+#else
+
+#ifdef _KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_
+
+static
+VOID
+NTAPI
+SDKIntegration_ExecutionCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PCZP_EXECUTION_JOB_LIST_VIEW Jobs,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+    ZP_EXECUTION_JOB_RECORD_VIEW Record;
+    ULONG Index, Offset = 0;
+    NTSTATUS NtStatus;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->ExecutionStatus = Status;
+    if (ZpStatus_IsSuccess(Status))
+    {
+        if (TestContext->ExecutionExpectedJobId == 0 && Jobs->Count != 1)
+        {
+            TestContext->ExecutionStatus = ZpStatus_FromNtStatus(STATUS_DATA_ERROR);
+        }
+        else
+        {
+            for (Index = 0; Index < Jobs->Count; Index++)
+            {
+                NtStatus = ZpExecution_GetNextJob(Jobs, &Offset, &Record);
+                if (!NT_SUCCESS(NtStatus))
+                {
+                    TestContext->ExecutionStatus = ZpStatus_FromNtStatus(NtStatus);
+                    break;
+                }
+                if (TestContext->ExecutionExpectedJobId == 0 ||
+                    Record.JobId == TestContext->ExecutionExpectedJobId)
+                {
+                    TestContext->ExecutionJobId = Record.JobId;
+                    TestContext->ExecutionState = Record.State;
+                    TestContext->ExecutionExitCode = Record.ExitCode;
+                    break;
+                }
+            }
+        }
+    }
+    SetEvent(TestContext->ExecutionEvent);
+}
+
+static
+LOGICAL
+SDKIntegration_ExecuteCommand(
+    _Inout_ PSDK_INTEGRATION_CONTEXT TestContext)
+{
+    static const WCHAR CommandName[] = L"\\cmd.exe";
+    static const WCHAR Arguments[] = L"/D /Q /C exit 7";
+    WCHAR CommandPath[MAX_PATH];
+    UINT PathLength;
+    ZP_EXECUTION_START Start = {
+        ZpExecutionEngineCreateProcess,
+        ZpExecutionIdentityCurrent,
+        ZP_EXECUTION_SESSION_CURRENT,
+        ZP_EXECUTION_FLAG_HIDDEN
+    };
+    ZP_REQUEST_HANDLE Request = NULL;
+    NTSTATUS Status;
+    ULONGLONG Deadline, Now;
+    DWORD RemainingMilliseconds;
+    LOGICAL Result = FALSE;
+
+    PathLength = GetSystemDirectoryW(CommandPath, ARRAYSIZE(CommandPath));
+    if (PathLength == 0 || PathLength + ARRAYSIZE(CommandName) > ARRAYSIZE(CommandPath)) return FALSE;
+    RtlCopyMemory(CommandPath + PathLength, CommandName, sizeof(CommandName));
+    Start.FileName = CommandPath;
+    Start.FileNameLength = PathLength + ARRAYSIZE(CommandName) - 1;
+    Start.Arguments = Arguments;
+    Start.ArgumentsLength = ARRAYSIZE(Arguments) - 1;
+    TestContext->ExecutionExpectedJobId = 0;
+    TestContext->ExecutionJobId = 0;
+    ResetEvent(TestContext->ExecutionEvent);
+    Status = ZpServer_StartExecution(TestContext->Connection, &Start, SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                    SDKIntegration_ExecutionCallback, TestContext, &Request);
+    if (!NT_SUCCESS(Status) ||
+        WaitForSingleObject(TestContext->ExecutionEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+        !ZpStatus_IsSuccess(TestContext->ExecutionStatus) || TestContext->ExecutionJobId == 0)
+    {
+        goto Cleanup;
+    }
+    ZpRequest_Close(Request);
+    Request = NULL;
+    TestContext->ExecutionExpectedJobId = TestContext->ExecutionJobId;
+    Deadline = GetTickCount64() + SDK_INTEGRATION_TIMEOUT_MILLISECONDS;
+    for (;;)
+    {
+        Now = GetTickCount64();
+        if (Now >= Deadline) break;
+        RemainingMilliseconds = (DWORD)(Deadline - Now);
+        TestContext->ExecutionJobId = 0;
+        ResetEvent(TestContext->ExecutionEvent);
+        Status = ZpServer_EnumerateExecutionJobs(TestContext->Connection, RemainingMilliseconds,
+                                                SDKIntegration_ExecutionCallback, TestContext, &Request);
+        if (!NT_SUCCESS(Status) ||
+            WaitForSingleObject(TestContext->ExecutionEvent, RemainingMilliseconds) != WAIT_OBJECT_0 ||
+            !ZpStatus_IsSuccess(TestContext->ExecutionStatus) ||
+            TestContext->ExecutionJobId != TestContext->ExecutionExpectedJobId)
+        {
+            goto Cleanup;
+        }
+        ZpRequest_Close(Request);
+        Request = NULL;
+        if (TestContext->ExecutionState == ZpExecutionJobExited)
+        {
+            Result = TestContext->ExecutionExitCode == 7;
+            break;
+        }
+        Now = GetTickCount64();
+        if (Now >= Deadline) break;
+        Sleep((DWORD)min(50ULL, Deadline - Now));
+    }
+
+Cleanup:
+    if (Request != NULL)
+    {
+        ZpRequest_Cancel(Request);
+        ZpRequest_Close(Request);
+    }
+    return Result;
+}
+
+#endif
+
+static
+VOID
+NTAPI
+SDKIntegration_UnsupportedRequestCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_ PCZP_BUFFER_VIEW Payload,
+    _In_opt_ PVOID Context)
+{
+    UNREFERENCED_PARAMETER(Request);
+    UNREFERENCED_PARAMETER(Status);
+    UNREFERENCED_PARAMETER(Payload);
+    UNREFERENCED_PARAMETER(Context);
+}
+
+static
+VOID
+NTAPI
+SDKIntegration_ProbeCallback(
+    _In_ ZP_REQUEST_HANDLE Request,
+    _In_ ZP_STATUS Status,
+    _In_opt_ PVOID Context)
+{
+    PSDK_INTEGRATION_CONTEXT TestContext = Context;
+
+    UNREFERENCED_PARAMETER(Request);
+    TestContext->ProbeStatus = Status;
+    SetEvent(TestContext->ProbeEvent);
+}
+
+static
+VOID
+SDKIntegration_Run(
+    _Inout_ UNITTEST_RESULT* TEST_PARAMETER_RESULT,
+    _In_ ZP_TRANSPORT_TYPE Transport)
+{
+    static const WCHAR ServerName[] = L"localhost";
+    SDK_INTEGRATION_CONTEXT TestContext = { 0 };
+    ZP_ENDPOINT Endpoint = { Transport, L"127.0.0.1", 0, ServerName };
+    ZP_LISTENER_ENDPOINT Listener = { Transport, L"127.0.0.1", 0 };
+    ZP_SERVER_DEPLOYMENT Deployment = { ServerName, NULL };
+    ZP_CLIENT_CONFIG ClientConfig = { 0 };
+    ZP_SERVER_CONFIG ServerConfig = { 0 };
+    ZP_CLIENT_CAPABILITIES LocalCapabilities, RemoteCapabilities;
+    GUID InstanceId;
+    WCHAR Group[ZP_CLIENT_GROUP_MAX_LENGTH + 1];
+    ZP_CLIENT_HANDLE Client = NULL;
+    ZP_SERVER_HANDLE Server = NULL;
+    ZP_REQUEST_HANDLE Request = NULL;
+    NCRYPT_PROV_HANDLE IdentityProvider = 0;
+    NCRYPT_KEY_HANDLE IdentityKey = 0;
+    HCERTSTORE CertificateStore = NULL;
+    PCCERT_CONTEXT Certificate = NULL;
+    NTSTATUS Status;
+    ZP_STATUS StartStatus;
+    DWORD WaitStatus;
+    ULONG Index, Round;
+    BYTE ModuleId;
+    ULONGLONG CloseStartTickCount;
+    LOGICAL Result = FALSE;
+    PCSTR Phase = "setup";
+    HANDLE Events[] = {
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+#ifdef _KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_
+        CreateEventW(NULL, TRUE, FALSE, NULL),
+#endif
+    };
+
+    for (Index = 0; Index < ARRAYSIZE(Events); Index++)
+    {
+        if (Events[Index] == NULL) goto Cleanup;
+    }
+    TestContext.ServerRunningEvent = Events[0];
+    TestContext.ClientReadyEvent = Events[1];
+    TestContext.ClientRetryWaitEvent = Events[2];
+    TestContext.ClientStoppedEvent = Events[3];
+    TestContext.ServerReadyEvent = Events[4];
+    TestContext.ServerStoppedEvent = Events[5];
+    TestContext.ProbeEvent = Events[6];
+#ifdef _KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_
+    TestContext.ExecutionEvent = Events[7];
+#endif
+    if (NCryptOpenStorageProvider(&IdentityProvider, MS_KEY_STORAGE_PROVIDER, 0) != ERROR_SUCCESS ||
+        NCryptCreatePersistedKey(IdentityProvider, &IdentityKey, NCRYPT_ECDSA_P256_ALGORITHM,
+                                 NULL, 0, 0) != ERROR_SUCCESS ||
+        NCryptFinalizeKey(IdentityKey, NCRYPT_SILENT_FLAG) != ERROR_SUCCESS)
+    {
+        goto Cleanup;
+    }
+    Certificate = SDKIntegration_CreateCertificate(&CertificateStore);
+    Endpoint.Port = Listener.Port = SDKIntegration_GetFreePort(Transport);
+    if (Certificate == NULL || Endpoint.Port == 0) goto Cleanup;
+    Deployment.Certificate = Certificate;
+    ClientConfig.Endpoints = &Endpoint;
+    ClientConfig.EndpointCount = 1;
+    ClientConfig.DeploymentRootCertificate = Certificate->pbCertEncoded;
+    ClientConfig.DeploymentRootCertificateLength = Certificate->cbCertEncoded;
+    ClientConfig.Group = L"SDK custom integration";
+    ClientConfig.InstanceId.Data1 = 1;
+    ClientConfig.ConnectTimeoutMilliseconds = SDK_INTEGRATION_TIMEOUT_MILLISECONDS;
+    ClientConfig.StateCallback = SDKIntegration_ClientStateCallback;
+    ClientConfig.CallbackContext = &TestContext;
+    ServerConfig.Listeners = &Listener;
+    ServerConfig.ListenerCount = 1;
+    ServerConfig.Deployments = &Deployment;
+    ServerConfig.DeploymentCount = 1;
+    ServerConfig.StateCallback = SDKIntegration_ServerStateCallback;
+    ServerConfig.ConnectionCallback = SDKIntegration_ServerConnectionCallback;
+    ServerConfig.CallbackContext = &TestContext;
+    ZpClient_QueryBuildCapabilities(&LocalCapabilities);
+    Phase = "Server create";
+    Status = ZpServer_Create(&ServerConfig, &Server);
+    if (!NT_SUCCESS(Status)) goto Cleanup;
+    Phase = "Server start";
+    StartStatus = ZpServer_Start(Server);
+    if (!ZpStatus_IsSuccess(StartStatus) ||
+        WaitForSingleObject(TestContext.ServerRunningEvent,
+                            SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0)
+    {
+        goto Cleanup;
+    }
+    Phase = "Client create";
+    Status = ZpClient_Create(&ClientConfig, &Client);
+    if (!NT_SUCCESS(Status)) goto Cleanup;
+    ((PZP_CLIENT_OBJECT)Client)->ExternalIdentityKey = IdentityKey;
+    Phase = "Client start";
+    Status = ZpClient_Start(Client);
+    if (!NT_SUCCESS(Status)) goto Cleanup;
+    for (Round = 0; Round < 2; Round++)
+    {
+        Phase = "authenticated capabilities";
+        if (WaitForSingleObject(TestContext.ClientReadyEvent,
+                                SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+            WaitForSingleObject(TestContext.ServerReadyEvent,
+                                SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+            !ZpStatus_IsSuccess(TestContext.ClientReadyStatus) ||
+            !ZpStatus_IsSuccess(TestContext.ServerReadyStatus) ||
+            TestContext.ClientVersion != ZP_CLIENT_VERSION ||
+            !NT_SUCCESS(ZpServer_QueryConnectionClientGroup(TestContext.Connection, Group)) ||
+            wcscmp(Group, ClientConfig.Group) != 0 ||
+            !NT_SUCCESS(ZpServer_QueryConnectionClientCapabilities(
+                            TestContext.Connection, &RemoteCapabilities, &InstanceId)) ||
+            memcmp(&RemoteCapabilities, &LocalCapabilities, sizeof(LocalCapabilities)) != 0 ||
+            memcmp(&InstanceId, &ClientConfig.InstanceId, sizeof(InstanceId)) != 0)
+        {
+            goto Cleanup;
+        }
+        Phase = "excluded module requests";
+        for (ModuleId = 1; ModuleId <= ZP_BITLOCKER_MODULE_ID; ModuleId++)
+        {
+            if (FlagOn(LocalCapabilities.Modules, ZP_MODULE_BIT(ModuleId))) continue;
+            Status = ZpServer_SendRequest(TestContext.Connection, ModuleId, 1,
+                                          SDK_INTEGRATION_TIMEOUT_MILLISECONDS, NULL, 0,
+                                          SDKIntegration_UnsupportedRequestCallback, NULL, &Request);
+            if (Status != STATUS_NOT_SUPPORTED) goto Cleanup;
+        }
+        Phase = "Probe";
+        ResetEvent(TestContext.ProbeEvent);
+        Status = ZpServer_ProbeConnection(TestContext.Connection, SDK_INTEGRATION_TIMEOUT_MILLISECONDS,
+                                         SDKIntegration_ProbeCallback, &TestContext, &Request);
+        if (!NT_SUCCESS(Status) ||
+            WaitForSingleObject(TestContext.ProbeEvent,
+                                SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0 ||
+            !ZpStatus_IsSuccess(TestContext.ProbeStatus))
+        {
+            goto Cleanup;
+        }
+        ZpRequest_Close(Request);
+        Request = NULL;
+        if (Round == 0)
+        {
+#ifdef _KNSOFT_ZPIGEON_BUILD_MODULE_EXECUTION_
+            LOGICAL ExecutionResult;
+
+            Phase = "Execution exit code";
+            ExecutionResult = SDKIntegration_ExecuteCommand(&TestContext);
+
+            TEST_OK(ExecutionResult);
+            if (!ExecutionResult) goto Cleanup;
+#endif
+            ResetEvent(TestContext.ServerRunningEvent);
+            ResetEvent(TestContext.ClientReadyEvent);
+            ResetEvent(TestContext.ServerReadyEvent);
+            Phase = "Server stop";
+            Status = ZpServer_Stop(Server);
+            if (!NT_SUCCESS(Status) ||
+                WaitForSingleObject(TestContext.ServerStoppedEvent,
+                                    SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0)
+            {
+                goto Cleanup;
+            }
+            Phase = "idle disconnect detection";
+            if (WaitForSingleObject(TestContext.ClientRetryWaitEvent,
+                                    Transport == ZpTransportUdp ? 65000 :
+                                        SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0)
+            {
+                goto Cleanup;
+            }
+            Phase = "Server restart";
+            ResetEvent(TestContext.ServerStoppedEvent);
+            StartStatus = ZpServer_Start(Server);
+            if (!ZpStatus_IsSuccess(StartStatus) ||
+                WaitForSingleObject(TestContext.ServerRunningEvent,
+                                    SDK_INTEGRATION_TIMEOUT_MILLISECONDS) != WAIT_OBJECT_0)
+            {
+                goto Cleanup;
+            }
+        }
+    }
+    Result = TRUE;
+
+Cleanup:
+    if (Result) Phase = "cleanup";
+    if (Request != NULL) ZpRequest_Close(Request);
+    if (Client != NULL)
+    {
+        ZpClient_Stop(Client);
+        WaitStatus = WaitForSingleObject(TestContext.ClientStoppedEvent, SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
+        CloseStartTickCount = GetTickCount64();
+        do
+        {
+            Status = ZpClient_Close(Client);
+            if (Status != STATUS_DEVICE_BUSY) break;
+            SwitchToThread();
+        } while (GetTickCount64() - CloseStartTickCount < SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
+        Result = Result && WaitStatus == WAIT_OBJECT_0 &&
+                 ZpStatus_IsSuccess(TestContext.ClientStoppedStatus) && NT_SUCCESS(Status);
+    }
+    if (Server != NULL)
+    {
+        ZpServer_Stop(Server);
+        WaitStatus = WaitForSingleObject(TestContext.ServerStoppedEvent, SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
+        CloseStartTickCount = GetTickCount64();
+        do
+        {
+            Status = ZpServer_Close(Server);
+            if (Status != STATUS_DEVICE_BUSY) break;
+            SwitchToThread();
+        } while (GetTickCount64() - CloseStartTickCount < SDK_INTEGRATION_TIMEOUT_MILLISECONDS);
+        Result = Result && WaitStatus == WAIT_OBJECT_0 &&
+                 ZpStatus_IsSuccess(TestContext.ServerStoppedStatus) && NT_SUCCESS(Status);
+    }
+    if (IdentityKey != 0) NCryptFreeObject(IdentityKey);
+    if (IdentityProvider != 0) NCryptFreeObject(IdentityProvider);
+    if (Certificate != NULL)
+    {
+        SDKIntegration_DeleteCertificateKey(Certificate);
+        CertFreeCertificateContext(Certificate);
+    }
+    if (CertificateStore != NULL) CertCloseStore(CertificateStore, 0);
+    for (Index = 0; Index < ARRAYSIZE(Events); Index++)
+    {
+        if (Events[Index] != NULL) CloseHandle(Events[Index]);
+    }
+    if (!Result)
+    {
+        UnitTest_FormatMessage("Custom integration failed during %hs (transport %u)\n", Phase, Transport);
+    }
+    TEST_OK(Result);
+}
+
+#endif
+
 TEST_FUNC(SDKQuicIntegration)
 {
     UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGC);
     UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGV);
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_QUIC_)
     SDKIntegration_Run(TEST_PARAMETER_RESULT, ZpTransportQuic);
+#else
+    TEST_SKIP("QUIC transport is excluded from this Client build");
+#endif
 }
 
 TEST_FUNC(SDKTcpIntegration)
 {
     UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGC);
     UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGV);
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_TCP_)
     SDKIntegration_Run(TEST_PARAMETER_RESULT, ZpTransportTcp);
+#else
+    TEST_SKIP("TCP transport is excluded from this Client build");
+#endif
 }
 
 TEST_FUNC(SDKUdpIntegration)
 {
     UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGC);
     UNREFERENCED_PARAMETER(TEST_PARAMETER_ARGV);
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_TRANSPORT_UDP_)
     SDKIntegration_Run(TEST_PARAMETER_RESULT, ZpTransportUdp);
+#else
+    TEST_SKIP("UDP transport is excluded from this Client build");
+#endif
 }

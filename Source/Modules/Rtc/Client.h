@@ -22,6 +22,15 @@ ZpRtc_Send(
     _In_reads_bytes_(Length) const VOID* Data,
     _In_ ULONG Length);
 
+/* Serialize writes to the same StreamId; unsuccessful writes may be partial. */
+NTSTATUS
+ZpRtc_SendEx(
+    _Inout_ PZP_CLIENT_OBJECT Client,
+    _In_ ULONG StreamId,
+    _In_reads_bytes_(Length) const VOID* Data,
+    _In_ ULONG Length,
+    _In_opt_ HANDLE CancelEvent);
+
 VOID
 ZpRtc_Close(
     _Inout_ PZP_CLIENT_OBJECT Client);

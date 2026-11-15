@@ -11,6 +11,10 @@
 
 #include <KNSoft/MakeLifeEasier/Memory/Core.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WINDOW_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
+
 #pragma comment(lib, "Mfplat.lib")
 #pragma comment(lib, "Mfuuid.lib")
 #pragma comment(lib, "Ole32.lib")
@@ -25,11 +29,12 @@ struct _ZP_WINDOW_VIDEO_ENCODER
     MFT_OUTPUT_STREAM_INFO OutputInfo;
     PBYTE SequenceHeader;
     ULONG SequenceHeaderLength;
+    ULONG PendingOutputs;
+    ULONG PendingInputs;
     ULONGLONG FirstTimestamp;
     LONGLONG FrameDuration;
     BOOLEAN TimestampStarted;
     BOOLEAN Async;
-    BOOLEAN NeedInput;
     BOOLEAN MfStarted;
     BOOLEAN ComInitialized;
 };
@@ -115,19 +120,26 @@ ZpWindowVideoEncoder_CreateType(
 }
 
 static
-VOID
-ZpWindowVideoEncoder_SetUInt32(
-    _In_opt_ ICodecAPI* CodecApi,
+HRESULT
+ZpWindowVideoEncoder_SetProperty(
+    _In_ ICodecAPI* CodecApi,
     _In_ const GUID* Key,
+    _In_ VARTYPE Type,
     _In_ ULONG Value)
 {
     VARIANT Variant;
+    HRESULT Result;
 
-    if (CodecApi == NULL) return;
+    Result = ICodecAPI_IsSupported(CodecApi, Key);
+    if (Result != S_OK) return Result == S_FALSE ? E_NOTIMPL : Result;
+    Result = ICodecAPI_IsModifiable(CodecApi, Key);
+    if (Result != S_OK) return Result == S_FALSE ? HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED) : Result;
     VariantInit(&Variant);
-    V_VT(&Variant) = VT_UI4;
-    V_UI4(&Variant) = Value;
-    ICodecAPI_SetValue(CodecApi, Key, &Variant);
+    V_VT(&Variant) = Type;
+    if (Type == VT_BOOL) V_BOOL(&Variant) = Value ? VARIANT_TRUE : VARIANT_FALSE;
+    else V_UI4(&Variant) = Value;
+    Result = ICodecAPI_SetValue(CodecApi, Key, &Variant);
+    return Result == S_FALSE ? HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED) : Result;
 }
 
 static
@@ -284,12 +296,13 @@ static
 HRESULT
 ZpWindowVideoEncoder_GetEvent(
     _In_ PZP_WINDOW_VIDEO_ENCODER Encoder,
+    _In_ DWORD Flags,
     _Out_ MediaEventType* Type)
 {
     IMFMediaEvent* Event;
     HRESULT Result, EventStatus;
 
-    Result = IMFMediaEventGenerator_GetEvent(Encoder->Events, 0, &Event);
+    Result = IMFMediaEventGenerator_GetEvent(Encoder->Events, Flags, &Event);
     if (FAILED(Result)) return Result;
     Result = IMFMediaEvent_GetStatus(Event, &EventStatus);
     if (SUCCEEDED(Result)) Result = EventStatus;
@@ -298,51 +311,119 @@ ZpWindowVideoEncoder_GetEvent(
     return Result;
 }
 
+HRESULT
+ZpWindowVideoEncoder_Receive(
+    _Inout_ PZP_WINDOW_VIDEO_ENCODER Encoder,
+    _Out_ PZP_WINDOW_VIDEO_FRAME Frame)
+{
+    MediaEventType Type;
+    HRESULT Result;
+
+    if (Encoder->Async)
+    {
+        while (Encoder->PendingOutputs == 0)
+        {
+            Result = ZpWindowVideoEncoder_GetEvent(Encoder, MF_EVENT_FLAG_NO_WAIT, &Type);
+            if (Result == MF_E_NO_EVENTS_AVAILABLE) return S_FALSE;
+            if (FAILED(Result)) return Result;
+            if (Type == METransformNeedInput) Encoder->PendingInputs++;
+            else if (Type == METransformHaveOutput) Encoder->PendingOutputs++;
+        }
+        Encoder->PendingOutputs--;
+    }
+    Result = ZpWindowVideoEncoder_ProcessOutput(Encoder, Frame);
+    return Result == MF_E_TRANSFORM_NEED_MORE_INPUT ? S_FALSE : Result;
+}
+
+static
+HRESULT
+ZpWindowVideoEncoder_CheckWait(
+    _In_opt_ HANDLE CancelEvent,
+    _In_ ULONGLONG Deadline)
+{
+    LARGE_INTEGER Zero = { 0 };
+    NTSTATUS Status;
+
+    if (CancelEvent != NULL)
+    {
+        Status = NtWaitForSingleObject(CancelEvent, FALSE, &Zero);
+        if (Status == STATUS_SUCCESS) return HRESULT_FROM_WIN32(ERROR_CANCELLED);
+        if (Status != STATUS_TIMEOUT) return HRESULT_FROM_NT(Status);
+    }
+    return GetTickCount64() >= Deadline ? HRESULT_FROM_WIN32(ERROR_TIMEOUT) : S_OK;
+}
+
 static
 HRESULT
 ZpWindowVideoEncoder_EncodeAsync(
     _Inout_ PZP_WINDOW_VIDEO_ENCODER Encoder,
     _In_ IMFSample* Sample,
+    _In_opt_ HANDLE CancelEvent,
+    _In_ ULONGLONG Deadline,
     _Out_ PZP_WINDOW_VIDEO_FRAME Frame)
 {
     MediaEventType Type;
     LOGICAL OutputReady = FALSE;
+    LARGE_INTEGER Delay;
+    ULONGLONG Now;
+    NTSTATUS Status;
     HRESULT Result;
 
-    while (!Encoder->NeedInput)
+    if (Encoder->PendingOutputs != 0)
     {
-        Result = ZpWindowVideoEncoder_GetEvent(Encoder, &Type);
+        Result = ZpWindowVideoEncoder_Receive(Encoder, Frame);
         if (FAILED(Result)) return Result;
-        if (Type == METransformNeedInput) Encoder->NeedInput = TRUE;
+        OutputReady = Result == S_OK;
+    }
+    while (Encoder->PendingInputs == 0)
+    {
+        Result = ZpWindowVideoEncoder_CheckWait(CancelEvent, Deadline);
+        if (FAILED(Result)) goto Failure;
+        Result = ZpWindowVideoEncoder_GetEvent(Encoder, MF_EVENT_FLAG_NO_WAIT, &Type);
+        if (Result == MF_E_NO_EVENTS_AVAILABLE)
+        {
+            Now = GetTickCount64();
+            if (Now >= Deadline)
+            {
+                Result = HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+                goto Failure;
+            }
+            Delay.QuadPart = -(LONGLONG)min(Deadline - Now, 5) * 10000;
+            Status = CancelEvent != NULL ? NtWaitForSingleObject(CancelEvent, FALSE, &Delay) :
+                                          NtDelayExecution(FALSE, &Delay);
+            if (CancelEvent != NULL && Status == STATUS_SUCCESS)
+            {
+                Result = HRESULT_FROM_WIN32(ERROR_CANCELLED);
+                goto Failure;
+            }
+            if (Status == STATUS_TIMEOUT || (CancelEvent == NULL && Status == STATUS_SUCCESS)) continue;
+            Result = HRESULT_FROM_NT(Status);
+            goto Failure;
+        }
+        if (FAILED(Result)) goto Failure;
+        if (Type == METransformNeedInput) Encoder->PendingInputs++;
         else if (Type == METransformHaveOutput)
         {
-            Result = ZpWindowVideoEncoder_ProcessOutput(Encoder, Frame);
-            if (FAILED(Result)) return Result;
-            if (Result == S_OK) OutputReady = TRUE;
+            Encoder->PendingOutputs++;
+            if (!OutputReady)
+            {
+                Result = ZpWindowVideoEncoder_Receive(Encoder, Frame);
+                if (FAILED(Result)) goto Failure;
+                OutputReady = Result == S_OK;
+            }
         }
     }
+    Result = ZpWindowVideoEncoder_CheckWait(CancelEvent, Deadline);
+    if (FAILED(Result)) goto Failure;
     Result = IMFTransform_ProcessInput(Encoder->Transform, 0, Sample, 0);
-    if (FAILED(Result))
-    {
-        if (OutputReady) ZpWindowVideoEncoder_FreeFrame(Frame);
-        return Result;
-    }
-    Encoder->NeedInput = FALSE;
+    if (FAILED(Result)) goto Failure;
+    Encoder->PendingInputs--;
     if (OutputReady) return S_OK;
-    for (;;)
-    {
-        Result = ZpWindowVideoEncoder_GetEvent(Encoder, &Type);
-        if (FAILED(Result)) return Result;
-        if (Type == METransformNeedInput)
-        {
-            Encoder->NeedInput = TRUE;
-            return S_FALSE;
-        }
-        else if (Type == METransformHaveOutput)
-        {
-            return ZpWindowVideoEncoder_ProcessOutput(Encoder, Frame);
-        }
-    }
+    return ZpWindowVideoEncoder_Receive(Encoder, Frame);
+
+Failure:
+    if (OutputReady) ZpWindowVideoEncoder_FreeFrame(Frame);
+    return Result;
 }
 
 HRESULT
@@ -395,6 +476,35 @@ ZpWindowVideoEncoder_Create(
     }
     if (SUCCEEDED(Result))
     {
+        Result = IMFTransform_QueryInterface(Object->Transform, &IID_ICodecAPI, (PVOID*)&Object->CodecApi);
+    }
+    if (SUCCEEDED(Result))
+    {
+        Result = ZpWindowVideoEncoder_SetProperty(Object->CodecApi, &CODECAPI_AVLowLatencyMode, VT_BOOL, TRUE);
+    }
+    if (SUCCEEDED(Result))
+    {
+        Result = ZpWindowVideoEncoder_SetProperty(Object->CodecApi,
+                                                  &CODECAPI_AVEncMPVDefaultBPictureCount,
+                                                  VT_UI4,
+                                                  0);
+    }
+    if (SUCCEEDED(Result))
+    {
+        Result = ZpWindowVideoEncoder_SetProperty(Object->CodecApi,
+                                                  &CODECAPI_AVEncCommonRateControlMode,
+                                                  VT_UI4,
+                                                  eAVEncCommonRateControlMode_CBR);
+    }
+    if (SUCCEEDED(Result))
+    {
+        Result = ZpWindowVideoEncoder_SetProperty(Object->CodecApi,
+                                                  &CODECAPI_AVEncMPVGOPSize,
+                                                  VT_UI4,
+                                                  FrameRate * 2);
+    }
+    if (SUCCEEDED(Result))
+    {
         Result = ZpWindowVideoEncoder_CreateType(Codec == ZpWindowVideoCodecH264 ?
                                                      &MFVideoFormat_H264 : &MFVideoFormat_HEVC,
                                                  Width,
@@ -423,12 +533,6 @@ ZpWindowVideoEncoder_Create(
     if (InputType != NULL) IMFMediaType_Release(InputType);
     if (SUCCEEDED(Result))
     {
-        IMFTransform_QueryInterface(Object->Transform, &IID_ICodecAPI, (PVOID*)&Object->CodecApi);
-        ZpWindowVideoEncoder_SetUInt32(Object->CodecApi, &CODECAPI_AVLowLatencyMode, TRUE);
-        ZpWindowVideoEncoder_SetUInt32(Object->CodecApi, &CODECAPI_AVEncMPVDefaultBPictureCount, 0);
-        ZpWindowVideoEncoder_SetUInt32(Object->CodecApi,
-                                      &CODECAPI_AVEncVideoMaxKeyframeDistance,
-                                      FrameRate * 2);
         Result = IMFTransform_GetOutputStreamInfo(Object->Transform, 0, &Object->OutputInfo);
     }
     if (SUCCEEDED(Result) && Object->Async)
@@ -461,15 +565,33 @@ ZpWindowVideoEncoder_Create(
 }
 
 HRESULT
+ZpWindowVideoEncoder_UpdateBitRate(
+    _Inout_ PZP_WINDOW_VIDEO_ENCODER Encoder,
+    _In_ ULONG BitRate)
+{
+    if (BitRate == 0) return E_INVALIDARG;
+    return ZpWindowVideoEncoder_SetProperty(Encoder->CodecApi,
+                                            &CODECAPI_AVEncCommonMeanBitRate,
+                                            VT_UI4,
+                                            BitRate);
+}
+
+HRESULT
 ZpWindowVideoEncoder_Encode(
     _Inout_ PZP_WINDOW_VIDEO_ENCODER Encoder,
     _In_ IMFSample* Sample,
     _In_ ULONGLONG Timestamp,
     _In_ LOGICAL ForceKeyFrame,
+    _In_opt_ HANDLE CancelEvent,
+    _In_ ULONG TimeoutMilliseconds,
     _Out_ PZP_WINDOW_VIDEO_FRAME Frame)
 {
+    ULONGLONG Deadline = GetTickCount64() + TimeoutMilliseconds;
     HRESULT Result;
 
+    if (TimeoutMilliseconds == INFINITE) return E_INVALIDARG;
+    Result = ZpWindowVideoEncoder_CheckWait(CancelEvent, Deadline);
+    if (FAILED(Result)) return Result;
     if (!Encoder->TimestampStarted)
     {
         Encoder->FirstTimestamp = Timestamp;
@@ -479,16 +601,20 @@ ZpWindowVideoEncoder_Encode(
     if (SUCCEEDED(Result)) Result = IMFSample_SetSampleDuration(Sample, Encoder->FrameDuration);
     if (SUCCEEDED(Result) && ForceKeyFrame)
     {
-        ZpWindowVideoEncoder_SetUInt32(Encoder->CodecApi, &CODECAPI_AVEncVideoForceKeyFrame, TRUE);
+        Result = ZpWindowVideoEncoder_SetProperty(Encoder->CodecApi,
+                                                  &CODECAPI_AVEncVideoForceKeyFrame,
+                                                  VT_UI4,
+                                                  TRUE);
     }
     if (FAILED(Result)) return Result;
     if (Encoder->Async)
     {
-        Result = ZpWindowVideoEncoder_EncodeAsync(Encoder, Sample, Frame);
+        Result = ZpWindowVideoEncoder_EncodeAsync(Encoder, Sample, CancelEvent, Deadline, Frame);
     }
     else
     {
-        Result = IMFTransform_ProcessInput(Encoder->Transform, 0, Sample, 0);
+        Result = ZpWindowVideoEncoder_CheckWait(CancelEvent, Deadline);
+        if (SUCCEEDED(Result)) Result = IMFTransform_ProcessInput(Encoder->Transform, 0, Sample, 0);
         if (SUCCEEDED(Result)) Result = ZpWindowVideoEncoder_ProcessOutput(Encoder, Frame);
     }
     return Result == MF_E_TRANSFORM_NEED_MORE_INPUT ? S_FALSE : Result;
@@ -505,11 +631,18 @@ VOID
 ZpWindowVideoEncoder_Close(
     _In_opt_ PZP_WINDOW_VIDEO_ENCODER Encoder)
 {
+    IMFShutdown* Shutdown;
+
     if (Encoder == NULL) return;
     if (Encoder->Transform != NULL)
     {
         IMFTransform_ProcessMessage(Encoder->Transform, MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
         IMFTransform_ProcessMessage(Encoder->Transform, MFT_MESSAGE_COMMAND_FLUSH, 0);
+        if (SUCCEEDED(IMFTransform_QueryInterface(Encoder->Transform, &IID_IMFShutdown, (PVOID*)&Shutdown)))
+        {
+            IMFShutdown_Shutdown(Shutdown);
+            IMFShutdown_Release(Shutdown);
+        }
     }
     Mem_Free(Encoder->SequenceHeader);
     if (Encoder->OutputType != NULL) IMFMediaType_Release(Encoder->OutputType);
@@ -520,3 +653,5 @@ ZpWindowVideoEncoder_Close(
     if (Encoder->ComInitialized) CoUninitialize();
     Mem_Free(Encoder);
 }
+
+#endif

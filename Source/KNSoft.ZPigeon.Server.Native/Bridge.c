@@ -125,6 +125,7 @@ typedef struct _ZP_NATIVE_WINDOW_CAPTURE_STREAM
     ZP_CHANNEL_HANDLE Channel;
     ZP_NATIVE_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback;
     ZP_NATIVE_WINDOW_CAPTURE_DATA_CALLBACK DataCallback;
+    ZP_NATIVE_WINDOW_CAPTURE_WRITABLE_CALLBACK WritableCallback;
     ZP_NATIVE_WINDOW_CAPTURE_CLOSE_CALLBACK CloseCallback;
     PVOID Context;
 } ZP_NATIVE_WINDOW_CAPTURE_STREAM, *PZP_NATIVE_WINDOW_CAPTURE_STREAM;
@@ -164,6 +165,9 @@ typedef struct _ZP_NATIVE_CLIENT_ENTRY
     ULONGLONG ClientId;
     ZP_CONNECTION_HANDLE Connection;
     BYTE PublicKey[ZP_CLIENT_PUBLIC_KEY_SIZE];
+    WCHAR Group[ZP_CLIENT_GROUP_MAX_LENGTH + 1];
+    GUID InstanceId;
+    ZP_CLIENT_CAPABILITIES Capabilities;
 } ZP_NATIVE_CLIENT_ENTRY, *PZP_NATIVE_CLIENT_ENTRY;
 
 static RTL_SRWLOCK ZpNativeLock = RTL_SRWLOCK_INIT;
@@ -212,17 +216,17 @@ ZpNative_Start(
     _In_ PCCERT_CONTEXT Certificate,
     _In_ USHORT Port)
 {
-    ZP_LISTENER_ENDPOINT Listener = {
-        ZpTransportQuic,
-        L"127.0.0.1",
-        Port
+    ZP_LISTENER_ENDPOINT Listeners[] = {
+        { ZpTransportTcp, L"127.0.0.1", Port },
+        { ZpTransportUdp, L"127.0.0.1", (USHORT)(Port + 1) },
+        { ZpTransportQuic, L"127.0.0.1", Port }
     };
     ZP_SERVER_DEPLOYMENT Deployment = { L"localhost", Certificate };
     ZP_SERVER_CONFIG Config = { 0 };
     NTSTATUS CreateStatus;
     ZP_STATUS Status;
 
-    if (Certificate == NULL || Port == 0)
+    if (Certificate == NULL || Port == 0 || Port == 0xFFFF)
     {
         return ZpStatus_FromNtStatus(STATUS_INVALID_PARAMETER);
     }
@@ -251,8 +255,8 @@ ZpNative_Start(
         ZpNativeStateEvent = NULL;
         return Status;
     }
-    Config.Listeners = &Listener;
-    Config.ListenerCount = 1;
+    Config.Listeners = Listeners;
+    Config.ListenerCount = NtCurrentPeb()->OSBuildNumber >= 20348 ? ARRAYSIZE(Listeners) : 2;
     Config.Deployments = &Deployment;
     Config.DeploymentCount = 1;
     Config.StateCallback = ZpNative_ServerStateCallback;
@@ -413,9 +417,12 @@ ZpNative_EnumerateClients(
     {
         Client = CONTAINING_RECORD(Entry, ZP_NATIVE_CLIENT_ENTRY, ListEntry);
         Clients[Required].ClientId = Client->ClientId;
+        Clients[Required].InstanceId = Client->InstanceId;
+        Clients[Required].Capabilities = Client->Capabilities;
         RtlCopyMemory(Clients[Required].PublicKey,
                       Client->PublicKey,
                       sizeof(Clients[Required].PublicKey));
+        RtlCopyMemory(Clients[Required].Group, Client->Group, sizeof(Clients[Required].Group));
         if (!NT_SUCCESS(ZpServer_QueryConnectionRemoteAddress(Client->Connection,
                                                                &Clients[Required].Address)) ||
             !NT_SUCCESS(ZpServer_QueryConnectionStatistics(Client->Connection,

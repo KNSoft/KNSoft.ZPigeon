@@ -130,11 +130,16 @@ ZpTcpConnection_DeliverPlaintext(
     _In_opt_ PVOID Context)
 {
     PZP_TCP_CONNECTION Connection = Context;
+    NTSTATUS Status;
 
-    return Connection->Receive(Connection,
-                               Data,
-                               DataLength,
-                               Connection->CallbackContext);
+    /* Application callbacks may acquire the owner lock, which senders hold before the TCP lock. */
+    RtlLeaveCriticalSection(&Connection->Lock);
+    Status = Connection->Receive(Connection,
+                                   Data,
+                                   DataLength,
+                                   Connection->CallbackContext);
+    RtlEnterCriticalSection(&Connection->Lock);
+    return Status;
 }
 
 static
@@ -179,7 +184,9 @@ ZpTcpConnection_ProcessHandshake(
     }
     if (Complete)
     {
+        RtlLeaveCriticalSection(&Connection->Lock);
         Status = Connection->Connected(Connection, Connection->CallbackContext);
+        RtlEnterCriticalSection(&Connection->Lock);
         if (ZpStatus_IsSuccess(Status) && Connection->Tls.InputLength != 0)
         {
             Status = ZpTls_Decrypt(&Connection->Tls,

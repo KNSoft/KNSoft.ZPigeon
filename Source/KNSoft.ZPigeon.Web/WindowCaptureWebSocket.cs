@@ -47,6 +47,7 @@ internal static class WindowCaptureWebSocket
                 threadId,
                 effectiveOptions,
                 directStreamId);
+            await capture.UpdateAsync(effectiveOptions, context.RequestAborted);
             var input = ReceiveInputAsync(socket, capture, context.RequestAborted);
             var output = directStreamId != 0 ? capture.Completion :
                                                SendOutputAsync(socket, capture, context.RequestAborted);
@@ -125,7 +126,7 @@ internal static class WindowCaptureWebSocket
             if (next == effective) continue;
             try
             {
-                capture.Update(next);
+                await capture.UpdateAsync(next, cancellationToken);
             }
             catch (NativeException exception) when (
                 exception.Status is { Type: ZpStatusType.NtStatus, Code: 0xC0000184 })
@@ -141,23 +142,15 @@ internal static class WindowCaptureWebSocket
         WindowCaptureOptions requested,
         ConnectionPerformance performance)
     {
-        var qualityClass = Math.Min(performance.EffectiveSpeedClass,
-                                    performance.EffectiveLatencyClass);
-        var limits = qualityClass switch
+        var maxBitRate = performance.Automatic ? 100_000_000U : performance.ManualSpeedClass switch
         {
-            0 => (FrameRate: (byte)3, Dimension: 720U, Quality: (byte)60),
-            1 => (FrameRate: (byte)6, Dimension: 960U, Quality: (byte)72),
-            2 => (FrameRate: (byte)12, Dimension: 1280U, Quality: (byte)80),
-            3 => (FrameRate: (byte)18, Dimension: 1920U, Quality: (byte)85),
-            _ => (FrameRate: byte.MaxValue, Dimension: uint.MaxValue, Quality: byte.MaxValue)
+            0 => 1_500_000U,
+            1 => 5_000_000U,
+            2 => 16_000_000U,
+            3 => 50_000_000U,
+            _ => 100_000_000U
         };
-        return requested with
-        {
-            FrameRate = Math.Min(requested.FrameRate, limits.FrameRate),
-            MaxDimension = requested.MaxDimension == 7680 ? requested.MaxDimension :
-                Math.Min(requested.MaxDimension, limits.Dimension),
-            ImageQuality = Math.Min(requested.ImageQuality, limits.Quality)
-        };
+        return requested with { MaxBitRate = Math.Min(requested.MaxBitRate, maxBitRate) };
     }
 
     private static async Task SendOutputAsync(
@@ -212,7 +205,7 @@ internal static class WindowCaptureWebSocket
             while (!result.EndOfMessage);
             try
             {
-                capture.Send(buffer.AsSpan(0, length));
+                await capture.SendAsync(buffer.AsMemory(0, length), cancellationToken);
             }
             catch (NativeException exception) when (
                 exception.Status is { Type: ZpStatusType.NtStatus, Code: 0xC0000184 })

@@ -24,11 +24,25 @@ ZpWindowVideoEncoder_Create(
     _Out_ PZP_WINDOW_VIDEO_ENCODER* Encoder);
 
 HRESULT
+ZpWindowVideoEncoder_UpdateBitRate(
+    _Inout_ PZP_WINDOW_VIDEO_ENCODER Encoder,
+    _In_ ULONG BitRate);
+
+_Success_(return == S_OK)
+HRESULT
+ZpWindowVideoEncoder_Receive(
+    _Inout_ PZP_WINDOW_VIDEO_ENCODER Encoder,
+    _Out_ PZP_WINDOW_VIDEO_FRAME Frame);
+
+_Success_(return == S_OK)
+HRESULT
 ZpWindowVideoEncoder_Encode(
     _Inout_ PZP_WINDOW_VIDEO_ENCODER Encoder,
     _In_ IMFSample* Sample,
     _In_ ULONGLONG Timestamp,
     _In_ LOGICAL ForceKeyFrame,
+    _In_opt_ HANDLE CancelEvent,
+    _In_ ULONG TimeoutMilliseconds,
     _Out_ PZP_WINDOW_VIDEO_FRAME Frame);
 
 VOID

@@ -4,18 +4,23 @@
 #include <WebView2.h>
 #include <wrl.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RTC_)
+
+#pragma comment(lib, "version.lib")
+
 using Microsoft::WRL::Callback;
 
 #define ZP_RTC_NEGOTIATION_TIMEOUT_MILLISECONDS 30000
 #define ZP_RTC_SEND_HEADER_SIZE sizeof(ULONG)
+#define ZP_RTC_SEND_CHUNK_SIZE 0x00004000UL
+#define ZP_RTC_SEND_TIMEOUT_MILLISECONDS 1000
 
 typedef struct _ZP_RTC_SESSION
 {
     volatile LONG ReferenceCount;
-    volatile LONG Connected;
     volatile LONG Initializing;
     volatile LONG Stopping;
-    RTL_SRWLOCK SendLock;
+    RTL_SRWLOCK WorkLock;
     PZP_CLIENT_OBJECT Owner;
     BYTE Id[ZP_RTC_SESSION_ID_SIZE];
     HANDLE Thread;
@@ -23,6 +28,7 @@ typedef struct _ZP_RTC_SESSION
     HANDLE WorkEvent;
     HANDLE AnswerEvent;
     HANDLE SendEvent;
+    HANDLE SendAvailableEvent;
     PWSTR OfferMessage;
     PWSTR ConfigurationMessage;
     PWSTR Answer;
@@ -31,11 +37,11 @@ typedef struct _ZP_RTC_SESSION
     const BYTE* SendData;
     ULONG SendLength;
     ULONG SendStreamId;
+    ULONG SendSerial;
     NTSTATUS SendStatus;
     BOOLEAN SendPending;
     BOOLEAN CanSend;
     HWND Window;
-    HMODULE Loader;
     ICoreWebView2Environment* Environment;
     ICoreWebView2Environment12* Environment12;
     ICoreWebView2Controller* Controller;
@@ -45,7 +51,18 @@ typedef struct _ZP_RTC_SESSION
 
 static const WCHAR ZpRtcPage[] =
     L"<!doctype html><meta charset=utf-8><script>"
-    L"let pc,channel,servers=[];const post=value=>chrome.webview.postMessage(value);"
+    L"let pc,channel,servers=[],waitingDrain=false,previousStats;"
+    L"const post=value=>chrome.webview.postMessage(value);"
+    L"const drain=()=>{if(waitingDrain&&channel.bufferedAmount<=channel.bufferedAmountLowThreshold){"
+    L"waitingDrain=false;post('DRAIN')}};"
+    L"const sample=async()=>{try{if(pc.connectionState!=='connected')return;const stats=await pc.getStats();"
+    L"const transport=[...stats.values()].find(value=>value.type==='transport'&&value.selectedCandidatePairId);"
+    L"const pair=transport&&stats.get(transport.selectedCandidatePairId);if(!pair)return;"
+    L"if(previousStats&&pair.id===previousStats.id&&pair.timestamp>previousStats.timestamp){"
+    L"const rate=Math.max(0,pair.bytesSent-previousStats.bytes)/(pair.timestamp-previousStats.timestamp);"
+    L"channel.bufferedAmountLowThreshold=Math.max(16384,Math.min(131072,Math.floor(rate*150)))}"
+    L"else channel.bufferedAmountLowThreshold=16384;"
+    L"previousStats={id:pair.id,bytes:pair.bytesSent,timestamp:pair.timestamp};drain()}catch{}};"
     L"const complete=pc=>pc.iceGatheringState==='complete'?Promise.resolve():new Promise((resolve,reject)=>{"
     L"const timeout=setTimeout(()=>reject(new Error('ICE gathering timeout')),10000);"
     L"pc.addEventListener('icegatheringstatechange',()=>{"
@@ -55,8 +72,8 @@ static const WCHAR ZpRtcPage[] =
     L"if(!value.startsWith('OFFER\\n'))return;"
     L"pc=new RTCPeerConnection({iceServers:servers.map(url=>({urls:url}))});"
     L"pc.ondatachannel=event=>{channel=event.channel;channel.binaryType='arraybuffer';"
-    L"channel.bufferedAmountLowThreshold=1048576;"
-    L"channel.onopen=()=>post('OPEN');channel.onclose=()=>post('CLOSED');"
+    L"channel.bufferedAmountLowThreshold=16384;channel.onbufferedamountlow=drain;"
+    L"channel.onopen=()=>{post('OPEN');setInterval(sample,1000)};channel.onclose=()=>post('CLOSED');"
     L"channel.onmessage=event=>{if(event.data==='PING')channel.send('PONG')}};"
     L"pc.onconnectionstatechange=()=>{"
     L"if(pc.connectionState==='failed'||pc.connectionState==='closed')post('CLOSED')};"
@@ -64,10 +81,9 @@ static const WCHAR ZpRtcPage[] =
     L"await pc.setLocalDescription(await pc.createAnswer());"
     L"await complete(pc);post('ANSWER\\n'+pc.localDescription.sdp)}catch(error){post('ERROR\\n'+error)}});"
     L"chrome.webview.addEventListener('sharedbufferreceived',event=>{const buffer=event.getBuffer();try{"
-    L"if(!channel||channel.readyState!=='open')throw new Error('Data channel is closed');channel.send(buffer)}"
-    L"catch(error){post('ERROR\\n'+error)}finally{chrome.webview.releaseBuffer(buffer)}"
-    L"if(channel&&channel.bufferedAmount<=channel.bufferedAmountLowThreshold)post('DRAIN');else if(channel){"
-    L"channel.onbufferedamountlow=()=>{channel.onbufferedamountlow=null;post('DRAIN')}}});post('READY')</script>";
+    L"if(!channel||channel.readyState!=='open')throw new Error('Data channel is closed');channel.send(buffer);"
+    L"waitingDrain=true;drain()}catch(error){post('ERROR\\n'+error)}finally{chrome.webview.releaseBuffer(buffer)}"
+    L"});post('READY')</script>";
 
 static
 VOID
@@ -88,6 +104,7 @@ ZpRtc_Release(
     if (Session->WorkEvent != NULL) NtClose(Session->WorkEvent);
     if (Session->AnswerEvent != NULL) NtClose(Session->AnswerEvent);
     if (Session->SendEvent != NULL) NtClose(Session->SendEvent);
+    if (Session->SendAvailableEvent != NULL) NtClose(Session->SendAvailableEvent);
     Mem_Free(Session->Answer);
     Mem_Free(Session->ConfigurationMessage);
     Mem_Free(Session->OfferMessage);
@@ -158,7 +175,6 @@ ZpRtc_WebMessage(
     }
     else if (wcscmp(Message, L"OPEN") == 0)
     {
-        InterlockedExchange(&Session->Connected, TRUE);
         Session->CanSend = TRUE;
         NtSetEvent(Session->WorkEvent, NULL);
     }
@@ -169,7 +185,6 @@ ZpRtc_WebMessage(
     }
     else if (wcscmp(Message, L"CLOSED") == 0 || wcsncmp(Message, L"ERROR\n", 6) == 0)
     {
-        InterlockedExchange(&Session->Connected, FALSE);
         ZpRtc_SetOpenStatus(Session, ZpStatus_FromNtStatus(STATUS_CONNECTION_DISCONNECTED));
         NtSetEvent(Session->StopEvent, NULL);
     }
@@ -254,25 +269,50 @@ ZpRtc_ProcessSend(
 {
     ICoreWebView2SharedBuffer* Buffer = NULL;
     BYTE* Destination = NULL;
+    ULONG Length, Serial;
     HRESULT Result;
 
-    if (!Session->SendPending || !Session->CanSend) return;
-    Result = Session->Environment12->CreateSharedBuffer(ZP_RTC_SEND_HEADER_SIZE + Session->SendLength,
-                                                        &Buffer);
+    RtlAcquireSRWLockExclusive(&Session->WorkLock);
+    if (!Session->SendPending || !Session->CanSend)
+    {
+        RtlReleaseSRWLockExclusive(&Session->WorkLock);
+        return;
+    }
+    Length = Session->SendLength;
+    Serial = Session->SendSerial;
+    RtlReleaseSRWLockExclusive(&Session->WorkLock);
+    Result = Session->Environment12->CreateSharedBuffer(ZP_RTC_SEND_HEADER_SIZE + Length, &Buffer);
     if (SUCCEEDED(Result)) Result = Buffer->get_Buffer(&Destination);
+    RtlAcquireSRWLockExclusive(&Session->WorkLock);
+    if (!Session->SendPending || Session->SendSerial != Serial)
+    {
+        RtlReleaseSRWLockExclusive(&Session->WorkLock);
+        if (Buffer != NULL) Buffer->Release();
+        return;
+    }
     if (SUCCEEDED(Result))
     {
         RtlCopyMemory(Destination, &Session->SendStreamId, sizeof(Session->SendStreamId));
-        RtlCopyMemory(Destination + ZP_RTC_SEND_HEADER_SIZE, Session->SendData, Session->SendLength);
+        RtlCopyMemory(Destination + ZP_RTC_SEND_HEADER_SIZE, Session->SendData, Length);
+    }
+    Session->SendData = NULL;
+    Session->SendPending = FALSE;
+    Session->CanSend = FALSE;
+    RtlReleaseSRWLockExclusive(&Session->WorkLock);
+    if (SUCCEEDED(Result))
+    {
         Result = Session->WebView17->PostSharedBufferToScript(Buffer,
                                                               COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_ONLY,
                                                               NULL);
     }
     if (Buffer != NULL) Buffer->Release();
-    Session->CanSend = FALSE;
-    Session->SendStatus = SUCCEEDED(Result) ? STATUS_SUCCESS : STATUS_CONNECTION_DISCONNECTED;
-    Session->SendPending = FALSE;
-    NtSetEvent(Session->SendEvent, NULL);
+    RtlAcquireSRWLockExclusive(&Session->WorkLock);
+    if (Session->SendSerial == Serial)
+    {
+        Session->SendStatus = SUCCEEDED(Result) ? STATUS_SUCCESS : STATUS_CONNECTION_DISCONNECTED;
+        NtSetEvent(Session->SendEvent, NULL);
+    }
+    RtlReleaseSRWLockExclusive(&Session->WorkLock);
     if (FAILED(Result)) NtSetEvent(Session->StopEvent, NULL);
 }
 
@@ -298,7 +338,6 @@ ZpRtc_Worker(
     PZP_RTC_SESSION Session = (PZP_RTC_SESSION)Context;
     WNDCLASSW WindowClass = { 0 };
     WCHAR UserDataFolder[MAX_PATH];
-    WCHAR LoaderPath[MAX_PATH];
     WCHAR ModulePath[MAX_PATH];
     HANDLE Events[] = { Session->StopEvent, Session->WorkEvent };
     PWCHAR Separator;
@@ -347,26 +386,7 @@ ZpRtc_Worker(
         Result = HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
         goto Cleanup;
     }
-    if (_snwprintf_s(LoaderPath,
-                     ARRAYSIZE(LoaderPath),
-                     _TRUNCATE,
-                     L"%.*s\\WebView2Loader.dll",
-                     (int)(Separator - ModulePath),
-                     ModulePath) < 0)
     {
-        Result = HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
-        goto Cleanup;
-    }
-    Session->Loader = LoadLibraryExW(LoaderPath, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR);
-    if (Session->Loader == NULL)
-    {
-        Result = HRESULT_FROM_WIN32(GetLastError());
-        goto Cleanup;
-    }
-    {
-        auto CreateEnvironment = (decltype(&CreateCoreWebView2EnvironmentWithOptions))GetProcAddress(
-            Session->Loader,
-            "CreateCoreWebView2EnvironmentWithOptions");
         auto Handler = Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [Session](HRESULT EnvironmentError, ICoreWebView2Environment* Environment) -> HRESULT
             {
@@ -380,9 +400,7 @@ ZpRtc_Worker(
                 return S_OK;
             });
         Session->Initializing = TRUE;
-        Result = CreateEnvironment != NULL ?
-                     CreateEnvironment(NULL, UserDataFolder, NULL, Handler.Get()) :
-                     HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
+        Result = CreateCoreWebView2EnvironmentWithOptions(NULL, UserDataFolder, NULL, Handler.Get());
     }
     if (FAILED(Result))
     {
@@ -414,23 +432,24 @@ ZpRtc_Worker(
     Result = S_OK;
 
 Cleanup:
-    InterlockedExchange(&Session->Connected, FALSE);
     ZpRtc_SetOpenStatus(Session,
                         FAILED(Result) ? ZpStatus_FromCode(ZpStatusHResult, (ULONG)Result) :
                                          ZpStatus_FromNtStatus(STATUS_CONNECTION_DISCONNECTED));
+    RtlAcquireSRWLockExclusive(&Session->WorkLock);
     if (Session->SendPending)
     {
         Session->SendStatus = STATUS_CONNECTION_DISCONNECTED;
+        Session->SendData = NULL;
         Session->SendPending = FALSE;
         NtSetEvent(Session->SendEvent, NULL);
     }
+    RtlReleaseSRWLockExclusive(&Session->WorkLock);
     if (Session->Controller != NULL) Session->Controller->Close();
     if (Session->WebView17 != NULL) Session->WebView17->Release();
     if (Session->WebView != NULL) Session->WebView->Release();
     if (Session->Controller != NULL) Session->Controller->Release();
     if (Session->Environment12 != NULL) Session->Environment12->Release();
     if (Session->Environment != NULL) Session->Environment->Release();
-    if (Session->Loader != NULL) FreeLibrary(Session->Loader);
     if (Session->Window != NULL) DestroyWindow(Session->Window);
     if (ComInitialized) CoUninitialize();
     RtlAcquireSRWLockExclusive(&Session->Owner->Lock);
@@ -507,14 +526,15 @@ ZpRtc_Open(
     Session->ReferenceCount = 1;
     Session->OpenStatus = ZpStatus_FromNtStatus(STATUS_PENDING);
     Session->Owner = Client;
-    Session->SendLock = RTL_SRWLOCK_INIT;
+    Session->WorkLock = RTL_SRWLOCK_INIT;
     RtlCopyMemory(Session->Id, Request->SessionId, sizeof(Session->Id));
     Session->StopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     Session->WorkEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
     Session->AnswerEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     Session->SendEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+    Session->SendAvailableEvent = CreateEventW(NULL, FALSE, TRUE, NULL);
     if (Session->StopEvent == NULL || Session->WorkEvent == NULL ||
-        Session->AnswerEvent == NULL || Session->SendEvent == NULL)
+        Session->AnswerEvent == NULL || Session->SendEvent == NULL || Session->SendAvailableEvent == NULL)
     {
         Status = NTSTATUS_FROM_WIN32(GetLastError());
         ZpRtc_Release(Session);
@@ -646,17 +666,42 @@ ZpRtc_Execute(
     return ZpStatus_FromNtStatus(STATUS_NOT_SUPPORTED);
 }
 
+static
 NTSTATUS
-ZpRtc_Send(
+ZpRtc_WaitSend(
+    _In_ PZP_RTC_SESSION Session,
+    _In_ HANDLE Event,
+    _In_opt_ HANDLE CancelEvent)
+{
+    HANDLE Events[3];
+    ULONG Count;
+    DWORD Result;
+
+    Events[0] = Session->StopEvent;
+    Count = 1;
+    if (CancelEvent != NULL) Events[Count++] = CancelEvent;
+    Events[Count++] = Event;
+    Result = WaitForMultipleObjects(Count, Events, FALSE, ZP_RTC_SEND_TIMEOUT_MILLISECONDS);
+    if (Result == WAIT_OBJECT_0 + Count - 1) return STATUS_SUCCESS;
+    if (CancelEvent != NULL && Result == WAIT_OBJECT_0 + 1) return STATUS_CANCELLED;
+    if (Result == WAIT_TIMEOUT)
+    {
+        NtSetEvent(Session->StopEvent, NULL);
+        return STATUS_IO_TIMEOUT;
+    }
+    return STATUS_CONNECTION_DISCONNECTED;
+}
+
+NTSTATUS
+ZpRtc_SendEx(
     _Inout_ PZP_CLIENT_OBJECT Client,
     _In_ ULONG StreamId,
     _In_reads_bytes_(Length) const VOID* Data,
-    _In_ ULONG Length)
+    _In_ ULONG Length,
+    _In_opt_ HANDLE CancelEvent)
 {
     PZP_RTC_SESSION Session;
-    HANDLE Events[2];
     ULONG Offset = 0, ChunkLength;
-    DWORD WaitResult;
     NTSTATUS Status = STATUS_SUCCESS;
 
     if (StreamId == 0 || Data == NULL || Length == 0) return STATUS_INVALID_PARAMETER;
@@ -664,35 +709,48 @@ ZpRtc_Send(
     Session = (PZP_RTC_SESSION)Client->RtcSession;
     if (Session != NULL) ZpRtc_AddReference(Session);
     RtlReleaseSRWLockShared(&Client->Lock);
-    if (Session == NULL || !Session->Connected)
-    {
-        if (Session != NULL) ZpRtc_Release(Session);
-        return STATUS_CONNECTION_DISCONNECTED;
-    }
-    Events[0] = Session->StopEvent;
-    Events[1] = Session->SendEvent;
-    RtlAcquireSRWLockExclusive(&Session->SendLock);
+    if (Session == NULL) return STATUS_CONNECTION_DISCONNECTED;
+    /* CanSend gates delayed onopen; StopEvent handles session closure. */
     while (Offset < Length)
     {
-        ChunkLength = min(Length - Offset, ZP_RTC_DATA_CHUNK_SIZE);
+        Status = ZpRtc_WaitSend(Session, Session->SendAvailableEvent, CancelEvent);
+        if (!NT_SUCCESS(Status)) break;
+        ChunkLength = min(Length - Offset, ZP_RTC_SEND_CHUNK_SIZE);
+        RtlAcquireSRWLockExclusive(&Session->WorkLock);
+        NtClearEvent(Session->SendEvent);
+        Session->SendSerial++;
         Session->SendData = (const BYTE*)Add2Ptr(Data, Offset);
         Session->SendLength = ChunkLength;
         Session->SendStreamId = StreamId;
         Session->SendPending = TRUE;
+        RtlReleaseSRWLockExclusive(&Session->WorkLock);
         NtSetEvent(Session->WorkEvent, NULL);
-        WaitResult = WaitForMultipleObjects(ARRAYSIZE(Events), Events, FALSE, INFINITE);
-        if (WaitResult != WAIT_OBJECT_0 + 1)
+        Status = ZpRtc_WaitSend(Session, Session->SendEvent, CancelEvent);
+        RtlAcquireSRWLockExclusive(&Session->WorkLock);
+        if (NT_SUCCESS(Status)) Status = Session->SendStatus;
+        else
         {
-            Status = STATUS_CONNECTION_DISCONNECTED;
-            break;
+            Session->SendSerial++;
+            Session->SendData = NULL;
+            Session->SendPending = FALSE;
         }
-        Status = Session->SendStatus;
+        RtlReleaseSRWLockExclusive(&Session->WorkLock);
+        NtSetEvent(Session->SendAvailableEvent, NULL);
         if (!NT_SUCCESS(Status)) break;
         Offset += ChunkLength;
     }
-    RtlReleaseSRWLockExclusive(&Session->SendLock);
     ZpRtc_Release(Session);
     return Status;
+}
+
+NTSTATUS
+ZpRtc_Send(
+    _Inout_ PZP_CLIENT_OBJECT Client,
+    _In_ ULONG StreamId,
+    _In_reads_bytes_(Length) const VOID* Data,
+    _In_ ULONG Length)
+{
+    return ZpRtc_SendEx(Client, StreamId, Data, Length, NULL);
 }
 
 VOID
@@ -715,3 +773,5 @@ ZpRtc_Close(
     NtWaitForSingleObject(Session->Thread, FALSE, NULL);
     ZpRtc_Release(Session);
 }
+
+#endif

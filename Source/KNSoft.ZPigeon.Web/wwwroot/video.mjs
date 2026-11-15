@@ -184,7 +184,7 @@ export class VideoManager {
     let socket, direct;
     try {
       try {
-        direct = await this.rtc.open(
+        if (this.rtc.enabled) direct = await this.rtc.open(
           (data) => this.receive(data, socket),
           (text) => (this.status.textContent = text),
         );

@@ -7,11 +7,13 @@ public sealed class OwnedBuffer : IMemoryOwner<byte>
 {
     private byte[]? buffer;
     private readonly int length;
+    private readonly Action<int>? released;
 
-    private OwnedBuffer(byte[] buffer, int length)
+    private OwnedBuffer(byte[] buffer, int length, Action<int>? released)
     {
         this.buffer = buffer;
         this.length = length;
+        this.released = released;
     }
 
     public Memory<byte> Memory =>
@@ -24,11 +26,11 @@ public sealed class OwnedBuffer : IMemoryOwner<byte>
 
     public static implicit operator ReadOnlyMemory<byte>(OwnedBuffer buffer) => buffer.Memory;
 
-    internal static unsafe OwnedBuffer Copy(nint source, int length)
+    internal static unsafe OwnedBuffer Copy(nint source, int length, Action<int>? released = null)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(length);
         new ReadOnlySpan<byte>((void*)source, length).CopyTo(buffer);
-        return new(buffer, length);
+        return new(buffer, length, released);
     }
 
     internal static void Drain(ChannelReader<OwnedBuffer> reader)
@@ -39,6 +41,10 @@ public sealed class OwnedBuffer : IMemoryOwner<byte>
     public void Dispose()
     {
         var rented = Interlocked.Exchange(ref buffer, null);
-        if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
+        if (rented is not null)
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+            released?.Invoke(length);
+        }
     }
 }

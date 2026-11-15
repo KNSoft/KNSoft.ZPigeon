@@ -13,6 +13,12 @@ typedef struct _ZP_WINDOW_CAPTURE_IMAGE
     PBYTE Data;
 } ZP_WINDOW_CAPTURE_IMAGE, *PZP_WINDOW_CAPTURE_IMAGE;
 
+VOID
+ZpWindowCapture_Initialize(VOID);
+
+VOID
+ZpWindowCapture_Uninitialize(VOID);
+
 HRESULT
 ZpWindowCapture_ResolveMonitor(
     _In_ ULONG MonitorIndex,
@@ -52,6 +58,7 @@ VOID
 ZpWindowCapture_AddRefFrame(
     _In_ PZP_WINDOW_CAPTURE_FRAME Frame);
 
+_Success_(return == S_OK)
 HRESULT
 ZpWindowCapture_EncodeFrame(
     _Inout_ PZP_WINDOW_CAPTURE Capture,

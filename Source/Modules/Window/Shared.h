@@ -9,6 +9,7 @@ struct _ZP_WINDOW_SHARED_IMAGE
 {
     volatile LONG ReferenceCount;
     ZP_WINDOW_CAPTURE_IMAGE Value;
+    BYTE ChangeRate;
 };
 
 HRESULT

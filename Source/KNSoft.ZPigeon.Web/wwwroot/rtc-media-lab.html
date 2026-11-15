@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>视频轨实验 · KNSoft ZPigeon</title>
+    <link rel="stylesheet" href="rtc-media-lab.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <a href="/">KNSoft ZPigeon</a>
+        <h1>WebRTC 视频轨实验</h1>
+        <p>同一浏览器内建立两个 PeerConnection，通过真实 RTP 视频轨测试编码与呈现。</p>
+      </header>
+      <p class="notice">这是本机媒体管线基线，不代表远程网络或现有 Client 的性能。桌面采集仅在点击开始、
+        并由你选择分享源后进行。RGBA 模式仅模拟原始内存帧桥接，尚未接入 native 采集或 GPU 共享。</p>
+      <form id="settings">
+        <label>画面来源<select id="source">
+          <option value="display">选择桌面或窗口</option>
+          <option value="synthetic">合成测试图（不采集桌面）</option>
+        </select></label>
+        <label>帧路径<select id="mode">
+          <option value="track">采集轨直接发送</option>
+          <option value="rgba">RGBA 缓冲区 → VideoFrame → 生成轨</option>
+        </select></label>
+        <label>内容偏好<select id="hint">
+          <option value="text">text · 文字</option>
+          <option value="detail">detail · 细节</option>
+          <option value="motion">motion · 运动</option>
+          <option value="">浏览器默认</option>
+        </select></label>
+        <label>带宽不足时<select id="degradation">
+          <option value="maintain-resolution">优先保持分辨率</option>
+          <option value="maintain-framerate">优先保持帧率</option>
+          <option value="balanced">平衡分辨率与帧率</option>
+        </select></label>
+        <label>编码器<select id="codec"><option value="">浏览器协商</option></select></label>
+        <label>码率上限（Mbps）<input id="bitrate" type="number" min="0.1" max="100" step="0.1" value="5" required /></label>
+        <label>帧率上限<input id="fps" type="number" min="1" max="60" step="1" value="30" required /></label>
+        <label>连接后运行时间（秒）<input id="duration" type="number" min="5" max="300" step="1" value="60" required /></label>
+        <label class="scenario">测试场景<input id="scenario" maxlength="120" placeholder="例如：中文小字、网页滚动、视频播放" /></label>
+        <div class="actions">
+          <button id="start" type="submit">开始实验</button>
+          <button id="apply" type="button" disabled>应用编码参数</button>
+          <button id="stop" type="button" disabled>停止</button>
+          <button id="download" type="button" disabled>导出 JSON</button>
+        </div>
+      </form>
+      <p id="status" role="status">尚未开始。建连最多 30 秒，连接后运行最多 300 秒；导出不包含画面内容。</p>
+      <section class="metrics" aria-label="运行指标">
+        <div><span>实际发送码率</span><strong id="sendBitrate">—</strong></div>
+        <div><span>接收帧率</span><strong id="receiveFps">—</strong></div>
+        <div><span>实际编码器</span><strong id="actualCodec">—</strong></div>
+        <div><span>接收分辨率</span><strong id="resolution">—</strong></div>
+        <div><span>采集到呈现估计 P95</span><strong id="latency">—</strong></div>
+        <div><span>每秒编码均值 P95</span><strong id="encodeTime">—</strong></div>
+        <div><span>RGBA 物化耗时 P95</span><strong id="bridgeTime">—</strong></div>
+        <div><span>媒体负载累计</span><strong id="totalBytes">—</strong></div>
+      </section>
+      <section class="preview">
+        <h2>接收端画面</h2>
+        <video id="received" autoplay playsinline muted></video>
+      </section>
+      <details open>
+        <summary>指标边界与实验步骤</summary>
+        <p>先用直接发送模式运行同一场景，再用 RGBA 模式运行；改变参数时会在结果中记录生效时间。
+          RGBA 模式包含浏览器原始帧读取、复制和 VideoFrame 创建成本，不测 native IPC 或 MF 编码器。</p>
+        <p>实际帧率受采集源的初始能力限制；提高帧率上限后若未生效，请重新开始实验。</p>
+        <p>采集到呈现仅在浏览器提供 captureTime 时记录，来自 requestVideoFrameCallback 的时钟估计；
+          这不是键鼠输入延迟。P95 采用最多 6,000 个最近帧样本，每秒统计记录最多 300 条。
+          浏览器未提供的统计项保持缺失。隐藏页面可能影响采样频率。</p>
+        <p>本机连接不模拟丢包、限速或公网 RTT；弱网对比应在后续两机实验中完成。
+          停止、分享结束或关闭页面时会关闭采集与两个连接。</p>
+      </details>
+      <pre id="trace" aria-label="最新统计">等待统计数据。</pre>
+      <canvas id="synthetic" width="1280" height="720" hidden></canvas>
+    </main>
+    <script type="module" src="rtc-media-lab.mjs"></script>
+  </body>
+</html>

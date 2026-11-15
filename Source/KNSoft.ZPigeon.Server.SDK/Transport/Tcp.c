@@ -225,6 +225,7 @@ ZpServerTcp_Accept(
                                   (ZP_CONNECTION_HANDLE)&Connection->Public,
                                   ZpConnectionPhaseConnecting,
                                   ZpStatus_FromNtStatus(STATUS_SUCCESS));
+        ZpConnection_AddRef(&Connection->Public);
         Status = ZpTcpConnection_Initialize(&Connection->Tcp,
                                             Transport->CompletionPort,
                                             Socket,
@@ -235,10 +236,12 @@ ZpServerTcp_Accept(
                                             ZpServerTcp_Receive,
                                             ZpServerTcp_Closed,
                                             Connection);
-        if (!ZpStatus_IsSuccess(Status))
+        if (!ZpStatus_IsSuccess(Status) && Connection->Tcp.Closed == NULL)
         {
-            continue;
+            closesocket(Socket);
+            ZpServerTcp_Closed(&Connection->Tcp, Status, Connection);
         }
+        ZpConnection_Release(&Connection->Public);
     }
 }
 
@@ -434,6 +437,7 @@ ZpServerTcp_Stop(
     _In_opt_ PVOID Context)
 {
     PZP_SERVER_TCP_TRANSPORT Transport = Context;
+    PZP_SERVER_TCP_CONNECTION Connection, Candidate;
     PLIST_ENTRY Entry;
 
     RtlAcquireSRWLockExclusive(&Transport->Owner->Lock);
@@ -441,20 +445,31 @@ ZpServerTcp_Stop(
     RtlReleaseSRWLockExclusive(&Transport->Owner->Lock);
     SetEvent(Transport->StopEvent);
     ZpServerTcp_CloseListeners(Transport);
-    RtlAcquireSRWLockShared(&Transport->Owner->Lock);
-    for (Entry = Transport->Connections.Flink;
-         Entry != &Transport->Connections;
-         Entry = Entry->Flink)
+    if (Transport->AcceptThread != NULL)
     {
-        PZP_SERVER_TCP_CONNECTION Connection = CONTAINING_RECORD(
-            Entry,
-            ZP_SERVER_TCP_CONNECTION,
-            ListEntry);
-
-        ZpTcpConnection_Close(&Connection->Tcp,
-                              ZpStatus_FromNtStatus(STATUS_SUCCESS));
+        WaitForSingleObject(Transport->AcceptThread, INFINITE);
     }
-    RtlReleaseSRWLockShared(&Transport->Owner->Lock);
+    for (;;)
+    {
+        Connection = NULL;
+        RtlAcquireSRWLockShared(&Transport->Owner->Lock);
+        for (Entry = Transport->Connections.Flink;
+             Entry != &Transport->Connections;
+             Entry = Entry->Flink)
+        {
+            Candidate = CONTAINING_RECORD(Entry, ZP_SERVER_TCP_CONNECTION, ListEntry);
+            if (!InterlockedCompareExchange(&Candidate->Tcp.Closing, FALSE, FALSE))
+            {
+                ZpConnection_AddRef(&Candidate->Public);
+                Connection = Candidate;
+                break;
+            }
+        }
+        RtlReleaseSRWLockShared(&Transport->Owner->Lock);
+        if (Connection == NULL) break;
+        ZpTcpConnection_Close(&Connection->Tcp, ZpStatus_FromNtStatus(STATUS_SUCCESS));
+        ZpConnection_Release(&Connection->Public);
+    }
     ZpServerTcp_TryCompleteStop(Transport);
 }
 

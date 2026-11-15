@@ -255,6 +255,7 @@ ZpNative_OpenWindowCapture(
     _In_ BYTE Encoding,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_OPEN_CALLBACK OpenCallback,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_DATA_CALLBACK DataCallback,
+    _In_ ZP_NATIVE_WINDOW_CAPTURE_WRITABLE_CALLBACK WritableCallback,
     _In_ ZP_NATIVE_WINDOW_CAPTURE_CLOSE_CALLBACK CloseCallback,
     _In_opt_ PVOID Context)
 {
@@ -278,7 +279,7 @@ ZpNative_OpenWindowCapture(
     Options.Encoding.Codec = (Encoding >> 2) & 1;
     Options.Encoding.Reserved = Encoding >> 3;
 
-    if (OpenCallback == NULL || DataCallback == NULL || CloseCallback == NULL)
+    if (OpenCallback == NULL || DataCallback == NULL || WritableCallback == NULL || CloseCallback == NULL)
     {
         return STATUS_INVALID_PARAMETER;
     }
@@ -294,6 +295,7 @@ ZpNative_OpenWindowCapture(
     Stream->Connection = Connection;
     Stream->OpenCallback = OpenCallback;
     Stream->DataCallback = DataCallback;
+    Stream->WritableCallback = WritableCallback;
     Stream->CloseCallback = CloseCallback;
     Stream->Context = Context;
     Status = ZpServer_OpenWindowCapture(Connection,
@@ -301,6 +303,7 @@ ZpNative_OpenWindowCapture(
                                         ZP_NATIVE_TIMEOUT_MILLISECONDS,
                                         ZpNative_WindowCaptureOpenCallback,
                                         ZpNative_WindowCaptureDataCallback,
+                                        ZpNative_WindowCaptureWritableCallback,
                                         ZpNative_WindowCaptureCloseCallback,
                                         Stream,
                                         &Request);

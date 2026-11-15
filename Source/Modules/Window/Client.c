@@ -2,6 +2,7 @@
 
 #include "Capture.h"
 #include "Encoder.h"
+#include "Rate.h"
 #include "Shared.h"
 #include "../Rtc/Client.h"
 
@@ -10,11 +11,22 @@
 #include <KNSoft/MakeLifeEasier/MakeLifeEasier.h>
 #include <KNSoft/NDK/NT/Win32K/Win32KApi.h>
 
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WINDOW_)
+
 #pragma comment(lib, "KNSoft.NDK.Win32u.lib")
 
 #define ZP_WINDOW_CLASS_CCH 256
 #define ZP_WINDOW_CAPTURE_CHUNK_SIZE 0x00040000UL
 #define ZP_WINDOW_PRESSED_KEY_COUNT 512
+#define ZP_WINDOW_CAPTURE_MAX_PENDING_FRAMES 8
+#define ZP_WINDOW_CAPTURE_MAX_PENDING_BYTES 0x00200000UL
+
+typedef struct _ZP_WINDOW_PENDING_FRAME
+{
+    ULONG Sequence;
+    ULONG Length;
+    ULONGLONG SentTickCount;
+} ZP_WINDOW_PENDING_FRAME, *PZP_WINDOW_PENDING_FRAME;
 
 typedef struct _ZP_WINDOW_ENTRY
 {
@@ -33,8 +45,25 @@ struct _ZP_CLIENT_WINDOW_CAPTURE_CHANNEL
     HANDLE RenderEvent;
     HANDLE WorkerThread;
     PZP_WINDOW_SHARED_CAPTURE Capture;
-    ULONG PendingFrameSequence;
-    ULONG AcknowledgedFrameSequence;
+    HANDLE StopEvent;
+    ZP_WINDOW_PENDING_FRAME PendingFrames[ZP_WINDOW_CAPTURE_MAX_PENDING_FRAMES];
+    ULONG PendingFrameHead;
+    ULONG PendingFrameCount;
+    ULONG PendingFrameBytes;
+    ULONG MinimumAckMilliseconds;
+    ULONG WindowWaitMilliseconds;
+    ULONG SendWaitMilliseconds;
+    ULONG RenderMilliseconds;
+    ULONG NetworkAckMilliseconds;
+    ULONG MinimumNetworkAckMilliseconds;
+    ULONG LastAdaptSequence;
+    ULONG LastAcknowledgedFrameSequence;
+    ULONGLONG AdaptTickCount;
+    ULONG VideoBitRateLimit;
+    BYTE AdaptiveFrameRate;
+    BYTE VideoRatePercent;
+    BYTE CongestedSamples;
+    BYTE StableSamples;
     ULONG FrameSequence;
     BYTE FrameAckFlags;
     BYTE VideoCodecs;
@@ -54,14 +83,21 @@ typedef struct _ZP_WINDOW_VIDEO_STATE
     ULONG Width;
     ULONG Height;
     ULONG BitRate;
-    ULONG HighChangeFrames;
-    ULONG LowChangeFrames;
+    ULONG PendingSamples;
+    ULONGLONG HighChangeTickCount;
+    ULONGLONG LowChangeTickCount;
+    ULONGLONG KeyFrameTickCount;
+    ULONGLONG SampleTimestamp;
+    ULONGLONG BitRateTickCount;
     BYTE FrameRate;
+    BYTE ChangeRate;
     BYTE Codec;
     BYTE RequestedCodec;
     BOOLEAN Active;
     BOOLEAN Unavailable;
     BOOLEAN ForceKeyFrame;
+    BOOLEAN NeedKeyFrame;
+    BOOLEAN BitRateUpdateUnavailable;
 } ZP_WINDOW_VIDEO_STATE, *PZP_WINDOW_VIDEO_STATE;
 
 static
@@ -726,7 +762,11 @@ ZpWindowCapture_SendBytes(
 
     if (Channel->Options.DirectStreamId != 0)
     {
-        return ZpRtc_Send(Object, Channel->Options.DirectStreamId, Data, Length);
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RTC_)
+        return ZpRtc_SendEx(Object, Channel->Options.DirectStreamId, Data, Length, Channel->StopEvent);
+#else
+        return STATUS_NOT_SUPPORTED;
+#endif
     }
     Status = ZpMessage_EncodeChannelDataHeader(Channel->Header.ChannelId, Header);
     if (!NT_SUCCESS(Status)) return Status;
@@ -775,54 +815,34 @@ ZpWindowCapture_SendBytes(
 
 static
 NTSTATUS
-ZpWindowCapture_BeginFrame(
+ZpWindowCapture_WaitForFrameSlot(
     _Inout_ PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel,
-    _In_ ULONG Sequence)
+    _In_ ULONG Length)
 {
     PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
-    NTSTATUS Status;
-
-    RtlAcquireSRWLockExclusive(&Object->Lock);
-    if (!Channel->Header.Pending)
-    {
-        Status = STATUS_CANCELLED;
-    }
-    else if (Channel->PendingFrameSequence != 0)
-    {
-        Status = STATUS_INVALID_DEVICE_STATE;
-    }
-    else
-    {
-        NtClearEvent(Channel->RenderEvent);
-        Channel->PendingFrameSequence = Sequence;
-        Channel->AcknowledgedFrameSequence = 0;
-        Channel->FrameAckFlags = 0;
-        Status = STATUS_SUCCESS;
-    }
-    RtlReleaseSRWLockExclusive(&Object->Lock);
-    return Status;
-}
-
-static
-NTSTATUS
-ZpWindowCapture_WaitForFrame(
-    _Inout_ PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel,
-    _Out_ PBYTE Flags)
-{
-    PZP_CLIENT_OBJECT Object = Channel->Header.Owner;
+    LARGE_INTEGER Timeout;
+    ULONGLONG Started = GetTickCount64();
+    ULONG Window, AgeLimit;
     NTSTATUS Status;
 
     for (;;)
     {
         RtlAcquireSRWLockExclusive(&Object->Lock);
+        Window = min(ZP_WINDOW_CAPTURE_MAX_PENDING_FRAMES,
+                     max(2, (Channel->AdaptiveFrameRate * max(Channel->MinimumAckMilliseconds,
+                         Channel->NetworkAckMilliseconds + Channel->RenderMilliseconds) + 999) / 1000 + 1));
+        AgeLimit = max(250, max(Channel->MinimumAckMilliseconds,
+                                Channel->NetworkAckMilliseconds + Channel->RenderMilliseconds) * 2 + 150);
         if (!Channel->Header.Pending)
         {
             Status = STATUS_CANCELLED;
         }
-        else if (Channel->AcknowledgedFrameSequence == Channel->PendingFrameSequence)
+        else if (Channel->PendingFrameCount == 0 ||
+                 (Channel->PendingFrameCount < Window &&
+                  (Length == 0 || Channel->PendingFrameBytes + Length <= ZP_WINDOW_CAPTURE_MAX_PENDING_BYTES) &&
+                  GetTickCount64() - Channel->PendingFrames[Channel->PendingFrameHead].SentTickCount < AgeLimit))
         {
-            *Flags = Channel->FrameAckFlags;
-            Channel->PendingFrameSequence = 0;
+            Channel->WindowWaitMilliseconds += (ULONG)(GetTickCount64() - Started);
             Status = STATUS_SUCCESS;
         }
         else
@@ -832,9 +852,42 @@ ZpWindowCapture_WaitForFrame(
         }
         RtlReleaseSRWLockExclusive(&Object->Lock);
         if (Status != STATUS_PENDING) return Status;
-        Status = NtWaitForSingleObject(Channel->RenderEvent, FALSE, NULL);
+        Timeout.QuadPart = -5000LL * 10000;
+        Status = NtWaitForSingleObject(Channel->RenderEvent, FALSE, &Timeout);
+        if (Status == STATUS_TIMEOUT) return STATUS_IO_TIMEOUT;
         if (!NT_SUCCESS(Status)) return Status;
     }
+}
+
+static
+NTSTATUS
+ZpWindowCapture_BeginFrame(
+    _Inout_ PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel,
+    _In_ ULONG Sequence,
+    _In_ ULONG Length)
+{
+    PZP_WINDOW_PENDING_FRAME Frame;
+    NTSTATUS Status;
+
+    Status = ZpWindowCapture_WaitForFrameSlot(Channel, Length);
+    if (!NT_SUCCESS(Status)) return Status;
+    RtlAcquireSRWLockExclusive(&Channel->Header.Owner->Lock);
+    if (!Channel->Header.Pending)
+    {
+        Status = STATUS_CANCELLED;
+    }
+    else
+    {
+        Frame = &Channel->PendingFrames[(Channel->PendingFrameHead + Channel->PendingFrameCount) %
+                                       ZP_WINDOW_CAPTURE_MAX_PENDING_FRAMES];
+        Frame->Sequence = Sequence;
+        Frame->Length = Length;
+        Frame->SentTickCount = GetTickCount64();
+        Channel->PendingFrameCount++;
+        Channel->PendingFrameBytes += Length;
+    }
+    RtlReleaseSRWLockExclusive(&Channel->Header.Owner->Lock);
+    return Status;
 }
 
 static
@@ -855,9 +908,11 @@ ZpWindowCapture_FinishWorker(
     Removed = ZpClientLocalChannel_RemoveLocked(&Channel->Header);
     if (Removed) ZpWindowCapture_SendCloseLocked(Channel, Status);
     Channel->WorkerActive = FALSE;
-    Object->CallbackCount--;
     RtlReleaseSRWLockExclusive(&Object->Lock);
     ZpWindowCapture_ReleaseInput(Channel);
+    RtlAcquireSRWLockExclusive(&Object->Lock);
+    Object->CallbackCount--;
+    RtlReleaseSRWLockExclusive(&Object->Lock);
     if (Removed) ZpClientLocalChannel_Release(&Channel->Header);
     ZpClientLocalChannel_Release(&Channel->Header);
 }
@@ -866,16 +921,77 @@ static
 VOID
 ZpWindowCapture_GetOptions(
     _In_ PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel,
+    _In_ BOOLEAN VideoActive,
     _Out_ PZP_WINDOW_CAPTURE_OPTIONS Options,
-    _Out_ PZP_CONNECTION_POLICY ConnectionPolicy,
     _Out_ PBYTE VideoCodecs,
     _Out_ PULONG VideoCodecWidth,
     _Out_ PULONG VideoCodecHeight,
-    _Out_ PBOOLEAN VideoCodecsChanged)
+    _Out_ PBOOLEAN VideoCodecsChanged,
+    _Out_ PBYTE AckFlags,
+    _Out_ PULONG BitRateLimit,
+    _Out_ PBYTE RatePercent,
+    _Out_ PBYTE RequestedFrameRate)
 {
+    ULONGLONG Now = GetTickCount64();
+
     RtlAcquireSRWLockExclusive(&Channel->Header.Owner->Lock);
+    if (Now - Channel->AdaptTickCount >= 1000 &&
+        Channel->LastAcknowledgedFrameSequence != Channel->LastAdaptSequence)
+    {
+        ULONG Interval = (1000 + Channel->AdaptiveFrameRate - 1) / Channel->AdaptiveFrameRate;
+        BOOLEAN NetworkCongested = Channel->SendWaitMilliseconds >= 200 ||
+            (Channel->WindowWaitMilliseconds >= 200 &&
+             Channel->NetworkAckMilliseconds > Channel->MinimumNetworkAckMilliseconds +
+                                                max(30, Channel->MinimumNetworkAckMilliseconds / 4));
+        BOOLEAN RenderCongested = Channel->RenderMilliseconds > Interval * 2;
+
+        if (Channel->WindowWaitMilliseconds >= 200 || NetworkCongested || RenderCongested)
+        {
+            Channel->StableSamples = 0;
+            if (++Channel->CongestedSamples >= 2)
+            {
+                if (VideoActive && NetworkCongested && Channel->VideoRatePercent > 10)
+                {
+                    Channel->VideoRatePercent = max(10, Channel->VideoRatePercent * 3 / 4);
+                    if (Channel->VideoRatePercent <= 50 && Channel->AdaptiveFrameRate > 3)
+                        Channel->AdaptiveFrameRate = max(3, Channel->AdaptiveFrameRate * 3 / 4);
+                }
+                else if (Channel->AdaptiveFrameRate > 3)
+                {
+                    Channel->AdaptiveFrameRate = max(3, Channel->AdaptiveFrameRate * 3 / 4);
+                }
+                Channel->CongestedSamples = 0;
+            }
+        }
+        else if (Channel->WindowWaitMilliseconds < 30)
+        {
+            Channel->CongestedSamples = 0;
+            if (++Channel->StableSamples >= 3)
+            {
+                Channel->MinimumNetworkAckMilliseconds = Channel->NetworkAckMilliseconds;
+                Channel->MinimumAckMilliseconds = max(1,
+                    Channel->NetworkAckMilliseconds + Channel->RenderMilliseconds);
+                Channel->AdaptiveFrameRate = min(Channel->Options.FrameRate,
+                                                 Channel->AdaptiveFrameRate + max(1, Channel->AdaptiveFrameRate / 2));
+                Channel->VideoRatePercent = min(100, Channel->VideoRatePercent + 5);
+                Channel->StableSamples = 0;
+            }
+        }
+        else
+        {
+            Channel->CongestedSamples = Channel->StableSamples = 0;
+        }
+        Channel->WindowWaitMilliseconds = Channel->SendWaitMilliseconds = 0;
+        Channel->AdaptTickCount = Now;
+        Channel->LastAdaptSequence = Channel->LastAcknowledgedFrameSequence;
+    }
+    *RequestedFrameRate = Channel->Options.FrameRate;
     *Options = Channel->Options;
-    *ConnectionPolicy = Channel->Header.Owner->ConnectionPolicy;
+    Options->FrameRate = min(Options->FrameRate, Channel->AdaptiveFrameRate);
+    *BitRateLimit = Channel->VideoBitRateLimit;
+    *RatePercent = Channel->VideoRatePercent;
+    *AckFlags = Channel->FrameAckFlags;
+    Channel->FrameAckFlags = 0;
     *VideoCodecs = Channel->VideoCodecs;
     *VideoCodecWidth = Channel->VideoCodecWidth;
     *VideoCodecHeight = Channel->VideoCodecHeight;
@@ -894,57 +1010,39 @@ ZpWindowCapture_IsVideoCodecSupported(
 }
 
 static
-ULONG
-ZpWindowCapture_GetVideoBitRate(
-    _In_ PCZP_WINDOW_CAPTURE_OPTIONS Options,
-    _In_ PCZP_CONNECTION_POLICY ConnectionPolicy,
-    _In_ ULONG Width,
-    _In_ ULONG Height,
-    _In_ ZP_WINDOW_VIDEO_CODEC Codec)
-{
-    static const ULONG Limits[] = { 1500000, 5000000, 16000000, 50000000, 100000000 };
-    BYTE QualityClass = min(ConnectionPolicy->SpeedClass, ConnectionPolicy->LatencyClass);
-    ULONGLONG BitRate = (ULONGLONG)Width * Height * Options->FrameRate *
-                        (Options->Quality + 40) / 1000;
-
-    if (Codec == ZpWindowVideoCodecH265) BitRate = BitRate * 7 / 10;
-    return (ULONG)max(256000, min(BitRate, Limits[QualityClass]));
-}
-
-static
 VOID
 ZpWindowCapture_UpdateAutomaticMode(
     _Inout_ PZP_WINDOW_VIDEO_STATE State,
-    _In_ PCZP_WINDOW_CAPTURE_OPTIONS Options,
-    _In_ PCZP_CONNECTION_POLICY ConnectionPolicy,
     _In_ BYTE VideoCodecs,
-    _In_ BYTE ChangeRate)
+    _In_ BYTE ChangeRate,
+    _In_ LOGICAL ExpensiveImage)
 {
-    static const BYTE EnterThresholds[] = { 12, 18, 25, 32, 40 };
-    BYTE QualityClass = min(ConnectionPolicy->SpeedClass, ConnectionPolicy->LatencyClass);
-    ULONG EnterFrames = max(3, Options->FrameRate / 2);
-    ULONG ExitFrames = max(6, Options->FrameRate * 3);
+    ULONGLONG Now = GetTickCount64();
 
     if (!State->Active)
     {
-        State->HighChangeFrames = ChangeRate >= EnterThresholds[QualityClass] ?
-                                      State->HighChangeFrames + 1 : 0;
-        if (State->HighChangeFrames >= EnterFrames && !State->Unavailable && VideoCodecs != 0)
+        if ((ChangeRate >= 25 || ExpensiveImage) && !State->Unavailable && VideoCodecs != 0)
         {
-            State->Active = TRUE;
-            State->HighChangeFrames = 0;
-            State->LowChangeFrames = 0;
+            if (State->HighChangeTickCount == 0) State->HighChangeTickCount = Now;
+            if (Now - State->HighChangeTickCount >= 500)
+            {
+                State->Active = TRUE;
+                State->HighChangeTickCount = State->LowChangeTickCount = 0;
+            }
         }
+        else State->HighChangeTickCount = 0;
         return;
     }
-    State->LowChangeFrames = ChangeRate <= EnterThresholds[QualityClass] / 3 ?
-                                 State->LowChangeFrames + 1 : 0;
-    if (State->LowChangeFrames >= ExitFrames)
+    if (ChangeRate <= 8)
     {
-        State->Active = FALSE;
-        State->HighChangeFrames = 0;
-        State->LowChangeFrames = 0;
+        if (State->LowChangeTickCount == 0) State->LowChangeTickCount = Now;
+        if (Now - State->LowChangeTickCount >= 3000)
+        {
+            State->Active = FALSE;
+            State->HighChangeTickCount = State->LowChangeTickCount = 0;
+        }
     }
+    else State->LowChangeTickCount = 0;
 }
 
 static
@@ -952,24 +1050,54 @@ NTSTATUS
 ZpWindowCapture_SendFrame(
     _Inout_ PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel,
     _Inout_ PZP_WINDOW_CAPTURE_RECORD Record,
-    _In_reads_bytes_(Record->DataLength) const VOID* Data,
-    _Out_ PBYTE AckFlags)
+    _In_reads_bytes_(Record->DataLength) const VOID* Data)
 {
     BYTE Header[ZP_WINDOW_CAPTURE_RECORD_WIRE_SIZE];
     ULONG HeaderLength;
     NTSTATUS Status;
+    ULONGLONG Started;
+    ULONG Elapsed, Interval;
 
     if (++Channel->FrameSequence == 0) Channel->FrameSequence++;
     Record->Sequence = Channel->FrameSequence;
-    Status = ZpWindowCapture_BeginFrame(Channel, Record->Sequence);
+    Status = ZpWindowCapture_BeginFrame(Channel, Record->Sequence, Record->DataLength + sizeof(Header));
     if (NT_SUCCESS(Status))
     {
         Status = ZpWindow_EncodeCaptureRecord(Record, Header, sizeof(Header), &HeaderLength);
     }
+    Started = GetTickCount64();
     if (NT_SUCCESS(Status)) Status = ZpWindowCapture_SendBytes(Channel, Header, HeaderLength);
     if (NT_SUCCESS(Status)) Status = ZpWindowCapture_SendBytes(Channel, Data, Record->DataLength);
-    if (NT_SUCCESS(Status)) Status = ZpWindowCapture_WaitForFrame(Channel, AckFlags);
+    Elapsed = (ULONG)(GetTickCount64() - Started);
+    RtlAcquireSRWLockExclusive(&Channel->Header.Owner->Lock);
+    Interval = (1000 + Channel->AdaptiveFrameRate - 1) / Channel->AdaptiveFrameRate;
+    if (Elapsed > Interval)
+    {
+        Channel->WindowWaitMilliseconds += Elapsed - Interval;
+        Channel->SendWaitMilliseconds += Elapsed - Interval;
+    }
+    RtlReleaseSRWLockExclusive(&Channel->Header.Owner->Lock);
     return Status;
+}
+
+static
+NTSTATUS
+ZpWindowCapture_WaitForCapture(
+    _In_ PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel,
+    _In_ ULONGLONG LastTickCount,
+    _In_ BYTE FrameRate,
+    _In_ ULONG MaximumWaitMilliseconds)
+{
+    ULONGLONG Elapsed = GetTickCount64() - LastTickCount;
+    ULONG Interval = (1000 + FrameRate - 1) / FrameRate;
+    LARGE_INTEGER Delay;
+    NTSTATUS Status;
+
+    if (LastTickCount == 0 || Elapsed >= Interval) return STATUS_SUCCESS;
+    Delay.QuadPart = -(LONGLONG)min(Interval - Elapsed, MaximumWaitMilliseconds) * 10000;
+    Status = NtWaitForSingleObject(Channel->StopEvent, FALSE, &Delay);
+    if (Status == STATUS_TIMEOUT) return STATUS_PENDING;
+    return NT_SUCCESS(Status) ? STATUS_CANCELLED : Status;
 }
 
 static
@@ -983,16 +1111,17 @@ ZpWindowCapture_Worker(
     PZP_WINDOW_SHARED_CAPTURE Capture = NULL;
     ZP_WINDOW_VIDEO_STATE Video = { 0 };
     ZP_WINDOW_CAPTURE_OPTIONS Options;
-    ZP_CONNECTION_POLICY ConnectionPolicy;
     ZP_WINDOW_CAPTURE_RECORD Record;
     BYTE AckFlags, ChangeRate, VideoCodecs;
     HWND Window;
-    ULONG Width, Height, BitRate, VideoCodecWidth, VideoCodecHeight;
+    ULONG Width, Height, BitRate, BitRateLimit, VideoCodecWidth, VideoCodecHeight;
+    BYTE RequestedFrameRate, RatePercent;
     LOGICAL WasVideo;
     BOOLEAN VideoCodecsChanged, VideoCodecsMatch;
     HRESULT Result;
     NTSTATUS Status = STATUS_SUCCESS;
     ZP_STATUS CompletionStatus;
+    ULONGLONG LastFrameTickCount = 0;
 
     CompletionStatus = ZpWindow_ValidateCaptureIdentity(&Channel->Options, &Window);
     Result = ZpStatus_IsSuccess(CompletionStatus) ?
@@ -1005,13 +1134,26 @@ ZpWindowCapture_Worker(
     }
     while (SUCCEEDED(Result))
     {
+        Status = ZpWindowCapture_WaitForFrameSlot(Channel, 0);
+        if (!NT_SUCCESS(Status)) break;
         ZpWindowCapture_GetOptions(Channel,
+                                   Video.Active,
                                    &Options,
-                                   &ConnectionPolicy,
                                    &VideoCodecs,
                                    &VideoCodecWidth,
                                    &VideoCodecHeight,
-                                   &VideoCodecsChanged);
+                                   &VideoCodecsChanged,
+                                   &AckFlags,
+                                   &BitRateLimit,
+                                   &RatePercent,
+                                   &RequestedFrameRate);
+        Result = ZpWindowShared_Update(Capture, Options.MaxDimension, Options.FrameRate, Options.Quality);
+        if (FAILED(Result)) break;
+        if (FlagOn(AckFlags, ZP_WINDOW_FRAME_ACK_KEYFRAME))
+        {
+            Video.ForceKeyFrame = Video.NeedKeyFrame = TRUE;
+            ZpWindowShared_RequestKeyFrame(Capture);
+        }
         CompletionStatus = ZpWindow_ValidateCaptureIdentity(&Options, &Window);
         if (!ZpStatus_IsSuccess(CompletionStatus)) break;
         ZpWindowShared_GetFormat(Capture, &Width, &Height);
@@ -1019,6 +1161,7 @@ ZpWindowCapture_Worker(
         if (Video.RequestedCodec != Options.Encoding.Codec)
         {
             Video.Unavailable = FALSE;
+            Video.BitRateUpdateUnavailable = FALSE;
             Video.RequestedCodec = Options.Encoding.Codec;
             if (Video.Encoder != NULL)
             {
@@ -1056,15 +1199,31 @@ ZpWindowCapture_Worker(
             if (Video.Encoder != NULL)
             {
                 BitRate = ZpWindowCapture_GetVideoBitRate(&Options,
-                                                           &ConnectionPolicy,
+                                                           BitRateLimit,
+                                                           RatePercent,
                                                            Width,
                                                            Height,
                                                            Video.Codec);
-                if (Video.Width != Width || Video.Height != Height ||
-                    Video.BitRate != BitRate || Video.FrameRate != Options.FrameRate)
+                if (Video.Width != Width || Video.Height != Height || Video.FrameRate != RequestedFrameRate)
                 {
                     ZpWindowVideoEncoder_Close(Video.Encoder);
                     Video.Encoder = NULL;
+                }
+                else if (Video.BitRate != BitRate &&
+                         (!Video.BitRateUpdateUnavailable || Video.BitRate > BitRateLimit ||
+                          ((BitRate <= Video.BitRate * 3 / 4 || BitRate >= Video.BitRate * 5 / 4) &&
+                           GetTickCount64() - Video.BitRateTickCount >= 3000)))
+                {
+                    Result = ZpWindowVideoEncoder_UpdateBitRate(Video.Encoder, BitRate);
+                    if (Result == E_NOTIMPL || Result == HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED))
+                    {
+                        Video.BitRateUpdateUnavailable = TRUE;
+                        ZpWindowVideoEncoder_Close(Video.Encoder);
+                        Video.Encoder = NULL;
+                        Result = S_OK;
+                    }
+                    else if (FAILED(Result)) break;
+                    else Video.BitRate = BitRate;
                 }
             }
         }
@@ -1079,14 +1238,15 @@ ZpWindowCapture_Worker(
                 Video.Codec ^= 1;
             }
             BitRate = ZpWindowCapture_GetVideoBitRate(&Options,
-                                                       &ConnectionPolicy,
+                                                       BitRateLimit,
+                                                       RatePercent,
                                                        Width,
                                                        Height,
                                                        Video.Codec);
             Result = ZpWindowVideoEncoder_Create(Video.Codec,
                                                  Width,
                                                  Height,
-                                                 Options.FrameRate,
+                                                 RequestedFrameRate,
                                                  BitRate,
                                                  ZpWindowShared_GetDeviceManager(Capture),
                                                  &Video.Encoder);
@@ -1096,14 +1256,15 @@ ZpWindowCapture_Worker(
             {
                 Video.Codec = AlternativeCodec;
                 BitRate = ZpWindowCapture_GetVideoBitRate(&Options,
-                                                           &ConnectionPolicy,
+                                                           BitRateLimit,
+                                                           RatePercent,
                                                            Width,
                                                            Height,
                                                            Video.Codec);
                 Result = ZpWindowVideoEncoder_Create(Video.Codec,
                                                      Width,
                                                      Height,
-                                                     Options.FrameRate,
+                                                     RequestedFrameRate,
                                                      BitRate,
                                                      ZpWindowShared_GetDeviceManager(Capture),
                                                      &Video.Encoder);
@@ -1120,8 +1281,11 @@ ZpWindowCapture_Worker(
                 Video.Width = Width;
                 Video.Height = Height;
                 Video.BitRate = BitRate;
-                Video.FrameRate = Options.FrameRate;
-                Video.ForceKeyFrame = TRUE;
+                Video.BitRateTickCount = GetTickCount64();
+                Video.FrameRate = RequestedFrameRate;
+                Video.ForceKeyFrame = Video.NeedKeyFrame = TRUE;
+                Video.PendingSamples = 0;
+                ZpWindowShared_RequestKeyFrame(Capture);
             }
         }
         WasVideo = Video.Active;
@@ -1131,25 +1295,61 @@ ZpWindowCapture_Worker(
             IMFSample* Sample;
             ULONGLONG Timestamp;
 
-            Result = ZpWindowShared_NextSample(Capture,
-                                               1000,
-                                               &Sample,
-                                               &Timestamp,
-                                               &ChangeRate);
-            if (Result == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || Result == S_FALSE)
+            Result = ZpWindowVideoEncoder_Receive(Video.Encoder, &VideoFrame);
+            ChangeRate = Video.ChangeRate;
+            if (Result == S_FALSE)
             {
-                Result = S_OK;
-                continue;
+                Status = ZpWindowCapture_WaitForCapture(Channel, LastFrameTickCount, Options.FrameRate, 10);
+                if (Status == STATUS_PENDING) continue;
+                if (!NT_SUCCESS(Status)) break;
+                Result = ZpWindowShared_NextSample(Capture,
+                                                   Video.PendingSamples != 0 ? 10 : 100,
+                                                   &Sample,
+                                                   &Timestamp,
+                                                   &ChangeRate);
+                if (Result == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || Result == S_FALSE)
+                {
+                    if (Options.Encoding.Mode == ZpWindowCaptureModeAuto)
+                    {
+                        ZpWindowCapture_UpdateAutomaticMode(&Video, VideoCodecs, 0, FALSE);
+                        if (!Video.Active) ZpWindowShared_RequestKeyFrame(Capture);
+                    }
+                    Result = S_OK;
+                    continue;
+                }
+                if (FAILED(Result)) break;
+                if (GetTickCount64() - Video.KeyFrameTickCount >= 2000) Video.ForceKeyFrame = TRUE;
+                if (Timestamp <= Video.SampleTimestamp)
+                    Timestamp = Video.SampleTimestamp + 10000000 / RequestedFrameRate;
+                Video.SampleTimestamp = Timestamp;
+                Video.ChangeRate = ChangeRate;
+                LastFrameTickCount = GetTickCount64();
+                Result = ZpWindowVideoEncoder_Encode(Video.Encoder,
+                                                     Sample,
+                                                     Timestamp,
+                                                     Video.ForceKeyFrame,
+                                                     Channel->StopEvent,
+                                                     2000,
+                                                     &VideoFrame);
+                Sample->lpVtbl->Release(Sample);
+                if (SUCCEEDED(Result)) Video.PendingSamples++;
+                Video.ForceKeyFrame = FALSE;
             }
-            if (FAILED(Result)) break;
-            Result = ZpWindowVideoEncoder_Encode(Video.Encoder,
-                                                 Sample,
-                                                 Timestamp,
-                                                 Video.ForceKeyFrame,
-                                                 &VideoFrame);
-            Sample->lpVtbl->Release(Sample);
-            Video.ForceKeyFrame = FALSE;
             if (Result == S_FALSE) continue;
+            if (Result == S_OK)
+            {
+                if (Video.PendingSamples != 0) Video.PendingSamples--;
+                if (Video.NeedKeyFrame && !VideoFrame.KeyFrame)
+                {
+                    ZpWindowVideoEncoder_FreeFrame(&VideoFrame);
+                    continue;
+                }
+                if (VideoFrame.KeyFrame)
+                {
+                    Video.NeedKeyFrame = FALSE;
+                    Video.KeyFrameTickCount = GetTickCount64();
+                }
+            }
             if (FAILED(Result) && Options.Encoding.Mode == ZpWindowCaptureModeAuto)
             {
                 ZpWindowVideoEncoder_Close(Video.Encoder);
@@ -1170,7 +1370,7 @@ ZpWindowCapture_Worker(
             Record.CanvasHeight = Record.Height = Video.Height;
             Record.Left = Record.Top = 0;
             Record.DataLength = VideoFrame.Length;
-            Status = ZpWindowCapture_SendFrame(Channel, &Record, VideoFrame.Data, &AckFlags);
+            Status = ZpWindowCapture_SendFrame(Channel, &Record, VideoFrame.Data);
             ZpWindowVideoEncoder_FreeFrame(&VideoFrame);
         }
         else
@@ -1178,6 +1378,9 @@ ZpWindowCapture_Worker(
             PZP_WINDOW_SHARED_IMAGE SharedImage;
             PZP_WINDOW_CAPTURE_IMAGE Image;
 
+            Status = ZpWindowCapture_WaitForCapture(Channel, LastFrameTickCount, Options.FrameRate, 1000);
+            if (Status == STATUS_PENDING) continue;
+            if (!NT_SUCCESS(Status)) break;
             Result = ZpWindowShared_Next(Capture, 1000, &SharedImage);
             if (Result == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || Result == S_FALSE)
             {
@@ -1185,32 +1388,24 @@ ZpWindowCapture_Worker(
                 continue;
             }
             if (FAILED(Result)) break;
+            LastFrameTickCount = GetTickCount64();
             Image = &SharedImage->Value;
             Record = Image->Record;
-            ChangeRate = Record.Type == ZpWindowCaptureRecordKeyFrame ? 100 :
-                             (BYTE)min(100,
-                                       (ULONGLONG)Record.Width * Record.Height * 100 /
-                                           ((ULONGLONG)Record.CanvasWidth * Record.CanvasHeight));
-            Status = ZpWindowCapture_SendFrame(Channel, &Record, Image->Data, &AckFlags);
+            ChangeRate = SharedImage->ChangeRate;
+            Status = ZpWindowCapture_SendFrame(Channel, &Record, Image->Data);
             ZpWindowShared_ReleaseImage(SharedImage);
-        }
-        if (NT_SUCCESS(Status) && FlagOn(AckFlags, ZP_WINDOW_FRAME_ACK_KEYFRAME))
-        {
-            if (WasVideo)
-            {
-                ZpWindowVideoEncoder_Close(Video.Encoder);
-                Video.Encoder = NULL;
-            }
-            ZpWindowShared_RequestKeyFrame(Capture);
         }
         if (!NT_SUCCESS(Status)) break;
         if (Options.Encoding.Mode == ZpWindowCaptureModeAuto)
         {
             ZpWindowCapture_UpdateAutomaticMode(&Video,
-                                                 &Options,
-                                                 &ConnectionPolicy,
                                                  VideoCodecsMatch ? VideoCodecs : 0,
-                                                 ChangeRate);
+                                                 ChangeRate,
+                                                 !WasVideo && ChangeRate != 0 &&
+                                                     (ULONGLONG)Record.DataLength * Options.FrameRate * 8 >
+                                                         (ULONGLONG)ZpWindowCapture_GetVideoBitRate(
+                                                             &Options, BitRateLimit, RatePercent, Width, Height,
+                                                             Options.Encoding.Codec) * 5 / 4);
             if (WasVideo && !Video.Active) ZpWindowShared_RequestKeyFrame(Capture);
         }
     }
@@ -1407,24 +1602,54 @@ ZpWindowCapture_ChannelData(
     if (Type == ZpWindowInputFrameAck)
     {
         const BYTE* Cursor = Data + sizeof(BYTE);
-        ULONG Sequence;
+        ULONG Sequence, RenderMilliseconds;
         BYTE AckFlags;
 
-        if (Length != 2 * sizeof(BYTE) + sizeof(ULONG)) return STATUS_PROTOCOL_UNREACHABLE;
+        if (Length != 2 * sizeof(BYTE) + sizeof(ULONG) + sizeof(USHORT)) return STATUS_PROTOCOL_UNREACHABLE;
         AckFlags = *Cursor++;
         Sequence = ZpWindowCapture_ReadUInt32(Cursor);
+        RenderMilliseconds = ZpWindowCapture_ReadUInt16(Cursor + sizeof(ULONG));
         RtlAcquireSRWLockExclusive(&Object->Lock);
-        if (FlagOn(AckFlags, ~ZP_WINDOW_FRAME_ACK_FLAGS_MASK) || Sequence == 0 ||
-            Sequence != Channel->PendingFrameSequence || Channel->AcknowledgedFrameSequence != 0)
+        Status = STATUS_PROTOCOL_UNREACHABLE;
+        if (!FlagOn(AckFlags, ~ZP_WINDOW_FRAME_ACK_FLAGS_MASK) && Sequence != 0)
         {
-            Status = STATUS_PROTOCOL_UNREACHABLE;
-        }
-        else
-        {
-            Channel->AcknowledgedFrameSequence = Sequence;
-            Channel->FrameAckFlags = AckFlags;
-            NtSetEvent(Channel->RenderEvent, NULL);
-            Status = STATUS_SUCCESS;
+            for (ULONG Index = 0; Index < Channel->PendingFrameCount; Index++)
+            {
+                PZP_WINDOW_PENDING_FRAME Frame =
+                    &Channel->PendingFrames[(Channel->PendingFrameHead + Index) % ZP_WINDOW_CAPTURE_MAX_PENDING_FRAMES];
+                if (Frame->Sequence != Sequence) continue;
+                ULONG Elapsed = (ULONG)(GetTickCount64() - Frame->SentTickCount);
+                if (RenderMilliseconds != 0)
+                {
+                    ULONG NetworkElapsed = max(1, Elapsed - min(Elapsed, RenderMilliseconds));
+                    Channel->RenderMilliseconds = Channel->RenderMilliseconds == 0 ? RenderMilliseconds :
+                        (Channel->RenderMilliseconds * 7 + RenderMilliseconds + 4) / 8;
+                    Channel->NetworkAckMilliseconds = Channel->NetworkAckMilliseconds == 0 ? NetworkElapsed :
+                        (Channel->NetworkAckMilliseconds * 7 + NetworkElapsed + 4) / 8;
+                    if (Channel->MinimumNetworkAckMilliseconds == 0 ||
+                        NetworkElapsed < Channel->MinimumNetworkAckMilliseconds)
+                        Channel->MinimumNetworkAckMilliseconds = NetworkElapsed;
+                }
+                if (Channel->MinimumAckMilliseconds == 0 || Elapsed < Channel->MinimumAckMilliseconds)
+                    Channel->MinimumAckMilliseconds = max(1, Elapsed);
+                for (ULONG Retired = 0; Retired <= Index; Retired++)
+                {
+                    Channel->PendingFrameBytes -= Channel->PendingFrames[Channel->PendingFrameHead].Length;
+                    Channel->PendingFrameHead = (Channel->PendingFrameHead + 1) % ZP_WINDOW_CAPTURE_MAX_PENDING_FRAMES;
+                }
+                Channel->PendingFrameCount -= Index + 1;
+                Channel->LastAcknowledgedFrameSequence = Sequence;
+                Channel->FrameAckFlags |= AckFlags;
+                NtSetEvent(Channel->RenderEvent, NULL);
+                Status = STATUS_SUCCESS;
+                break;
+            }
+            if (!NT_SUCCESS(Status) && Channel->LastAcknowledgedFrameSequence != 0 &&
+                (LONG)(Sequence - Channel->LastAcknowledgedFrameSequence) <= 0)
+            {
+                Channel->FrameAckFlags |= AckFlags;
+                Status = STATUS_SUCCESS;
+            }
         }
         RtlReleaseSRWLockExclusive(&Object->Lock);
         return ZpWindowCapture_CompleteInput(Channel, Length, Status);
@@ -1461,9 +1686,10 @@ ZpWindowCapture_ChannelData(
         PZP_WINDOW_SHARED_CAPTURE Capture;
         USHORT MaxDimension;
         BYTE FrameRate, Quality, Encoding;
+        ULONG BitRateLimit;
         HRESULT Result;
 
-        if (Length != sizeof(BYTE) + sizeof(USHORT) + 3 * sizeof(BYTE))
+        if (Length != sizeof(BYTE) + sizeof(USHORT) + 3 * sizeof(BYTE) + sizeof(ULONG))
         {
             return STATUS_PROTOCOL_UNREACHABLE;
         }
@@ -1471,23 +1697,27 @@ ZpWindowCapture_ChannelData(
         Cursor += sizeof(USHORT);
         FrameRate = *Cursor++;
         Quality = *Cursor++;
-        Encoding = *Cursor;
+        Encoding = *Cursor++;
+        BitRateLimit = ZpWindowCapture_ReadUInt32(Cursor);
         if (MaxDimension == 0 || MaxDimension > ZP_WINDOW_CAPTURE_MAX_DIMENSION ||
             FrameRate == 0 || FrameRate > ZP_WINDOW_CAPTURE_MAX_FRAME_RATE ||
             Quality == 0 || Quality > 100 || (Encoding & 3) > ZpWindowCaptureModeVideo ||
-            ((Encoding >> 2) & 1) > ZpWindowVideoCodecH265 || (Encoding >> 3) != 0)
+            ((Encoding >> 2) & 1) > ZpWindowVideoCodecH265 || (Encoding >> 3) != 0 ||
+            BitRateLimit < 256000 || BitRateLimit > 100000000)
         {
             return STATUS_PROTOCOL_UNREACHABLE;
         }
         RtlAcquireSRWLockExclusive(&Object->Lock);
         Channel->Options.MaxDimension = MaxDimension;
+        if (Channel->Options.FrameRate != FrameRate) Channel->AdaptiveFrameRate = FrameRate;
         Channel->Options.FrameRate = FrameRate;
+        Channel->VideoBitRateLimit = BitRateLimit;
         Channel->Options.Quality = Quality;
         Channel->Options.Encoding.Mode = Encoding & 3;
         Channel->Options.Encoding.Codec = (Encoding >> 2) & 1;
         Capture = Channel->Capture;
         Result = Capture != NULL ?
-                     ZpWindowShared_Update(Capture, MaxDimension, FrameRate, Quality) : S_OK;
+                     ZpWindowShared_Update(Capture, MaxDimension, Channel->AdaptiveFrameRate, Quality) : S_OK;
         RtlReleaseSRWLockExclusive(&Object->Lock);
         Status = SUCCEEDED(Result) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
         return ZpWindowCapture_CompleteInput(Channel, Length, Status);
@@ -1601,6 +1831,7 @@ ZpWindowCapture_ChannelClose(
     Removed = ZpClientLocalChannel_RemoveLocked(&Channel->Header);
     RtlReleaseSRWLockExclusive(&Object->Lock);
     if (!Removed) return STATUS_PROTOCOL_UNREACHABLE;
+    NtSetEvent(Channel->StopEvent, NULL);
     NtSetEvent(Channel->CreditEvent, NULL);
     NtSetEvent(Channel->RenderEvent, NULL);
     ZpWindowCapture_ReleaseInput(Channel);
@@ -1617,6 +1848,7 @@ ZpWindowCapture_ChannelAbort(
     PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel = (PZP_CLIENT_WINDOW_CAPTURE_CHANNEL)LocalChannel;
 
     UNREFERENCED_PARAMETER(Status);
+    NtSetEvent(Channel->StopEvent, NULL);
     NtSetEvent(Channel->CreditEvent, NULL);
     NtSetEvent(Channel->RenderEvent, NULL);
     ZpWindowCapture_ReleaseInput(Channel);
@@ -1630,6 +1862,7 @@ ZpWindowCapture_ChannelDestroy(
     PZP_CLIENT_WINDOW_CAPTURE_CHANNEL Channel = (PZP_CLIENT_WINDOW_CAPTURE_CHANNEL)LocalChannel;
 
     if (Channel->WorkerThread != NULL) NtClose(Channel->WorkerThread);
+    if (Channel->StopEvent != NULL) NtClose(Channel->StopEvent);
     if (Channel->RenderEvent != NULL) NtClose(Channel->RenderEvent);
     if (Channel->CreditEvent != NULL) NtClose(Channel->CreditEvent);
     Mem_Free(Channel);
@@ -1645,10 +1878,18 @@ ZpWindowCapture_CreateChannel(
     PZP_CLIENT_WINDOW_CAPTURE_CHANNEL CaptureChannel;
     NTSTATUS Status;
 
+#if defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) && !defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RTC_)
+    if (Options->DirectStreamId != 0) return STATUS_NOT_SUPPORTED;
+#endif
+
     CaptureChannel = Mem_Alloc(sizeof(*CaptureChannel));
     if (CaptureChannel == NULL) return STATUS_NO_MEMORY;
     RtlZeroMemory(CaptureChannel, sizeof(*CaptureChannel));
     CaptureChannel->Options = *Options;
+    CaptureChannel->AdaptiveFrameRate = Options->FrameRate;
+    CaptureChannel->VideoRatePercent = 100;
+    CaptureChannel->VideoBitRateLimit = 100000000;
+    CaptureChannel->AdaptTickCount = GetTickCount64();
     if (FlagOn(Options->Flags, ZP_WINDOW_CAPTURE_DESKTOP))
     {
         HMONITOR Monitor;
@@ -1686,6 +1927,14 @@ ZpWindowCapture_CreateChannel(
     }
     if (NT_SUCCESS(Status))
     {
+        Status = NtCreateEvent(&CaptureChannel->StopEvent,
+                               EVENT_MODIFY_STATE | SYNCHRONIZE,
+                               NULL,
+                               NotificationEvent,
+                               FALSE);
+    }
+    if (NT_SUCCESS(Status))
+    {
         Status = ZpClientLocalChannel_Insert(Object,
                                              &CaptureChannel->Header,
                                              ZP_WINDOW_MODULE_ID,
@@ -1698,6 +1947,7 @@ ZpWindowCapture_CreateChannel(
     }
     if (!NT_SUCCESS(Status))
     {
+        if (CaptureChannel->StopEvent != NULL) NtClose(CaptureChannel->StopEvent);
         if (CaptureChannel->RenderEvent != NULL) NtClose(CaptureChannel->RenderEvent);
         if (CaptureChannel->CreditEvent != NULL) NtClose(CaptureChannel->CreditEvent);
         Mem_Free(CaptureChannel);
@@ -1835,3 +2085,5 @@ ZpWindow_CommitCaptureChannel(
                                      ZpStatus_FromNtStatus(Status));
     }
 }
+
+#endif

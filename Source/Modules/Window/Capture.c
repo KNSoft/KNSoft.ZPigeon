@@ -1,6 +1,6 @@
 ﻿#include "Capture.h"
 
-#include <d3d11.h>
+#include <d3d11_4.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <mftransform.h>
@@ -12,6 +12,10 @@
 #include <windows.graphics.directx.direct3d11.interop.h>
 
 #include <KNSoft/MakeLifeEasier/Memory/Core.h>
+
+#if !defined(_KNSOFT_ZPIGEON_BUILD_CUSTOM_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_WINDOW_) || \
+    defined(_KNSOFT_ZPIGEON_BUILD_MODULE_RECORDING_)
 
 #pragma comment(lib, "D3d11.lib")
 #pragma comment(lib, "Dxguid.lib")
@@ -90,6 +94,7 @@ struct _WGC_FRAME_HANDLER
 
 struct _ZP_WINDOW_CAPTURE
 {
+    RTL_SRWLOCK ResourceLock;
     ZP_WINDOW_CAPTURE_OPTIONS Options;
     HWND Window;
     ID3D11Device* Device;
@@ -130,11 +135,17 @@ struct _ZP_WINDOW_CAPTURE_FRAME
 {
     LONG ReferenceCount;
     ID3D11Texture2D* Texture;
+    WGC_FRAME* WgcFrame;
     struct __x_ABI_CWindows_CGraphics_CSizeInt32 Size;
     struct __x_ABI_CWindows_CFoundation_CTimeSpan Time;
     WICRect DirtyRect;
+    ULONGLONG DirtyArea;
     HRESULT DirtyResult;
 };
+
+static RTL_SRWLOCK ZpWindowCaptureDeviceLock = RTL_SRWLOCK_INIT;
+static ULONG ZpWindowCaptureDeviceUsers;
+static ID3D11Device* ZpWindowCaptureDevice;
 
 static CONST IID WgcCaptureItemIid = { 0x79c3f95b, 0x31f7, 0x4ec2,
                                        { 0xa4, 0x64, 0x63, 0x2e, 0xf5, 0xd3, 0x07, 0x60 } };
@@ -162,6 +173,8 @@ static CONST IID WgcSession6Iid = { 0xd7419236, 0xbe20, 0x5e9f,
                                     { 0xbc, 0xd6, 0xc4, 0xe9, 0x8f, 0xd6, 0xaf, 0xdc } };
 static CONST IID WgcFrameHandlerIid = { 0x51a947f7, 0x79cf, 0x5a3e,
                                         { 0xa3, 0xa5, 0x12, 0x89, 0xcf, 0xa6, 0xdf, 0xe8 } };
+static CONST IID WgcClosableIid = { 0x30d5a829, 0x7fa4, 0x4026,
+                                    { 0x83, 0xbb, 0xd7, 0x5b, 0xae, 0x4e, 0xa9, 0x9e } };
 static CONST IID WgcAgileObjectIid = { 0x94ea2b94, 0xe9cc, 0x49e0,
                                        { 0xc0, 0xff, 0xee, 0x64, 0xca, 0x8f, 0x5b, 0x90 } };
 
@@ -171,6 +184,112 @@ WgcRelease(
     _In_opt_ IUnknown* Object)
 {
     if (Object != NULL) Object->lpVtbl->Release(Object);
+}
+
+/* Keep the device alive across capture restarts until the last SDK Client closes. */
+VOID
+ZpWindowCapture_Initialize(VOID)
+{
+    RtlAcquireSRWLockExclusive(&ZpWindowCaptureDeviceLock);
+    ZpWindowCaptureDeviceUsers++;
+    RtlReleaseSRWLockExclusive(&ZpWindowCaptureDeviceLock);
+}
+
+VOID
+ZpWindowCapture_Uninitialize(VOID)
+{
+    RtlAcquireSRWLockExclusive(&ZpWindowCaptureDeviceLock);
+    if (--ZpWindowCaptureDeviceUsers == 0)
+    {
+        WgcRelease((IUnknown*)ZpWindowCaptureDevice);
+        ZpWindowCaptureDevice = NULL;
+    }
+    RtlReleaseSRWLockExclusive(&ZpWindowCaptureDeviceLock);
+}
+
+static
+HRESULT
+ZpWindowCapture_GetDevice(
+    _Outptr_ ID3D11Device** Device,
+    _Outptr_ ID3D11DeviceContext** Context)
+{
+    ID3D11DeviceContext* DeviceContext;
+    ID3D11Multithread* Multithread;
+    HRESULT Result = S_OK;
+
+    RtlAcquireSRWLockExclusive(&ZpWindowCaptureDeviceLock);
+    if (ZpWindowCaptureDevice != NULL &&
+        FAILED(ZpWindowCaptureDevice->lpVtbl->GetDeviceRemovedReason(ZpWindowCaptureDevice)))
+    {
+        WgcRelease((IUnknown*)ZpWindowCaptureDevice);
+        ZpWindowCaptureDevice = NULL;
+    }
+    if (ZpWindowCaptureDevice == NULL)
+    {
+        Result = D3D11CreateDevice(NULL,
+                                   D3D_DRIVER_TYPE_HARDWARE,
+                                   NULL,
+                                   D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                                   NULL,
+                                   0,
+                                   D3D11_SDK_VERSION,
+                                   &ZpWindowCaptureDevice,
+                                   NULL,
+                                   &DeviceContext);
+        if (FAILED(Result))
+        {
+            Result = D3D11CreateDevice(NULL,
+                                       D3D_DRIVER_TYPE_WARP,
+                                       NULL,
+                                       D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                                       NULL,
+                                       0,
+                                       D3D11_SDK_VERSION,
+                                       &ZpWindowCaptureDevice,
+                                       NULL,
+                                       &DeviceContext);
+        }
+        if (SUCCEEDED(Result))
+        {
+            Result = DeviceContext->lpVtbl->QueryInterface(DeviceContext,
+                                                            &IID_ID3D11Multithread,
+                                                            (PVOID*)&Multithread);
+            if (SUCCEEDED(Result))
+            {
+                Multithread->lpVtbl->SetMultithreadProtected(Multithread, TRUE);
+                Multithread->lpVtbl->Release(Multithread);
+            }
+            DeviceContext->lpVtbl->Release(DeviceContext);
+            if (FAILED(Result))
+            {
+                WgcRelease((IUnknown*)ZpWindowCaptureDevice);
+                ZpWindowCaptureDevice = NULL;
+            }
+        }
+    }
+    if (SUCCEEDED(Result))
+    {
+        ZpWindowCaptureDevice->lpVtbl->AddRef(ZpWindowCaptureDevice);
+        *Device = ZpWindowCaptureDevice;
+        ZpWindowCaptureDevice->lpVtbl->GetImmediateContext(ZpWindowCaptureDevice, Context);
+    }
+    RtlReleaseSRWLockExclusive(&ZpWindowCaptureDeviceLock);
+    return Result;
+}
+
+static
+VOID
+WgcClose(
+    _In_opt_ IUnknown* Object)
+{
+    __x_ABI_CWindows_CFoundation_CIClosable* Closable;
+
+    if (Object != NULL && SUCCEEDED(Object->lpVtbl->QueryInterface(
+        Object, &WgcClosableIid, (PVOID*)&Closable)))
+    {
+        Closable->lpVtbl->Close(Closable);
+        Closable->lpVtbl->Release(Closable);
+    }
 }
 
 static
@@ -509,7 +628,7 @@ ZpWindowCapture_Encode(
     _Outptr_result_bytebuffer_(*DataLength) PBYTE* Data,
     _Out_ PULONG DataLength)
 {
-    D3D11_TEXTURE2D_DESC Description;
+    D3D11_BOX Box;
     D3D11_MAPPED_SUBRESOURCE Mapped;
     IWICBitmap* Bitmap = NULL;
     IWICBitmapScaler* Scaler = NULL;
@@ -527,17 +646,45 @@ ZpWindowCapture_Encode(
     PROPBAG2 Property = { 0 };
     VARIANT Value;
     ULONG Width, Height, BufferSize;
+    LOGICAL Clipped;
     HRESULT Result;
 
-    Texture->lpVtbl->GetDesc(Texture, &Description);
     if (Capture->Staging == NULL)
     {
         Result = ZpWindowCapture_CreateStaging(Capture, Texture);
         if (FAILED(Result)) return Result;
     }
-    Capture->Context->lpVtbl->CopyResource(Capture->Context,
-                                           (ID3D11Resource*)Capture->Staging,
-                                           (ID3D11Resource*)Texture);
+    Clipped = OutputWidth == Capture->Size.Width && OutputHeight == Capture->Size.Height &&
+              (Rect->X != 0 || Rect->Y != 0 ||
+               (ULONG)Rect->Width != OutputWidth || (ULONG)Rect->Height != OutputHeight);
+    if (Clipped)
+    {
+        Box.left = Rect->X;
+        Box.top = Rect->Y;
+        Box.front = 0;
+        Box.right = Rect->X + Rect->Width;
+        Box.bottom = Rect->Y + Rect->Height;
+        Box.back = 1;
+        Capture->Context->lpVtbl->CopySubresourceRegion(Capture->Context,
+                                                        (ID3D11Resource*)Capture->Staging,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        (ID3D11Resource*)Texture,
+                                                        0,
+                                                        &Box);
+        Width = Rect->Width;
+        Height = Rect->Height;
+    }
+    else
+    {
+        Capture->Context->lpVtbl->CopyResource(Capture->Context,
+                                               (ID3D11Resource*)Capture->Staging,
+                                               (ID3D11Resource*)Texture);
+        Width = Capture->Size.Width;
+        Height = Capture->Size.Height;
+    }
     Result = Capture->Context->lpVtbl->Map(Capture->Context,
                                            (ID3D11Resource*)Capture->Staging,
                                            0,
@@ -545,16 +692,16 @@ ZpWindowCapture_Encode(
                                            0,
                                            &Mapped);
     if (FAILED(Result)) return Result;
-    if ((ULONGLONG)Mapped.RowPitch * Capture->Size.Height > MAXULONG)
+    if ((ULONGLONG)Mapped.RowPitch * Height > MAXULONG)
     {
         Result = E_OUTOFMEMORY;
         goto Cleanup;
     }
-    BufferSize = Mapped.RowPitch * Capture->Size.Height;
+    BufferSize = Mapped.RowPitch * Height;
     Result = Capture->ImagingFactory->lpVtbl->CreateBitmapFromMemory(
         Capture->ImagingFactory,
-        Capture->Size.Width,
-        Capture->Size.Height,
+        Width,
+        Height,
         &GUID_WICPixelFormat32bppBGRA,
         Mapped.RowPitch,
         BufferSize,
@@ -574,8 +721,8 @@ ZpWindowCapture_Encode(
         if (FAILED(Result)) goto Cleanup;
         Source = (IWICBitmapSource*)Scaler;
     }
-    if (Rect->X != 0 || Rect->Y != 0 ||
-        (ULONG)Rect->Width != OutputWidth || (ULONG)Rect->Height != OutputHeight)
+    if (!Clipped && (Rect->X != 0 || Rect->Y != 0 ||
+                    (ULONG)Rect->Width != OutputWidth || (ULONG)Rect->Height != OutputHeight))
     {
         Result = Capture->ImagingFactory->lpVtbl->CreateBitmapClipper(Capture->ImagingFactory, &Clipper);
         if (FAILED(Result)) goto Cleanup;
@@ -670,19 +817,25 @@ Cleanup:
     return Result;
 }
 
+_Success_(return == S_OK)
 static
 HRESULT
 ZpWindowCapture_GetDirtyRect(
     _In_ WGC_FRAME* Frame,
     _In_ ULONG SourceWidth,
     _In_ ULONG SourceHeight,
-    _Out_ WICRect* Rect)
+    _Out_ WICRect* Rect,
+    _Out_ PULONGLONG DirtyArea)
 {
     WGC_FRAME2* Frame2 = NULL;
     WGC_RECT_VECTOR* Regions = NULL;
+    HRGN DirtyRegion = NULL, RectangleRegion = NULL;
+    PRGNDATA RegionData = NULL;
     struct __x_ABI_CWindows_CGraphics_CRectInt32 Region;
     UINT32 Count, Index;
-    LONG Right, Bottom;
+    ULONG RegionDataLength;
+    LONG Right, Bottom, RegionRight, RegionBottom;
+    ULONGLONG Area = 0;
     HRESULT Result;
 
     Result = Frame->lpVtbl->QueryInterface(Frame,
@@ -697,6 +850,16 @@ ZpWindowCapture_GetDirtyRect(
     {
         Result = S_FALSE;
         goto Cleanup;
+    }
+    if (Count > 1)
+    {
+        DirtyRegion = CreateRectRgn(0, 0, 0, 0);
+        RectangleRegion = CreateRectRgn(0, 0, 0, 0);
+        if (DirtyRegion == NULL || RectangleRegion == NULL)
+        {
+            Result = E_OUTOFMEMORY;
+            goto Cleanup;
+        }
     }
     Rect->X = MAXLONG;
     Rect->Y = MAXLONG;
@@ -714,17 +877,58 @@ ZpWindowCapture_GetDirtyRect(
         }
         Rect->X = min(Rect->X, Region.X);
         Rect->Y = min(Rect->Y, Region.Y);
-        Right = max(Right,
-                    (LONG)min((ULONGLONG)SourceWidth,
-                              (ULONGLONG)(ULONG)Region.X + (ULONG)Region.Width));
-        Bottom = max(Bottom,
-                     (LONG)min((ULONGLONG)SourceHeight,
-                               (ULONGLONG)(ULONG)Region.Y + (ULONG)Region.Height));
+        RegionRight = (LONG)min((ULONGLONG)SourceWidth,
+                                (ULONGLONG)(ULONG)Region.X + (ULONG)Region.Width);
+        RegionBottom = (LONG)min((ULONGLONG)SourceHeight,
+                                 (ULONGLONG)(ULONG)Region.Y + (ULONG)Region.Height);
+        Right = max(Right, RegionRight);
+        Bottom = max(Bottom, RegionBottom);
+        if (Count == 1)
+        {
+            Area = (ULONGLONG)(RegionRight - Region.X) * (RegionBottom - Region.Y);
+        }
+        else if (!SetRectRgn(RectangleRegion, Region.X, Region.Y, RegionRight, RegionBottom) ||
+                 CombineRgn(DirtyRegion, DirtyRegion, RectangleRegion, RGN_OR) == ERROR)
+        {
+            Result = E_FAIL;
+            goto Cleanup;
+        }
+    }
+    if (Count > 1)
+    {
+        RegionDataLength = GetRegionData(DirtyRegion, 0, NULL);
+        if (RegionDataLength == 0)
+        {
+            Result = E_FAIL;
+            goto Cleanup;
+        }
+        RegionData = Mem_Alloc(RegionDataLength);
+        if (RegionData == NULL)
+        {
+            Result = E_OUTOFMEMORY;
+            goto Cleanup;
+        }
+        if (GetRegionData(DirtyRegion, RegionDataLength, RegionData) == 0)
+        {
+            Result = E_FAIL;
+            goto Cleanup;
+        }
+        for (Index = 0; Index < RegionData->rdh.nCount; Index++)
+        {
+            const RECT* Rectangle = &((const RECT*)RegionData->Buffer)[Index];
+
+            Area += (ULONGLONG)(Rectangle->right - Rectangle->left) *
+                        (Rectangle->bottom - Rectangle->top);
+        }
     }
     Rect->Width = Right - Rect->X;
     Rect->Height = Bottom - Rect->Y;
+    *DirtyArea = Area;
 
 Cleanup:
+    Mem_Free(RegionData);
+    if (RectangleRegion != NULL) DeleteObject(RectangleRegion);
+    if (DirtyRegion != NULL) DeleteObject(DirtyRegion);
     WgcRelease((IUnknown*)Regions);
     WgcRelease((IUnknown*)Frame2);
     return Result;
@@ -790,6 +994,8 @@ ZpWindowCapture_CloseWgc(
                                                          Capture->FrameToken);
         Capture->FrameHandlerRegistered = FALSE;
     }
+    WgcClose((IUnknown*)Capture->Session);
+    WgcClose((IUnknown*)Capture->FramePool);
     WgcRelease((IUnknown*)Capture->RateSession);
     WgcRelease((IUnknown*)Capture->Session);
     WgcRelease((IUnknown*)Capture->FramePool);
@@ -1046,6 +1252,7 @@ ZpWindowCapture_Create(
     Object = Mem_Alloc(sizeof(*Object));
     if (Object == NULL) return E_OUTOFMEMORY;
     RtlZeroMemory(Object, sizeof(*Object));
+    RtlInitializeSRWLock(&Object->ResourceLock);
     Object->Options = *Options;
     Object->Window = Window;
     Object->KeyFrame = TRUE;
@@ -1058,29 +1265,7 @@ ZpWindowCapture_Create(
                               &IID_IWICImagingFactory,
                               (PVOID*)&Object->ImagingFactory);
     if (FAILED(Result)) goto Cleanup;
-    Result = D3D11CreateDevice(NULL,
-                               D3D_DRIVER_TYPE_HARDWARE,
-                               NULL,
-                               D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
-                               NULL,
-                               0,
-                               D3D11_SDK_VERSION,
-                               &Object->Device,
-                               NULL,
-                               &Object->Context);
-    if (FAILED(Result))
-    {
-        Result = D3D11CreateDevice(NULL,
-                                   D3D_DRIVER_TYPE_WARP,
-                                   NULL,
-                                   D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                                   NULL,
-                                   0,
-                                   D3D11_SDK_VERSION,
-                                   &Object->Device,
-                                   NULL,
-                                   &Object->Context);
-    }
+    Result = ZpWindowCapture_GetDevice(&Object->Device, &Object->Context);
     if (FAILED(Result)) goto Cleanup;
     Result = ZpWindowCapture_CreateWgc(Object);
     if (FAILED(Result)) Result = ZpWindowCapture_CreateGdi(Object);
@@ -1099,9 +1284,11 @@ ZpWindowCapture_UpdateOptions(
     _In_ PCZP_WINDOW_CAPTURE_OPTIONS Options)
 {
     struct __x_ABI_CWindows_CFoundation_CTimeSpan Interval;
-    LOGICAL Resize = Capture->Options.MaxDimension != Options->MaxDimension;
+    LOGICAL Resize;
     HRESULT Result;
 
+    RtlAcquireSRWLockExclusive(&Capture->ResourceLock);
+    Resize = Capture->Options.MaxDimension != Options->MaxDimension;
     Result = S_OK;
     if (Capture->RateSession != NULL)
     {
@@ -1115,9 +1302,12 @@ ZpWindowCapture_UpdateOptions(
         {
             Capture->VideoWidth = Capture->VideoHeight = 0;
             Capture->KeyFrame = TRUE;
+            WgcRelease((IUnknown*)Capture->SampleAllocator);
+            Capture->SampleAllocator = NULL;
             ZpWindowCapture_ResetVideoProcessor(Capture);
         }
     }
+    RtlReleaseSRWLockExclusive(&Capture->ResourceLock);
     return Result;
 }
 
@@ -1125,7 +1315,9 @@ VOID
 ZpWindowCapture_RequestKeyFrame(
     _Inout_ PZP_WINDOW_CAPTURE Capture)
 {
+    RtlAcquireSRWLockExclusive(&Capture->ResourceLock);
     Capture->KeyFrame = TRUE;
+    RtlReleaseSRWLockExclusive(&Capture->ResourceLock);
 }
 
 VOID
@@ -1141,6 +1333,8 @@ ZpWindowCapture_ReleaseFrame(
 {
     if (InterlockedDecrement(&Frame->ReferenceCount) != 0) return;
     WgcRelease((IUnknown*)Frame->Texture);
+    WgcClose((IUnknown*)Frame->WgcFrame);
+    WgcRelease((IUnknown*)Frame->WgcFrame);
     Mem_Free(Frame);
 }
 
@@ -1191,7 +1385,9 @@ ZpWindowCapture_NextGdiFrame(
     ULONG Interval;
     HRESULT Result;
 
+    RtlAcquireSRWLockShared(&Capture->ResourceLock);
     Interval = max(1UL, 1000 / Capture->Options.FrameRate);
+    RtlReleaseSRWLockShared(&Capture->ResourceLock);
     Now = GetTickCount64();
     if (Capture->GdiFrameTime != 0 && Now - Capture->GdiFrameTime < Interval)
     {
@@ -1207,10 +1403,15 @@ ZpWindowCapture_NextGdiFrame(
     Width = (LONGLONG)Rect.right - Rect.left;
     Height = (LONGLONG)Rect.bottom - Rect.top;
     if (Width <= 0 || Width > MAXLONG || Height <= 0 || Height > MAXLONG) return E_INVALIDARG;
+    RtlAcquireSRWLockExclusive(&Capture->ResourceLock);
     if (Width != Capture->Size.Width || Height != Capture->Size.Height || Capture->GdiMemory == NULL)
     {
         Result = ZpWindowCapture_CreateGdiSurface(Capture, (ULONG)Width, (ULONG)Height);
-        if (FAILED(Result)) return Result;
+        if (FAILED(Result))
+        {
+            RtlReleaseSRWLockExclusive(&Capture->ResourceLock);
+            return Result;
+        }
         if (Width != Capture->Size.Width || Height != Capture->Size.Height)
         {
             Capture->Size.Width = (INT32)Width;
@@ -1224,6 +1425,7 @@ ZpWindowCapture_NextGdiFrame(
             ZpWindowCapture_ResetVideoProcessor(Capture);
         }
     }
+    RtlReleaseSRWLockExclusive(&Capture->ResourceLock);
     Source = FlagOn(Capture->Options.Flags, ZP_WINDOW_CAPTURE_DESKTOP) ?
                  GetDC(NULL) :
                  GetDCEx(Capture->Window, NULL, DCX_WINDOW | DCX_CACHE);
@@ -1269,12 +1471,15 @@ ZpWindowCapture_NextGdiFrame(
         return Result;
     }
     Object->ReferenceCount = 1;
-    Object->Size = Capture->Size;
+    Object->WgcFrame = NULL;
+    Object->Size.Width = (INT32)Width;
+    Object->Size.Height = (INT32)Height;
     Object->Time.Duration = MFGetSystemTime();
     Object->DirtyRect.X = 0;
     Object->DirtyRect.Y = 0;
     Object->DirtyRect.Width = (INT)Width;
     Object->DirtyRect.Height = (INT)Height;
+    Object->DirtyArea = (ULONGLONG)Width * Height;
     Object->DirtyResult = S_OK;
     Capture->GdiFrameTime = GetTickCount64();
     *Frame = Object;
@@ -1319,6 +1524,7 @@ ZpWindowCapture_NextWgcFrame(
         Result = E_INVALIDARG;
         goto Cleanup;
     }
+    RtlAcquireSRWLockExclusive(&Capture->ResourceLock);
     if (Size.Width != Capture->Size.Width || Size.Height != Capture->Size.Height)
     {
         Capture->Size = Size;
@@ -1331,8 +1537,10 @@ ZpWindowCapture_NextWgcFrame(
                                                        ZP_WINDOW_CAPTURE_BUFFER_COUNT,
                                                        Size);
         if (SUCCEEDED(Result)) Result = S_FALSE;
+        RtlReleaseSRWLockExclusive(&Capture->ResourceLock);
         goto Cleanup;
     }
+    RtlReleaseSRWLockExclusive(&Capture->ResourceLock);
     Object = Mem_Alloc(sizeof(*Object));
     if (Object == NULL)
     {
@@ -1347,7 +1555,8 @@ ZpWindowCapture_NextWgcFrame(
     Object->DirtyResult = ZpWindowCapture_GetDirtyRect(WgcFrame,
                                                        Size.Width,
                                                        Size.Height,
-                                                       &Object->DirtyRect);
+                                                       &Object->DirtyRect,
+                                                       &Object->DirtyArea);
     Result = WgcFrame->lpVtbl->get_Surface(WgcFrame, &Surface);
     if (FAILED(Result)) goto Cleanup;
     Result = Surface->lpVtbl->QueryInterface(Surface, &WgcDxgiAccessIid, (PVOID*)&DxgiAccess);
@@ -1355,6 +1564,8 @@ ZpWindowCapture_NextWgcFrame(
     Result = DxgiAccess->lpVtbl->GetInterface(DxgiAccess, &WgcTextureIid, (PVOID*)&Object->Texture);
     if (SUCCEEDED(Result))
     {
+        Object->WgcFrame = WgcFrame;
+        WgcFrame = NULL;
         *Frame = Object;
         Object = NULL;
     }
@@ -1367,6 +1578,7 @@ Cleanup:
     }
     WgcRelease((IUnknown*)DxgiAccess);
     WgcRelease((IUnknown*)Surface);
+    WgcClose((IUnknown*)WgcFrame);
     WgcRelease((IUnknown*)WgcFrame);
     return Result;
 }
@@ -1395,12 +1607,15 @@ ZpWindowCapture_NextFrame(
     {
         return Result;
     }
+    RtlAcquireSRWLockExclusive(&Capture->ResourceLock);
     ZpWindowCapture_CloseWgc(Capture);
     Result = ZpWindowCapture_CreateGdi(Capture);
+    RtlReleaseSRWLockExclusive(&Capture->ResourceLock);
     if (FAILED(Result)) return Result;
     return ZpWindowCapture_NextGdiFrame(Capture, TimeoutMilliseconds, Frame);
 }
 
+_Success_(return == S_OK)
 HRESULT
 ZpWindowCapture_EncodeFrame(
     _Inout_ PZP_WINDOW_CAPTURE Capture,
@@ -1413,7 +1628,14 @@ ZpWindowCapture_EncodeFrame(
     ULONGLONG DirtyArea, CanvasArea;
     LOGICAL KeyFrame;
     HRESULT Result;
+
+    RtlAcquireSRWLockExclusive(&Capture->ResourceLock);
     Size = Frame->Size;
+    if (Size.Width != Capture->Size.Width || Size.Height != Capture->Size.Height)
+    {
+        Result = S_FALSE;
+        goto Cleanup;
+    }
     KeyFrame = Capture->KeyFrame;
     SourceRect.X = 0;
     SourceRect.Y = 0;
@@ -1477,6 +1699,7 @@ ZpWindowCapture_EncodeFrame(
     Capture->KeyFrame = FALSE;
 
 Cleanup:
+    RtlReleaseSRWLockExclusive(&Capture->ResourceLock);
     return Result;
 }
 
@@ -1499,8 +1722,9 @@ ZpWindowCapture_Next(
     return Result;
 }
 
+static
 VOID
-ZpWindowCapture_GetFormat(
+ZpWindowCapture_GetFormatLocked(
     _In_ PZP_WINDOW_CAPTURE Capture,
     _Out_ PULONG Width,
     _Out_ PULONG Height)
@@ -1517,6 +1741,17 @@ ZpWindowCapture_GetFormat(
     *Height = Capture->VideoHeight;
 }
 
+VOID
+ZpWindowCapture_GetFormat(
+    _In_ PZP_WINDOW_CAPTURE Capture,
+    _Out_ PULONG Width,
+    _Out_ PULONG Height)
+{
+    RtlAcquireSRWLockExclusive(&Capture->ResourceLock);
+    ZpWindowCapture_GetFormatLocked(Capture, Width, Height);
+    RtlReleaseSRWLockExclusive(&Capture->ResourceLock);
+}
+
 IMFDXGIDeviceManager*
 ZpWindowCapture_GetDeviceManager(
     _In_ PZP_WINDOW_CAPTURE Capture)
@@ -1524,6 +1759,7 @@ ZpWindowCapture_GetDeviceManager(
     return Capture->DeviceManager;
 }
 
+_Success_(return == S_OK)
 HRESULT
 ZpWindowCapture_CreateSample(
     _Inout_ PZP_WINDOW_CAPTURE Capture,
@@ -1546,10 +1782,16 @@ ZpWindowCapture_CreateSample(
     ULONG DestinationWidth, DestinationHeight;
     HRESULT Result;
 
+    RtlAcquireSRWLockExclusive(&Capture->ResourceLock);
+    if (Size.Width != Capture->Size.Width || Size.Height != Capture->Size.Height)
+    {
+        Result = S_FALSE;
+        goto Cleanup;
+    }
     Result = S_OK;
     if (Capture->VideoWidth == 0)
     {
-        ZpWindowCapture_GetFormat(Capture, &DestinationWidth, &DestinationHeight);
+        ZpWindowCapture_GetFormatLocked(Capture, &DestinationWidth, &DestinationHeight);
     }
     if (Capture->VideoProcessor == NULL)
     {
@@ -1668,6 +1910,7 @@ Cleanup:
     WgcRelease((IUnknown*)OutputView);
     WgcRelease((IUnknown*)InputView);
     WgcRelease((IUnknown*)OutputTexture);
+    RtlReleaseSRWLockExclusive(&Capture->ResourceLock);
     return Result;
 }
 
@@ -1684,7 +1927,7 @@ ZpWindowCapture_GetFrameChangeRate(
         return S_OK;
     }
     if (FAILED(Frame->DirtyResult)) return Frame->DirtyResult;
-    DirtyArea = (ULONGLONG)Frame->DirtyRect.Width * Frame->DirtyRect.Height;
+    DirtyArea = Frame->DirtyArea;
     CanvasArea = (ULONGLONG)Frame->Size.Width * Frame->Size.Height;
     *ChangeRate = (BYTE)min(100, (DirtyArea * 100 + CanvasArea - 1) / CanvasArea);
     return S_OK;
@@ -1736,3 +1979,5 @@ ZpWindowCapture_Close(
     if (Capture->RoInitialized) RoUninitialize();
     Mem_Free(Capture);
 }
+
+#endif
