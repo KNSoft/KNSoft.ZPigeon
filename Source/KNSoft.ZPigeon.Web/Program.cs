@@ -1,9 +1,7 @@
-using KNSoft.ZPigeon.Agent;
 using KNSoft.ZPigeon.Application;
 using KNSoft.ZPigeon.Server.Managed;
 using KNSoft.ZPigeon.Tools;
 using KNSoft.ZPigeon.Web;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
@@ -15,6 +13,7 @@ const uint StatusDeviceNotConnected = 0xC000009D;
 var builder = WebApplication.CreateBuilder(args);
 var webPort = builder.Configuration.GetValue("Web:Port", 9983);
 var localOrigin = new UriBuilder(Uri.UriSchemeHttp, "127.0.0.1", webPort).Uri.GetLeftPart(UriPartial.Authority);
+var mcpEndpoint = $"{localOrigin}/mcp";
 builder.WebHost.UseUrls(localOrigin);
 builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 builder.Logging.AddFilter("ModelContextProtocol", LogLevel.Warning);
@@ -31,13 +30,10 @@ var applicationData = Path.Combine(Environment.GetFolderPath(Environment.Special
                                    "KNSoft",
                                    "ZPigeon");
 var consoleStore = new ConsoleStore(Path.Combine(applicationData, "console.json"));
-builder.Services.AddDataProtection()
-                .SetApplicationName("KNSoft.ZPigeon")
-                .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(applicationData, "DataProtection")))
-                .ProtectKeysWithDpapi();
+var mcpPolicyStore = new McpPolicyStore(Path.Combine(applicationData, "mcp.json"));
 builder.Services.AddMcpServer()
-                .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
-                .WithDynamicTools(toolCatalog);
+                 .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
+                 .WithDynamicTools(toolCatalog, mcpPolicyStore);
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -48,16 +44,6 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownProxies.Add(IPAddress.IPv6Loopback);
 });
 var app = builder.Build();
-var secretProtector = new DataProtectionSecretProtector(
-    app.Services.GetRequiredService<IDataProtectionProvider>());
-var agentStore = new AgentStore(Path.Combine(applicationData, "agent.db"),
-                                secretProtector,
-                                AgentWebApi.CreateProfile(null, toolCatalog));
-var agent = new ZPigeonAgent(zpigeonApplication, toolCatalog, agentStore);
-var modelsDevCatalog = new ModelsDevCatalog(Path.Combine(AppContext.BaseDirectory,
-                                                         "3rdParty",
-                                                         "models.dev",
-                                                         "api.json"));
 
 app.UseForwardedHeaders();
 
@@ -73,6 +59,17 @@ app.Use(async (context, next) =>
             "cross-site"))
     {
         context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return;
+    }
+    await next();
+});
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/mcp") &&
+        !mcpPolicyStore.Get().Enabled)
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
         return;
     }
     await next();
@@ -97,7 +94,6 @@ app.Use(async (context, next) =>
     if (context.Request.Path.StartsWithSegments("/api/browser") ||
         context.Request.Path.StartsWithSegments("/api/clients") ||
         context.Request.Path.StartsWithSegments("/api/console") ||
-        context.Request.Path.StartsWithSegments("/api/agent") ||
         context.Request.Path.StartsWithSegments("/mcp"))
     {
         context.Response.OnStarting(() =>
@@ -158,8 +154,7 @@ app.Use(async (context, next) =>
 {
     if (!context.Request.Path.StartsWithSegments("/api") ||
         context.Request.Path.StartsWithSegments("/api/clients") ||
-        context.Request.Path.StartsWithSegments("/api/console") ||
-        context.Request.Path.StartsWithSegments("/api/agent"))
+        context.Request.Path.StartsWithSegments("/api/console"))
     {
         await next();
         return;
@@ -208,6 +203,9 @@ app.MapGet("/api/capabilities", () =>
 });
 app.MapGet("/api/clients/events", (HttpContext context) =>
     StreamClientChangesAsync(server, clientServices, consoleStore, context));
+app.MapGet("/api/console/mcp", () => CreateMcpPolicyView(mcpPolicyStore.Get(), mcpEndpoint));
+app.MapPut("/api/console/mcp", (McpPolicyConfiguration configuration) =>
+    Results.Ok(CreateMcpPolicyView(mcpPolicyStore.Update(configuration), mcpEndpoint)));
 app.MapGet("/api/console/groups", consoleStore.GetGroups);
 app.MapPost("/api/console/groups", (ConsoleGroupRequest request) =>
 {
@@ -312,7 +310,6 @@ app.Map("/api/rtc", context => RtcWebSocket.RunAsync(context,
                                                       proxyUserHeader));
 app.MapPost("/api/serial/ports", () => server.EnumerateSerialPortsAsync());
 app.Map("/api/serial", context => SerialWebSocket.RunAsync(context, server));
-app.MapAgentApi(agent, agentStore, modelsDevCatalog, toolCatalog, server);
 app.MapRegistryApi(clientServices);
 app.MapManagementApi(clientServices);
 app.MapSoftwareApi(clientServices);
@@ -323,7 +320,6 @@ app.MapRemoteAccessApi(clientServices,
 app.Lifetime.ApplicationStopping.Register(server.Dispose);
 app.Lifetime.ApplicationStopping.Register(clientServices.Dispose);
 app.Lifetime.ApplicationStopping.Register(stun.Dispose);
-app.Lifetime.ApplicationStopping.Register(agent.Dispose);
 server.Start();
 stun.Start();
 app.Run();
@@ -331,6 +327,15 @@ app.Run();
 static bool IsDeviceNotConnected(NativeException exception) =>
     exception.Status.Type == ZpStatusType.NtStatus &&
     exception.Status.Code == StatusDeviceNotConnected;
+
+static McpPolicyView CreateMcpPolicyView(McpPolicyConfiguration configuration, string endpoint) =>
+    new(configuration.Enabled,
+        configuration.ReadOnlyOnly,
+        configuration.MaxConcurrentCalls,
+        configuration.MaxCallsPerMinute,
+        configuration.CallTimeoutSeconds,
+        configuration.MaxResultSizeBytes,
+        endpoint);
 
 static ConnectedClientView[] GetConnectedClientViews(
     NativeServer server,

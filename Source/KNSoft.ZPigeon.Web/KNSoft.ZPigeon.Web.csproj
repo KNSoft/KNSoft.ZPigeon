@@ -14,10 +14,6 @@
 
   <ItemGroup>
     <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\3rdParty\models.dev\api.json" Link="3rdParty\models.dev\api.json"
-             CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\3rdParty\models.dev\LICENSE" Link="3rdParty\models.dev\LICENSE"
-             CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\3rdParty\rdpwrap.ini\rdpwrap.ini" Link="3rdParty\rdpwrap.ini\rdpwrap.ini"
              CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
@@ -25,7 +21,6 @@
   <ItemGroup>
     <PackageReference Include="KNSoft.FirmwareSpec" Version="1.0.1-beta" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
-    <ProjectReference Include="..\KNSoft.ZPigeon.Agent\KNSoft.ZPigeon.Agent.csproj" />
     <ProjectReference Include="..\KNSoft.ZPigeon.Application\KNSoft.ZPigeon.Application.csproj" />
     <ProjectReference Include="..\KNSoft.ZPigeon.Server.Managed\KNSoft.ZPigeon.Server.Managed.csproj" />
     <ProjectReference Include="..\KNSoft.ZPigeon.Tools\KNSoft.ZPigeon.Tools.csproj" />

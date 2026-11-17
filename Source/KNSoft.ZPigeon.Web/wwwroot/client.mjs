@@ -54,7 +54,6 @@ import { ShadowCopyManager } from "./shadow-copy.mjs";
 import { BitLockerManager } from "./bitlocker.mjs";
 import { WinObjManager } from "./winobj.mjs";
 import { ClientStatusManager, ZPigeonConnectionManager } from "./zpigeon.mjs";
-import { AgentManager } from "./agent.mjs";
 import { language, localize, observeLocalization, t, translateSource } from "./i18n.mjs";
 import {
   apiUrl,
@@ -164,7 +163,6 @@ const categories = {
       ["execution", "module.execution"],
       ["remoteDesktop", "module.remoteDesktop"],
     ],
-    agent: [["agent", "module.agent"]],
   },
   views = Object.values(categories).flat(),
   viewCategory = new Map(
@@ -182,9 +180,9 @@ const viewModules = {
 };
 let capabilities = { modules: [], execution: 0 }, capabilityModules = new Set();
 const supportsModule = (id) => capabilityModules.has(id),
-  viewAvailable = (view) => view === "connection" || view === "agent" || viewModules[view]?.some(supportsModule),
+  viewAvailable = (view) => view === "connection" || viewModules[view]?.some(supportsModule),
   firstAvailableView = () =>
-    views.find(([view]) => view !== "connection" && view !== "agent" && viewAvailable(view))?.[0] ||
+    views.find(([view]) => view !== "connection" && viewAvailable(view))?.[0] ||
     "connection";
 const requestedView = location.hash.slice(1);
 let active = null,
@@ -411,14 +409,6 @@ const remoteDesktop = new RemoteDesktopManager($("remoteDesktopManager"), { call
 const forwards = new PortForwardManager($("portForwardManager"), { call, notify });
 const connection = new ZPigeonConnectionManager($("connectionManager"), { call, notify });
 const clientStatus = new ClientStatusManager($("clientStatusManager"), { call, notify });
-const agentManager = new AgentManager($("agentManager"), {
-  get: getJson,
-  post: postJson,
-  put: putJson,
-  remove: deleteRequest,
-  download: downloadRequest,
-  notify,
-});
 files.disconnect();
 portableDevices.disconnect();
 clipboard.disconnect();
@@ -432,7 +422,6 @@ forwards.disconnect();
 remoteDesktop.disconnect();
 execution.disconnect();
 clientStatus.disconnect();
-agentManager.disconnect();
 for (const manager of administration) manager.disconnect();
 localize(document);
 observeLocalization();
@@ -476,7 +465,6 @@ function applyStatus(state) {
     remoteDesktop.disconnect();
     execution.disconnect();
     clientStatus.disconnect();
-    agentManager.disconnect();
     for (const manager of administration) manager.disconnect();
   }
   shellSelect.disabled = newShell.disabled = emptyNew.disabled = !connected || selectedShell === null;
@@ -874,7 +862,7 @@ function closeActive() {
 function showView(name, historyMode = "replace") {
   if (!viewCategory.has(name) || !viewAvailable(name)) name = firstAvailableView();
   if (name !== currentView)
-    ({ execution, forwards, packages, updates, clientStatus, agent: agentManager })[currentView]?.deactivate?.();
+    ({ execution, forwards, packages, updates, clientStatus })[currentView]?.deactivate?.();
   currentView = name;
   const category = viewCategory.get(name),
     moduleNav = $("moduleNav");
@@ -883,7 +871,6 @@ function showView(name, historyMode = "replace") {
     button.hidden = !categories[button.dataset.category].some(([view]) => viewAvailable(view));
     button.classList.toggle("active", button.dataset.category === category);
   }
-  moduleNav.hidden = name === "agent";
   moduleNav.replaceChildren(
     ...categories[category].filter(([view]) => viewAvailable(view)).map(([view, title]) => {
       const button = document.createElement("button");
@@ -898,7 +885,6 @@ function showView(name, historyMode = "replace") {
   processes.setActive(name === "processes");
   connection[name === "connection" ? "activate" : "deactivate"]();
   if (name === "clientStatus") clientStatus.activate(clientConnected);
-  if (name === "agent") agentManager.activate(clientConnected);
   if (name === "terminal") {
     scheduleFit();
     loadShells();

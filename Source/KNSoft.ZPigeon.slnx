@@ -29,19 +29,13 @@
     <BuildDependency Project="KNSoft.ZPigeon.Application/KNSoft.ZPigeon.Application.csproj" />
     <Platform Solution="*|x64" Project="x64" />
   </Project>
-  <Project Path="KNSoft.ZPigeon.Agent/KNSoft.ZPigeon.Agent.csproj" Id="f5e17916-1483-4ea4-b9ab-497dd7b3360b">
-    <BuildDependency Project="KNSoft.ZPigeon.Tools/KNSoft.ZPigeon.Tools.csproj" />
-    <Platform Solution="*|x64" Project="x64" />
-  </Project>
   <Project Path="KNSoft.ZPigeon.Web/KNSoft.ZPigeon.Web.csproj" Id="fe932cfa-668a-48b7-991f-07b108dfe38a">
-    <BuildDependency Project="KNSoft.ZPigeon.Agent/KNSoft.ZPigeon.Agent.csproj" />
     <BuildDependency Project="KNSoft.ZPigeon.Application/KNSoft.ZPigeon.Application.csproj" />
     <BuildDependency Project="KNSoft.ZPigeon.Server.Managed/KNSoft.ZPigeon.Server.Managed.csproj" />
     <BuildDependency Project="KNSoft.ZPigeon.Tools/KNSoft.ZPigeon.Tools.csproj" />
     <Platform Solution="*|x64" Project="x64" />
   </Project>
   <Project Path="ToolCatalogTest/ToolCatalogTest.csproj" Id="40fb39f9-d6a1-409e-8dc4-f2505cf6a964">
-    <BuildDependency Project="KNSoft.ZPigeon.Agent/KNSoft.ZPigeon.Agent.csproj" />
     <BuildDependency Project="KNSoft.ZPigeon.Tools/KNSoft.ZPigeon.Tools.csproj" />
     <Platform Solution="*|x64" Project="x64" />
   </Project>

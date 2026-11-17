@@ -11,7 +11,7 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
 - 安全部署：严格验证 Server 身份，Client 使用持久化 CNG 实例密钥
 - 极简高效：核心使用纯 C，并优先调用 NT 层接口。不仅功能更多更强，运行效率也更佳。不背负旧系统和历史兼容路径，直接使用 Windows 10 及以上系统能力，带来当下最佳体验
 - 功能全面：系统管理能力覆盖广泛，包含 文件数据、系统软硬件、网络及端口转发、远程桌面/终端 等功能，详见 [功能模块](#功能模块)
-- AI 赋能：同一工具目录同时提供标准 MCP 入口和管理端 Agent，支持 OpenAI Responses、OpenAI-compatible Chat Completions 和 Anthropic Messages
+- AI 赋能：通过标准 MCP 入口向外部智能体提供有界、结构化的管理工具
 
 ## 功能模块
 
@@ -74,10 +74,8 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
   - 远程桌面：管理启用状态、端口及同一用户多会话策略；按精确 `termsrv.dll` 版本启用或关闭仅驻留内存的多会话补丁；
     管理 Child Sessions 系统功能、Hello-only 登录和仅限 localhost 的凭据委派，并基于 Client 当前活动用户会话创建独立 Child Session；通过受控端口转发建立 RDP 连接，或由用户明确点击开始后使用 Web 交互式远控
 
-- Agent
-  - MCP：通过 Streamable HTTP 向外部智能体提供有界、结构化的管理工具；目标由瞬时 `ClientId` 显式指定
-  - 模型：从仓库内的 models.dev 快照选择 Provider 和模型，或手动配置接口协议、Base URL、认证、上下文、输出、Reasoning、超时及高级 JSON；凭据使用当前 Windows 账户加密后保存在本机
-  - 会话：直接选择模型；所有会话共用唯一一份全局 Profile，配置 System Prompt、工具以及 `AGENTS.md`、`TOOLS.md`、`MEMORY.md` 和自定义 Markdown，每次发送消息时提供给模型。历史保存在 Server，支持搜索、分支和导出；运行时支持 Tool Call 时间线、Token 用量、上下文压缩、终止、消息排队和插队
+- MCP
+  - 通过 Streamable HTTP 向外部智能体提供有界、结构化的管理工具；目标由瞬时 `ClientId` 显式指定
 
 ## 架构与本地运行
 
@@ -88,9 +86,8 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
 - Server Native：向托管程序提供稳定的 C ABI
 - Server Managed：封装可复用的 .NET 管理能力
 - Application：把 Server Managed 能力组合为显式目标、受边界约束的管理用例
-- Tools：定义 MCP 与内置智能体共用的唯一工具目录及读写语义
-- Agent：持久化模型、会话及全局 Profile，并通过 OpenAI Responses、Chat Completions 或 Anthropic Messages 执行工具循环
-- Web：承载本地回环 REST、MCP、连接分组控制台、系统设置、Client EXE 生成、Agent 会话和按 Client 隔离的可视化控制界面
+- Tools：定义 MCP 的唯一工具目录及读写语义
+- Web：承载本地回环 REST、MCP、连接分组控制台、系统设置、Client EXE 生成和按 Client 隔离的可视化控制界面
 - Transport：支持 QUIC、TLS/TCP 和 DTLS/UDP，默认使用 QUIC
 
 首次获取源码时需初始化 `Source/3rdParty/rdpwrap.ini` 子模块。
@@ -100,7 +97,7 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
 2. 启动一个或多个 `KNSoft.ZPigeon.Client.exe`
 3. 打开 `http://127.0.0.1:9983`，在首页控制台按分组选择 Client，进入其控制面板
 
-首页控制台显示多个连接分组、传输方式、往返延迟、收发字节和请求状态，并支持搜索及按客户端公钥指纹保存分组调整。系统设置提供浅色、深色、跟随系统主题及蓝色、青色、紫色主题颜色，外观在当前浏览器内保存并应用到客户端控制面板。Agent 的模型、认证、工具、System Prompt 和全局 Profile 文档统一在系统设置中配置，无需 Client 在线；客户端 Agent 页面继续负责绑定该 Client 的会话和对话。
+首页控制台显示多个连接分组、传输方式、往返延迟、收发字节和请求状态，并支持搜索及按客户端公钥指纹保存分组调整。系统设置提供浅色、深色、跟随系统主题及蓝色、青色、紫色主题颜色，外观在当前浏览器内保存并应用到客户端控制面板。
 
 “生成客户端”支持任意选择 46 个逻辑模块、6 个远程执行扩展以及 TCP、UDP、QUIC 传输。C# 直接调用 VS 2026 的 MSBuild 18 子进程，通过该进程的 `CL=/D...` 传入模块宏，在独立源码快照中构建整个解决方案的 Release x64 版本；页面显示实时编译输出、状态、取消按钮和最终 EXE 大小。相同源码、依赖内容、工具链和宏集合复用缓存模板。首次构建需要本机具备源码、已还原的依赖与 VS 2026；构建失败会显示日志。
 
@@ -108,11 +105,11 @@ KNSoft.ZPigeon 是面向 Windows 系统的远程管理平台，[功能模块](#�
 
 生成器在模板副本中写入默认分组、连接顺序、TLS 策略、实例标识和当前 Server 根证书。“新实例”分配独立 ID；“更新已有实例”保留 ID，生成记录按部署持久化。CNG 密钥名固定为 `KNSoft.ZPigeon.Client.<部署根公钥 SHA-256>.<实例 ID>`，不提供任意名称输入。私钥由目标机器的当前用户 CNG 首次创建，EXE 不包含实例或 Server 私钥；同机同账户两个独立实例使用不同密钥，同一实例重复运行由按用户和角色区分的 NT 互斥对象拒绝。
 
-命令执行基础模块与 TCP 的实测 EXE 为 212,992 字节（208 KiB），仅需一个 EXE；完整版本为 1,341,952 字节（约 1.28 MiB），比原动态 Loader 的 1,320,448 字节基线增加 21,504 字节（21 KiB），同时省去 164,704 字节的 Loader DLL。当前生成器仍为选中的 WinGet 提供 `Microsoft.Management.Deployment.dll` 和 `.winmd` 旁文件；`.winmd` 用于构建期投影，其分发策略待确认。RTC/P2P 的 WebView2 Loader 静态链接进 EXE，无需 `WebView2Loader.dll` 旁文件，目标系统仍需安装 WebView2 Runtime。Client 握手签名覆盖编译能力和实例元数据；Web 页面、内置 Agent 工具及 MCP 目录按已认证能力过滤。编译宏和构建细节见 [Client 可选编译与 Web 构建](Docs/ClientBuildProfiles.md)。
+命令执行基础模块与 TCP 的实测 EXE 为 212,992 字节（208 KiB），仅需一个 EXE；完整版本为 1,341,952 字节（约 1.28 MiB），比原动态 Loader 的 1,320,448 字节基线增加 21,504 字节（21 KiB），同时省去 164,704 字节的 Loader DLL。当前生成器仍为选中的 WinGet 提供 `Microsoft.Management.Deployment.dll` 和 `.winmd` 旁文件；`.winmd` 用于构建期投影，其分发策略待确认。RTC/P2P 的 WebView2 Loader 静态链接进 EXE，无需 `WebView2Loader.dll` 旁文件，目标系统仍需安装 WebView2 Runtime。Client 握手签名覆盖编译能力和实例元数据；Web 页面及 MCP 目录按已认证能力过滤。编译宏和构建细节见 [Client 可选编译与 Web 构建](Docs/ClientBuildProfiles.md)。
 
-MCP Streamable HTTP 端点为 `http://127.0.0.1:9983/mcp`。外部调用方先使用 `list_clients` 获取本次 Server 进程内有效的 `ClientId`，再把该值传给其他工具。MCP 无会话目标状态，不会隐式沿用上一次选择的 Client。管理端“Agent”页面则把当前页面的 Client 固定绑定到工具调用，模型无法改选目标。
+MCP Streamable HTTP 端点为 `http://127.0.0.1:9983/mcp`。外部调用方先使用 `list_clients` 获取本次 Server 进程内有效的 `ClientId`，再把该值传给其他工具。MCP 无会话目标状态，不会隐式沿用上一次选择的 Client。
 
-AI 工具按用途显式列入目录，不会因底层 SDK 新增 API 或枚举值而自动暴露。Cookie、密码等敏感浏览器数据使用独立工具和敏感性标记，并提示模型仅在用户明确要求时调用。OpenAI 请求显式关闭 Provider 端存储；所有模型服务的实际数据处理和保留策略仍由所选 Provider 决定。
+MCP 工具按用途显式列入目录，不会因底层 SDK 新增 API 或枚举值而自动暴露。Cookie、密码等浏览器数据读取与其他读取工具一样属于只读工具。
 
 当前 Web 是本机闭环原型，仅接受 `127.0.0.1` 的规范 Host 和同源浏览器请求；HTTP、WebSocket 与 MCP 都会经过同一 Host 边界，浏览器请求还会拒绝跨站来源。没有浏览器来源信息的本机原生程序仍视为可信，本阶段不把任意本机进程纳入安全边界。对外访问应通过本机反向代理，并重新设计 HTTPS、身份验证和可信代理边界。多个 Client 可同时主动连接一个 Server，并接受 Server 的统一管理。首页按分组及客户端公钥指纹列出当前连接，选择后进入该 Client 的独立管理上下文。当前分组仅用于控制台组织，不提供独立 Deployment 信任根或入组授权。
 

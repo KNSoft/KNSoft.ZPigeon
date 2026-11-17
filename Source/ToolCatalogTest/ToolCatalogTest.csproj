@@ -13,7 +13,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\KNSoft.ZPigeon.Agent\KNSoft.ZPigeon.Agent.csproj" />
     <ProjectReference Include="..\KNSoft.ZPigeon.Tools\KNSoft.ZPigeon.Tools.csproj" />
     <ProjectReference Include="..\KNSoft.ZPigeon.Web\KNSoft.ZPigeon.Web.csproj" />
   </ItemGroup>

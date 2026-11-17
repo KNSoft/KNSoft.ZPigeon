@@ -9,8 +9,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
 {
     [ZPigeonTool("list_clients",
                  "List connected ZPigeon clients. Use the exact returned id for every other external tool.",
-                 true,
-                 audience: ToolAudience.ExternalMcp)]
+                 true)]
     public ConnectedClientSummary[] ListClients() => application.GetClients();
 
     [ZPigeonTool("get_system_info", "Get operating system and hardware summary for a client.", true, moduleId: 1)]
@@ -81,7 +80,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                  "Control one process instance. control is Terminate, TerminateTree, Suspend, Resume, " +
                  "EfficiencyMode, Priority, or UacVirtualization.",
                  false,
-                 destructive: true, moduleId: 2)]
+                 moduleId: 2)]
     public async Task<ToolOperationResult> ControlProcess(
         [Description("Exact client id returned by list_clients.")] string clientId,
         uint processId,
@@ -117,7 +116,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
     [ZPigeonTool("control_service",
                  "Control a Windows service. control is Start, Stop, Pause, Continue, or Restart.",
                  false,
-                 destructive: true, moduleId: 3)]
+                 moduleId: 3)]
     public async Task<ToolOperationResult> ControlService(
         [Description("Exact client id returned by list_clients.")] string clientId,
         string serviceName,
@@ -171,7 +170,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                                   ParseEnum<FileHashAlgorithm>(algorithm),
                                   cancellationToken);
 
-    [ZPigeonTool("delete_file", "Delete a remote file or directory.", false, destructive: true, moduleId: 4)]
+    [ZPigeonTool("delete_file", "Delete a remote file or directory.", false, moduleId: 4)]
     public async Task<ToolOperationResult> DeleteFile(
         [Description("Exact client id returned by list_clients.")] string clientId,
         string path,
@@ -181,7 +180,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
         return new(true);
     }
 
-    [ZPigeonTool("rename_file", "Rename or move a remote file or directory.", false, destructive: true, moduleId: 4)]
+    [ZPigeonTool("rename_file", "Rename or move a remote file or directory.", false, moduleId: 4)]
     public async Task<ToolOperationResult> RenameFile(
         [Description("Exact client id returned by list_clients.")] string clientId,
         string path,
@@ -279,9 +278,9 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
                                       cancellationToken);
 
     [ZPigeonTool("query_browser_secrets",
-                 "Read a bounded page of sensitive Cookie or Password data only when explicitly requested.",
+                 "Read a bounded page of Cookie or Password data when explicitly requested.",
                  true,
-                 sensitive: true, moduleId: 12)]
+                 moduleId: 12)]
     public Task<BrowserPage> QueryBrowserSecrets(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Chrome or Edge.")] string browser,
@@ -341,7 +340,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
     [ZPigeonTool("control_administration",
                  "Apply a Control* administration operation. Obtain exact operation and action names first.",
                  false,
-                 destructive: true, administration: AdministrationToolKind.Control)]
+                 administration: AdministrationToolKind.Control)]
     public async Task<ToolAdministrationControlResult> ControlAdministration(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Exact control name returned by list_administration_operations.")] string operation,
@@ -364,8 +363,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
     [ZPigeonTool("start_process",
                  "Start a hidden process under the connected client identity and return its execution job.",
                  false,
-                 destructive: true,
-                 openWorld: true, moduleId: 10)]
+                 moduleId: 10)]
     public Task<ExecutionJob> StartProcess(
         [Description("Exact client id returned by list_clients.")] string clientId,
         string fileName,
@@ -384,7 +382,7 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
         CancellationToken cancellationToken = default) =>
         application.GetExecutionJobsAsync(ParseClientId(clientId), cancellationToken);
 
-    [ZPigeonTool("terminate_execution", "Terminate an execution job.", false, destructive: true, moduleId: 10)]
+    [ZPigeonTool("terminate_execution", "Terminate an execution job.", false, moduleId: 10)]
     public async Task<ToolOperationResult> TerminateExecution(
         [Description("Exact client id returned by list_clients.")] string clientId,
         [Description("Numeric jobId returned by start_process or list_execution_jobs.")] string jobId,
@@ -409,10 +407,10 @@ internal sealed class ToolFunctions(ZPigeonApplication application)
             result :
             throw new ArgumentException(null, parameterName);
 
-    private static BrowserKind ParseBrowserKind(string value, bool sensitive)
+    private static BrowserKind ParseBrowserKind(string value, bool secrets)
     {
         var result = ParseEnum<BrowserKind>(value);
-        if ((result is BrowserKind.Cookie or BrowserKind.Password) != sensitive)
+        if ((result is BrowserKind.Cookie or BrowserKind.Password) != secrets)
         {
             throw new ArgumentException(null, nameof(value));
         }

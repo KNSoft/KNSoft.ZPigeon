@@ -142,7 +142,7 @@ ClientHello 使用固定宽度的已编译模块位图、传输位图和 Executi
 
 认证签名覆盖 Server Challenge 和完整规范编码的 ClientHello，使公钥、版本及能力属于同一次认证。Server 仅在验签成功后保存并向 Managed、Application、Tools 和 Web 暴露能力；能力描述构建内容，不替代授权或本机权限验证。
 
-Web 隐藏不可用页面和子功能；内置 Agent 按绑定 Client 过滤工具，外部 MCP 目录提供当前全部连接支持的工具并集，调用时显式指定 ClientId。直接 REST、SDK 或协议请求仍由 Server 检查，Client 对未编译模块或扩展统一返回 `STATUS_NOT_SUPPORTED`，不会因缺少实现而关闭健康连接。连接质量依赖固定核心探测和 Server 观测，不强制包含完整 ClientStatus 模块。
+Web 隐藏不可用页面和子功能；外部 MCP 目录提供当前全部连接支持的工具并集，调用时显式指定 ClientId。直接 REST、SDK 或协议请求仍由 Server 检查，Client 对未编译模块或扩展统一返回 `STATUS_NOT_SUPPORTED`，不会因缺少实现而关闭健康连接。连接质量依赖固定核心探测和 Server 观测，不强制包含完整 ClientStatus 模块。
 
 ## 与 Web 生成器衔接
 
@@ -172,7 +172,7 @@ KNSoft.ZPigeon.Client.<DeploymentId>.<InstanceId>
 
 | 场景 | 实例身份行为 |
 | --- | --- |
-| 同一电脑、同一账户，分别生成两个 Client | 不同 InstanceId，不同 CNG 密钥和公钥指纹，分组与 Agent 历史独立 |
+| 同一电脑、同一账户，分别生成两个 Client | 不同 InstanceId，不同 CNG 密钥和公钥指纹，分组与连接身份独立 |
 | 两个 Client 分别连接两个独立部署 | DeploymentId 与 InstanceId 分隔身份；两条控制连接分别属于两个实例 |
 | 同一 Client 重启、重连或切换传输 | 打开原名称对应的密钥，公钥指纹稳定 |
 | 更新已有实例的模块或连接信息 | 保留原 InstanceId，继续使用原身份 |
@@ -181,7 +181,7 @@ KNSoft.ZPigeon.Client.<DeploymentId>.<InstanceId>
 
 Web 的“新增实例”分配新 InstanceId；“更新已有实例”保留已选择实例的 ID。实例 ID 只在部署配置阶段写入，不影响模块模板缓存。已有实例 ID 可由服务端实例记录和已认证 Client 元数据保留，目标端无需额外维护安装目录与 ID 的状态文件。
 
-同一实例在同一账户重复启动时，以实例名称对应的进程互斥对象保证一个运行进程，避免两条连接共用分组和 Agent 历史却被误认为两个独立 Client。互斥对象按当前用户及实例作用域创建；子会话 Worker 具有独立角色名称。
+同一实例在同一账户重复启动时，以实例名称对应的进程互斥对象保证一个运行进程，避免两条连接共用分组和身份却被误认为两个独立 Client。互斥对象按当前用户及实例作用域创建；子会话 Worker 具有独立角色名称。
 
 多个 Endpoint 是一个实例的连接候选，不代表同时接受多个 Server 的并发控制。确需两个 Server 同时管理这台电脑时，生成并运行两个独立 Client 实例。若两个 Server 使用同一根公钥，它们属于同一信任部署；独立 InstanceId 仍可分隔客户端身份。
 
@@ -212,6 +212,6 @@ UDP 空闲连接在 Server 停止后按现有 60 秒接收超时检测断开，�
 
 全部功能和关键精简宏组合均需通过整个解决方案的 Release x64 构建。只选 Execution 时分别验证 TCP、UDP、QUIC 和三者同时启用；其他模块验证独立启用、关闭及实际依赖组合，并抽样覆盖任意多模块子集。集成检查包括认证、探测、执行和退出码、取消或终止、断线重连、关闭资源回收，以及请求未编译模块时的确定错误。
 
-多实例验收包括同机同账户两个实例的不同公钥指纹、独立分组和 Agent 历史，以及重启/更新后身份不变、同实例重复启动被拒绝。TLS 1.3 策略与 QUIC 在支持的平台上测试，Windows 10 验证 TCP/TLS 1.2 与 UDP/DTLS 1.2。
+多实例验收包括同机同账户两个实例的不同公钥指纹、独立分组和连接状态，以及重启/更新后身份不变、同实例重复启动被拒绝。TLS 1.3 策略与 QUIC 在支持的平台上测试，Windows 10 验证 TCP/TLS 1.2 与 UDP/DTLS 1.2。
 
 尺寸报告记录 EXE 字节数、完整部署文件总字节数、PE 导入表和链接 Map；仅 Execution + TCP 的 Map 中不得出现 QUIC、UDP、WinGet、WebView2、RTC、摄像头或音频执行器，部署目录不附带这些功能的 DLL。用禁用模块的符号和导入检查验证真实裁剪，并比较同传输条件下增加功能的体积变化。首个实际构建后再固定尺寸上限，避免把历史产物或估计值当成精简版承诺。

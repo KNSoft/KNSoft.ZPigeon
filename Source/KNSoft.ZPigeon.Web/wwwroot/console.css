@@ -227,6 +227,36 @@
   width: 100%;
   color: var(--text);
 }
+.settings-check {
+  display: flex !important;
+  align-items: center;
+  gap: 9px;
+  color: var(--text) !important;
+}
+.settings-check input {
+  width: 16px !important;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.settings-inline {
+  display: flex;
+  gap: 8px;
+}
+.settings-inline input {
+  min-width: 0;
+  flex: 1;
+}
+.settings-inline button {
+  flex: none;
+}
+.settings-warning {
+  padding: 12px 14px;
+  border: 1px solid var(--danger-line);
+  border-radius: 7px;
+  color: var(--danger-text);
+  background: var(--danger-panel);
+}
 .settings-grid .wide {
   grid-column: 1 / -1;
 }

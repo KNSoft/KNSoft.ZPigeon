@@ -1,4 +1,3 @@
-import { AgentSettings } from "./agent-settings.mjs";
 import { getTheme, setTheme } from "./theme.mjs";
 import { installDialogBehavior } from "./dialogs.mjs";
 import { localize, observeLocalization, t } from "./i18n.mjs";
@@ -14,7 +13,8 @@ let clients = [],
   buildJob,
   buildEvents,
   buildStarting = false,
-  buildCancelRequested = false;
+  buildCancelRequested = false,
+  mcpPolicy;
 
 const buildModuleGroups = [
   ["console.coreFeatures", [[44, "module.clientStatus"]]],
@@ -67,13 +67,6 @@ async function json(url, method = "GET", body) {
   return response.status === 204 ? null : response.json();
 }
 
-new AgentSettings($("agentSettings"), {
-  get: (url) => json(url),
-  post: (url, body) => json(url, "POST", body),
-  put: (url, body) => json(url, "PUT", body),
-  remove: (url) => json(url, "DELETE"),
-  notify,
-});
 installDialogBehavior();
 localize();
 observeLocalization();
@@ -208,6 +201,29 @@ async function refresh() {
     $("consoleStatus").textContent = t("console.serverUnavailable");
     notify(error.message);
   } finally { refreshing = false; }
+}
+
+function renderMcpPolicy() {
+  if (!mcpPolicy) return;
+  $("mcpEnabled").checked = mcpPolicy.enabled;
+  $("mcpEndpoint").value = mcpPolicy.endpoint;
+  $("mcpAccessMode").value = mcpPolicy.readOnlyOnly ? "readonly" : "all";
+  $("mcpMaxConcurrent").value = mcpPolicy.maxConcurrentCalls;
+  $("mcpMaxCallsPerMinute").value = mcpPolicy.maxCallsPerMinute;
+  $("mcpCallTimeout").value = mcpPolicy.callTimeoutSeconds;
+  $("mcpMaxResultSize").value = Math.max(1, Math.ceil(mcpPolicy.maxResultSizeBytes / 1048576));
+  $("mcpAllToolsWarning").hidden = mcpPolicy.readOnlyOnly;
+}
+
+async function loadMcpPolicy() {
+  try {
+    mcpPolicy = await json("/api/console/mcp");
+    renderMcpPolicy();
+  } catch (error) { notify(error.message); }
+}
+
+function updateMcpWarning() {
+  $("mcpAllToolsWarning").hidden = $("mcpAccessMode").value !== "all";
 }
 
 function buildCheckbox(value, text, checked) {
@@ -470,6 +486,33 @@ $("buildExecutionOnly").onclick = () => {
   $("buildTcpTls13").checked = false;
   updateBuildSelection();
 };
+$("mcpAccessMode").onchange = updateMcpWarning;
+$("mcpCopyEndpoint").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($("mcpEndpoint").value);
+    notify(t("console.mcpEndpointCopied"));
+  } catch (error) { notify(error.message); }
+};
+$("mcpForm").onsubmit = async (event) => {
+  event.preventDefault();
+  if (!event.currentTarget.checkValidity()) return;
+  $("mcpSave").disabled = true;
+  $("mcpSaveStatus").textContent = "";
+  try {
+    mcpPolicy = await json("/api/console/mcp", "PUT", {
+      enabled: $("mcpEnabled").checked,
+      readOnlyOnly: $("mcpAccessMode").value === "readonly",
+      maxConcurrentCalls: Number($("mcpMaxConcurrent").value),
+      maxCallsPerMinute: Number($("mcpMaxCallsPerMinute").value),
+      callTimeoutSeconds: Number($("mcpCallTimeout").value),
+      maxResultSizeBytes: Number($("mcpMaxResultSize").value) * 1048576,
+    });
+    renderMcpPolicy();
+    $("mcpSaveStatus").textContent = t("console.mcpSaved");
+  } catch (error) {
+    notify(error.message);
+  } finally { $("mcpSave").disabled = false; }
+};
 const preference = getTheme();
 $("theme").value = preference.theme;
 $("accent").value = preference.accent;
@@ -481,6 +524,7 @@ window.addEventListener("themechange", () => {
 });
 showView(location.hash.slice(1));
 await refresh();
+await loadMcpPolicy();
 const events = new EventSource("/api/clients/events");
 events.addEventListener("clients", (event) => {
   const snapshot = JSON.parse(event.data);
