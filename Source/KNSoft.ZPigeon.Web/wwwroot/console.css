@@ -209,6 +209,9 @@
   max-width: 920px;
   margin-bottom: 18px;
 }
+#buildForm, #buildLogSection {
+  max-width: 1280px;
+}
 .settings-card p {
   line-height: 1.7;
 }
@@ -321,6 +324,7 @@
 }
 .settings-grid label.build-check {
   display: flex;
+  align-items: center;
   color: var(--text);
 }
 .build-shortcuts {
@@ -330,10 +334,20 @@
   gap: 10px;
   margin-bottom: 20px;
 }
-.build-shortcuts button {
-  font-size: 12px;
+.build-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text);
+  cursor: pointer;
 }
-.build-shortcuts span {
+.build-select-all input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.build-shortcuts > span {
   margin-left: auto;
 }
 .build-module-groups {
@@ -341,13 +355,24 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 22px 28px;
 }
-.build-module-group h3, .build-execution-extensions h3 {
+.build-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 20px;
+  margin: 0 0 12px;
+  color: var(--muted);
   font-size: 13px;
   font-weight: 600;
-  color: var(--muted);
-  margin: 0 0 12px;
+  cursor: pointer;
 }
-.build-module-group > div {
+.build-group-heading input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.build-module-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px 10px;
@@ -356,6 +381,8 @@
   font-size: 13px;
 }
 .build-execution-extensions {
+  display: block;
+  grid-column: 1 / -1;
   margin-top: 24px;
   padding-top: 20px;
   border-top: 1px solid var(--line);
@@ -372,8 +399,21 @@
   justify-content: space-between;
   gap: 12px;
 }
+.build-log-heading > div:first-child {
+  min-width: 0;
+}
 .build-log-heading h2 {
   margin: 0;
+}
+.build-log-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.build-minimum-os-note {
+  margin-top: 0;
 }
 .build-output {
   background: var(--bg);
@@ -474,12 +514,22 @@
   .build-module-groups, .build-transports, .build-options {
     grid-template-columns: 1fr;
   }
+  .build-module-options {
+    grid-template-columns: 1fr;
+  }
   .build-fieldset {
     padding: 14px;
   }
-  .build-shortcuts span {
+  .build-shortcuts > span {
     width: 100%;
     margin-left: 0;
+  }
+  .build-log-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .build-log-actions {
+    justify-content: flex-start;
   }
   .client-grid {
     grid-template-columns: 1fr;

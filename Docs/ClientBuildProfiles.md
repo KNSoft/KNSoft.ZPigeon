@@ -48,6 +48,10 @@ VS 2026 / MSBuild 18 完整解决方案 Release x64 的当前完整 Client 为 1
 | UDP（DTLS 1.2） | `_KNSOFT_ZPIGEON_BUILD_TRANSPORT_UDP_` | Client UDP 适配、Network UDP/DTLS、确认、重传、排序与背压；当前 DTLS 路径要求 Windows 10 1607 及以上 |
 | QUIC（TLS 1.3） | `_KNSOFT_ZPIGEON_BUILD_TRANSPORT_QUIC_` | Client QUIC 适配与静态 KNSoft.Quic；当前包使用 Schannel，要求 Windows 11 / Server 2022 及以上 |
 
+最低系统要求取所选传输方式和 TLS 策略的最高要求：TCP 为 Windows 10 1809 / Server 2019，
+UDP 为 Windows 10 1607 / Server 2016，QUIC 或 TCP 要求 TLS 1.3 为 Windows 11 / Server 2022。
+当前 46 个业务模块和 6 个远程执行扩展没有在源码中声明独立的更高最低系统版本；生成页的最低系统要求因此由传输和 TLS 选择决定。
+
 TLS 1.3 是安全协议版本。QUIC 固定要求 TLS 1.3，UDP 当前实现使用 DTLS 1.2，TLS 1.3 不作为第四种 Transport。TCP 单独提供最低 TLS 版本策略：默认协商 TLS 1.2 或更高版本，另可选择“要求 TLS 1.3”。选择后者时目标必须支持 TLS 1.3，不降低要求继续连接。加密和服务端身份验证始终保留，不提供明文 TCP/UDP 开关。
 
 上述范围由当前源码和平台决定：TCP 的 `SCH_CREDENTIALS` / `TLS_PARAMETERS` 要求见 [Microsoft credential 文档](https://learn.microsoft.com/en-us/windows/win32/api/schannel/ns-schannel-sch_credentials)；TLS 1.3 与 DTLS 1.2 支持范围见 [Schannel 支持矩阵](https://learn.microsoft.com/en-us/windows/win32/secauthn/protocols-in-tls-ssl--schannel-ssp-)。QUIC 必须使用 TLS 1.3 见 [RFC 9001 第 4.2 节](https://www.rfc-editor.org/rfc/rfc9001.html#section-4.2)，当前 Schannel 后端的平台要求见 [MsQuic Platforms](https://github.com/microsoft/msquic/blob/main/docs/Platforms.md)。当前包不使用 OpenSSL 后端。

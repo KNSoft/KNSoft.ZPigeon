@@ -69,7 +69,7 @@
             <div class="settings-grid build-transport-settings">
               <label><span data-i18n="console.preferredTransport">优先连接方式</span><select
                 id="buildPreferredTransport" required></select></label>
-              <label class="build-check"><input id="buildTcpTls13" type="checkbox" />
+              <label class="build-check build-tls13-check"><input id="buildTcpTls13" type="checkbox" />
                 <span data-i18n="console.tcpTls13">TCP 要求 TLS 1.3</span></label>
             </div>
             <p class="muted" data-i18n="console.transportHint"
@@ -79,16 +79,11 @@
           <fieldset class="build-fieldset">
             <legend data-i18n="console.features">功能模块</legend>
             <div class="build-shortcuts">
-              <button id="buildExecutionOnly" type="button" data-i18n="console.executionOnly">仅命令执行</button>
-              <button id="buildSelectAll" type="button" data-i18n="console.selectAll">全部功能</button>
-              <button id="buildSelectNone" type="button" data-i18n="console.selectNone">清空选择</button>
+              <label class="build-select-all"><input id="buildSelectAll" type="checkbox" />
+                <span data-i18n="console.selectAll">全选</span></label>
               <span id="buildSelectedCount" class="muted"></span>
             </div>
             <div id="buildModules" class="build-module-groups"></div>
-            <div id="buildExecutionExtensions" class="build-execution-extensions">
-              <h3 data-i18n="console.executionExtensions">远程执行扩展</h3>
-              <div id="buildExecutionOptions" class="build-options"></div>
-            </div>
           </fieldset>
           <dl class="build-details">
             <div><dt data-i18n="console.minimumOs">最低系统要求</dt><dd id="buildMinimumOs">—</dd></div>
@@ -99,20 +94,23 @@
             <div><dt data-i18n="console.runtimeFiles">所选功能部署旁文件</dt><dd id="buildRuntimeFiles">—</dd></div>
             <div><dt data-i18n="console.templateCache">编译模板缓存</dt><dd id="buildCache">—</dd></div>
           </dl>
+          <p class="muted build-minimum-os-note" data-i18n="console.minimumOsBasis">
+            最低系统要求按所选传输方式和 TLS 策略计算；当前业务模块与远程执行扩展没有额外最低版本要求。</p>
           <p class="muted" data-i18n="console.buildLimit"
             >连接目标固定为本机 127.0.0.1，QUIC 与 TCP 默认使用端口 21943，UDP 默认使用端口 21944。私钥在目标机器首次运行时由当前用户 CNG 创建，EXE 只包含服务端根证书公钥。</p>
           <p id="buildRuntimeHint" class="muted" hidden data-i18n="console.wingetDependency"
             >WinGet 当前附带 DLL 和构建期 .winmd；RTC 使用静态 Loader，仍需系统 WebView2 Runtime，无需 Loader DLL。</p>
           <p id="buildError" class="danger" role="status" hidden></p>
-          <div class="dialog-actions">
-            <button id="buildDownload" type="submit" disabled data-i18n="console.startBuild">编译并生成</button>
-            <button id="buildCancel" type="button" hidden data-i18n="console.cancelBuild">取消构建</button>
-            <a id="buildResultDownload" class="control-link" hidden data-i18n="console.downloadResult">下载客户端</a>
-          </div>
         </form>
-        <section id="buildLogSection" class="zpigeon-card settings-card build-log-section" hidden>
-          <div class="build-log-heading"><h2 data-i18n="console.buildOutput">编译控制台</h2>
+        <section id="buildLogSection" class="zpigeon-card settings-card build-log-section">
+          <div class="build-log-heading"><div><h2 data-i18n="console.buildOutput">编译控制台</h2>
             <span id="buildState" class="muted" role="status"></span></div>
+            <div class="build-log-actions">
+              <button id="buildDownload" type="button" disabled data-i18n="console.startBuild">生成</button>
+              <button id="buildCancel" type="button" hidden data-i18n="console.cancelBuild">取消构建</button>
+              <a id="buildResultDownload" class="control-link" hidden data-i18n="console.downloadResult">下载客户端</a>
+            </div>
+          </div>
           <pre id="buildOutput" class="build-output" tabindex="0" aria-label="编译控制台"
             data-i18n-aria-label="console.buildOutput"></pre>
         </section>

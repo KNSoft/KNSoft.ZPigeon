@@ -27,17 +27,78 @@ const buildModuleGroups = [
   ["nav.storage", [[4, "module.files"], [46, "module.bitlocker"], [45, "module.shadowCopies"],
     [19, "module.portableDevices"], [29, "module.clipboard"]]],
   ["nav.tasks", [[2, "module.processes"], [8, "module.windows"], [3, "module.services"],
-    [23, "module.tasks"], [42, "module.uiAutomation"]]],
+    [23, "module.tasks"], [42, "module.uiAutomation"]], true],
   ["nav.hardware", [[21, "module.hardware"], [35, "module.bluetooth"], [36, "module.keyboard"],
     [37, "module.location"], [31, "module.firmware"], [15, "module.video"], [14, "module.audio"],
     [17, "module.serial"], [25, "module.power"]]],
   ["nav.software", [[20, "console.softwareModule"], [38, "module.fonts"], [12, "module.browsers"]]],
   ["nav.remote", [[5, "module.terminal"], [10, "module.execution"], [16, "module.rtc"], [18, "module.recording"]]],
 ];
+const buildModuleDescriptionKeys = {
+  system: "console.buildModuleDescription.system",
+  process: "console.buildModuleDescription.process",
+  service: "console.buildModuleDescription.service",
+  file: "console.buildModuleDescription.file",
+  terminal: "console.buildModuleDescription.terminal",
+  eventLog: "console.buildModuleDescription.eventLog",
+  registry: "console.buildModuleDescription.registry",
+  window: "console.buildModuleDescription.window",
+  user: "console.buildModuleDescription.user",
+  execution: "console.buildModuleDescription.execution",
+  tunnel: "console.buildModuleDescription.tunnel",
+  browser: "console.buildModuleDescription.browser",
+  wmi: "console.buildModuleDescription.wmi",
+  audio: "console.buildModuleDescription.audio",
+  video: "console.buildModuleDescription.video",
+  rtc: "console.buildModuleDescription.rtc",
+  serial: "console.buildModuleDescription.serial",
+  recording: "console.buildModuleDescription.recording",
+  portableDevice: "console.buildModuleDescription.portableDevice",
+  software: "console.buildModuleDescription.software",
+  hardware: "console.buildModuleDescription.hardware",
+  update: "console.buildModuleDescription.update",
+  task: "console.buildModuleDescription.task",
+  firewall: "console.buildModuleDescription.firewall",
+  power: "console.buildModuleDescription.power",
+  systemAdministration: "console.buildModuleDescription.systemAdministration",
+  wlan: "console.buildModuleDescription.wlan",
+  certificate: "console.buildModuleDescription.certificate",
+  clipboard: "console.buildModuleDescription.clipboard",
+  credential: "console.buildModuleDescription.credential",
+  firmware: "console.buildModuleDescription.firmware",
+  networkShare: "console.buildModuleDescription.networkShare",
+  networkStatus: "console.buildModuleDescription.networkStatus",
+  pageFile: "console.buildModuleDescription.pageFile",
+  bluetooth: "console.buildModuleDescription.bluetooth",
+  keyboard: "console.buildModuleDescription.keyboard",
+  location: "console.buildModuleDescription.location",
+  font: "console.buildModuleDescription.font",
+  appContainer: "console.buildModuleDescription.appContainer",
+  winobj: "console.buildModuleDescription.winobj",
+  wsl: "console.buildModuleDescription.wsl",
+  uiAutomation: "console.buildModuleDescription.uiAutomation",
+  proxyVpn: "console.buildModuleDescription.proxyVpn",
+  clientStatus: "console.buildModuleDescription.clientStatus",
+  shadowCopy: "console.buildModuleDescription.shadowCopy",
+  bitlocker: "console.buildModuleDescription.bitlocker",
+};
 const buildExecutionLabels = {
   runtimeDiscovery: "console.extensionRuntimes", shellExecute: "console.extensionShellExecute",
   alternateIdentity: "console.extensionIdentity", appContainer: "console.extensionAppContainer",
   customToken: "console.extensionCustomToken", staging: "console.extensionStaging",
+};
+const buildExecutionDescriptions = {
+  runtimeDiscovery: "console.buildExecutionDescription.runtimeDiscovery",
+  shellExecute: "console.buildExecutionDescription.shellExecute",
+  alternateIdentity: "console.buildExecutionDescription.alternateIdentity",
+  appContainer: "console.buildExecutionDescription.appContainer",
+  customToken: "console.buildExecutionDescription.customToken",
+  staging: "console.buildExecutionDescription.staging",
+};
+const buildTransportDescriptions = {
+  1: "console.buildTransportDescription.quic",
+  2: "console.buildTransportDescription.tcp",
+  3: "console.buildTransportDescription.udp",
 };
 
 function notify(message) {
@@ -83,6 +144,55 @@ function bytes(value) {
   if (value < 1048576) return `${(value / 1024).toFixed(1)} KiB`;
   if (value < 1073741824) return `${(value / 1048576).toFixed(1)} MiB`;
   return `${(value / 1073741824).toFixed(1)} GiB`;
+}
+
+function groupOptionInputs(group) {
+  return [...$("buildModules").querySelectorAll("input[data-build-group-option]")]
+    .filter((input) => input.dataset.buildGroupOption === group);
+}
+
+function executionOptionInputs() {
+  return [...$("buildModules").querySelectorAll("input[data-build-execution]")];
+}
+
+function featureOptionInputs() {
+  return [...$("buildModules").querySelectorAll("input[data-build-module], input[data-build-execution]")];
+}
+
+function updateBuildGroupChecks() {
+  for (const input of $("buildModules").querySelectorAll("input[data-build-group-toggle]")) {
+    const options = groupOptionInputs(input.dataset.buildGroupToggle),
+      selected = options.filter((option) => option.checked).length;
+    input.checked = options.length !== 0 && selected === options.length;
+    input.indeterminate = selected !== 0 && selected !== options.length;
+  }
+  for (const input of $("buildModules").querySelectorAll("input[data-build-subgroup-toggle]")) {
+    const options = [...$("buildModules").querySelectorAll("input[data-build-subgroup-option]")]
+      .filter((option) => option.dataset.buildSubgroupOption === input.dataset.buildSubgroupToggle),
+      selected = options.filter((option) => option.checked).length;
+    input.checked = options.length !== 0 && selected === options.length;
+    input.indeterminate = selected !== 0 && selected !== options.length;
+  }
+}
+
+function updateBuildSelectAll() {
+  const options = featureOptionInputs(), selected = options.filter((option) => option.checked).length;
+  $("buildSelectAll").checked = options.length !== 0 && selected === options.length;
+  $("buildSelectAll").indeterminate = selected !== 0 && selected !== options.length;
+}
+
+function updateMinimumOs(selected) {
+  let minimum;
+  if (selected.includes(1) || $("buildTcpTls13").checked)
+    minimum = t("console.minimumOsWindows11");
+  else if (selected.includes(2))
+    minimum = t("console.minimumOsWindows10");
+  else if (selected.includes(3))
+    minimum = t("console.minimumOsWindows10Udp");
+  else
+    minimum = t("console.minimumOsSelectTransport");
+  $("buildMinimumOs").textContent = minimum;
+  $("buildMinimumOs").title = t("console.minimumOsHint");
 }
 
 function allGroups() {
@@ -226,17 +336,24 @@ function updateMcpWarning() {
   $("mcpAllToolsWarning").hidden = $("mcpAccessMode").value !== "all";
 }
 
-function buildCheckbox(value, text, checked) {
+function buildCheckbox(value, text, checked, title, dataset = {}) {
   const label = element("label", "build-check"), input = document.createElement("input");
   input.type = "checkbox";
   input.value = value;
   input.checked = checked;
+  if (title) label.title = title;
+  for (const [name, data] of Object.entries(dataset)) input.dataset[name] = data;
   label.append(input, element("span", "", text));
   return label;
 }
 
 function selectedBuildModules() {
-  return [...$("buildModules").querySelectorAll("input:checked")].map((input) => Number(input.value));
+  return [...$("buildModules").querySelectorAll("input[data-build-module]:checked")]
+    .map((input) => Number(input.value));
+}
+
+function selectedBuildExecutionOptions() {
+  return executionOptionInputs().filter((input) => input.checked).map((input) => input.value);
 }
 
 function selectedBuildTransports() {
@@ -256,7 +373,6 @@ function updateBuildSelection() {
   $("buildPreferredTransport").replaceChildren(...selected.map((id) =>
     new Option(buildConfig.transports.find((transport) => transport.id === id).name, id)));
   if (selected.includes(Number(previous))) $("buildPreferredTransport").value = previous;
-  $("buildTcpTls13").disabled = !selected.includes(2) || buildActive();
   if (!selected.includes(2)) $("buildTcpTls13").checked = false;
   $("buildTransportOrder").textContent = selected.length ? t("console.transportOrder", {
     order: selectedBuildTransports().map((id) => {
@@ -268,11 +384,11 @@ function updateBuildSelection() {
     count: modules.length, total: buildConfig.modules.length,
   });
   const executionEnabled = modules.includes(10);
-  $("buildExecutionExtensions").classList.toggle("disabled", !executionEnabled);
-  for (const input of $("buildExecutionOptions").querySelectorAll("input"))
+  for (const input of executionOptionInputs())
     input.disabled = !executionEnabled || buildActive();
-  $("buildMinimumOs").textContent = selected.includes(1) || $("buildTcpTls13").checked ?
-    "Windows 11 / Windows Server 2022" : "Windows 10 1809 / Windows Server 2019";
+  if (!buildConfig.supportsTcpTls13) $("buildTcpTls13").checked = false;
+  $("buildTcpTls13").disabled = !selected.includes(2) || !buildConfig.supportsTcpTls13 || buildActive();
+  updateMinimumOs(selected);
   const runtimeFiles = [];
   if (modules.includes(20))
     runtimeFiles.push("Microsoft.Management.Deployment.dll", "Microsoft.Management.Deployment.winmd");
@@ -282,6 +398,12 @@ function updateBuildSelection() {
   $("buildInstanceId").textContent = instanceId || t("console.newInstanceId");
   $("buildKeyName").textContent = `KNSoft.ZPigeon.Client.${buildConfig.deploymentId}.${instanceId || "<InstanceId>"}`;
   $("buildDownload").disabled = !buildConfig.available || !selected.length || !!buildActive();
+  const executionExtensions = document.querySelector(".build-execution-extensions"),
+    executionHeading = $("buildModules").querySelector("input[data-build-subgroup-toggle='execution']");
+  executionExtensions?.classList.toggle("disabled", !executionEnabled);
+  if (executionHeading) executionHeading.disabled = !executionEnabled || buildActive();
+  updateBuildGroupChecks();
+  updateBuildSelectAll();
   if (!buildActive()) {
     $("buildSize").textContent = "—";
     $("buildCache").textContent = t("console.cachePending");
@@ -291,17 +413,70 @@ function updateBuildSelection() {
 
 function renderBuildCatalog() {
   $("buildTransports").replaceChildren(...buildConfig.transports.map((transport) =>
-    buildCheckbox(transport.id, `${transport.name} · ${transport.port}`, transport.id === 2)));
+    buildCheckbox(transport.id, `${transport.name} · ${transport.port}`, transport.id === 2,
+                  t(buildTransportDescriptions[transport.id]))));
   const availableIds = new Set(buildConfig.modules.map((module) => module.id));
-  $("buildModules").replaceChildren(...buildModuleGroups.map(([key, entries]) => {
-    const section = element("section", "build-module-group"), options = element("div");
-    options.append(...entries.filter(([id]) => availableIds.has(id)).map(([id, labelKey]) =>
-      buildCheckbox(id, t(labelKey), true)));
-    section.append(element("h3", "", t(key)), options);
+  $("buildModules").replaceChildren(...buildModuleGroups.map(([key, entries, includeExecution]) => {
+    const section = element("section", "build-module-group"),
+      heading = element("label", "build-group-heading"),
+      headingInput = document.createElement("input"),
+      options = element("div", "build-module-options");
+    headingInput.type = "checkbox";
+    heading.title = t(key);
+    headingInput.dataset.buildGroupToggle = key;
+    headingInput.onchange = () => {
+      for (const input of groupOptionInputs(key)) input.checked = headingInput.checked;
+      if (key === "nav.tasks" && headingInput.checked) {
+        const execution = $("buildModules").querySelector("input[data-build-module][value='10']");
+        if (execution) execution.checked = true;
+      }
+      updateBuildSelection();
+    };
+    heading.append(headingInput, element("span", "", t(key)));
+    options.append(...entries.filter(([id]) => availableIds.has(id)).map(([id, labelKey]) => {
+      const module = buildConfig.modules.find((value) => value.id === id);
+      return buildCheckbox(id,
+                          t(labelKey),
+                          true,
+                          t(buildModuleDescriptionKeys[module.key] || labelKey),
+                          { buildModule: "", buildGroupOption: key });
+    }));
+    section.append(heading, options);
+    if (includeExecution) {
+      const extension = element("div", "build-execution-extensions"),
+        extensionHeading = element("label", "build-group-heading"),
+        extensionHeadingInput = document.createElement("input"),
+        executionOptions = element("div", "build-options");
+      extensionHeadingInput.type = "checkbox";
+      extensionHeading.title = t("console.executionExtensions");
+      extensionHeadingInput.dataset.buildSubgroupToggle = "execution";
+      extensionHeadingInput.onchange = () => {
+        if (extensionHeadingInput.checked) {
+          const execution = $("buildModules").querySelector("input[data-build-module][value='10']");
+          if (execution) execution.checked = true;
+        }
+        for (const input of $("buildModules").querySelectorAll("input[data-build-subgroup-option]"))
+          if (input.dataset.buildSubgroupOption === "execution") input.checked = extensionHeadingInput.checked;
+        updateBuildSelection();
+      };
+      extensionHeading.append(extensionHeadingInput,
+                              element("span", "", t("console.executionExtensions")));
+      executionOptions.id = "buildExecutionOptions";
+      executionOptions.append(...buildConfig.executionOptions.map((option) =>
+        buildCheckbox(option.id,
+                      t(buildExecutionLabels[option.id]),
+                      true,
+                      t(buildExecutionDescriptions[option.id]),
+                      {
+                        buildExecution: "",
+                        buildGroupOption: key,
+                        buildSubgroupOption: "execution",
+                      })));
+      extension.append(extensionHeading, executionOptions);
+      section.append(extension);
+    }
     return section;
   }));
-  $("buildExecutionOptions").replaceChildren(...buildConfig.executionOptions.map((option) =>
-    buildCheckbox(option.id, t(buildExecutionLabels[option.id]), true)));
   updateBuildSelection();
 }
 
@@ -415,8 +590,7 @@ $("groupForm").onsubmit = async (event) => {
     await refresh();
   } catch (error) { notify(error.message); }
 };
-$("buildForm").onsubmit = async (event) => {
-  event.preventDefault();
+async function startBuild() {
   if (buildActive()) return;
   buildStarting = true;
   buildCancelRequested = false;
@@ -427,6 +601,7 @@ $("buildForm").onsubmit = async (event) => {
   $("buildLogSection").hidden = false;
   $("buildOutput").textContent = "";
   $("buildState").textContent = t("console.buildQueued");
+  $("buildLogSection").scrollIntoView({ behavior: "smooth", block: "start" });
   setBuildFormBusy(true);
   try {
     const snapshot = await json("/api/clients/build/jobs", "POST", {
@@ -434,8 +609,7 @@ $("buildForm").onsubmit = async (event) => {
       instanceId: $("buildInstance").value || null,
       modules: selectedBuildModules(),
       transports: selectedBuildTransports(),
-      executionOptions: selectedBuildModules().includes(10) ?
-        [...$("buildExecutionOptions").querySelectorAll("input:checked")].map((input) => input.value) : [],
+      executionOptions: selectedBuildModules().includes(10) ? selectedBuildExecutionOptions() : [],
       requireTcpTls13: $("buildTcpTls13").checked,
     });
     buildStarting = false;
@@ -448,6 +622,11 @@ $("buildForm").onsubmit = async (event) => {
     $("buildState").textContent = t("console.buildFailed");
     notify(error.message);
   }
+}
+$("buildDownload").onclick = startBuild;
+$("buildForm").onsubmit = (event) => {
+  event.preventDefault();
+  startBuild();
 };
 $("buildCancel").onclick = async () => {
   if (!buildJob || !buildActive()) return;
@@ -463,27 +642,15 @@ $("buildCancel").onclick = async () => {
   }
 };
 $("buildModules").onchange = $("buildTransports").onchange = $("buildPreferredTransport").onchange =
-  $("buildTcpTls13").onchange = $("buildExecutionOptions").onchange = updateBuildSelection;
+  $("buildTcpTls13").onchange = updateBuildSelection;
 $("buildInstance").onchange = () => {
   const instance = buildConfig.instances.find((value) => value.instanceId === $("buildInstance").value);
   if (instance) $("buildGroup").value = instance.group;
   updateBuildSelection();
 };
 $("buildGroup").oninput = updateBuildSelection;
-$("buildSelectAll").onclick = () => {
-  for (const input of [...$("buildModules").querySelectorAll("input"),
-    ...$("buildExecutionOptions").querySelectorAll("input")]) input.checked = true;
-  updateBuildSelection();
-};
-$("buildSelectNone").onclick = () => {
-  for (const input of $("buildModules").querySelectorAll("input")) input.checked = false;
-  updateBuildSelection();
-};
-$("buildExecutionOnly").onclick = () => {
-  for (const input of $("buildModules").querySelectorAll("input")) input.checked = Number(input.value) === 10;
-  for (const input of $("buildExecutionOptions").querySelectorAll("input")) input.checked = false;
-  for (const input of $("buildTransports").querySelectorAll("input")) input.checked = Number(input.value) === 2;
-  $("buildTcpTls13").checked = false;
+$("buildSelectAll").onchange = () => {
+  for (const input of featureOptionInputs()) input.checked = $("buildSelectAll").checked;
   updateBuildSelection();
 };
 $("mcpAccessMode").onchange = updateMcpWarning;
